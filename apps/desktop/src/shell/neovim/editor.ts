@@ -33,7 +33,13 @@ import {
 } from "./painter";
 import { escapeInputText, keyToNeovim } from "./keys";
 import { floatLabelsOf } from "./frame";
-import { THEME_GROUPS, THEME_LUA, themeOf, type Surface } from "./chrome";
+import {
+  THEME_GROUPS,
+  THEME_LUA,
+  themeOf,
+  type PaintTheme,
+  type Surface,
+} from "./chrome";
 import { cmdlineLayout, textCells } from "./cmdline";
 import { cmdlinePlace } from "./place";
 import { SCROLL_LUA, replied, type ScrollRequest } from "./smoothScroll";
@@ -304,6 +310,11 @@ export class NeovimEditor {
       if (p?.kind === "message" && p.scrolled) return box.row;
     }
     return undefined;
+  }
+
+  /** What the colorscheme says beyond the grid (`chrome.ts`). */
+  paintTheme(): PaintTheme {
+    return this.painter.paintTheme();
   }
 
   /** The colours a GUI surface over the editor wears (`chrome.ts`). */

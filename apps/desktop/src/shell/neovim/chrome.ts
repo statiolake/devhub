@@ -11,6 +11,7 @@
  */
 
 import type { GridBox, NeovimUiState } from "./redraw";
+import { KINDS, KIND_GROUPS, iconKinds, kindGroups, type Kind } from "./kinds";
 
 /**
  * What the painter knows of the colorscheme beyond the grid's own colours,
@@ -29,6 +30,33 @@ export interface PaintTheme {
    * diagnostics' colours for levels. Absent until asked.
    */
   readonly surface?: Surface;
+  /** The completion menu's colours (`Pmenu*`); absent until asked. */
+  readonly menu?: MenuColours;
+  /**
+   * Completion kinds (`kinds.ts`): each kind's colour from the person's
+   * groups, and their kind icons (blink.cmp's `kind_icons`) glyph to kind.
+   */
+  readonly kinds?: KindTheme;
+}
+
+export interface KindTheme {
+  readonly colours: ReadonlyMap<Kind, number>;
+  readonly icons: ReadonlyMap<string, Kind>;
+}
+
+/** `Pmenu` and its parts, as the person's colorscheme gives them. */
+export interface MenuColours {
+  readonly bg?: number;
+  readonly fg?: number;
+  readonly selBg?: number;
+  readonly selFg?: number;
+  /** `PmenuKind`: the kind's name. */
+  readonly kind?: number;
+  /** `PmenuExtra`: the item's `menu` text (its source). */
+  readonly extra?: number;
+  /** `PmenuKindSel`, `PmenuExtraSel`: the same on the selected row. */
+  readonly kindSel?: number;
+  readonly extraSel?: number;
 }
 
 /** `PaintTheme.surface`: colours a GUI surface over the editor wears. */
@@ -54,13 +82,18 @@ export const NO_THEME: PaintTheme = {
 /**
  * Asked with `nvim_exec_lua` (0.9+: `nvim_get_hl`): each group's colours,
  * links followed; `cmdheight`; the global `fillchars` and each window's
- * of the tab page.
+ * of the tab page; blink.cmp's kind icons once blink is loaded (only read:
+ * asking would load a lazy plugin).
  */
 export const THEME_LUA = `local names = ...
 local out = { groups = {}, wins = {}, cmdheight = vim.o.cmdheight, fillchars = vim.go.fillchars }
 for _, name in ipairs(names) do
   local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
   if ok then out.groups[name] = hl end
+end
+local blink = package.loaded['blink.cmp.config']
+if type(blink) == 'table' and type(blink.appearance) == 'table' and type(blink.appearance.kind_icons) == 'table' then
+  out.kind_icons = blink.appearance.kind_icons
 end
 for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
   out.wins[tostring(win)] = vim.wo[win].fillchars
@@ -75,6 +108,13 @@ export const THEME_GROUPS: readonly string[] = [
   "DiagnosticWarn",
   "DiagnosticError",
   "DiagnosticOk",
+  "Pmenu",
+  "PmenuSel",
+  "PmenuKind",
+  "PmenuExtra",
+  "PmenuKindSel",
+  "PmenuExtraSel",
+  ...KIND_GROUPS,
 ];
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -112,12 +152,41 @@ export function themeOf(answer: unknown): PaintTheme {
     error: colour("DiagnosticError", "fg"),
     ok: colour("DiagnosticOk", "fg"),
   }).filter(([, v]) => v !== undefined);
+  const menuEntries = Object.entries({
+    bg: colour("Pmenu", "bg"),
+    fg: colour("Pmenu", "fg"),
+    selBg: colour("PmenuSel", "bg"),
+    selFg: colour("PmenuSel", "fg"),
+    kind: colour("PmenuKind", "fg"),
+    extra: colour("PmenuExtra", "fg"),
+    kindSel: colour("PmenuKindSel", "fg"),
+    extraSel: colour("PmenuExtraSel", "fg"),
+  }).filter(([, v]) => v !== undefined);
+  const colours = new Map<Kind, number>();
+  for (const kind of KINDS) {
+    const fg = kindGroups(kind)
+      .map(({ name, generic }) => {
+        const own = colour(name, "fg");
+        return generic !== undefined && own === colour(generic, "fg")
+          ? undefined
+          : own;
+      })
+      .find((v) => v !== undefined);
+    if (fg !== undefined) colours.set(kind, fg);
+  }
+  const icons = iconKinds(record(out["kind_icons"]) ?? {});
   return {
     fillchars,
     winFillchars,
     cmdheight,
     ...(surfaceEntries.length > 0
       ? { surface: Object.fromEntries(surfaceEntries) as Surface }
+      : {}),
+    ...(menuEntries.length > 0
+      ? { menu: Object.fromEntries(menuEntries) as MenuColours }
+      : {}),
+    ...(colours.size > 0 || icons.size > 0
+      ? { kinds: { colours, icons } }
       : {}),
   };
 }
@@ -143,7 +212,12 @@ export function sameTheme(a: PaintTheme, b: PaintTheme): boolean {
     a.fillchars === b.fillchars &&
     JSON.stringify([...a.winFillchars]) ===
       JSON.stringify([...b.winFillchars]) &&
-    JSON.stringify(a.surface) === JSON.stringify(b.surface)
+    JSON.stringify(a.surface) === JSON.stringify(b.surface) &&
+    JSON.stringify(a.menu) === JSON.stringify(b.menu) &&
+    JSON.stringify([...(a.kinds?.colours ?? [])]) ===
+      JSON.stringify([...(b.kinds?.colours ?? [])]) &&
+    JSON.stringify([...(a.kinds?.icons ?? [])]) ===
+      JSON.stringify([...(b.kinds?.icons ?? [])])
   );
 }
 

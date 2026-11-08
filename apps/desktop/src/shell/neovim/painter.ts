@@ -16,6 +16,7 @@ import type { CellMetrics } from "./mouse";
 import { pinnedRows, type BufposAnchor, type FloatRef } from "./riders";
 import { strokesFor, type Stroke, type StrokeKind } from "./strokes";
 import { boxArms, fitIcon, glyphKind, glyphShapes, type Shape } from "./glyphs";
+import { familyOf, markPath, type KindFamily } from "./kinds";
 import {
   floatClusters,
   framePieces,
@@ -211,8 +212,22 @@ const FILLER_STEP = 6;
 
 /** A selection's or search match's corners (`chrome.ts`). */
 
-/** A float's outer corners' radius (DevHub's frame); a border of lines has none. */
-const FLOAT_RADIUS = 6;
+/**
+ * A float's outer corners' radius (DevHub's frame); a border of lines has
+ * none. A third of the default line (18 px): the corner reads as lifted at
+ * the text's scale and never reaches a row's text. DevHub's own popups
+ * (the completion menu, `gui.popup`, the command line) wear it too.
+ */
+export const FLOAT_RADIUS = 6;
+
+/**
+ * A selected row's band in a rounded float (a completion menu's, a
+ * picker's) is inset by this much where its row has blank cells at both
+ * ends, and rounded by the float's radius less it, so its corners are
+ * concentric with the float's: the band is the float's own shape, smaller.
+ * Half the radius: the rim and the band's corner share it equally.
+ */
+const BAND_INSET = FLOAT_RADIUS / 2;
 
 /**
  * What of a grid its canvas shows: a float's left-out blank border, or a
@@ -307,6 +322,10 @@ export class GridPainter {
   /** The row's cells whose glyph is not drawn (`~`, a filler's `-`). */
   private readonly skip = new Set<number>();
   private dpr: number;
+  /** Floats whose canvas is rounded (not a border of lines, not framed). */
+  private readonly roundFloats = new Set<number>();
+  /** The editor face's cap height: a kind mark's size. */
+  private capHeight = 0;
   /** The row's icons, drawn after its backgrounds (`paintRow`). */
   private readonly icons: {
     c: string;
@@ -436,6 +455,9 @@ export class GridPainter {
       const round = corners.get(box.grid);
       canvas.style.borderRadius =
         round && box.lined !== true ? radii(round, FLOAT_RADIUS) : "";
+      if (round && box.lined !== true && box.frame === undefined)
+        this.roundFloats.add(box.grid);
+      else this.roundFloats.delete(box.grid);
       canvas.classList.toggle("nvim-framed", box.frame !== undefined);
       // A menu's scrollbar drawn as floats: the thumb a thin rounded bar
       // in the middle of its cell, the gutter left to the menu's ground,
@@ -1314,12 +1336,23 @@ export class GridPainter {
       runs.push({ start: col, end, hl });
       col = end;
     }
-    // Every ground first, then the shapes over them, then the text: a
-    // selection's rounded corner shows the ground beside it, and no run's
-    // ground covers the text of the run before it.
+    // Every ground first, then the shapes over them, then the text: no
+    // run's ground covers the text of the run before it.
+    const band = this.bandOf(state, box, grid, row);
+    if (band) {
+      // A selected row in a rounded float: the float's ground, then the
+      // row's grounds inside the band's rounded outline.
+      ctx.fillStyle = cssColor(band.ground);
+      ctx.fillRect(0, y, grid.width * cw, ch);
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(band.x0, y, band.x1 - band.x0, ch, band.radius);
+      ctx.clip();
+    }
     for (const run of runs) {
       this.paintGround(ctx, state, box, grid.chars, base, run, y);
     }
+    if (band) ctx.restore();
     if (box.grid === 1) this.paintSeparators(ctx, state, grid, base, row, y);
     this.skip.clear();
     if (!box.float && box.grid !== 1) this.paintFiller(ctx, state, box, row, y);
@@ -1354,6 +1387,14 @@ export class GridPainter {
     // After every background of the row: an icon may reach into the blank
     // cell after it, which a later run would otherwise paint over.
     for (const icon of this.icons) {
+      // A completion kind's glyph (the person's own `kind_icons` say which
+      // kind it is) in a menu: the kind's mark (`kinds.ts`).
+      const kind = box.float ? this.theme.kinds?.icons.get(icon.c) : undefined;
+      if (kind) {
+        const colour = this.theme.kinds?.colours.get(kind) ?? icon.fg;
+        this.paintKind(ctx, familyOf(kind), icon.x, y, colour);
+        continue;
+      }
       ctx.fillStyle = cssColor(icon.fg);
       this.paintIcon(ctx, icon.c, icon.x, y, icon.cells, icon.attr, icon.spill);
     }
@@ -1548,6 +1589,100 @@ export class GridPainter {
   /** Fonts arrived (the icon font, a `guifont`): icon fits are measured again. */
   fontsLoaded(): void {
     this.inks.clear();
+    this.capHeight = 0;
+  }
+
+  /**
+   * A kind's mark on its cell, a cap height square standing on the
+   * baseline: as tall as the capitals of the word beside it, centred on
+   * the cell, in the kind's colour (`kindGroups`, else the cell's).
+   */
+  private paintKind(
+    ctx: CanvasRenderingContext2D,
+    family: KindFamily,
+    x: number,
+    y: number,
+    fg: number,
+  ): void {
+    const { width: cw, baseline } = this.metrics;
+    if (this.capHeight === 0) {
+      ctx.font = fontOf(this.font, undefined);
+      this.capHeight = ctx.measureText("H").actualBoundingBoxAscent;
+    }
+    const size = this.capHeight;
+    const mark = markPath(family, size);
+    ctx.save();
+    ctx.translate(x + (cw - size) / 2, y + baseline - size);
+    const path = new Path2D(mark.d);
+    if (mark.fill) {
+      ctx.fillStyle = cssColor(fg);
+      ctx.fill(path);
+    } else {
+      ctx.strokeStyle = cssColor(fg);
+      ctx.lineWidth = mark.stroke;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.stroke(path);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * A float row that is a band: a rounded float's one row whose every cell
+   * has a ground other than the float's (its neighbours'), a menu's or a
+   * picker's selected row. Answers its outline in the canvas's own
+   * coordinates, or `undefined` for a row drawn as cells.
+   */
+  private bandOf(
+    state: NeovimUiState,
+    box: GridBox,
+    grid: {
+      readonly width: number;
+      readonly height: number;
+      readonly chars: readonly string[];
+      readonly hls: ArrayLike<number>;
+    },
+    row: number,
+  ): { x0: number; x1: number; radius: number; ground: number } | undefined {
+    if (!box.float || !this.roundFloats.has(box.grid)) return undefined;
+    const crop = cropOf(box);
+    const first = crop.left;
+    const last = grid.width - crop.right - 1;
+    if (last <= first) return undefined;
+    const bgAt = (r: number, c: number) => {
+      const attr = state.hl.get(grid.hls[r * grid.width + c] ?? 0);
+      if ((attr?.blend ?? 0) > 0) return undefined;
+      return resolveColors(attr, state.defaults).bg;
+    };
+    const neighbours = [row - 1, row + 1].filter(
+      (r) => r >= crop.top && r < grid.height - crop.bottom,
+    );
+    if (neighbours.length === 0) return undefined;
+    const ground = bgAt(neighbours[0] ?? 0, first);
+    if (ground === undefined) return undefined;
+    if (
+      neighbours.some(
+        (r) => bgAt(r, first) !== ground || bgAt(r, last) !== ground,
+      )
+    )
+      return undefined;
+    for (let c = first; c <= last; c += 1) {
+      const bg = bgAt(row, c);
+      if (bg === undefined || bg === ground) return undefined;
+    }
+    const blank = (c: string | undefined) => c === " " || c === undefined;
+    const base = row * grid.width;
+    const inset =
+      blank(grid.chars[base + first]) && blank(grid.chars[base + last])
+        ? BAND_INSET
+        : 0;
+    const { width: cw } = this.metrics;
+    return {
+      x0: first * cw + inset,
+      x1: (last + 1) * cw - inset,
+      radius: FLOAT_RADIUS - inset,
+      ground,
+    };
   }
 
   /** A run's background, `winblend` applied. */

@@ -45,7 +45,7 @@ import {
 } from "./redraw";
 import { cmdlineLayout, textCells } from "./cmdline";
 import { ICON_FAMILY, cssColor, fontOf, resolveColors } from "./painter";
-import { glyphKind } from "./glyphs";
+import { familyOf, kindOf, markPath, type Kind } from "./kinds";
 import { TerminalSurface } from "../terminal/TerminalSurface";
 import { TabStrip } from "./TabStrip";
 import { InlineImages, Toasts } from "./DecorationViews";
@@ -1051,46 +1051,39 @@ function CmdlineRow({
   );
 }
 
-/**
- * The kind letter Vim's completion gives, as a word and a colour. A kind
- * that starts with a Nerd Font icon (lspkind's `" Function"`, a config's
- * own symbols) shows that icon, in the bundled symbols font.
- */
-function kindOf(kind: string): { label: string; tone: string } {
-  const trimmed = kind.trim();
-  const first = String.fromCodePoint(trimmed.codePointAt(0) ?? 0x20);
-  if (glyphKind(first) === "icon") {
-    const rest = trimmed.slice(first.length).trim();
-    return { label: first, tone: rest ? kindOf(rest).tone : "text" };
-  }
-  const k = trimmed.toLowerCase();
-  const table: Record<string, [string, string]> = {
-    f: ["ƒ", "function"],
-    function: ["ƒ", "function"],
-    method: ["ƒ", "function"],
-    m: ["◆", "member"],
-    field: ["◆", "member"],
-    property: ["◆", "member"],
-    v: ["𝑥", "variable"],
-    variable: ["𝑥", "variable"],
-    t: ["T", "type"],
-    class: ["C", "type"],
-    interface: ["I", "type"],
-    struct: ["S", "type"],
-    enum: ["E", "type"],
-    keyword: ["K", "keyword"],
-    snippet: ["✂", "snippet"],
-    text: ["≡", "text"],
-    module: ["{}", "module"],
-    constant: ["π", "constant"],
-    d: ["#", "constant"],
-  };
-  const hit = table[k];
-  if (hit) return { label: hit[0], tone: hit[1] };
-  return { label: Array.from(trimmed).slice(0, 2).join(""), tone: "text" };
+/** A completion kind's mark (`kinds.ts`): a cap-height square on the baseline. */
+function KindMark({
+  kind,
+  color,
+}: {
+  readonly kind: Kind | undefined;
+  readonly color: string | undefined;
+}) {
+  if (!kind) return <span className="nvim-pum-mark" />;
+  const mark = markPath(familyOf(kind), 10);
+  return (
+    <svg className="nvim-pum-mark" viewBox="0 0 10 10" aria-hidden="true">
+      <path
+        d={mark.d}
+        fill={mark.fill ? color : "none"}
+        stroke={mark.fill ? "none" : color}
+        strokeWidth={mark.stroke}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
-/** `ext_popupmenu`: the completion list, at its anchor cell. */
+/**
+ * `ext_popupmenu`: the completion list, at its anchor cell, in the
+ * person's `Pmenu` colours. Words in the editor's face on its rows, so a
+ * candidate looks as it will in the buffer and lines up with the word it
+ * completes; the kind as a mark in the kind's own colour; the kind's name
+ * and the item's source in the UI face, labels about the word. The
+ * selection is a band rounded concentrically with the menu (the floats'
+ * radius less the inset), as a float's selected row is (`painter.ts`).
+ */
 function Popupmenu({
   state,
   editor,
@@ -1109,21 +1102,60 @@ function Popupmenu({
   }, [menu?.selected, menu]);
   if (!menu || menu.items.length === 0) return null;
   const cell = editor.cellMetrics();
+  const font = editor.font();
+  const theme = editor.paintTheme();
+  const colours = theme.menu;
+  const css = (v: number | undefined) =>
+    v === undefined ? undefined : cssColor(v);
   const command = menu.grid === -1;
   const box = editor.gridBoxes().find((b) => b.grid === menu.grid);
   const bar = cmdlinePlace(editor.gridSize().cols, cell.width);
-  const style: React.CSSProperties = command
-    ? {
-        left: (bar.col + menu.col) * cell.width - 6,
-        top: (bar.row + 1) * cell.height + CMDLINE_PAD_Y + 4,
-      }
-    : popupmenuPlace(
-        editor.areaSize(),
-        ((box?.row ?? 0) + menu.row) * cell.height,
-        ((box?.col ?? 0) + menu.col) * cell.width - 6,
-        cell.height,
-        menu.items.length,
-      );
+  // The words start three cells in (padding, mark, gap): the menu goes
+  // that far left of its anchor, so a candidate sits over the word it
+  // completes.
+  const lead = 3 * cell.width;
+  const style: React.CSSProperties = {
+    ...(command
+      ? {
+          left: (bar.col + menu.col) * cell.width - lead,
+          top: (bar.row + 1) * cell.height + CMDLINE_PAD_Y + 4,
+        }
+      : popupmenuPlace(
+          editor.areaSize(),
+          ((box?.row ?? 0) + menu.row) * cell.height,
+          ((box?.col ?? 0) + menu.col) * cell.width - lead,
+          cell.height,
+          menu.items.length,
+        )),
+    font: fontOf(font),
+    lineHeight: `${String(cell.height)}px`,
+    ["--nvim-cell" as string]: `${String(cell.width)}px`,
+    ["--nvim-row" as string]: `${String(cell.height)}px`,
+    ["--nvim-label-size" as string]: `${String(font.size - 1)}px`,
+    ...(colours?.bg !== undefined ? { background: css(colours.bg) } : {}),
+    ...(colours?.fg !== undefined ? { color: css(colours.fg) } : {}),
+    ...(colours?.selBg !== undefined
+      ? { ["--nvim-pum-sel-bg" as string]: css(colours.selBg) }
+      : {}),
+    ...(colours?.selFg !== undefined
+      ? { ["--nvim-pum-sel-fg" as string]: css(colours.selFg) }
+      : {}),
+    ...(colours?.kind !== undefined
+      ? { ["--nvim-pum-kind" as string]: css(colours.kind) }
+      : {}),
+    ...(colours?.extra !== undefined
+      ? { ["--nvim-pum-extra" as string]: css(colours.extra) }
+      : {}),
+    ...(colours?.kindSel !== undefined
+      ? { ["--nvim-pum-kind-sel" as string]: css(colours.kindSel) }
+      : {}),
+    ...(colours?.extraSel !== undefined
+      ? { ["--nvim-pum-extra-sel" as string]: css(colours.extraSel) }
+      : {}),
+    ...(theme.surface?.muted !== undefined
+      ? { ["--nvim-pum-muted" as string]: css(theme.surface.muted) }
+      : {}),
+  };
   return (
     <div
       className="nvim-pum"
@@ -1136,6 +1168,7 @@ function Popupmenu({
     >
       {menu.items.map((item, index) => {
         const kind = kindOf(item.kind);
+        const kindColour = kind ? theme.kinds?.colours.get(kind) : undefined;
         return (
           <div
             key={index}
@@ -1150,12 +1183,11 @@ function Popupmenu({
               send("nvim_select_popupmenu_item", [index, true, false, {}]);
             }}
           >
-            {item.kind ? (
-              <span className={`nvim-pum-kind nvim-kind-${kind.tone}`}>
-                {kind.label}
-              </span>
-            ) : null}
+            <KindMark kind={kind} color={css(kindColour) ?? "currentcolor"} />
             <span className="nvim-pum-word">{item.word}</span>
+            {kind || item.kind.trim() !== "" ? (
+              <span className="nvim-pum-kind">{kind ?? item.kind.trim()}</span>
+            ) : null}
             {item.menu ? (
               <span className="nvim-pum-menu">{item.menu}</span>
             ) : null}

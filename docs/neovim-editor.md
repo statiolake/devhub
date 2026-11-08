@@ -1,20 +1,11 @@
 # The Neovim editor: DevHub as a GUI for Neovim
 
 With `[general] editor = "neovim"` a Workspace's editor area is not a VS Code
-workbench but **its terminal**: the Workspace's `ws-` tmux session, which is
-what DevHub shows when it starts and when a Workspace is opened or selected.
-Neovim is something opened inside it, and every Neovim there is DevHub's own
-GUI for it, drawn through Neovim's UI protocol exactly over its tmux pane:
-
-- `nvim` typed in a pane — of the Workspace's terminal or an Agent's — or run
-  by `git commit`, `crontab -e`, `$EDITOR` (see Neovim in a terminal);
-- the Workspace's one `devhub-nvim` window, where `devhub <file>`, a
-  conversation's file link and Send to Agent's reference open (see
-  Integrations).
-
-Neovim owns the buffers, the windows and their layout, the modes, the
-plugins and the language servers; DevHub draws, and adds GUI-native widgets
-that are attached to Neovim objects and follow them.
+workbench but DevHub's own GUI for a Neovim: a headless `nvim` on the
+Workspace's machine, drawn by DevHub through Neovim's UI protocol. Neovim owns
+the buffers, the windows and their layout, the modes, the plugins and the
+language servers; DevHub draws, and adds GUI-native widgets that are attached
+to Neovim objects and follow them.
 
 ```toml
 [general]
@@ -24,26 +15,19 @@ editor = "neovim"   # "vscode" (the default): each Workspace's own VS Code
 Settings > General > Editors > Editor is the same switch. It applies at once:
 with "neovim" no workbench is started for any Workspace (the lifecycle plan
 wants none, `planWorkbenches`), and one that was running is closed; back to
-"vscode", the terminals are taken out of the editor area and the workbenches
-start as before (on Enter, or a file opened into them). The VS Code path is
-untouched. There is no separate switch for Neovim over terminals: it is what
-`editor = "neovim"` is (`neovim_terminal_overlay` is gone, and refused).
-
-There is no editor surface apart from the terminal, no "Editor not running"
-placeholder and nothing to start: the terminal attaches as the area is shown,
-and a session that ended (its last window closed) is made and attached again
-at once. `Cmd+Q Shift+E` stops nothing here and says so; `:q` ends a Neovim.
+"vscode", the Neovim pages are taken away and the workbenches start as before
+(on Enter, or a file opened into them). The VS Code path is untouched.
 
 ## Architecture
 
 ```
- neovim.html#tnv:<n> (one per pane)      Neovim host (utility process)     the Workspace's machine
+ neovim.html (one view per Workspace)      Neovim host (utility process)     the Workspace's machine
  ┌───────────────────────────────┐ port ┌──────────────────────────┐      ┌──────────────────────────┐
  │ redraw.ts  (pure reducer)     │◀─────│ NeovimUiSessions         │◀─────│ nvim --headless --listen │
- │ painter.ts (a canvas per grid)│redraw│  NeovimUi (attach,       │ rpc  │   in its devhub-nvim     │
- │ widgets: pum, cmdline, tabs,  │─────▶│  GUI windows), msgpack   │─────▶│   tmux window (or a      │
- │  GUI windows (iframe, xterm)  │calls └──────────────────────────┘      │   pane's nvim); socket:  │
- │ keys.ts ime.ts mouse.ts       │        ▲ attach, ended, clipboard      │   local, or ssh forward  │
+ │ painter.ts (a canvas per grid)│redraw│  NeovimUi (attach,       │ rpc  │   kept by a hidden tmux  │
+ │ widgets: pum, cmdline, tabs,  │─────▶│  GUI windows), msgpack   │─────▶│   window (new-window -d) │
+ │  GUI windows (iframe, xterm)  │calls └──────────────────────────┘      │   socket: local, or      │
+ │ keys.ts ime.ts mouse.ts       │        ▲ attach, ended, clipboard      │   ssh -O forward -L      │
  └───────────────────────────────┘        │                    ┌──────────┴───────────────┐
           │ attach (invoke)        ┌──────┴──────────────┐      │ (a second connection:    │
           └───────────────────────▶│ main: NeovimEditors │─────▶│  lifecycle, file jumps,  │
@@ -66,45 +50,33 @@ phase 5c).
 
 ### The process
 
-Two kinds of Neovim, drawn the same way:
-
-- **The Workspace's `devhub-nvim` window.** `main/editor/managedNeovim.ts`
-  keeps one Neovim per Workspace for the files DevHub opens:
-  `env DEVHUB_NEOVIM_GUI=1 nvim --headless --listen <socket>` with the
-  person's own config, cwd the Workspace's folder, in a window named
-  `devhub-nvim` of the Workspace's `ws-` session, made the first time a file
-  is opened. Each open selects that window and names the socket on its pane
-  (`@devhub-nvim`), and the terminal draws the GUI over the pane; the pane
-  itself draws nothing (the Neovim is headless). tmux keeps it across a
-  DevHub restart and an SSH connection dropping, and the next DevHub adopts
-  it by its socket, a digest of the Workspace id.
-- **A `nvim` run in a pane**, by DevHub's shim (Neovim in a terminal): the
-  person's own Neovim as that pane's foreground program.
-
-Neither is ever used for the other's job: an open never goes to a Neovim the
-person started (a `git commit` waiting on its editor gets no other file),
-and `nvim` in a pane never reuses the `devhub-nvim` one.
-
-Each is drawn by a `neovim.html#tnv:<n>` page over its pane
-(`main/editor/terminalNeovims.ts`), with its own UI connection to the socket
-(below).
+`main/editor/managedNeovim.ts` keeps one Neovim per Workspace:
+`env DEVHUB_NEOVIM_GUI=1 nvim --headless --listen <socket>` with the person's
+own config, cwd the Workspace's folder, in a window of the Workspace's `ws-`
+tmux session made with `new-window -d`, so it is never the window anybody
+sees. tmux is only its keeper: the Neovim survives a DevHub restart and an SSH
+connection dropping, and the next DevHub adopts it by its socket, which is a
+digest of the Workspace id. Nothing from that pane is ever displayed — DevHub
+is the server's only UI. (The editor-area terminal view that used to show a
+TUI Neovim in a tmux pane is gone.)
 
 - **This Mac**: the socket is in DevHub's own `0700` directory and is
   connected to directly.
 - **An SSH host**: the socket is in `${TMPDIR:-/tmp}/devhub-nvim-<uid>/` on the
   host, and is forwarded to a socket here over the host's ControlMaster —
   `ssh -O forward -L <here>:<there>` (`Runtime.forwardUnixSocket`,
-  `editor/neovimMachines.ts`). A dropped connection takes the forward with it
-  and the overlay goes, while the Neovim runs on in the host's tmux; the
-  next file opened into the Workspace forwards again, adopts that same
-  Neovim (its unsaved edits still there) and draws it again. A closed
-  connection only counts as Neovim ending when its pane is gone or dead, so
-  a drop never unlinks the socket of a Neovim still running there.
+  `editor/neovimMachines.ts`). A dropped connection takes the forward with it;
+  when its Neovim is still running there, the page says the connection
+  dropped and attaches again by itself (0.8 s, 2 s, 5 s, 10 s apart; then a
+  Retry button), forwarding again and adopting the same Neovim. A closed
+  connection only counts as Neovim ending when its keeper pane is gone or
+  dead: before, the drop unlinked the host's socket, so Retry started a
+  second Neovim beside the orphaned first.
 - **A dev container**: not yet. A Workspace whose editor is attached to a
   container says so ("does not run in a dev container yet").
-- **No `nvim`**: the open is refused with a notice naming the machine that
-  lacks it and what to do (`brew install neovim`, or install it on the
-  host). DevHub does not deliver Neovim to hosts (yet).
+- **No `nvim`**: the page says which machine lacks it and what to do
+  (`brew install neovim`, or install it on the host). DevHub does not deliver
+  Neovim to hosts (yet).
 
 ### The attach
 
@@ -358,8 +330,8 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   hollow, a bar or underline (and the command line's caret) faint and
   steady.
 - Widgets in DevHub's chrome: the completion menu at its anchor cell (flipped
-  above near the bottom, kind icons, scrolls to the selected item, click to
-  select), the command line as a palette-like bar (firstc, cursor, special
+  above near the bottom, scrolls to the selected item, click to select;
+  drawn as below, "The completion menu"), the command line as a palette-like bar (firstc, cursor, special
   char, `cmdline_block` for multiline), and tab pages as a native tab strip
   (click switches via `nvim_set_current_tabpage`; `gt`/`gT` are Neovim's):
   the current tab wears the editor's ground and joins it, over the strip's
@@ -623,26 +595,22 @@ following its event stream. See devhub.nvim's README.
 
 - `devhub <file>`, `devhub -g file:line:col`, `devhub --wait`, a
   conversation's file link and Send to Agent's reference open in the
-  Workspace's `devhub-nvim` window (`:drop`, the cursor placed, folds
-  opened), made when it is not there. The Workspace is selected (beside the
-  asking Agent, for a link from one), tmux is switched to that window, and
-  the keys go to the Neovim drawn over it, wherever they were.
-  `AppController.openInEditor` is the one place that branches on the editor
-  kind (`editor/neovimOpen.ts`).
-- Leaving it is tmux's and Neovim's: `:q` ends that Neovim, its window
-  closes and tmux shows the window it shows next, with the keys in it; the
-  prefix and a window key (`l`, `0`, `n`) go back and forth with the
-  Neovim kept; `<C-o>`, `:b#` and the rest move within it. The next open
-  makes the window again.
-- The window title names the file of the Neovim the selected Workspace's
-  terminal shows (its active pane's), whichever kind it is.
-- Closing a Workspace kills its `devhub-nvim` Neovim. Quitting DevHub does
-  not: it is adopted next time.
+  Workspace's Neovim (`:drop`, the cursor placed, folds opened) and show its
+  editor area. `AppController.openInEditor` is the one place that branches on
+  the editor kind (`editor/neovimOpen.ts`).
+- The window title names the file the selected Workspace's Neovim is in.
+- Closing a Workspace kills its Neovim. Quitting DevHub does not: it is
+  adopted next time.
 
 ## Neovim in a terminal
 
-With `editor = "neovim"`, `nvim [args]` in a DevHub terminal — the
-Workspace's (its editor area) or an Agent's; typed, or run by
+```toml
+[general]
+neovim_terminal_overlay = true   # default false; independent of `editor`
+```
+
+Settings > General > Editors > "Neovim over terminals" is the same switch.
+With it on, `nvim [args]` in an Agent's terminal — typed, or run by
 `git commit`, `crontab -e`, `$EDITOR` — is the person's own Neovim drawn by
 DevHub's GUI exactly over that tmux pane, in place of its TUI. The command
 blocks like any editor and returns Neovim's exit status (`:cq` fails a
@@ -651,8 +619,8 @@ commit). It works the same in a terminal on an SSH host.
 **The shim** (`main/editor/terminalNeovimShim.ts`). DevHub writes a POSIX
 `sh` script named `nvim` on each machine — `<DevHub's data>/devhub/nvim-bin/`
 here, `~/.devhub/terminal/nvim-<tag>/` on a host — and puts its directory in
-front of the PATH of every pane it creates while the editor is Neovim (the
-way a host's `devhub` is). PATH and not `EDITOR`/`VISUAL`: it catches `nvim` typed
+front of the PATH of every pane it creates while the setting is on (the way a
+host's `devhub` is). PATH and not `EDITOR`/`VISUAL`: it catches `nvim` typed
 at a prompt and run by other programs alike, and a dotfile's
 `EDITOR=nvim` still reaches it. The script finds the next `nvim` on the PATH
 and runs it with the person's arguments, in the pane, as `nvim --embed
@@ -662,9 +630,8 @@ before reading the config or a file, so a swap-file question or a config
 error is shown, not answered blind. Neovim 0.9 waits for an `--embed` UI on
 stdin alone and answers nothing on its socket meanwhile, so there it starts
 `--headless` instead, without that wait. It runs the real `nvim` untouched
-outside a DevHub terminal (no `$TMUX_PANE`, a session that is neither a
-Workspace's `ws-` nor an Agent terminal's `tm-`), with the editor not
-Neovim, inside a DevHub GUI Neovim (`$DEVHUB_NEOVIM_GUI`), with stdin
+outside a DevHub Agent terminal (no `$TMUX_PANE`, another session), with the
+overlay off, inside a DevHub GUI Neovim (`$DEVHUB_NEOVIM_GUI`), with stdin
 or stdout not a terminal, for non-editing arguments (`--headless`, `-es`,
 `--remote*`, `--version`, `-`…), and when no UI attached within ten seconds
 (the terminal is not on screen): then the waiting Neovim is ended and the TUI
@@ -675,19 +642,15 @@ its socket in a pane option of DevHub's own tmux server (`@devhub-nvim`) and
 waits for `@devhub-nvim-ui = 1`, which DevHub sets once its UI is attached.
 That channel is the same here and on a host and needs no Node, no `devhub`
 command and no forwarded control socket over there; the socket itself is
-forwarded like the managed Neovim's (`ssh -O forward`). The `devhub-nvim`
-window's pane names its Neovim's socket in the same option, which is all it
-takes for it to be drawn the same way. The server option
-`@devhub-nvim-overlay` says the editor is Neovim, so switching to VS Code
-reaches panes that already have the shim. While the script waits, tmux's
+forwarded like the managed Neovim's (`ssh -O forward`). The server option
+`@devhub-nvim-overlay` says the setting is on, so turning it off reaches
+panes that already have the shim. While the script waits, tmux's
 `pane_current_command` would say `sh`, which DevHub counts as an idle shell;
 every pane reading DevHub makes says `nvim` for a pane with `@devhub-nvim`
 instead, so closing the terminal still asks first.
 
-**Where the overlay goes** (`main/editor/terminalNeovims.ts`). While a
-terminal is on screen — a Workspace's in the editor area (`pane.html#ws:<id>`,
-its `ws-` session), an Agent's beside it (`tm-`), both at once in a split —
-its session is read every 150 ms (400 ms on a host):
+**Where the overlay goes** (`main/editor/terminalNeovims.ts`). While an Agent
+terminal is on screen, its session is read every 150 ms (400 ms on a host):
 each pane's cells, which window and pane are active, zoom, modes, the socket
 option, and DevHub's client's size, key table, prefix and status line. tmux
 pushes none of a window switch, a zoom, `swap-pane` or a resize to anyone
@@ -698,10 +661,10 @@ rectangle in the terminal view, a `neovim.html#tnv:<n>` view placed right
 above it (`ShellWindow.syncTerminalNeovims`). It is hidden while tmux does
 not show the pane: another window, a zoomed sibling, copy mode or a chooser.
 A terminal not on screen is not read; its overlays keep their pages, hidden.
-Each Neovim is its own: a `nvim` run in a pane is never the `devhub-nvim`
-one and never reused — `devhub <file>`, a conversation's file link and Send
-to Agent go to the Workspace's `devhub-nvim` window, and a `git commit`
-waiting on a terminal's Neovim gets no other file.
+Each Neovim is its own: never the Workspace's managed Neovim, never reused —
+`devhub <file>`, a conversation's file link and Send to Agent still go to the
+Workspace's `devhub-nvim` window, and a `git commit` waiting on a terminal's
+Neovim gets no other file.
 
 **The keyboard.** The overlay has the keys whenever its terminal would and
 its pane is tmux's active pane, shown. DevHub's chords are caught first, as on
@@ -714,12 +677,9 @@ until Enter or Escape. A click beside the overlay gives the keys to the
 terminal; a key typed there that tmux would only hand to the pane under the
 overlay (whose Neovim does not read its tty) moves them to the overlay, that
 key included. Moving into the pane by tmux brings them back; `:q` ends the
-overlay and the keys are the shell's again. A file DevHub opens takes them
-back for the `devhub-nvim` window's Neovim, wherever they were. Over the
-Workspace's terminal the overlay is the editor half (`Cmd+Q E`, `Cmd+Q O`);
-over an Agent's, that terminal.
+overlay and the keys are the shell's again.
 
-Limits: DevHub's terminals only (an Agent's own pane, `ag-`, gets the TUI);
+Limits: Agent terminals only (an Agent's own pane, `ag-`, gets the TUI);
 nothing drawn by tmux over a pane (`display-popup`, `display-menu`) shows
 over an overlay; a binding of the person's own that opens a prompt is not
 known as one; in bash or fish, a startup file that puts another `nvim`'s
@@ -745,22 +705,7 @@ provider, GUI windows and `:DevhubTerminal`, file opens, reattaching after a
 DevHub restart. SSH, against an sshd on localhost (a Workspace on
 `ssh:<host>`, Neovim 0.11.5 and the same config on the host): the socket
 forward, the attach, and — after the ControlMaster is killed — the page
-reconnecting by itself to the same Neovim, its unsaved edit still there
-(before the editor area became the terminal; not run again since). Not
-exercised in CI.
-
-Terminal-first, in a DevHub run under Xvfb with the dotfiles' config and
-settings (Neovim 0.11.5, zsh with Homebrew's directory put first): startup
-and a Workspace opened land on its terminal; `devhub -g file:line:col` makes
-the `devhub-nvim` window, switches to it and puts the keys in its Neovim;
-`:q` goes back to the shell with the keys; `nvim` typed in the Workspace's
-terminal is drawn over its pane, and a `devhub <file>` meanwhile goes to the
-`devhub-nvim` window and leaves it alone; `git commit`'s Neovim, a `devhub`
-open while it waits, the prefix and `l`/`0` between the two, `:wq` making
-the commit; a file opened from an Agent's pane (the split, the keys in the
-editor half); `Cmd+Q O` between the halves; resize; switching Workspaces;
-`exit` in a session's last shell (attached again); a DevHub restart (the
-`devhub-nvim` Neovim adopted, its unsaved edit drawn).
+reconnecting by itself to the same Neovim, its unsaved edit still there. Not exercised in CI.
 
 ## Limitations
 
@@ -796,16 +741,10 @@ editor half); `Cmd+Q O` between the halves; resize; switching Workspaces;
 - A GUI buffer shown in two windows has its content (one page, one terminal
   client) in one of them — the current window when it is one, else the
   first — and the other says where it is; a click there moves the cursor in.
-- A `devhub-nvim` window started by a DevHub from before the terminal
-  became the editor area has its status-line entry made empty; it is
-  adopted as it is, and one started from now on is an ordinary window.
-- An SSH host's dropped connection takes the overlay with it while the
-  Neovim runs on; it is drawn again at the next file opened into the
-  Workspace (a pane's own `nvim` there stays undrawn until it exits).
-- `:DevhubTerminal` has no Workspace terminal to show in a Neovim drawn
-  over a pane (its page is named by the overlay, not a Workspace): its
-  window says the terminal surface is invalid. The Workspace's terminal is
-  the editor area itself.
+- The keeper window is still a window of the `ws-` session: its entry in
+  the status line is made empty (`window-status-format` for that window
+  only), but `next-window` or `choose-tree` in a terminal on the session
+  still reach it. A keeper started before this change keeps its entry.
 
 ## Phase 2
 
@@ -824,6 +763,48 @@ VS Code: several terminals (`:DevhubTerminal new`, numbered buffers), each a
 DevHub pane terminal session of the Workspace (on the Workspace's machine
 even when Neovim runs in a container), `<C-w>` navigation, a `terminal`
 layout preset, and the Sidebar's terminal activity marks.
+
+**The completion menu** (round 7, the person's pick). Both menus — DevHub's
+own (`ext_popupmenu`: a native completion, `<C-x><C-o>`) and a plugin's
+float (blink.cmp, nvim-cmp) — say the same things the same way:
+
+- _Candidates_ stay in the editor's face, on the editor's line: a word is
+  the text that will land in the buffer, so it looks as it will there. The
+  menu sits three cells left of its anchor (padding, mark, gap), so a
+  candidate lies over the word it completes.
+- _Kinds_ are vector marks (`kinds.ts`), not Nerd Font glyphs or letters:
+  eight shapes for LSP's twenty-five kinds — `∧` a callable (an action),
+  `●` a value, `○` a variable (a place a value goes), `□` a field (a slot
+  of a structure), `■` a type (the structure), `–` a keyword, `◇` a
+  module, `⋯` a snippet (text with gaps), `=` text. Eight are learnt at a
+  glance; a glyph per kind at cap height is a puzzle. A mark is a cap
+  height square on the baseline, as tall as the capitals beside it, its
+  stroke a tenth of it. Its colour is the person's: `BlinkCmpKind<Kind>`,
+  else `CmpItemKind<Kind>`, else the treesitter group the kind's words
+  wear in the buffer (`@function.method`, `@constant`, …). A plugin group
+  that is only its generic group (blink links every kind to one
+  `BlinkCmpKind`) says nothing about the kind and is passed over. In a
+  plugin's float a kind glyph is known by the person's own table
+  (blink.cmp's `appearance.kind_icons`, read once blink is loaded — never
+  loading it), not guessed from the glyph; other icons stay glyphs.
+- _Labels_ (the kind's name, `PmenuKind`; the item's source, `PmenuExtra`;
+  `*Sel` on the selected row) are in the UI face a step under the
+  editor's size: words about the word, not code.
+- _Shape._ The menu is a popup in the floats' radius (6 px, a third of
+  the default line). Its selection is a band rounded concentrically: inset
+  half the radius (3 px) and rounded by the rest (3 px), the menu's own
+  shape smaller, as Zed's; VS Code's square band in a rounded widget is two
+  shapes. In a plugin's rounded float the selected row (a row whose every
+  cell has a ground other than its neighbours') is drawn the same way,
+  inset where the row's end cells are blank (blink's padding), else
+  edge to edge with the float's radius. Colours are `Pmenu`/`PmenuSel`.
+
+**Review threads** keep their card (a raised, rounded card with clear
+buttons — the person preferred it to a flat band with quiet key hints).
+Round 7 took away the coloured, thicker stripe on its left: the state is
+the label in its header (and in the panel's list), so the stripe said it
+twice and broke the card's one border. No other DevHub card drew one; a
+plugin's own `ui.card{ accent = … }` still can.
 
 **Toward a GUI editor: what still looks like a terminal.**
 
@@ -939,7 +920,12 @@ build, 0.11.5 and 0.12.6: riders with notifications and the message panel
 (0 misplaced of 635 checks), pixel scrolling with an IME preedit, a Visual
 selection and through a diff (`scrollbind`, filler hatched, both sides in
 line), floats, the picker, the command line, blink, `:terminal`, folds,
-CJK and `linespace`. Proposed, not built (mocks first, the person picks):
+CJK and `linespace`. Round 6 mocked the rest; round 7 built the person's
+picks (notifications, the completion menu, review threads above) and
+checked them on 0.11.5 and 0.12.6 with the person's config. The audit's
+flat `gui.view` panels were declined (the current panels stay); its
+`ui.*` card proposals and removing the "TERMINAL NORMAL" pill are
+undecided. Proposed, not built (mocks first, the person picks):
 a feathered translucent backdrop behind fidget's lines, a fold's fill as
 a fading hairline when its fill character is a line, a very short slide
 of the lines `dd`/`p`/`o` move.

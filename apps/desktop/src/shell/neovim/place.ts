@@ -2,9 +2,12 @@
  * Where the widgets DevHub draws for Neovim go: pure, so tested without a page.
  */
 
-/** Height of one completion row and the list's cap, as `neovim.css` draws them. */
-const PUM_ROW = 21;
+/**
+ * The completion list's cap, and its inset at each end (the band's inset,
+ * `BAND_INSET`), as `neovim.css` draws them; a row is the editor's line.
+ */
 const PUM_MAX = 280;
+const PUM_PAD = 3;
 
 /**
  * Under the anchor cell, or over it when there is no room below — the way
@@ -17,7 +20,7 @@ export function popupmenuPlace(
   cellHeight: number,
   items: number,
 ): { left: number; top: number; maxHeight: number } {
-  const wanted = Math.min(PUM_MAX, items * PUM_ROW + 8);
+  const wanted = Math.min(PUM_MAX, items * cellHeight + 2 * PUM_PAD);
   const below = area.height - (anchorTop + cellHeight) - 2;
   const above = anchorTop - 2;
   const left = Math.max(0, Math.min(anchorLeft, area.width - 200));
