@@ -105,21 +105,27 @@ if [ -z "$real" ]; then
 	exit 127
 fi
 
+# DEVHUB_NVIM_DEBUG=1 says on stderr why it runs the TUI.
+why() {
+	[ -z "\${DEVHUB_NVIM_DEBUG-}" ] || echo "DevHub's nvim runs $real as it is: $*" >&2
+	return 1
+}
+
 overlay() {
-	[ -n "\${TMUX_PANE-}" ] && [ -n "\${TMUX-}" ] || return 1
-	[ -z "\${DEVHUB_NEOVIM_GUI-}" ] || return 1
-	[ -t 0 ] && [ -t 1 ] || return 1
+	[ -n "\${TMUX_PANE-}" ] && [ -n "\${TMUX-}" ] || { why "not in a tmux pane (TMUX_PANE, TMUX)"; return 1; }
+	[ -z "\${DEVHUB_NEOVIM_GUI-}" ] || { why "inside a Neovim DevHub draws (DEVHUB_NEOVIM_GUI)"; return 1; }
+	[ -t 0 ] && [ -t 1 ] || { why "stdin or stdout is not a terminal"; return 1; }
 	for argument in "$@"; do
 		case $argument in
 		--) break ;;
-		-|--headless|--embed|--listen|-es|-Es|-e|-E|-l|-L|-r|-h|-v|-\\?|--help|--version|--api-info|--server|--remote*) return 1 ;;
+		-|--headless|--embed|--listen|-es|-Es|-e|-E|-l|-L|-r|-h|-v|-\\?|--help|--version|--api-info|--server|--remote*) why "not an editing session ($argument)"; return 1 ;;
 		esac
 	done
-	state=$("$shim_tmux" display-message -p -t "$TMUX_PANE" '#{${NVIM_OVERLAY_OPTION}}|#{session_name}|#{${NVIM_SOCKET_OPTION}}' 2>/dev/null) || return 1
+	state=$("$shim_tmux" display-message -p -t "$TMUX_PANE" '#{${NVIM_OVERLAY_OPTION}}|#{session_name}|#{${NVIM_SOCKET_OPTION}}' 2>/dev/null) || { why "$shim_tmux could not read pane $TMUX_PANE (not DevHub's tmux server?)"; return 1; }
 	case $state in
 	${facts.sessionPrefixes.map((prefix) => `"1|${prefix}"*"|"`).join(" | ")}) return 0 ;;
 	esac
-	return 1
+	why "overlay|session|socket is $state (wants 1|${facts.sessionPrefixes.join(" or ")}...|empty)"
 }
 
 overlay "$@" || exec "$real" "$@"
@@ -159,6 +165,7 @@ while kill -0 "$pid" 2>/dev/null; do
 		kill "$pid" 2>/dev/null
 		wait "$pid" 2>/dev/null
 		cleanup
+		why "no DevHub UI attached within ${String(NVIM_UI_WAIT_TENTHS / 10)} s"
 		trap - INT QUIT TSTP
 		exec "$real" "$@"
 	fi

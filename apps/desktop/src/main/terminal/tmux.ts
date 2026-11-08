@@ -3797,14 +3797,27 @@ export class TmuxTerminalRuntime {
 		deadline: OperationDeadline,
 	): Promise<void> {
 		const options = sessionOptions(identity.context);
-		if (options.length === 0) return;
-		const args = options.flatMap(([option, value], index) => [
+		const environment = this.paneEnvironmentForExistingSession();
+		const commands = [
+			...options.map(([option, value]) => [
+				"set-option",
+				"-t",
+				identity.sessionName,
+				option,
+				value,
+			]),
+			...Object.entries(environment).map(([name, value]) => [
+				"set-environment",
+				"-t",
+				identity.sessionName,
+				name,
+				value,
+			]),
+		];
+		if (commands.length === 0) return;
+		const args = commands.flatMap((command, index) => [
 			...(index === 0 ? [] : [";"]),
-			"set-option",
-			"-t",
-			identity.sessionName,
-			option,
-			value,
+			...command,
 		]);
 		const output = await this.runTmux(
 			socket,
@@ -3814,6 +3827,26 @@ export class TmuxTerminalRuntime {
 			deadline,
 		);
 		if (!output.success) throw output.refusal();
+	}
+
+	/**
+	 * What a session made before DevHub's `nvim` was wanted — by an older
+	 * build, or a server that outlived DevHub — is given now, so a pane made
+	 * in it from here on (a window or split from tmux's own keys among them)
+	 * has DevHub's `nvim` as a pane DevHub makes would: the shim's variables
+	 * and zsh's `ZDOTDIR`, and the PATH with its directory in front. tmux
+	 * gives a pane made by an attached client the session's PATH (the
+	 * client's only for a session it is creating), so the session states it.
+	 * A shell already running in such a pane keeps what it started with.
+	 */
+	private paneEnvironmentForExistingSession(): Record<string, string> {
+		const shim = this.neovimShimEnvironment();
+		if (Object.keys(shim).length === 0) return {};
+		const path = this.tmuxEnvironment()["PATH"];
+		return {
+			...shim,
+			...(path === undefined || path.length === 0 ? {} : { PATH: path }),
+		};
 	}
 
 	/**

@@ -147,6 +147,10 @@ function fixture(
     readonly host?: Runtime;
     readonly paneBinDirectory?: string;
     readonly themeEnvironment?: () => Readonly<Record<string, string>>;
+    readonly neovimShim?: {
+      readonly directory: string;
+      readonly wanted: () => boolean;
+    };
   },
 ): Fixture {
   sequence += 1;
@@ -182,6 +186,9 @@ function fixture(
     ...(options?.themeEnvironment === undefined
       ? {}
       : { themeEnvironment: options.themeEnvironment }),
+    ...(options?.neovimShim === undefined
+      ? {}
+      : { neovimShim: options.neovimShim }),
   });
   const created = {
     home,
@@ -624,6 +631,48 @@ describe.skipIf(TMUX === undefined)(
       expect(await test.runtime.editorPaneState(target, paneId)).toBe("alive");
       await test.runtime.killEditorPane(target, paneId);
       expect(await test.runtime.editorPaneState(target, paneId)).toBe("gone");
+    });
+
+    it("gives a session made before DevHub's nvim was wanted its PATH and zsh's ZDOTDIR", async () => {
+      let wanted = false;
+      // In the fixture's home, which exists once the fixture does.
+      let shim = "";
+      const test = fixture("shimlate", undefined, {
+        neovimShim: {
+          get directory() {
+            return shim;
+          },
+          wanted: () => wanted,
+        },
+      });
+      shim = join(test.home, "shim");
+      mkdirSync(join(test.home, "workspace"), { recursive: true });
+      const root = realpathSync(join(test.home, "workspace"));
+      const target = workspaceTarget(
+        "local",
+        "00000000-0000-4000-8000-000000000043",
+        root,
+      );
+      await test.runtime.ensure(target);
+      const session = `ws-${workspaceDigest(root).slice(0, 20)}`;
+      expect(sessionEnvironment(test.socket, session, "DEVHUB_NVIM_SHIM")).toBe(
+        undefined,
+      );
+
+      // The setting is turned on, or a newer DevHub meets the old session:
+      // a pane made in it from now on (tmux's own new-window among them)
+      // has the shim first.
+      wanted = true;
+      await test.runtime.ensure(target);
+      expect(sessionEnvironment(test.socket, session, "DEVHUB_NVIM_SHIM")).toBe(
+        shim,
+      );
+      expect(sessionEnvironment(test.socket, session, "ZDOTDIR")).toBe(
+        join(shim, "zsh"),
+      );
+      expect(
+        sessionEnvironment(test.socket, session, "PATH")?.split(":")[0],
+      ).toBe(shim);
     });
 
     it("creates and closes a workspace session by its own digest name", async () => {
