@@ -99,6 +99,8 @@ vi.mock("@xterm/xterm", () => {
     }
 
     focus() {}
+
+    clearSelection() {}
   }
 
   return { Terminal: MockTerminal };
@@ -273,6 +275,32 @@ describe("TerminalSurface lifecycle", () => {
     ).toHaveAttribute("aria-label", "Scratch terminal input");
   });
 
+  it("makes no emulator and attaches nothing until it is first shown", async () => {
+    const harness = clientHarness();
+    const view = render(
+      <TerminalSurface
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
+        surfaceLabel="Scratch"
+        client={harness.client}
+        hidden
+      />,
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(mocks.terminals).toHaveLength(0);
+    expect(harness.client.attach).not.toHaveBeenCalled();
+    view.rerender(
+      <TerminalSurface
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
+        surfaceLabel="Scratch"
+        client={harness.client}
+      />,
+    );
+    await waitFor(() => expect(harness.client.attach).toHaveBeenCalledTimes(1));
+    expect(mocks.terminals).toHaveLength(1);
+  });
+
   it("keeps a pooled surface off the resize path until it is on screen", async () => {
     // A pooled surface sits under `display: none`, where the fit addon has no
     // box to measure and would fall back to 80x24. Sending that would resize
@@ -283,11 +311,18 @@ describe("TerminalSurface lifecycle", () => {
         surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
         surfaceLabel="Scratch"
         client={harness.client}
-        hidden
       />,
     );
     await waitFor(() => expect(harness.client.attach).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+    view.rerender(
+      <TerminalSurface
+        surfaceKey="workspace-terminal:00000000-0000-4000-8000-00000000005c"
+        surfaceLabel="Scratch"
+        client={harness.client}
+        hidden
+      />,
+    );
     const attachResizes = (harness.client.resize as ReturnType<typeof vi.fn>)
       .mock.calls.length;
     act(() => mocks.observers[0]?.trigger());
@@ -915,12 +950,24 @@ describe("TerminalSurface coming on screen disconnected", () => {
     });
   }
 
+  /**
+   * A pooled surface that has been on screen once and is hidden now: one
+   * that was never shown has not attached at all, so has nothing to retry.
+   */
+  async function shownThenHidden(client: TerminalClient) {
+    const view = render(surface(client, false));
+    await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(1));
+    await settle();
+    view.rerender(surface(client, true));
+    return view;
+  }
+
   it("reconnects on its own, once, when it is shown", async () => {
     // A pooled Agent whose attach failed while nobody was looking at it. The
     // person selecting it is asking to use it, so it tries again — once. That
     // try failing is the same pane as before: the error, and Retry.
     const harness = failingHarness(2);
-    const view = render(surface(harness.client, true));
+    const view = await shownThenHidden(harness.client);
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument(),
     );
@@ -962,7 +1009,7 @@ describe("TerminalSurface coming on screen disconnected", () => {
 
   it("is simply connected when the one try succeeds", async () => {
     const harness = failingHarness(1);
-    const view = render(surface(harness.client, true));
+    const view = await shownThenHidden(harness.client);
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument(),
     );
@@ -980,11 +1027,108 @@ describe("TerminalSurface coming on screen disconnected", () => {
 
   it("leaves a connected pane alone when it is shown", async () => {
     const harness = clientHarness();
-    const view = render(surface(harness.client, true));
+    const view = await shownThenHidden(harness.client);
     await waitFor(() => expect(harness.client.resize).toHaveBeenCalled());
     view.rerender(surface(harness.client, false));
     await settle();
     expect(harness.client.attach).toHaveBeenCalledTimes(1);
     expect(harness.client.detach).not.toHaveBeenCalled();
+  });
+});
+
+describe("TerminalSurface off screen", () => {
+  const KEY = "workspace-terminal:00000000-0000-4000-8000-00000000005c";
+
+  function surface(client: TerminalClient, hidden: boolean) {
+    return (
+      <TerminalSurface
+        surfaceKey={KEY}
+        surfaceLabel="Scratch"
+        client={client}
+        hidden={hidden}
+      />
+    );
+  }
+
+  function frame(id: string, sequence: number, text: string | Uint8Array) {
+    return output(
+      id,
+      sequence,
+      typeof text === "string" ? new TextEncoder().encode(text) : text,
+    );
+  }
+
+  async function connectedThenHidden() {
+    const harness = clientHarness();
+    const view = render(surface(harness.client, false));
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+    view.rerender(surface(harness.client, true));
+    return { harness, view };
+  }
+
+  it("acknowledges what arrives while hidden without drawing it, and draws it, in order, when shown", async () => {
+    const { harness, view } = await connectedThenHidden();
+    const id = harness.receipts[0].attachmentId;
+    act(() => harness.handlers[0](frame(id, 1, "one ")));
+    act(() => harness.handlers[0](frame(id, 2, "two")));
+    expect(mocks.terminals[0].writes).toEqual([]);
+    await waitFor(() =>
+      expect(harness.client.acknowledge).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sequence: 2, attachmentId: id }),
+      ),
+    );
+
+    view.rerender(surface(harness.client, false));
+    act(() => harness.handlers[0](frame(id, 3, " three")));
+    expect(mocks.terminals[0].writes).toEqual(["one ", "two", " three"]);
+    // The stream was drawn whole, so the client it came from is kept.
+    expect(harness.client.attach).toHaveBeenCalledTimes(1);
+    expect(harness.client.detach).not.toHaveBeenCalled();
+  });
+
+  it("attaches a new client when it is shown after more than it keeps, without saying it is connecting, and the keys typed meanwhile reach it", async () => {
+    const { harness, view } = await connectedThenHidden();
+    const id = harness.receipts[0].attachmentId;
+    // Five frames of the largest size main sends: more than is kept.
+    const chunk = new Uint8Array(32 * 1024).fill(0x79);
+    for (let sequence = 1; sequence <= 5; sequence += 1) {
+      act(() => harness.handlers[0](frame(id, sequence, chunk)));
+    }
+    expect(mocks.terminals[0].writes).toEqual([]);
+    let release: (() => void) | undefined;
+    const attach = harness.client.attach;
+    harness.client.attach = vi.fn(async (request, onFrame) => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return attach(request, onFrame);
+    });
+
+    view.rerender(surface(harness.client, false));
+    await waitFor(() => expect(harness.client.attach).toHaveBeenCalledTimes(1));
+    expect(harness.client.detach).toHaveBeenCalledWith(
+      expect.objectContaining({ attachmentId: id }),
+    );
+    expect(screen.queryByText("Connecting…")).not.toBeInTheDocument();
+    mocks.terminals[0].emitData("k");
+    expect(harness.client.input).not.toHaveBeenCalled();
+    act(() => release?.());
+    await waitFor(() => expect(harness.client.input).toHaveBeenCalledTimes(1));
+    expect(harness.client.input).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachmentId: harness.receipts[1].attachmentId,
+        inputSequence: 1,
+        bytes: [0x6b],
+      }),
+    );
+    // The client it replaced was streaming: what it had on the way arrives
+    // on the same channel after the new one started, and is not drawn.
+    act(() => harness.handlers[1](frame(id, 6, "stale")));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    // Nothing of what was missed is drawn: the new client draws the screen.
+    expect(mocks.terminals[0].writes).toEqual([]);
   });
 });

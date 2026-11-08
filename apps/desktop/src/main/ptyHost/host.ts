@@ -144,6 +144,7 @@ export class PtyHost {
 			page.port.postMessage({
 				type: "frame",
 				channelId,
+				attachmentId: frame.attachmentId,
 				sequence: frame.sequence,
 				last: frame.type === "exited" || frame.type === "error",
 				frame: encodeTerminalFrame(frame),

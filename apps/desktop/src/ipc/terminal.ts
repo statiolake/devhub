@@ -880,20 +880,38 @@ export function decodeTerminalFrame(value: unknown): TerminalFrame {
 	throw new Error("unknown terminal frame type");
 }
 
-/** Enforce one attachment identity and a contiguous sequence after decoding. */
+/**
+ * Enforce one attachment identity and a contiguous sequence after decoding.
+ *
+ * `retired` names attachments the surface has let go of on the same channel.
+ * Their frames can still be on the way when the next attach starts — a
+ * client streaming when it is replaced has frames in flight, and its end
+ * after them — and they are not this attachment's to judge: `push` answers
+ * `undefined` for them, whenever they come.
+ */
 export class TerminalFrameDecoder {
 	private attachment?: string;
 	private expectedSequence = 0;
 	private started = false;
 	private terminal = false;
 
+	constructor(
+		private readonly retired: (attachmentId: string) => boolean = () => false,
+	) {}
+
 	get attachmentId(): string | undefined {
 		return this.attachment;
 	}
 
-	push(value: unknown): TerminalFrame {
-		if (this.terminal) throw new Error("terminal frame arrived after exit");
+	push(value: unknown): TerminalFrame | undefined {
 		const frame = decodeTerminalFrame(value);
+		if (
+			frame.attachmentId !== this.attachment &&
+			this.retired(frame.attachmentId)
+		) {
+			return undefined;
+		}
+		if (this.terminal) throw new Error("terminal frame arrived after exit");
 		if (this.attachment === undefined) this.attachment = frame.attachmentId;
 		if (frame.attachmentId !== this.attachment) {
 			throw new Error("attachment identity changed");

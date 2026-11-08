@@ -56,6 +56,33 @@ interface Channel {
 }
 
 const channels = new Map<string, Channel>();
+/**
+ * Per channel, the attachments its surface let go of whose last frame has not
+ * come. A surface attaches again on the same channel id (a retry, a reveal
+ * after more than it kept), and the client it replaced may still have frames
+ * on the way, its end among them: they are not the new attachment's, and its
+ * end must not end the new one's channel.
+ */
+const retired = new Map<string, string[]>();
+/** More than a surface ever has in flight; a client lost with its host never sends its end. */
+const MAX_RETIRED = 8;
+
+function isRetired(channelId: string, attachmentId: string): boolean {
+	return retired.get(channelId)?.includes(attachmentId) === true;
+}
+
+function retire(channelId: string, attachmentId: string): void {
+	const ids = retired.get(channelId) ?? [];
+	if (!ids.includes(attachmentId)) ids.push(attachmentId);
+	if (ids.length > MAX_RETIRED) ids.shift();
+	retired.set(channelId, ids);
+}
+
+function forget(channelId: string, attachmentId: string): void {
+	const ids = retired.get(channelId)?.filter((id) => id !== attachmentId);
+	if (ids === undefined || ids.length === 0) retired.delete(channelId);
+	else retired.set(channelId, ids);
+}
 
 ipcRenderer.on(
 	TERMINAL_CHANNELS.frame,
@@ -86,6 +113,10 @@ ipcRenderer.on(
 				const reply = replies.get(data.rid);
 				replies.delete(data.rid);
 				reply?.(data.result);
+				return;
+			}
+			if (isRetired(data.channelId, data.attachmentId)) {
+				if (data.last) forget(data.channelId, data.attachmentId);
 				return;
 			}
 			const channel = channels.get(data.channelId);
@@ -232,6 +263,9 @@ export const terminalApi: DevhubTerminalApi = {
 
 	detach: async (channelId, request: TerminalDetachRequest) => {
 		const channel = channels.get(channelId);
+		if (channel?.hosted !== undefined && channel.ended === false) {
+			retire(channelId, request.attachmentId);
+		}
 		const result = (await ipcRenderer.invoke(
 			TERMINAL_CHANNELS.detach,
 			channelId,

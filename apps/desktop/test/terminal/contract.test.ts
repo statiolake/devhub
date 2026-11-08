@@ -222,8 +222,8 @@ describe("terminal frame decoding", () => {
         sequence,
         bytes: Uint8Array.from([65]),
       });
-    expect(decoder.push(started).type).toBe("started");
-    expect(decoder.push(output(1)).type).toBe("output");
+    expect(decoder.push(started)?.type).toBe("started");
+    expect(decoder.push(output(1))?.type).toBe("output");
     // A gap is a lost frame, and a terminal that renders around a lost frame
     // is showing something that never happened.
     expect(() => decoder.push(output(3))).toThrow();
@@ -243,6 +243,42 @@ describe("terminal frame decoding", () => {
           bytes: Uint8Array.from([65]),
         }),
       ),
+    ).toThrow();
+  });
+
+  it("passes over the frames of an attachment the channel let go of", () => {
+    // A client replaced while it streams still has frames on the way, and its
+    // end after them; the next attachment on the channel sees them first.
+    const RETIRED = "ffffffffffffffffffffffffffffffff";
+    const decoder = new TerminalFrameDecoder((id) => id === RETIRED);
+    const frame = (attachmentId: string, sequence: number) =>
+      encodeTerminalFrame({
+        type: "output",
+        schemaVersion: TERMINAL_PROTOCOL_VERSION,
+        attachmentId,
+        sequence,
+        bytes: Uint8Array.from([65]),
+      });
+    expect(decoder.push(frame(RETIRED, 7))).toBeUndefined();
+    expect(
+      decoder.push(
+        encodeTerminalFrame({
+          type: "started",
+          schemaVersion: TERMINAL_PROTOCOL_VERSION,
+          attachmentId: ATTACHMENT_ID,
+          sequence: 0,
+          surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
+          targetGeneration: 1,
+          cols: 80,
+          rows: 24,
+        }),
+      )?.type,
+    ).toBe("started");
+    expect(decoder.push(frame(RETIRED, 8))).toBeUndefined();
+    expect(decoder.push(frame(ATTACHMENT_ID, 1))?.sequence).toBe(1);
+    // Any other attachment is still a broken channel.
+    expect(() =>
+      decoder.push(frame("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", 2)),
     ).toThrow();
   });
 

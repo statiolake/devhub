@@ -55,6 +55,14 @@ export interface TerminalSurfaceProps {
    * while the person was typing into the Agent beside it — for a screen
    * nobody was looking at. tmux keeps that screen, and the attach that comes
    * with the first show draws it as it is then.
+   *
+   * A surface that has been on screen and is hidden again keeps its client
+   * attached and acknowledges every frame as it arrives, so tmux is never held
+   * back, but does not hand the frames to xterm: parsing a stream nobody sees
+   * was most of this page's thread with four Agents streaming
+   * (docs/process-model.md, phase 6). Coming back draws what was missed —
+   * the frames themselves while they are few (`HIDDEN_TAIL_BYTES`), else an
+   * attach of a new client, which tmux draws from scratch.
    */
   readonly hidden?: boolean;
   /**
@@ -95,6 +103,20 @@ const MAX_HANDSHAKE_BUFFER_FRAMES = 8;
  */
 const HOST_RESTART_REATTACH_MS = 250;
 const MAX_HANDSHAKE_BUFFER_BYTES = 256 * 1024;
+/**
+ * How much of what a hidden surface was sent it keeps, to draw when it is
+ * shown again.
+ *
+ * Under this, coming back writes the frames it missed, in order, which is the
+ * exact stream and costs one parse of at most this much (a few ms). Over it,
+ * they are dropped as they come, and coming back attaches a new client
+ * instead: tmux starts that client's terminal from nothing — the modes, the
+ * cursor, the whole screen — so nothing that was skipped can be missing from
+ * it, and the cost is one screen however much was missed. The bytes a busy
+ * TUI sends while it sits in the background for a while, or one screen of a
+ * stream, fit; a build log does not.
+ */
+const HIDDEN_TAIL_BYTES = 128 * 1024;
 
 function requestFor(
   surfaceKey: string,
@@ -163,7 +185,13 @@ export function TerminalSurface({
   const boundClient = useMemo(() => client ?? createTerminalClient(), [client]);
   const clientRef = useRef(boundClient);
   const sessionRef = useRef<XtermSession | null>(null);
-  const controllerRef = useRef<{ retry: () => void } | null>(null);
+  const controllerRef = useRef<{
+    retry: () => void;
+    /** Off screen: frames are acknowledged and not drawn. */
+    park: () => void;
+    /** On screen again: draw what was missed. */
+    reveal: () => void;
+  } | null>(null);
   const hiddenRef = useRef(hidden);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   // Connecting again because the pty host the client was in ended, not for
@@ -235,6 +263,24 @@ export function TerminalSurface({
           failed: boolean;
         }
       | undefined;
+    /**
+     * Off screen since the last `reveal`. Its own flag rather than
+     * `hiddenRef`, which a render changes before the effect that reveals the
+     * surface runs: a frame in between would be drawn ahead of the ones it
+     * follows.
+     */
+    let parked = hiddenRef.current;
+    /** What arrived while parked, in order, while it is under the bound. */
+    let missed: Uint8Array[] = [];
+    let missedBytes = 0;
+    /** More arrived while parked than `missed` keeps. */
+    let missedTooMuch = false;
+    /**
+     * Keys typed while a reveal attaches a new client: the pane is on screen
+     * and looks connected, so they are the person's, and they go to the new
+     * client once it is there. `undefined` outside such an attach.
+     */
+    let heldInput: string[] | undefined;
     let session: XtermSession;
     try {
       session = openXtermSession(host, {
@@ -326,14 +372,29 @@ export function TerminalSurface({
       });
     };
 
-    const attach = async () => {
+    /**
+     * Attach a client, in place of the one there is.
+     *
+     * `quiet` is a reveal's: the pane is on screen showing what it last drew,
+     * so it says nothing about connecting — the new client's first frame
+     * replaces that screen — and keys typed meanwhile wait for the client.
+     */
+    const attach = async ({ quiet = false }: { quiet?: boolean } = {}) => {
       const serial = ++attachSerial;
+      // A new client's terminal is drawn by tmux from nothing, so whatever an
+      // earlier one sent while parked is moot.
+      missed = [];
+      missedBytes = 0;
+      missedTooMuch = false;
+      heldInput = quiet ? [] : undefined;
       const previousReceipt = receipt;
       if (previousReceipt && !receiptDetached) detachExact(previousReceipt);
       receipt = undefined;
       receiptDetached = false;
       inputQueue = undefined;
-      const decoder = new TerminalFrameDecoder();
+      const decoder = new TerminalFrameDecoder((id) =>
+        detachedAttachmentIds.has(id),
+      );
       let started: StartedFrame | undefined;
       let returnedReceipt: TerminalReceipt | undefined;
       let channelFailure: unknown;
@@ -377,7 +438,7 @@ export function TerminalSurface({
         }, HANDSHAKE_SILENCE_MS);
       };
 
-      setConnection("connecting");
+      if (!quiet) setConnection("connecting");
       setError(undefined);
       session.remeasure();
 
@@ -389,6 +450,30 @@ export function TerminalSurface({
           throw new Error("terminal frame attachment identity changed");
         }
         if (frame.type === "output") {
+          if (parked) {
+            // Acknowledged now, not drawn: tmux is not held back by a view
+            // nobody is looking at. Kept to draw on reveal while it is small.
+            if (!missedTooMuch) {
+              if (missedBytes + frame.bytes.byteLength > HIDDEN_TAIL_BYTES) {
+                missedTooMuch = true;
+                missed = [];
+                missedBytes = 0;
+              } else {
+                missed.push(frame.bytes);
+                missedBytes += frame.bytes.byteLength;
+              }
+            }
+            void clientRef.current
+              .acknowledge({
+                schemaVersion: TERMINAL_PROTOCOL_VERSION,
+                surfaceKey,
+                attachmentId: frame.attachmentId,
+                targetGeneration: frameReceipt.targetGeneration,
+                sequence: frame.sequence,
+              })
+              .catch((ackError: unknown) => fail(serial, ackError));
+            return;
+          }
           terminal.write(frame.bytes, () => {
             perfProbe("terminal-output", { surfaceKey, bytes: frame.bytes });
             if (
@@ -430,6 +515,7 @@ export function TerminalSurface({
         if (handshakeTimer !== undefined) armHandshakeWatchdog();
         try {
           const frame = decoder.push(value);
+          if (frame === undefined) return;
           if (frame.type === "started") {
             started = frame;
             if (returnedReceipt) {
@@ -513,6 +599,9 @@ export function TerminalSurface({
           tail: Promise.resolve(),
           failed: false,
         };
+        const held = heldInput ?? [];
+        heldInput = undefined;
+        for (const data of held) sendInput(data);
         setConnection("connected");
         setReconnecting(false);
         await sendResize(returnedReceipt, session.geometry, serial);
@@ -522,11 +611,12 @@ export function TerminalSurface({
         // rejected it, or after a replacement/unmount. Always release exactly
         // that returned opaque handle; stale channels are ignored by serial.
         if (returnedReceipt) detachExact(returnedReceipt);
+        if (serial === attachSerial) heldInput = undefined;
         fail(serial, attachError);
       }
     };
 
-    const dataDisposable = terminal.onData((data) => {
+    const sendInput = (data: string) => {
       const queue = inputQueue;
       const currentReceipt = receipt;
       if (
@@ -568,6 +658,14 @@ export function TerminalSurface({
           })
           .catch((inputError: unknown) => fail(queue.serial, inputError));
       }
+    };
+
+    const dataDisposable = terminal.onData((data) => {
+      if (heldInput !== undefined) {
+        heldInput.push(data);
+        return;
+      }
+      sendInput(data);
     });
 
     const focusTerminal = () => terminal.focus();
@@ -578,6 +676,28 @@ export function TerminalSurface({
     controllerRef.current = {
       retry() {
         void attach();
+      },
+      park() {
+        parked = true;
+      },
+      reveal() {
+        if (!parked) return;
+        parked = false;
+        // A pane that is disconnected is retried by the caller, and that
+        // attach draws everything.
+        if (connectionRef.current === "disconnected") return;
+        if (missedTooMuch) {
+          terminal.clearSelection();
+          void attach({ quiet: true });
+          return;
+        }
+        for (const bytes of missed) {
+          terminal.write(bytes, () => {
+            perfProbe("terminal-output", { surfaceKey, bytes });
+          });
+        }
+        missed = [];
+        missedBytes = 0;
       },
     };
 
@@ -600,9 +720,14 @@ export function TerminalSurface({
   }, [surfaceKey, shown]);
 
   useEffect(() => {
+    if (hidden) {
+      controllerRef.current?.park();
+      return;
+    }
+    // What arrived while it was off screen, drawn before anything newer.
+    controllerRef.current?.reveal();
     // Coming back on screen is the first moment the host has a real box, so
     // the size the pane missed while it was pooled is sent now.
-    if (hidden) return;
     sessionRef.current?.remeasure();
     // Selecting a surface is a request to type into it, whether it is being
     // attached for the first time or coming back out of the pool.

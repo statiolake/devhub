@@ -64,6 +64,11 @@ export type PtyHostToPage =
 	| {
 			readonly type: "frame";
 			readonly channelId: string;
+			/**
+			 * Whose frame: a channel's next attachment can start while the one
+			 * it replaced still has frames on the way.
+			 */
+			readonly attachmentId: string;
 			readonly sequence: number;
 			/** An exited or error frame: nothing follows it on this channel. */
 			readonly last: boolean;
