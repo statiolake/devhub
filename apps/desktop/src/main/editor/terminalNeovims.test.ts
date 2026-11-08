@@ -223,6 +223,22 @@ describe("TerminalNeovims", () => {
 		neovims.dispose();
 	});
 
+	it("gives the keys back after the prefix twice (send-prefix)", async () => {
+		const { neovims } = setup(parseTerminalNeovimReading(OUTPUT));
+		await vi.waitFor(() => {
+			expect(neovims.views()).toHaveLength(1);
+		});
+		neovims.attached("tnv:1");
+		neovims.overlayKey("tnv:1", key({ key: "b", control: true }));
+		expect(neovims.terminalKey("t", key({ key: "b", control: true }))).toBe(
+			"pass",
+		);
+		await vi.waitFor(() => {
+			expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
+		});
+		neovims.dispose();
+	});
+
 	it("makes no overlay while the setting is off", async () => {
 		const { neovims, ports } = setup(parseTerminalNeovimReading(OUTPUT));
 		neovims.setEnabled(false);

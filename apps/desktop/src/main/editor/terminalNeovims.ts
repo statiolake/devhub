@@ -684,10 +684,7 @@ export class TerminalNeovims {
 		const client = watch.reading?.client;
 		if (overlay?.attached !== true || client === undefined) return "pass";
 		const lend = watch.lend;
-		if (client.prefixes.some((prefix) => isTmuxKey(prefix, input))) {
-			watch.lend = { kind: "prefix", armed: true };
-			return "pass";
-		}
+		// The key after the prefix, the prefix again (`send-prefix`) included.
 		if (lend?.kind === "prefix" && lend.armed) {
 			if (INTERACTIVE_AFTER_PREFIX.has(input.key)) {
 				watch.lend = { kind: "interactive" };
@@ -695,6 +692,10 @@ export class TerminalNeovims {
 				watch.lend = { kind: "prefix", armed: false };
 				this.settle(watch);
 			}
+			return "pass";
+		}
+		if (client.prefixes.some((prefix) => isTmuxKey(prefix, input))) {
+			watch.lend = { kind: "prefix", armed: true };
 			return "pass";
 		}
 		if (lend?.kind === "interactive") {
