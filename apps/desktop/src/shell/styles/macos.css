@@ -664,7 +664,13 @@
   max-height: min(520px, 76vh);
 }
 
-.picker > * + * {
+/* Not `* + *`: a sibling rule whose right-hand side is `*` makes Blink
+   restyle every child of any parent a child is inserted into or removed
+   from, on every page that loads this sheet — a GUI Agent's transcript of
+   3 000 entries took 25–45 ms of style and layout for each entry added
+   (docs/process-model.md, phase 6c). `:first-child` invalidates only the
+   old and the new first child. */
+.picker > :not(:first-child) {
   border-top: 1px solid var(--line-soft);
 }
 
