@@ -751,11 +751,14 @@ local pop = gui.popup{ anchor = 'cursor', component = ui.md(markdown), max_width
 In plain Neovim (or a terminal), devhub.nvim's calls do nothing: a view is
 its buffer's text, a card reserves nothing.
 
-**review-relay.** devhub.nvim's `:ReviewRelay` is the first adapter: the
-review panel is a view, each thread a card under its lines (markdown
-comments, you / agent, Reply and Resolve, `r` and `s` on the thread's
-lines), reading and writing through review-relay's CLI and endpoints and
-following its event stream. See devhub.nvim's README.
+**Plugins are the users.** These calls are a public API for any plugin:
+devhub.nvim ships none of its own on top of them, and DevHub knows no
+plugin that uses them. A plugin draws through `require('devhub').gui` when
+`gui.available()` and its own Neovim way otherwise (a view is its text, a
+card's content virt_lines), so it works in a terminal too. A review plugin,
+for instance, makes each thread a `gui.inline` card under its lines and its
+panel a `gui.view`, with the card's buttons naming the buffer-local keys
+that do the same.
 
 ### Integrations
 
