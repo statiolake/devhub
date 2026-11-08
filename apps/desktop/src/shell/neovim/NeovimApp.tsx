@@ -247,10 +247,6 @@ function NeovimSurface({
         editor.refreshTheme();
         return;
       }
-      if (event.kind === "marks") {
-        editor.setMarks(event.payload);
-        return;
-      }
       if (LAYER_EVENTS.has(event.kind)) {
         setLayers((before) =>
           applyLayerEvent(before, event.kind, event.payload, rowsOf),
