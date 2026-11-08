@@ -1098,6 +1098,21 @@ a fading hairline when its fill character is a line (built in round 8),
 a very short slide of the lines `dd`/`p`/`o` move (built in round 8,
 60 ms).
 
+Round 8 built: decorations in a proportional face (virtual text, inlay
+hints, virtual lines, a fold's text; The page), the command line in the
+rows `cmdheight` keeps, the fold's line fill as a fading hairline, the
+60 ms slide of lines a `dd` or an `o` moves, `:restart`, and fixed a
+picker's title row drawn as a band cut out of the selection (a title kept
+above a list whose first item is selected). Checked on 0.11.5 and 0.12.6
+with the dotfiles' config (`cmdheight=2`), terminal-first, `nvim` in a
+pane and `devhub -g`: splits, floats, the snacks picker (its layouts and
+`solid`, `rounded`, `single` borders titled left, centre and right), the
+command line at both `cmdheight`s, blink after `Math.m`, IME in the
+buffer and the command line, `:terminal`, diff, folds, CJK, `linespace`,
+keyboard-only, click-through, wheel scrolling, inlay hints (faked with
+`nvim_buf_set_extmark`: the config turns the servers' off), typing
+before them (no frame falls back to cells).
+
 Candidates, by visual impact and then by compatibility risk (the
 least risky first within a band):
 
