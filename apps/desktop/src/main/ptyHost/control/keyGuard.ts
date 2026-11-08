@@ -16,10 +16,12 @@
  * the prefix is held until the key after it says which binding it is, and a
  * binding that would wait is not sent but said (`KeyRoute.refused`); one
  * that is a `display-popup` is handed to DevHub to run (`KeyRoute.popup`,
- * `popup.ts`). Pure:
+ * `popup.ts`), one that is a `command-prompt` or `confirm-before` to DevHub
+ * to ask (`KeyRoute.prompt`, `prompt.ts`). Pure:
  * `controlClient.ts` reads the bindings and sends.
  */
 
+import { promptOf, type PromptArgs } from "./prompt.js";
 import { popupOf, type PopupArgs } from "./tmuxCommand.js";
 
 export interface Binding {
@@ -89,6 +91,11 @@ export interface KeyRoute {
 	 * (`popup.ts`), not sent.
 	 */
 	readonly popup?: PopupArgs;
+	/**
+	 * A binding that is one `command-prompt` or `confirm-before`: DevHub asks
+	 * it (`prompt.ts`), not sent.
+	 */
+	readonly prompt?: PromptArgs;
 	/**
 	 * tmux may be in a table other than the root one (a repeat, a
 	 * `switch-client -T`) after a refusal: it is to be put back in it.
@@ -170,10 +177,13 @@ export class KeyRouter {
 		if (binding === undefined) return { send: keys };
 		const waiting = waitingCommand(binding.command);
 		const popup = waiting === undefined ? undefined : popupOf(binding.command);
-		if (popup !== undefined) {
+		const prompt =
+			waiting === undefined ? undefined : promptOf(binding.command);
+		if (popup !== undefined || prompt !== undefined) {
 			return {
 				send: [],
-				popup,
+				...(popup === undefined ? {} : { popup }),
+				...(prompt === undefined ? {} : { prompt }),
 				resetTable: table !== "root" && keys.length === 1,
 			};
 		}

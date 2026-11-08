@@ -4,6 +4,7 @@ import "../../surfaces/xtermSession.css";
 import "../terminal.css";
 import "./control.css";
 import "./popup.css";
+import "./prompt.css";
 import { useColorScheme } from "../../appearance";
 import { Failure, Waiting } from "../../components/shell/SurfaceState";
 import { GridPainter, rgbOfCss } from "../../neovim/painter";
@@ -141,12 +142,15 @@ export function ControlTerminalSurface({
     const popupFrame = document.createElement("div");
     popupFrame.className = "control-popup";
     popupFrame.hidden = true;
+    const promptLine = document.createElement("div");
+    promptLine.className = "control-prompt";
+    promptLine.hidden = true;
     const input = document.createElement("textarea");
     input.className = "control-input";
     input.setAttribute("aria-label", `${surfaceLabel} terminal input`);
     input.autocapitalize = "off";
     input.spellcheck = false;
-    host.append(grids, lines, popupFrame, cursor, input);
+    host.append(grids, lines, popupFrame, promptLine, cursor, input);
 
     const appearanceNow = live.current.appearance;
     const fontSize = appearanceNow?.terminalFontSize ?? 13;
@@ -290,6 +294,7 @@ export function ControlTerminalSurface({
           );
         }
       }
+      drawPrompt(width, height);
       // While a popup is open its cursor is the one shown, over it.
       const inset = popup?.border === true ? 1 : 0;
       const pane =
@@ -310,7 +315,12 @@ export function ControlTerminalSurface({
             ? undefined
             : view.cursors.get(pane.pane);
       cursor.style.zIndex = popup === undefined ? "" : "60";
-      if (pane === undefined || at === undefined || !at.visible) {
+      if (
+        pane === undefined ||
+        at === undefined ||
+        !at.visible ||
+        view.prompt !== undefined
+      ) {
         cursor.style.display = "none";
       } else {
         cursor.style.display = "";
@@ -327,6 +337,64 @@ export function ControlTerminalSurface({
         send({ kind: "ack", seq: lastSeq });
       }
       if (merged.layout) report();
+    };
+
+    // The prompt's line (`prompt.css`): the panes' last row, in their font.
+    let promptShown = "";
+    const drawPrompt = (width: number, height: number) => {
+      const prompt = view.prompt;
+      promptLine.hidden = prompt === undefined;
+      if (prompt === undefined) {
+        promptShown = "";
+        return;
+      }
+      const rows = Math.max(1, view.rows);
+      promptLine.style.top = `${String((rows - 1) * height)}px`;
+      promptLine.style.height = `${String(height)}px`;
+      promptLine.style.width = `${String(Math.max(1, view.cols) * width)}px`;
+      promptLine.style.right = "auto";
+      promptLine.style.font = `${String(fontSize)}px/${String(height)}px ${terminalFontStack(appearanceNow?.terminalFontFamily)}`;
+      const key = JSON.stringify(prompt);
+      if (key === promptShown) return;
+      promptShown = key;
+      promptLine.dataset.command = String(prompt.command);
+      const chars = [...prompt.input];
+      const at = Math.min(prompt.cursor, chars.length);
+      const span = (className: string, text: string) =>
+        Object.assign(document.createElement("span"), {
+          className,
+          textContent: text,
+        });
+      const caret = span("control-prompt-cursor", chars[at] ?? " ");
+      const line = document.createElement("span");
+      line.className = "control-prompt-line";
+      line.append(
+        span("control-prompt-label", prompt.prompt),
+        chars.slice(0, at).join(""),
+        // A confirm-before takes one key: no cursor in a line, as tmux.
+        ...(prompt.confirm ? [] : [caret]),
+        chars.slice(at + 1).join(""),
+      );
+      const hint = document.createElement("span");
+      hint.className = "control-prompt-hint";
+      const kbd = (text: string) =>
+        Object.assign(document.createElement("kbd"), { textContent: text });
+      if (!prompt.confirm) {
+        // What tmux's keys do here, the vi table's in its command mode.
+        hint.append(
+          "history ",
+          kbd("↑"),
+          kbd("↓"),
+          " · run ",
+          kbd("Enter"),
+          " · cancel ",
+          ...(prompt.vi ? [kbd("Esc"), " ", kbd("q")] : [kbd("Esc")]),
+        );
+      }
+      promptLine.replaceChildren(line, hint);
+      // The cursor in view, as tmux scrolls a long line to keep it there.
+      const left = caret.offsetLeft - line.offsetLeft;
+      line.scrollLeft = Math.max(0, left - line.clientWidth + 2 * width);
     };
 
     const schedule = (changes: ReturnType<typeof applyControl>) => {

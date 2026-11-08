@@ -144,6 +144,24 @@ export type ControlToPage =
 	  }
 	| { readonly kind: "popup-closed"; readonly id: number }
 	/**
+	 * A `command-prompt` or `confirm-before` DevHub asks
+	 * (`ptyHost/control/prompt.ts`), drawn as one line at the terminal's
+	 * foot, where tmux draws its prompt. While one is open the keys are its.
+	 */
+	| {
+			readonly kind: "prompt";
+			/** Expanded by tmux. */
+			readonly prompt: string;
+			readonly input: string;
+			/** In characters of `input`. */
+			readonly cursor: number;
+			/** `status-keys vi`, and in command (normal) mode. */
+			readonly vi: boolean;
+			readonly command: boolean;
+			readonly confirm: boolean;
+	  }
+	| { readonly kind: "prompt-closed" }
+	/**
 	 * Something DevHub did not do and says so quietly: a binding whose
 	 * command tmux does not draw for a control client (`keyGuard.ts`).
 	 */

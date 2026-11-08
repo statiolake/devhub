@@ -1,0 +1,100 @@
+/* A `command-prompt` or `confirm-before` DevHub asks
+   (`ptyHost/control/prompt.ts`): one line at the terminal's foot, over the
+   panes' last row, where tmux draws its prompt (in the status line, or over
+   the last row with `status off`). Its look is here alone, as tokens, as
+   the mock has it (`docs/terminal-mode.md`, phase 3). */
+
+.control-terminal {
+  /* For the hint's room. */
+  container: control-terminal / inline-size;
+  /* A hairline above it, as between panes. */
+  --prompt-rule: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 18%,
+    transparent
+  );
+  /* Its ground: the terminal's, a shade towards the ink. */
+  --prompt-ground: color-mix(
+    in srgb,
+    var(--terminal-background, Canvas) 96%,
+    var(--terminal-foreground, CanvasText)
+  );
+  /* The prompt's own text is quieter than what is typed. */
+  --prompt-label: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 60%,
+    transparent
+  );
+  --prompt-hint: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 50%,
+    transparent
+  );
+}
+
+.control-prompt {
+  position: absolute;
+  /* Over the panes, their hairlines and a popup's frame (40). */
+  z-index: 45;
+  left: 0;
+  right: 0;
+  display: flex;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-top: 1px solid var(--prompt-rule);
+  background: var(--prompt-ground);
+  color: var(--terminal-foreground, currentColor);
+  white-space: pre;
+  pointer-events: none;
+}
+
+.control-prompt[hidden] {
+  display: none;
+}
+
+.control-prompt-line {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.control-prompt-label {
+  color: var(--prompt-label);
+}
+
+/* A block, as the terminal's; hollow while the keys are elsewhere. */
+.control-prompt-cursor {
+  background: var(--control-cursor);
+  color: var(--terminal-background, Canvas);
+}
+
+.control-prompt[data-command="true"] .control-prompt-cursor,
+.control-terminal:not(:focus-within) .control-prompt-cursor {
+  background: none;
+  color: inherit;
+  outline: 1px solid var(--control-cursor);
+  outline-offset: -1px;
+}
+
+/* The keys, quietly, on the right: only where there is room. */
+.control-prompt-hint {
+  flex: none;
+  padding: 0 10px 0 16px;
+  color: var(--prompt-hint);
+  font: 11px var(--font-ui, system-ui, sans-serif);
+  align-self: center;
+}
+
+@container control-terminal (width < 520px) {
+  .control-prompt-hint {
+    display: none;
+  }
+}
+
+.control-prompt-hint kbd {
+  padding: 0 3px;
+  border: 1px solid var(--prompt-rule);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  font: 10px var(--terminal-font, monospace);
+}

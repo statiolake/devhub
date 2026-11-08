@@ -52,15 +52,20 @@ describe("the key guard", () => {
 		expect(r.route("Q", 0)).toEqual({ send: ["C-q", "Q"] });
 	});
 
-	it("refuses a binding that would wait, and never sends its prefix", () => {
+	it("hands over a popup or a prompt, refuses what else would wait, and never sends its prefix", () => {
 		const r = router();
+		// A prompt is DevHub's to ask (`prompt.ts`).
 		for (const key of ["W", ","]) {
 			r.route("C-q", 0);
 			const route = r.route(key, 0);
 			expect(route.send).toEqual([]);
-			expect(route.refused?.keys).toBe(`C-q ${key}`);
+			expect(route.prompt?.replay).toMatch(
+				/^(confirm-before|command-prompt) -b /,
+			);
 			expect(route.resetTable).toBe(false);
 		}
+		r.route("C-q", 0);
+		expect(r.route("w", 0).refused?.keys).toBe("C-q w");
 		// A popup is DevHub's to run (`popup.ts`): handed over, not sent.
 		r.route("C-q", 0);
 		const popup = r.route("m", 0);

@@ -93,6 +93,8 @@ export interface ControlView {
         cursor: VtCursor | undefined;
       }
     | undefined;
+  /** The `command-prompt` or `confirm-before` open now: one line at the foot. */
+  prompt: Omit<Extract<ControlToPage, { kind: "prompt" }>, "kind"> | undefined;
   readonly modes: Map<number, PaneModes>;
   /** Each pane's own style ids, as highlights of the one table. */
   readonly hlIds: Map<string, number>;
@@ -115,6 +117,7 @@ export function newControlView(fallback: {
     prefixes: [],
     cursors: new Map(),
     popup: undefined,
+    prompt: undefined,
     modes: new Map(),
     hlIds: new Map(),
   };
@@ -229,6 +232,16 @@ export function applyControl(
         changes.layout = true;
         changes.cursor = true;
       }
+      return changes;
+    case "prompt": {
+      const { kind: _, ...prompt } = message;
+      view.prompt = prompt;
+      changes.cursor = true;
+      return changes;
+    }
+    case "prompt-closed":
+      view.prompt = undefined;
+      changes.cursor = true;
       return changes;
     case "notice":
     case "ended":

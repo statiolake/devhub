@@ -39,9 +39,21 @@ import {
 	type WindowInfo,
 } from "../../../ipc/terminalControl.js";
 import type { LibGhosttyVt, VtPane } from "../vt/libghosttyVt.js";
-import { KeyRouter, parseBindings } from "./keyGuard.js";
+import { KeyRouter, parseBindings, waitingCommand } from "./keyGuard.js";
 import { PopupJob, popupInput, type PopupPty } from "./popup.js";
-import { popupPosition, popupSize, type PopupArgs } from "./tmuxCommand.js";
+import {
+	PromptSession,
+	promptOf,
+	untilControl,
+	type PromptArgs,
+	type PromptStep,
+} from "./prompt.js";
+import {
+	popupOf,
+	popupPosition,
+	popupSize,
+	type PopupArgs,
+} from "./tmuxCommand.js";
 import {
 	ControlParser,
 	commandLine,
@@ -163,6 +175,12 @@ export class ControlClient {
 	#popupSerial = 0;
 	/** Keys typed while a popup was being opened: its, once it is. */
 	#popupOpening: string[] | undefined;
+	/** The prompt open now (`prompt.ts`): the keys are its. */
+	#prompt: PromptSession | undefined;
+	/** Keys and text typed while a prompt was being opened: its, once it is. */
+	#promptOpening: (string | { text: string })[] | undefined;
+	/** What Tab completes to, read once: commands and aliases, options. */
+	#completions: Promise<{ commands: string[]; options: string[] }> | undefined;
 
 	constructor(options: ControlClientOptions) {
 		this.#o = options;
@@ -187,6 +205,8 @@ export class ControlClient {
 				this.#keys(message.keys);
 				return;
 			case "bytes": {
+				if (message.pane === undefined && this.#promptText(message.bytes))
+					return;
 				if (this.#popup !== undefined && message.pane === undefined) {
 					this.#popup.bytes(message.bytes);
 					return;
@@ -213,6 +233,7 @@ export class ControlClient {
 				this.#visible = message.visible;
 				if (message.visible) {
 					this.#popup?.redraw();
+					this.#postPrompt();
 					for (const pane of this.#panes.values()) pane.all = true;
 					this.#postLayout();
 					this.#schedule();
@@ -282,6 +303,10 @@ export class ControlClient {
 			case "reply":
 				if (event.own)
 					this.#replies.shift()?.({ ok: event.ok, lines: event.lines });
+				// A command tmux ran for this client failed (a prompt's
+				// template): tmux would say so in the status line.
+				else if (!event.ok && event.lines.length > 0)
+					this.#o.post({ kind: "notice", text: event.lines.join(" ") });
 				return;
 			case "output": {
 				const pane = this.#panes.get(event.pane);
@@ -368,6 +393,16 @@ export class ControlClient {
 			case "exit":
 				this.#end(event.reason.length > 0 ? event.reason : "detached");
 				return;
+			// What tmux would show in the client's status line: a
+			// `display-message`, an error from a command a prompt ran.
+			case "message":
+				if (event.text !== "")
+					this.#o.post({ kind: "notice", text: event.text });
+				return;
+			case "other":
+				if (event.line.trim() !== "" && !event.line.startsWith("%"))
+					this.#o.post({ kind: "notice", text: event.line });
+				return;
 			default:
 				return;
 		}
@@ -384,6 +419,21 @@ export class ControlClient {
 		}
 		if (this.#popupOpening !== undefined) {
 			this.#popupOpening.push(...keys);
+			return;
+		}
+		if (this.#promptOpening !== undefined) {
+			this.#promptOpening.push(...keys);
+			return;
+		}
+		if (this.#prompt !== undefined) {
+			for (const [index, key] of keys.entries()) {
+				this.#promptKey(key);
+				// A key that closed it: the rest are the panes' again.
+				if (this.#prompt === undefined) {
+					this.#keys(keys.slice(index + 1));
+					return;
+				}
+			}
 			return;
 		}
 		if (this.#popup !== undefined) {
@@ -407,7 +457,7 @@ export class ControlClient {
 		for (const [index, key] of keys.entries()) {
 			const route = this.#router.route(key, Date.now());
 			send.push(...route.send);
-			if (route.popup !== undefined) {
+			if (route.popup !== undefined || route.prompt !== undefined) {
 				flush();
 				if (route.resetTable === true) {
 					void this.#command([
@@ -419,7 +469,9 @@ export class ControlClient {
 					]);
 				}
 				const rest = keys.slice(index + 1);
-				void this.#openPopup(route.popup, rest);
+				if (route.popup !== undefined) void this.#openPopup(route.popup, rest);
+				else if (route.prompt !== undefined)
+					void this.#openPrompt(route.prompt, rest);
 				return;
 			}
 			if (route.refused !== undefined) {
@@ -604,6 +656,246 @@ export class ControlClient {
 		this.#popup = job;
 		for (const key of waiting) job.key(key);
 		this.#schedule();
+	}
+
+	/**
+	 * Ask a `command-prompt` or `confirm-before` binding (`prompt.ts`): its
+	 * prompts and inputs expanded by tmux against the active pane, as tmux
+	 * expands them; tmux's history of its type, `status-keys`,
+	 * `word-separators` and the top buffer for its keys. `rest`: keys typed
+	 * after the binding's, which are the prompt's.
+	 */
+	async #openPrompt(args: PromptArgs, rest: readonly string[]): Promise<void> {
+		this.#promptOpening = [...rest];
+		const active = this.#activePane();
+		const target = active === undefined ? [] : ["-t", `%${String(active)}`];
+		const texts = args.prompts.flatMap((p) => [p.prompt, p.input]);
+		const [facts, history, paste, completions] = await Promise.all([
+			this.#command([
+				"display-message",
+				"-p",
+				...target,
+				"--",
+				["#{status-keys}", "#{word-separators}", ...texts].join(FIELD),
+			]),
+			this.#command(["show-prompt-history", "-T", args.type]),
+			this.#command(["show-buffer"]),
+			this.#readCompletions(),
+		]);
+		const waiting = this.#promptOpening;
+		this.#promptOpening = undefined;
+		if (this.#ended) return;
+		const [keys, separators, ...expanded] = facts.lines.join("\n").split(FIELD);
+		if (!facts.ok) {
+			this.#o.post({ kind: "notice", text: facts.lines.join(" ") });
+			this.#replayOpening(waiting);
+			return;
+		}
+		const session = new PromptSession(
+			args,
+			args.prompts.map((_, i) => ({
+				prompt: expanded[2 * i] ?? "",
+				input: expanded[2 * i + 1] ?? "",
+			})),
+			{
+				vi: keys === "vi",
+				separators: separators ?? "",
+				history: history.ok
+					? history.lines.flatMap((line) => {
+							const entry = /^\d+: (.*)$/.exec(line);
+							return entry === null ? [] : [entry[1]];
+						})
+					: [],
+				paste: paste.ok ? paste.lines.join("\n") : undefined,
+				...completions,
+			},
+		);
+		this.#prompt = session;
+		// An incremental prompt is tmux's from the start: it runs its
+		// template as the answer changes.
+		if (args.mode === "incremental") void this.#run([args.replay]);
+		this.#postPrompt();
+		this.#replayOpening(waiting);
+	}
+
+	/** Keys and text typed while a prompt opened, in order. */
+	#replayOpening(waiting: readonly (string | { text: string })[]): void {
+		for (const item of waiting) {
+			if (typeof item === "string") this.#keys([item]);
+			else if (!this.#promptText(new TextEncoder().encode(item.text)))
+				this.#keys([]);
+		}
+	}
+
+	async #readCompletions(): Promise<{ commands: string[]; options: string[] }> {
+		this.#completions ??= (async () => {
+			const [commands, aliases, ...options] = await Promise.all([
+				this.#command([
+					"list-commands",
+					"-F",
+					`#{command_list_name}${FIELD}#{command_list_alias}`,
+				]),
+				this.#command(["show-options", "-s", "command-alias"]),
+				...[["-s"], ["-g"], ["-wg"]].map((scope) =>
+					this.#command(["show-options", ...scope]),
+				),
+			]);
+			const names = (line: string) => /^([a-z][a-z0-9-]*)/.exec(line)?.[1];
+			return {
+				commands: [
+					...commands.lines.flatMap((line) => line.split(FIELD)),
+					...aliases.lines.flatMap(
+						(line) => /^\S+\s+"?([^=\s"]+)=/.exec(line)?.[1] ?? [],
+					),
+				].filter((word) => word !== ""),
+				options: options.flatMap((answer) =>
+					answer.lines.flatMap((line) => names(line) ?? []),
+				),
+			};
+		})();
+		return this.#completions;
+	}
+
+	/** Text for the prompt (an IME's, a paste), if one is open or opening. */
+	#promptText(bytes: Uint8Array): boolean {
+		const text = new TextDecoder().decode(bytes);
+		if (this.#promptOpening !== undefined) {
+			this.#promptOpening.push({ text });
+			return true;
+		}
+		const prompt = this.#prompt;
+		if (prompt === undefined) return false;
+		const step = prompt.text(text);
+		if (prompt.args.mode === "incremental" && step.kind === "changed") {
+			const typed = untilControl(text);
+			void this.#run([this.#typeInto(["-l", typed])]);
+		}
+		this.#promptStep(prompt, step);
+		return true;
+	}
+
+	#promptKey(key: string): void {
+		const prompt = this.#prompt;
+		if (prompt === undefined) return;
+		const step = prompt.key(key);
+		if (prompt.args.mode === "incremental") {
+			// tmux's prompt has every key too, and closes itself as this does.
+			void this.#run([this.#typeInto([key])]);
+			if (step.kind === "done" || step.kind === "cancel") this.#closePrompt();
+			else this.#postPrompt();
+			return;
+		}
+		this.#promptStep(prompt, step);
+	}
+
+	#promptStep(prompt: PromptSession, step: PromptStep): void {
+		switch (step.kind) {
+			case "unchanged":
+				return;
+			case "changed":
+				this.#postPrompt();
+				return;
+			case "cancel":
+				this.#closePrompt();
+				return;
+			case "done":
+				this.#closePrompt();
+				this.#answer(prompt.args, step.keys);
+				return;
+		}
+	}
+
+	/**
+	 * The answer typed into tmux's own prompt, opened by the binding run with
+	 * `-b`, in one command line: tmux fills the template, keeps the history
+	 * and runs it. What is typed at the bare `:` prompt is the command itself,
+	 * and is looked at first as a key's binding is (`keyGuard.ts`).
+	 */
+	#answer(args: PromptArgs, keys: readonly (readonly string[])[]): void {
+		if (args.bare) {
+			const typed = keys.find((k) => k[0] === "-l")?.[1] ?? "";
+			const popup = popupOf(typed);
+			if (popup !== undefined) {
+				void this.#openPopup(popup, []);
+				return;
+			}
+			const prompt = promptOf(typed);
+			if (prompt !== undefined) {
+				void this.#openPrompt(prompt, []);
+				return;
+			}
+			const waiting = waitingCommand(typed);
+			if (waiting !== undefined) {
+				this.#o.post({
+					kind: "notice",
+					text: `${waiting} is not available in control mode yet.`,
+				});
+				return;
+			}
+		}
+		let lines: string[];
+		try {
+			lines = [args.replay, ...keys.map((k) => this.#typeInto(k))];
+		} catch (failure: unknown) {
+			this.#o.post({
+				kind: "notice",
+				text: failure instanceof Error ? failure.message : String(failure),
+			});
+			return;
+		}
+		void this.#run(lines);
+	}
+
+	/** `send-keys -K` into this client's prompt: keys, or `-l` and text. */
+	#typeInto(keys: readonly string[]): string {
+		const literal = keys[0] === "-l";
+		return commandLine([
+			"send-keys",
+			"-K",
+			"-c",
+			this.#clientName,
+			...(literal ? ["-l"] : []),
+			"--",
+			...(literal ? keys.slice(1) : keys),
+		]);
+	}
+
+	#postPrompt(): void {
+		const prompt = this.#prompt;
+		if (prompt === undefined || this.#ended) return;
+		this.#o.post({ kind: "prompt", ...prompt.view() });
+	}
+
+	#closePrompt(): void {
+		if (this.#prompt === undefined) return;
+		this.#prompt = undefined;
+		if (!this.#ended) this.#o.post({ kind: "prompt-closed" });
+	}
+
+	/**
+	 * Commands, already written as tmux reads them, on one line: tmux runs
+	 * them in order with nothing between, and answers each.
+	 */
+	#run(
+		commands: readonly string[],
+	): Promise<{ ok: boolean; lines: readonly string[] }[]> {
+		if (this.#ended) return Promise.resolve([]);
+		return Promise.all(
+			commands.map(
+				(_, i) =>
+					new Promise<{ ok: boolean; lines: readonly string[] }>((resolve) => {
+						this.#replies.push(resolve);
+						if (i === commands.length - 1) {
+							try {
+								this.#o.process.write(`${commands.join(" ; ")}\n`);
+							} catch {
+								for (const reply of this.#replies.splice(-commands.length))
+									reply({ ok: false, lines: [] });
+							}
+						}
+					}),
+			),
+		);
 	}
 
 	/** Write a command; its answer is the next reply of this client's. */
@@ -997,6 +1289,7 @@ export class ControlClient {
 			this.#flushTimer = undefined;
 		}
 		this.#popup?.close();
+		this.#prompt = undefined;
 		for (const check of this.#modeChecks.values()) {
 			(this.#o.timers ?? NODE_TIMERS).clear(check);
 		}

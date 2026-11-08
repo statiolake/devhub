@@ -540,6 +540,32 @@ a host's pane finds the host's own `tmux` on its PATH, not DevHub's (on the
 test host a 3.4, which cannot talk to the 3.7c server), in a popup and in a
 pane alike.
 
+**`command-prompt` and `confirm-before` are DevHub's too**
+(`main/ptyHost/control/prompt.ts`), a binding that is one of them and
+nothing else. tmux keeps a prompt's buffer on the client and says nothing of
+it to a control client, so the line is edited in the pty host by tmux's own
+rules, `status_prompt_key` and `status_prompt_translate_key` ported key for
+key (the `status-keys` emacs table and the vi one with its two modes,
+`word-separators`, `C-w`/`C-y`, `C-t`, `C-v`, Tab completion of commands,
+aliases, options and layouts), and the page draws it as one line over the
+panes' last row (`prompt.css`), where tmux draws its prompt. The prompt and
+its `-I` input are expanded by tmux against the active pane
+(`display-message -p`); Up/Down walk tmux's history of the prompt's `-T`
+type (`show-prompt-history`). What the answer *means* is left to tmux: the
+binding is run as written with `-b` (so it does not hold the client's queue)
+and the answer typed into tmux's own prompt on the same command line —
+`send-keys -K C-u`, the answer with `-l`, `Enter`, once per `-p` prompt; for
+`-1`, `-k`, `confirm-before` the key itself, for `-N` the digits and the key
+that ended them. tmux fills the template (`%%`, `%1`, `-F`), adds the answer
+to its history and runs it, exactly as for a key typed into its status line;
+a `#` or `%` typed stays literal, since nothing is re-expanded. An
+incremental prompt (`-i`) is tmux's from its start, each key typed into it as
+it is typed here. What is typed at the bare `:` prompt is looked at first as
+a key's binding is: a popup or a prompt is DevHub's, a command that would
+wait is refused. An error from the command, and a `display-message` to the
+client, are said in the notice, where tmux would put them in its status
+line. tmux's completion menus (`-t` targets, window lists) are not drawn.
+
 The rest, until phase 3 draws them, is not let do that
 (`main/ptyHost/control/keyGuard.ts`):
 

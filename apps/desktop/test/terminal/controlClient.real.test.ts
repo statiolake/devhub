@@ -75,8 +75,11 @@ function page() {
   let layout: Extract<ControlToPage, { kind: "layout" }> | undefined;
   let ended: string | undefined;
   const notices: string[] = [];
+  let prompt: Extract<ControlToPage, { kind: "prompt" }> | undefined;
   const post = (message: ControlToPage) => {
     if (message.kind === "layout") layout = message;
+    else if (message.kind === "prompt") prompt = message;
+    else if (message.kind === "prompt-closed") prompt = undefined;
     else if (message.kind === "ended") ended = message.reason;
     else if (message.kind === "notice") notices.push(message.text);
     else if (message.kind === "pane") {
@@ -96,6 +99,9 @@ function page() {
     },
     get ended() {
       return ended;
+    },
+    get prompt() {
+      return prompt;
     },
   };
 }
@@ -183,6 +189,74 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     client.stop();
     await until("the end", () => view.ended);
   }, 20000);
+  it("asks a command-prompt and a confirm-before, and tmux runs the answer", async () => {
+    const socket = `devhub-prompt-${String(process.pid)}`;
+    sockets.push(socket);
+    tmux(socket, "new-session", "-d", "-s", "p", "-x", "80", "-y", "24", "sh");
+    tmux(socket, "rename-window", "-t", "p", "before");
+    const view = page();
+    const client = new ControlClient({
+      process: controlProcess(socket, "p"),
+      vt: lib,
+      cols: 80,
+      rows: 24,
+      post: view.post,
+      ended: () => undefined,
+    });
+    await until("the pane", () => view.layout?.panes[0]?.pane);
+    // tmux's own `,`: the input is the window's name, expanded by tmux.
+    client.receive({ kind: "keys", keys: ["C-q", ","] });
+    const asked = await until("the prompt", () => view.prompt);
+    expect(asked.input).toBe("before");
+    expect(asked.prompt).toContain("rename-window");
+    client.receive({
+      kind: "keys",
+      keys: ["C-u", "a", "#", "b", "Space", "%", "d", "Enter"],
+    });
+    await until("the rename", () =>
+      view.layout?.windows[0]?.name === "a#b %d" ? true : undefined,
+    );
+    expect(view.prompt).toBeUndefined();
+    // tmux kept it in its history, as typed.
+    expect(tmux(socket, "show-prompt-history", "-T", "command")).toContain(
+      "a#b %d",
+    );
+    // A confirm declined runs nothing; the keys are the pane's again.
+    client.receive({ kind: "keys", keys: ["C-q", "W"] });
+    expect((await until("the confirm", () => view.prompt)).prompt).toBe(
+      "kill? (y/n) ",
+    );
+    client.receive({ kind: "keys", keys: ["n"] });
+    await until("the confirm closed", () => view.prompt === undefined);
+    // The bare `:` prompt runs what is typed.
+    client.receive({ kind: "keys", keys: ["C-q", ":"] });
+    await until("the command prompt", () => view.prompt?.prompt === ":");
+    client.receive({
+      kind: "bytes",
+      bytes: new TextEncoder().encode("rename-window typed"),
+    });
+    client.receive({ kind: "keys", keys: ["Enter"] });
+    await until("the typed command", () =>
+      view.layout?.windows[0]?.name === "typed" ? true : undefined,
+    );
+    // An error is said, as tmux says it in the status line.
+    client.receive({ kind: "keys", keys: ["C-q", ":"] });
+    await until("the command prompt", () => view.prompt?.prompt === ":");
+    client.receive({
+      kind: "bytes",
+      bytes: new TextEncoder().encode("no-such-command"),
+    });
+    client.receive({ kind: "keys", keys: ["Enter"] });
+    await until("the error", () =>
+      view.notices.find((n) => n.includes("no-such-command")),
+    );
+    expect(tmux(socket, "list-sessions", "-F", "#{session_name}").trim()).toBe(
+      "p",
+    );
+    client.stop();
+    await until("the end", () => view.ended);
+  }, 20000);
+
   it("refuses the bindings that would wait on it, and is never held by them", async () => {
     const socket = `devhub-guard-${String(process.pid)}`;
     sockets.push(socket);
@@ -198,12 +272,12 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       ended: () => undefined,
     });
     const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
-    // A confirm is said, not run, and so is a popup with no pty to run it
+    // A chooser is said, not run, and so is a popup with no pty to run it
     // in (`ControlClientOptions.popup`): the client answers on.
-    client.receive({ kind: "keys", keys: ["C-q", "m", "C-q", "W"] });
+    client.receive({ kind: "keys", keys: ["C-q", "m", "C-q", "q"] });
     await until("two notices", () => view.notices.length === 2);
     expect(view.notices[0]).toContain("display-popup");
-    expect(view.notices[1]).toContain("confirm-before");
+    expect(view.notices[1]).toContain("display-panes");
     client.receive({
       kind: "bytes",
       bytes: new TextEncoder().encode("echo still-here\r"),
