@@ -162,7 +162,9 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   DevHub's theme for `-1`), `mode_info_set/mode_change`, `option_set`,
   `busy_start/stop`, `flush`, and the popupmenu, command line and tab line.
   `layoutGrids` stacks the grids: grid 1, the windows, floats by `zindex`
-  against their anchor grid, the message grid on top.
+  against their anchor grid, the message grid on top, cut at the screen's
+  last row as Neovim's compositor cuts it (the grid is as tall as the
+  screen and keeps a `:messages`' old rows below the `cmdheight` rows).
 - `painter.ts` — a 2D canvas per grid, repainted a dirty row at a time on
   the animation frame after a `flush`; runs of one highlight, wide characters
   cell by cell, underline/undercurl/underdouble/dotted/dashed/strikethrough in

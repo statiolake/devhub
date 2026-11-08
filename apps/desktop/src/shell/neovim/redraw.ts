@@ -867,6 +867,7 @@ export interface GridBox {
    * A float's border is blank cells (`'solid'`, a table of spaces): they
    * are left out — the float shows its text area where Neovim put it, in
    * DevHub's own frame, as with no border — and a click there falls through.
+   * The message grid's rows past the screen's bottom are left out the same way.
    */
   readonly crop?: Margins;
   /** A float with a border of lines: no frame of DevHub's. */
@@ -974,6 +975,12 @@ export function layoutGrids(state: NeovimUiState): GridBox[] {
         win: p.win,
       };
     } else if (p.kind === "message") {
+      // The message grid is as tall as the screen wherever it starts, and
+      // keeps what it last held below the rows in view (the rest of a
+      // `:messages` after the prompt is answered). Neovim's compositor
+      // shows it down to the screen's last row and no further; so does
+      // this, or those rows show in whatever the pane has past the grid.
+      const below = base ? p.row + grid.height - base.height : 0;
       box = {
         grid: window.grid,
         row: p.row,
@@ -983,6 +990,9 @@ export function layoutGrids(state: NeovimUiState): GridBox[] {
         z: 200,
         float: false,
         win: undefined,
+        ...(below > 0
+          ? { crop: { top: 0, right: 0, bottom: below, left: 0 } }
+          : {}),
       };
     } else {
       const anchorWindow = state.windows.get(p.anchorGrid);

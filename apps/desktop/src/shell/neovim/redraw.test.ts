@@ -236,6 +236,25 @@ describe("the redraw reducer", () => {
     expect(state.windows.size).toBe(0);
   });
 
+  it("shows the message grid down to the screen's last row, not past it", () => {
+    const state = initialUiState();
+    // Neovim's message grid is as tall as the screen wherever it starts.
+    applyRedraw(state, [
+      ["grid_resize", [1, 80, 24], [3, 80, 24]],
+      ["msg_set_pos", [3, 4, true, "─"]],
+    ]);
+    expect(layoutGrids(state).find((b) => b.grid === 3)?.crop).toEqual({
+      top: 0,
+      right: 0,
+      bottom: 4,
+      left: 0,
+    });
+    // Back to the cmdheight rows: what `:messages` left below them stays out.
+    applyRedraw(state, [["msg_set_pos", [3, 22, false, "─"]]]);
+    const box = layoutGrids(state).find((b) => b.grid === 3);
+    expect([box?.row, box?.crop?.bottom]).toEqual([22, 22]);
+  });
+
   it("follows the popupmenu, the command line and the tab line", () => {
     const state = initialUiState();
     applyRedraw(state, [
