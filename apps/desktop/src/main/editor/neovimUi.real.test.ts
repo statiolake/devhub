@@ -449,6 +449,18 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			msg: "done",
 			level: "warn",
 		});
+		// Kept to be read again: work in progress only once done, a key once.
+		const history = (await h.ui.request("nvim_exec_lua", [
+			`local M = require('devhub_gui')
+			M.notify{ group = 'lua_ls', key = 'p', title = 'Indexing', progress = true, percent = 10 }
+			M.notify{ group = 'lua_ls', key = 'p', title = 'Indexing', msg = 'done', progress = true, done = true }
+			return vim.tbl_map(function(n) return { n.group, n.title, n.msg, n.level, type(n.time) } end, M.history())`,
+			[],
+		])) as unknown[];
+		expect(history).toEqual([
+			["Build", "Build", "done", "warn", "number"],
+			["lua_ls", "Indexing", "done", "info", "number"],
+		]);
 		const lastPlace = () =>
 			h.gui.events.filter((e) => e.kind === "place").at(-1)?.payload as
 				| {

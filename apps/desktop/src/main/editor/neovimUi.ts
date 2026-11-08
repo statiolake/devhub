@@ -309,7 +309,7 @@ function M.notify(opts)
   local level = opts.level
   if type(level) == "number" then level = LEVELS[level] or "info" end
   if level ~= "debug" and level ~= "warn" and level ~= "error" then level = "info" end
-  gui_event("notify", {
+  local payload = {
     title = opts.title and tostring(opts.title) or "",
     msg = tostring(opts.msg or opts.body or ""),
     level = level,
@@ -319,7 +319,46 @@ function M.notify(opts)
     progress = (opts.progress == true or opts.percent ~= nil) or nil,
     percent = type(opts.percent) == "number" and opts.percent or nil,
     done = opts.done == true or nil,
+  }
+  M._remember(payload)
+  gui_event("notify", payload)
+end
+
+-- The notifications shown, oldest first, at most HISTORY_MAX: the toasts
+-- fade, this is where they can be read again. Work in progress is kept
+-- only once it is done (its ticks are not news); a key shown again
+-- replaces its entry and moves it to the end. Kept across attaches.
+local HISTORY_MAX = 200
+M._history = M._history or {}
+
+function M._remember(n)
+  if n.progress and not n.done then return end
+  if n.msg == "" and n.title == "" then return end
+  local list = M._history
+  if n.key then
+    for i = #list, 1, -1 do
+      if list[i].key == n.key then table.remove(list, i) break end
+    end
+  end
+  table.insert(list, {
+    time = os.time(),
+    group = n.group or (n.title ~= "" and n.title or nil),
+    title = n.title,
+    msg = n.msg,
+    level = n.level,
+    key = n.key,
   })
+  while #list > HISTORY_MAX do table.remove(list, 1) end
+end
+
+--- The notifications shown so far, oldest first: { time = os.time(), group,
+--- title, msg, level = "debug" | "info" | "warn" | "error", key }, copies.
+function M.history()
+  return vim.deepcopy(M._history)
+end
+
+function M.clear_history()
+  M._history = {}
 end
 
 -- Decorations DevHub paints over a window's text area, anchored to Neovim

@@ -567,6 +567,12 @@ img.clear()
     fading slowly (600 ms, ease-in) and only then does its gap close
     (300 ms): nothing moves while its text shows. Reduced motion: fades
     only, a still arc.
+  - _History._ What fades can be read again: `gui.history()` answers the
+    notifications shown, oldest first (`time`, `group`, `title`, `msg`,
+    `level`, `key`), at most 200, kept across attaches;
+    `gui.clear_history()` empties it. Work in progress is kept only once
+    done (its ticks are not news), and a `key` shown again replaces its
+    entry. How it is shown is not decided yet.
 - **image** — an extmark's `virt_lines` reserve `height_rows` blank rows
   under the line, so Neovim lays them out (the cursor steps over them,
   `:vsplit` shows them twice) and DevHub paints the image there. A path is
