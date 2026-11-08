@@ -397,3 +397,48 @@ export function underFrames(boxes: readonly GridBox[]): Set<number> {
   }
   return out;
 }
+
+/**
+ * Whether `row` of a float is a band (a menu's or a picker's selected row):
+ * every cell of it from `first` to `last` has a ground other than the
+ * float's own, and so do neither of its neighbours. The float's own ground
+ * is the commonest along its first column (the row aside), so a row whose only neighbour is
+ * the selection (a title kept above a list whose first item is selected) is
+ * not taken for a band cut out of it. Answers the ground around the band.
+ */
+export function bandGround(
+  rows: { readonly top: number; readonly bottom: number },
+  first: number,
+  last: number,
+  row: number,
+  bgAt: (row: number, col: number) => number | undefined,
+): number | undefined {
+  if (last <= first) return undefined;
+  const neighbours = [row - 1, row + 1].filter(
+    (r) => r >= rows.top && r < rows.bottom,
+  );
+  if (neighbours.length === 0) return undefined;
+  const tally = new Map<number, number>();
+  for (let r = rows.top; r < rows.bottom; r += 1) {
+    if (r === row) continue;
+    const bg = bgAt(r, first);
+    if (bg !== undefined) tally.set(bg, (tally.get(bg) ?? 0) + 1);
+  }
+  let ground: number | undefined;
+  let most = 0;
+  for (const [bg, count] of tally) {
+    if (count > most) [ground, most] = [bg, count];
+  }
+  if (ground === undefined) return undefined;
+  if (
+    neighbours.some(
+      (r) => bgAt(r, first) !== ground || bgAt(r, last) !== ground,
+    )
+  )
+    return undefined;
+  for (let c = first; c <= last; c += 1) {
+    const bg = bgAt(row, c);
+    if (bg === undefined || bg === ground) return undefined;
+  }
+  return ground;
+}

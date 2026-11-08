@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { drawnRect, floatClusters, touching } from "./floats";
+import { bandGround, drawnRect, floatClusters, touching } from "./floats";
 import type { GridBox } from "./redraw";
 
 const float = (
@@ -92,5 +92,38 @@ describe("floats that make one panel", () => {
       floatClusters([float(4, 0, 0, 5, 5, lined), float(5, 0, 5, 5, 5)])[0]
         ?.lined,
     ).toBe(false);
+  });
+});
+
+describe("a float's selected row as a band", () => {
+  // Rows of a float 6 wide: "n" its ground, "s" the selection, "t" a title.
+  const grounds = (rows: readonly string[]) => (r: number, c: number) => {
+    const g = rows[r]?.[c];
+    return g === undefined ? undefined : g.charCodeAt(0);
+  };
+  const rows = (list: readonly string[]) => ({ top: 0, bottom: list.length });
+
+  it("is a row in another ground between rows of the float's", () => {
+    const list = ["nnnnnn", "ssssss", "nnnnnn", "nnnnnn"];
+    expect(bandGround(rows(list), 0, 5, 1, grounds(list))).toBe(110);
+  });
+
+  it("is the first row too, with the float's ground under it", () => {
+    const list = ["ssssss", "nnnnnn", "nnnnnn"];
+    expect(bandGround(rows(list), 0, 5, 0, grounds(list))).toBe(110);
+  });
+
+  it("is the selected one of two rows", () => {
+    const list = ["ssssss", "nnnnnn"];
+    expect(bandGround(rows(list), 0, 5, 0, grounds(list))).toBe(110);
+  });
+
+  it("is not the title row above a selected first item", () => {
+    // A picker's list: its kept title row in the float's ground, the first
+    // item selected under it. The title is not a band cut out of the
+    // selection.
+    const list = ["nnnnnn", "ssssss", "nnnnnn", "nnnnnn", "nnnnnn"];
+    expect(bandGround(rows(list), 0, 5, 0, grounds(list))).toBeUndefined();
+    expect(bandGround(rows(list), 0, 5, 1, grounds(list))).toBe(110);
   });
 });

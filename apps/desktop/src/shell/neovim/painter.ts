@@ -18,6 +18,7 @@ import { strokesFor, type Stroke, type StrokeKind } from "./strokes";
 import { boxArms, fitIcon, glyphKind, glyphShapes, type Shape } from "./glyphs";
 import { familyOf, markPath, type KindFamily } from "./kinds";
 import {
+  bandGround,
   floatClusters,
   framePieces,
   underFrames,
@@ -1629,8 +1630,8 @@ export class GridPainter {
 
   /**
    * A float row that is a band: a rounded float's one row whose every cell
-   * has a ground other than the float's (its neighbours'), a menu's or a
-   * picker's selected row. Answers its outline in the canvas's own
+   * has a ground other than the float's (its neighbours', the float's
+   * commonest), a menu's or a picker's selected row. Answers its outline in the canvas's own
    * coordinates, or `undefined` for a row drawn as cells.
    */
   private bandOf(
@@ -1654,22 +1655,14 @@ export class GridPainter {
       if ((attr?.blend ?? 0) > 0) return undefined;
       return resolveColors(attr, state.defaults).bg;
     };
-    const neighbours = [row - 1, row + 1].filter(
-      (r) => r >= crop.top && r < grid.height - crop.bottom,
+    const ground = bandGround(
+      { top: crop.top, bottom: grid.height - crop.bottom },
+      first,
+      last,
+      row,
+      bgAt,
     );
-    if (neighbours.length === 0) return undefined;
-    const ground = bgAt(neighbours[0] ?? 0, first);
     if (ground === undefined) return undefined;
-    if (
-      neighbours.some(
-        (r) => bgAt(r, first) !== ground || bgAt(r, last) !== ground,
-      )
-    )
-      return undefined;
-    for (let c = first; c <= last; c += 1) {
-      const bg = bgAt(row, c);
-      if (bg === undefined || bg === ground) return undefined;
-    }
     const blank = (c: string | undefined) => c === " " || c === undefined;
     const base = row * grid.width;
     const inset =
