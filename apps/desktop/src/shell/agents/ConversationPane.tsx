@@ -154,8 +154,12 @@ export function ConversationPane({
       preview: (session, cwd) => bridge.previewSession(agentId, session, cwd),
     };
   }, [agentId]);
-  return (
-    <>
+  // The same element while none of its props changed, so React does not
+  // render the conversation again when only the page around it did: the
+  // Agents page renders every pane for each snapshot of the app, and a long
+  // transcript's render was most of the page's time, hidden or not.
+  const surface = useMemo(
+    () => (
       <ConversationSurface
         transcript={transcript}
         actions={actions}
@@ -166,6 +170,21 @@ export function ConversationPane({
         inserted={inserted}
         issueRepository={issueRepository}
       />
+    ),
+    [
+      transcript,
+      actions,
+      appearance,
+      hidden,
+      label,
+      draft,
+      inserted,
+      issueRepository,
+    ],
+  );
+  return (
+    <>
+      {surface}
       {/* `/mcp`: the Agent's MCP servers, and what can be done about each. */}
       {managingMcp && !hidden ? (
         <McpPanel
