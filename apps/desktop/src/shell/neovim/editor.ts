@@ -239,6 +239,18 @@ export class NeovimEditor {
     return this.boxes;
   }
 
+  /**
+   * The row messages scrolled up over the windows start at (`:ls`, a
+   * hit-enter prompt), or `undefined` while they keep to their own rows.
+   */
+  messagePanelRow(): number | undefined {
+    for (const box of this.boxes) {
+      const p = this.state.windows.get(box.grid)?.placement;
+      if (p?.kind === "message" && p.scrolled) return box.row;
+    }
+    return undefined;
+  }
+
   /** The colours a GUI surface over the editor wears (`chrome.ts`). */
   surface(): Surface | undefined {
     return this.painter.paintTheme().surface;

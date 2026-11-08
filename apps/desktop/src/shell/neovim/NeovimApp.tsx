@@ -1156,7 +1156,11 @@ function toastBottom(
   const cell = editor.cellMetrics();
   const windows = boxes.filter((b) => !b.float && b.win !== undefined);
   if (windows.length === 0) return 12;
-  // The status line is the row under the lowest window: clear of its top.
-  const lowest = Math.max(...windows.map((b) => b.row + b.height));
+  // The status line is the row under the lowest window: clear of its top,
+  // and of messages risen over the windows (a prompt stays readable).
+  const lowest = Math.min(
+    Math.max(...windows.map((b) => b.row + b.height)),
+    editor.messagePanelRow() ?? Number.POSITIVE_INFINITY,
+  );
   return Math.max(6, editor.areaSize().height - lowest * cell.height + 6);
 }

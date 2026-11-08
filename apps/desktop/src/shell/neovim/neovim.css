@@ -58,6 +58,13 @@
   image-rendering: auto;
 }
 
+/* Messages scrolled up over the windows: a panel risen from the bottom. */
+.nvim-grid.nvim-msg-panel {
+  box-shadow:
+    0 -1px 0 color-mix(in srgb, var(--primary) 16%, transparent),
+    0 -10px 24px rgb(0 0 0 / 22%);
+}
+
 /*
  * Floats: one shadow per panel of them (`floats.ts`: floats edge to edge
  * are one panel, a float alone is one too), under the union of their

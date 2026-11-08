@@ -410,6 +410,16 @@ export class GridPainter {
       canvas.style.top = `${String((box.row + crop.top) * this.metrics.height)}px`;
       canvas.style.zIndex = String(box.z);
       canvas.classList.toggle("nvim-float", box.float);
+      // Messages scrolled up over the windows (`:ls`, an error's trace, a
+      // hit-enter prompt) are a panel risen from the bottom, as an editor's
+      // output panel: a hairline and a shadow along its top edge.
+      const placement = state.windows.get(box.grid)?.placement;
+      canvas.classList.toggle(
+        "nvim-msg-panel",
+        placement?.kind === "message" &&
+          placement.scrolled &&
+          box.row < (state.grids.get(1)?.height ?? 0) - this.theme.cmdheight,
+      );
       const round = corners.get(box.grid);
       canvas.style.borderRadius =
         round && box.lined !== true ? radii(round, FLOAT_RADIUS) : "";

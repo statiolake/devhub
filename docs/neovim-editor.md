@@ -512,8 +512,10 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
 
 - Dev containers: refused with a sentence.
 - No delivery of `nvim` to hosts; Neovim 0.9 or later is expected.
-- `ext_messages` off (see The attach); messages are Neovim's own, in its
-  message grid.
+- `ext_messages` off (see The attach and item 6 of the survey); messages
+  are Neovim's own, in its message grid, which DevHub draws as a panel
+  when they scroll over the windows. 0.12's `ui2` takes the command line
+  from DevHub's palette: leave it off in DevHub.
 - A GUI window's web page still gives `<C-w>` to Neovim (it has no shell
   to want it); only the terminal follows the `:terminal` model.
 - An image, an inline card and a decoration do not take part in the 90 ms
@@ -621,11 +623,26 @@ least risky first within a band):
    before. Thumbs drawn as glyphs inside a float (`█`, `▐`) are left as
    text: telling them from content is a guess.
 6. _The message area and `cmdheight` row_ (`-- INSERT --`, the ruler, `Press
-ENTER`): a terminal row at the bottom of the editor. With `ext_messages`
-   (0.10+, see The attach) the row goes away and messages become toasts and
-   a mode chip; until then, draw the row as a status bar of DevHub's
-   (smaller type, no cell grid). High risk: hit-enter prompts must stay
-   answerable.
+ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
+   is still experimental and still hands the UI `return_prompt`,
+   `confirm`, `confirm_sub` and the swap-file question while Neovim waits
+   for a key: a GUI that draws them as toasts must draw every one, with
+   its choices, or the person types into a prompt they cannot see; and
+   0.9/0.10 (still supported) differ again. 0.12's answer is not a remote
+   UI's at all: `ui2` (`require('vim._core.ui2').enable()`) is a Lua UI
+   inside Neovim that takes `ext_messages` and `ext_cmdline` itself and
+   draws messages, the pager and dialogs in Neovim windows. Tried under
+   DevHub on 0.12.6 it takes the command line away from DevHub's palette
+   (nothing shows while typing `:`), so it and DevHub's `ext_cmdline`
+   exclude each other; once ui2 is the default the way forward is to
+   leave messages to it and draw its windows as floats, not to grow a
+   second message UI here. What landed instead is safe: messages that
+   scroll up over the windows (`msg_set_pos` with `scrolled`: `:ls`, an
+   error's trace, a hit-enter or `confirm()` prompt) are a panel risen
+   from the bottom — a hairline and a shadow along its top edge — and the
+   notifications move above it, so a prompt is never under a toast.
+   Prompts are answered by keyboard as before (checked: hit-enter,
+   `confirm()` answered with `n`).
 7. _Sign, number and fold columns_ — fold column done (round 2): its
    default `-`/`+` are chevrons (an open fold's only on the cursor's row
    and under the pointer, as VS Code's `showFoldingControls: mouseover`),
