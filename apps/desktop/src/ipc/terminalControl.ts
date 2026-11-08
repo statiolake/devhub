@@ -92,6 +92,13 @@ export interface SessionPane {
  */
 export const NVIM_NAMED_OSC = "\u001b]6973;devhub-nvim\u0007";
 
+/** Cells `x0`…`x1` (inclusive) of row `y` of a pane. */
+export interface CopySpan {
+	readonly y: number;
+	readonly x0: number;
+	readonly x1: number;
+}
+
 /** A row of the picker's tree. */
 export interface ChooserRow {
 	readonly depth: number;
@@ -179,6 +186,8 @@ export type ControlToPage =
 			readonly vi: boolean;
 			readonly command: boolean;
 			readonly confirm: boolean;
+			/** A `-T search` prompt: asked at its pane's foot in copy mode. */
+			readonly search: boolean;
 	  }
 	| { readonly kind: "prompt-closed" }
 	/**
@@ -242,6 +251,24 @@ export type ControlToPage =
 	  }
 	| { readonly kind: "display-panes-closed"; readonly id: number }
 	/**
+	 * A pane in copy mode (`ptyHost/control/copyMode.ts`): its rows come as
+	 * its frames; this is what is drawn over them.
+	 */
+	| {
+			readonly kind: "copy-mode";
+			readonly pane: number;
+			/** tmux's position indicator (`copy-mode-position-format`). */
+			readonly badge: string;
+			/** Lines back from the bottom, of `history`. */
+			readonly scroll: number;
+			readonly history: number;
+			readonly selection: readonly CopySpan[];
+			readonly matches: readonly CopySpan[];
+	  }
+	| { readonly kind: "copy-mode-closed"; readonly pane: number }
+	/** Text for the system clipboard: a copy tmux made (`set-clipboard`). */
+	| { readonly kind: "clipboard"; readonly text: string }
+	/**
 	 * Something DevHub did not do and says so quietly: a binding whose
 	 * command tmux does not draw for a control client (`keyGuard.ts`).
 	 */
@@ -272,17 +299,18 @@ export type PageToControl =
 			readonly index?: number;
 	  }
 	/**
-	 * A right-click the pane's program did not take, or one on a window's
-	 * tab: tmux's `MouseDown3Pane` / `MouseDown3Status` binding runs.
+	 * A mouse event the pane's program did not take (a right-click, the
+	 * wheel), or one on a window's tab: tmux's binding for it runs.
 	 */
 	| {
-			readonly kind: "mouse-menu";
+			readonly kind: "mouse";
+			/** tmux's name: `MouseDown3Pane`, `WheelUpPane`, `MouseDown3Status`… */
+			readonly key: string;
 			readonly pane?: number;
 			readonly window?: number;
 			/** The cell, in the window. */
 			readonly x: number;
 			readonly y: number;
-			readonly meta: boolean;
 	  }
 	| { readonly kind: "select-window"; readonly window: number }
 	| { readonly kind: "visible"; readonly visible: boolean }
@@ -396,17 +424,20 @@ export function validateControlRequest(value: unknown): ControlRequest {
 				...(m.index === undefined ? {} : { index: count(m.index) }),
 			};
 			break;
-		case "mouse-menu":
+		case "mouse":
 			if (
-				typeof m.meta !== "boolean" ||
+				typeof m.key !== "string" ||
+				!/^(M-)?(MouseDown3Pane|MouseDown3Status|WheelUpPane|WheelDownPane)$/.test(
+					m.key,
+				) ||
 				(m.pane === undefined) === (m.window === undefined)
 			)
 				throw new TerminalFailure("invalid_request");
 			message = {
-				kind: "mouse-menu",
+				kind: "mouse",
+				key: m.key,
 				x: count(m.x, 10_000),
 				y: count(m.y, 10_000),
-				meta: m.meta,
 				...(m.pane === undefined ? {} : { pane: count(m.pane) }),
 				...(m.window === undefined ? {} : { window: count(m.window) }),
 			};

@@ -9,7 +9,7 @@ import "./menu.css";
 import "./chooser.css";
 import { useColorScheme } from "../../appearance";
 import { Failure, Waiting } from "../../components/shell/SurfaceState";
-import { GridPainter, rgbOfCss } from "../../neovim/painter";
+import { GridPainter, mixColors, rgbOfCss } from "../../neovim/painter";
 import { OptionKeys } from "../../surfaces/optionKey";
 import {
   activePalette,
@@ -30,6 +30,8 @@ import type {
   PaneBox,
 } from "../../../ipc/terminalControl";
 import { pasteBytes, sgrMouse, tmuxKey } from "./controlKeys";
+import { surfaceBridge } from "../surfaceBridge";
+import "./copyMode.css";
 import {
   applyControl,
   borders,
@@ -89,6 +91,10 @@ function colorsOf(palette: TerminalPalette | undefined) {
   return {
     foreground,
     background,
+    // The selection's colour, Neovim's Visual: copy mode's selection.
+    selection:
+      rgbOfCss(palette?.selectionBackground ?? "") ??
+      mixColors(foreground, background, 25),
     cursor: palette?.cursor ?? palette?.foreground ?? "#d0d0d0",
     palette: ansi.length === 16 ? palette256(ansi) : undefined,
   };
@@ -157,6 +163,7 @@ export function ControlTerminalSurface({
     chooserEl.setAttribute("role", "dialog");
     chooserEl.hidden = true;
     const numbersEl = document.createElement("div");
+    const copyEl = document.createElement("div");
     const input = document.createElement("textarea");
     input.className = "control-input";
     input.setAttribute("aria-label", `${surfaceLabel} terminal input`);
@@ -170,6 +177,7 @@ export function ControlTerminalSurface({
       menuEl,
       chooserEl,
       numbersEl,
+      copyEl,
       cursor,
       input,
     );
@@ -183,6 +191,7 @@ export function ControlTerminalSurface({
       linespace: Math.max(0, Math.round(fontSize * (lineHeight - 1))),
     });
     const view = newControlView(live.current.colors);
+    view.selection = live.current.colors.selection;
     const optionKeys = new OptionKeys();
 
     let disposed = false;
@@ -327,6 +336,7 @@ export function ControlTerminalSurface({
       drawMenu(width, height);
       drawChooser(width, height);
       drawNumbers(width, height);
+      drawCopy(width, height);
       // While a popup is open its cursor is the one shown, over it.
       const inset = popup?.border === true ? 1 : 0;
       const pane =
@@ -384,10 +394,17 @@ export function ControlTerminalSurface({
         promptShown = "";
         return;
       }
-      const rows = Math.max(1, view.rows);
-      promptLine.style.top = `${String((rows - 1) * height)}px`;
+      // A search from copy mode is asked at the foot of its pane, as wide.
+      const pane = activePane();
+      const inPane =
+        prompt.search && pane !== undefined && view.copy.has(pane.pane);
+      const box = inPane
+        ? pane
+        : { x: 0, y: 0, width: view.cols, height: Math.max(1, view.rows) };
+      promptLine.style.left = `${String(box.x * width)}px`;
+      promptLine.style.top = `${String((box.y + box.height - 1) * height)}px`;
       promptLine.style.height = `${String(height)}px`;
-      promptLine.style.width = `${String(Math.max(1, view.cols) * width)}px`;
+      promptLine.style.width = `${String(Math.max(1, box.width) * width)}px`;
       promptLine.style.right = "auto";
       promptLine.style.font = `${String(fontSize)}px/${String(height)}px ${terminalFontStack(appearanceNow?.terminalFontFamily)}`;
       const key = JSON.stringify(prompt);
@@ -570,6 +587,39 @@ export function ControlTerminalSurface({
       });
       chooserEl.replaceChildren(filter, tree);
     };
+    // Copy mode (`copyMode.css`): tmux's position as a badge at the pane's
+    // top right, and where the view is in the history as a thin bar.
+    const drawCopy = (width: number, height: number) => {
+      copyEl.replaceChildren(
+        ...view.panes.flatMap((box) => {
+          const copy = view.copy.get(box.pane);
+          if (copy === undefined) return [];
+          const badge = Object.assign(document.createElement("div"), {
+            className: "control-copy-badge",
+            textContent: copy.badge,
+          });
+          badge.style.right = `${String((view.cols - box.x - box.width) * width + 4)}px`;
+          badge.style.top = `${String(box.y * height + 4)}px`;
+          const out: HTMLElement[] = [badge];
+          if (copy.history > 0) {
+            const whole = box.height * height;
+            const bar = Math.max(
+              12,
+              (whole * box.height) / (copy.history + box.height),
+            );
+            const top =
+              ((copy.history - copy.scroll) / copy.history) * (whole - bar);
+            const thumb = document.createElement("div");
+            thumb.className = "control-copy-scroll";
+            thumb.style.left = `${String((box.x + box.width) * width - 4)}px`;
+            thumb.style.top = `${String(box.y * height + top)}px`;
+            thumb.style.height = `${String(bar)}px`;
+            out.push(thumb);
+          }
+          return out;
+        }),
+      );
+    };
     // `display-panes`: each pane's index in its middle.
     const drawNumbers = (width: number, height: number) => {
       const numbers = view.numbers;
@@ -660,6 +710,10 @@ export function ControlTerminalSurface({
       const message = value as ControlToPage;
       if (message.kind === "notice") {
         say(message.text);
+        return;
+      }
+      if (message.kind === "clipboard") {
+        void surfaceBridge().writeClipboard(message.text);
         return;
       }
       if (message.kind === "ended") {
@@ -824,11 +878,11 @@ export function ControlTerminalSurface({
       // A right-click the program does not take is tmux's MouseDown3Pane.
       if (event.button === 2 && !hit.reports) {
         send({
-          kind: "mouse-menu",
+          kind: "mouse",
+          key: `${event.altKey ? "M-" : ""}MouseDown3Pane`,
           pane: hit.pane.pane,
           x: hit.pane.x + hit.x,
           y: hit.pane.y + hit.y,
-          meta: event.altKey,
         });
         return;
       }
@@ -851,8 +905,21 @@ export function ControlTerminalSurface({
     };
     const onWheel = (event: WheelEvent) => {
       const hit = mouseFor(event);
-      if (hit === undefined || !hit.reports) return;
+      if (hit === undefined) return;
       event.preventDefault();
+      // The wheel over a program that does not take it is tmux's
+      // (WheelUpPane: into copy mode, and scrolling in it).
+      if (!hit.reports) {
+        if (event.deltaY === 0) return;
+        send({
+          kind: "mouse",
+          key: event.deltaY < 0 ? "WheelUpPane" : "WheelDownPane",
+          pane: hit.pane.pane,
+          x: hit.pane.x + hit.x,
+          y: hit.pane.y + hit.y,
+        });
+        return;
+      }
       send({
         kind: "bytes",
         pane: hit.pane.pane,
@@ -893,6 +960,7 @@ export function ControlTerminalSurface({
         if (on) focusIfUnclaimed();
       },
       colors(c) {
+        view.selection = c.selection;
         view.state.defaults.foreground = c.foreground;
         view.state.defaults.background = c.background;
         view.state.defaults.special = c.foreground;
@@ -911,11 +979,11 @@ export function ControlTerminalSurface({
         input.focus();
         const at = grids.getBoundingClientRect();
         send({
-          kind: "mouse-menu",
+          kind: "mouse",
+          key: "MouseDown3Status",
           window: id,
           x: Math.max(0, Math.floor((x - at.left) / cell().width)),
           y: Math.max(0, view.rows - 1),
-          meta: false,
         });
       },
       focus() {

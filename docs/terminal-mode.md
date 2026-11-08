@@ -620,6 +620,40 @@ formats are not drawn. `display-panes` draws each shown pane's index large
 in its middle for `-d` or `display-panes-time`; a digit runs its template
 (`select-pane -t '%%'`), any other key closes it.
 
+**Copy mode is tmux's, drawn by DevHub in place on the pane**
+(`main/ptyHost/control/copyMode.ts`, `copyMode.css`). A pane in copy mode or
+view mode is no longer taken out of it: while the active pane is in one, a
+key is looked up in the mode's table (`copy-mode-vi` with `mode-keys vi`) as
+tmux does, so the person's table is what runs — `v`, `y`'s `copy-pipe`,
+`g g` through `copy-mode-vi-g`, the search prompts (`/`, `?`: a `-T search`
+prompt, asked at the foot of its pane and as wide), prefix+y / Y's
+`previous-prompt -o` on tmux's own OSC 133 marks. After every key or
+command, DevHub reads the mode's state from tmux's formats (`scroll_position`,
+`copy_position`, `copy_cursor_*`, `selection_*`, `rectangle_toggle`,
+`selection_mode`, `pane_search_string`, and `copy-mode-position-format`
+expanded by tmux for the badge) and the rows it shows with `capture-pane -M`
+(the mode's own frozen copy) from `-scroll_position`; they go into an engine
+of the pane's size drawn in place of the pane's, with the copy cursor as a
+block. Why tmux's lines and not the engine's scrollback: the engine keeps
+2000 lines and tmux `history-limit` (100 000 in the person's tmux.conf), and
+copy mode's view is tmux's (its frozen copy, its line under the cursor), so
+reading the shown rows from tmux is exact at any depth for one capture per
+move. The selection is drawn as `screen_check_selection` takes it
+(inclusive, whole rows between, a rectangle, whole lines) in the theme's
+selection colour, Neovim's Visual; a search's matches in half of it; tmux's
+`[n/m]` is a small badge at the pane's top right and a thin bar shows where
+the view is in the history. A copy reaches the system clipboard as tmux's
+`set-clipboard` would send it to a terminal: on `%paste-buffer-changed`, with
+`set-clipboard` not `off`, the buffer is written through main
+(`writeClipboard`) — so does a script's `set-buffer`, which tmux itself would
+not send. The wheel over a pane whose program does not take it runs tmux's
+`WheelUpPane`/`WheelDownPane` (into copy mode, then the mode table's
+`scroll-up`), aimed at that pane. Not drawn: a drag or double-click
+selection (tmux reads the mouse's position from the mouse event, which a
+command from a control client has not got), line numbers
+(`copy-mode-line-numbers`), the 0.4 s flash the mock shows on a prompt-mark
+copy.
+
 The rest, until phase 3 draws them, is not let do that
 (`main/ptyHost/control/keyGuard.ts`):
 

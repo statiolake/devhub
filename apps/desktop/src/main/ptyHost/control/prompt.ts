@@ -177,6 +177,7 @@ export interface PromptView {
 	readonly vi: boolean;
 	readonly command: boolean;
 	readonly confirm: boolean;
+	readonly search: boolean;
 }
 
 /** What a key did to the prompt. */
@@ -333,6 +334,7 @@ export class PromptSession {
 			vi: this.#env.vi,
 			command: this.#commandMode,
 			confirm: this.args.command === "confirm-before",
+			search: this.args.type === "search",
 		};
 	}
 

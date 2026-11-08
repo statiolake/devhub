@@ -32,6 +32,8 @@ writeFileSync(
     'bind m display-popup -E "sleep 30"',
     'bind W confirm-before -p "kill? (y/n)" kill-session',
     "bind y copy-mode \\; send-keys -X cancel",
+    "set -g mode-keys vi",
+    "set -s set-clipboard on",
     "",
   ].join("\n"),
 );
@@ -78,6 +80,8 @@ function page() {
   let prompt: Extract<ControlToPage, { kind: "prompt" }> | undefined;
   let menu: Extract<ControlToPage, { kind: "menu" }> | undefined;
   let chooser: Extract<ControlToPage, { kind: "chooser" }> | undefined;
+  let copy: Extract<ControlToPage, { kind: "copy-mode" }> | undefined;
+  const clipboard: string[] = [];
   let numbers: Extract<ControlToPage, { kind: "display-panes" }> | undefined;
   const post = (message: ControlToPage) => {
     if (message.kind === "layout") layout = message;
@@ -86,6 +90,9 @@ function page() {
     else if (message.kind === "menu") menu = message;
     else if (message.kind === "menu-closed") menu = undefined;
     else if (message.kind === "chooser") chooser = message;
+    else if (message.kind === "copy-mode") copy = message;
+    else if (message.kind === "copy-mode-closed") copy = undefined;
+    else if (message.kind === "clipboard") clipboard.push(message.text);
     else if (message.kind === "chooser-closed") chooser = undefined;
     else if (message.kind === "display-panes") numbers = message;
     else if (message.kind === "display-panes-closed") numbers = undefined;
@@ -118,6 +125,10 @@ function page() {
     get chooser() {
       return chooser;
     },
+    get copy() {
+      return copy;
+    },
+    clipboard,
     get numbers() {
       return numbers;
     },
@@ -301,11 +312,11 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     await until("the menu closed", () => view.menu === undefined);
     // A right-click on the other pane: its menu, and its Zoom zooms it.
     client.receive({
-      kind: "mouse-menu",
+      kind: "mouse",
+      key: "MouseDown3Pane",
       pane: top.pane,
       x: 3,
       y: 2,
-      meta: false,
     });
     expect((await until("the pane's menu", () => view.menu)).title).toBe(
       `0 (%${String(top.pane)})`,
@@ -362,6 +373,49 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     await until("the end", () => view.ended);
   }, 20000);
 
+  it("draws copy mode as tmux keeps it, and a copy reaches the clipboard", async () => {
+    const socket = `devhub-copy-${String(process.pid)}`;
+    sockets.push(socket);
+    tmux(socket, "new-session", "-d", "-s", "y", "-x", "80", "-y", "24", "sh");
+    tmux(socket, "send-keys", "-t", "y", "PS1='$ '; clear; seq 1 60", "Enter");
+    const view = page();
+    const client = new ControlClient({
+      process: controlProcess(socket, "y"),
+      vt: lib,
+      cols: 80,
+      rows: 24,
+      post: view.post,
+      ended: () => undefined,
+    });
+    const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
+    await until("the output", () =>
+      view.screens.get(pane)?.some((row) => row === "60"),
+    );
+    client.receive({ kind: "keys", keys: ["C-q", "["] });
+    expect((await until("copy mode", () => view.copy)).badge).toMatch(
+      /\[0\/\d+\]/,
+    );
+    // The person's copy-mode-vi table, as tmux runs it: up 30, select a line.
+    client.receive({ kind: "keys", keys: ["3", "0", "k", "V"] });
+    await until("the selection", () =>
+      view.copy?.selection.length === 1 && view.copy.scroll > 0
+        ? true
+        : undefined,
+    );
+    // The rows shown are the mode's: the line the cursor is on is in them.
+    const row = view.copy?.selection[0]?.y ?? -1;
+    const text = view.screens.get(pane)?.[row];
+    expect(Number(text)).toBeGreaterThan(0);
+    client.receive({ kind: "keys", keys: ["Enter"] });
+    await until("the clipboard", () =>
+      view.clipboard.length > 0 ? true : undefined,
+    );
+    expect(view.clipboard[0]?.trim()).toBe(text);
+    await until("copy mode closed", () => view.copy === undefined);
+    client.stop();
+    await until("the end", () => view.ended);
+  }, 20000);
+
   it("refuses the bindings that would wait on it, and is never held by them", async () => {
     const socket = `devhub-guard-${String(process.pid)}`;
     sockets.push(socket);
@@ -390,23 +444,10 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     await until("the client still answering", () =>
       view.screens.get(pane)?.some((row) => row === "still-here"),
     );
-    // Copy mode left behind is left; one a binding leaves by itself is not said.
+    // A binding that enters copy mode and leaves it is left alone.
     client.receive({ kind: "keys", keys: ["C-q", "y"] });
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(view.notices).toHaveLength(2);
-    client.receive({ kind: "keys", keys: ["C-q", "["] });
-    await until("the copy-mode notice", () => view.notices.length === 3);
-    expect(view.notices[2]).toContain("copy-mode");
-    expect(
-      tmux(
-        socket,
-        "display-message",
-        "-p",
-        "-t",
-        "g",
-        "#{pane_in_mode}",
-      ).trim(),
-    ).toBe("0");
     client.stop();
     await until("the end", () => view.ended);
   }, 20000);

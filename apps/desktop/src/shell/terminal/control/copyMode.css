@@ -1,0 +1,44 @@
+/* Copy mode as DevHub draws it on the pane (`ptyHost/control/copyMode.ts`):
+   tmux's position indicator as a small badge at the pane's top right, and a
+   thin bar for where the view is in the history. The selection is the
+   painter's (the selection colour, Neovim's Visual). Its look is here alone,
+   as tokens, as the mock has it (`docs/terminal-mode.md`, phase 3). */
+
+.control-terminal {
+  --copy-badge-ink: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 60%,
+    transparent
+  );
+  --copy-badge-ground: color-mix(
+    in srgb,
+    var(--terminal-background, Canvas) 92%,
+    var(--terminal-foreground, CanvasText)
+  );
+  --copy-scroll: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 22%,
+    transparent
+  );
+}
+
+.control-copy-badge {
+  position: absolute;
+  z-index: 6;
+  padding: 0 6px;
+  border-radius: 3px;
+  background: var(--copy-badge-ground);
+  color: var(--copy-badge-ink);
+  font: 11px/18px var(--terminal-font, monospace);
+  pointer-events: none;
+  white-space: pre;
+}
+
+.control-copy-scroll {
+  position: absolute;
+  z-index: 6;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--copy-scroll);
+  pointer-events: none;
+}

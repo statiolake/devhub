@@ -64,6 +64,17 @@ import {
 	type MenuStep,
 } from "./menu.js";
 import {
+	COPY_FORMAT,
+	aimAt,
+	copyCapture,
+	copyScreen,
+	copyState,
+	matchSpans,
+	plainLine,
+	selectionSpans,
+	type CopyState,
+} from "./copyMode.js";
+import {
 	PromptSession,
 	promptOf,
 	untilControl,
@@ -128,7 +139,9 @@ const NODE_TIMERS = {
 const FIELD = "\u001f";
 /** The subscription that says a pane's mode or `@devhub-nvim` changed. */
 const PANE_FACTS = "devhub-pane";
-const PANE_FACTS_FORMAT = `#{pane_in_mode}${FIELD}#{@devhub-nvim}`;
+const PANE_FACTS_FORMAT = `#{pane_in_mode}${FIELD}#{pane_mode}${FIELD}#{@devhub-nvim}`;
+/** The modes DevHub draws on the pane (`copyMode.ts`): window-copy's two. */
+const COPY_MODES = new Set(["copy-mode", "view-mode"]);
 const NAMED = new TextEncoder().encode(NVIM_NAMED_OSC);
 
 /** A rectangle in cells of the window. */
@@ -143,6 +156,10 @@ interface Box {
 interface MouseAt {
 	/** `%pane` or `@window`: what `-t =` names. */
 	readonly target: string;
+	/** tmux's name for it: `MouseDown3Pane`, `WheelUpPane`. */
+	readonly key: string;
+	/** Already handed on to the pane's mode (`send-keys -M`). */
+	readonly viaMode?: boolean;
 	readonly x: number;
 	readonly y: number;
 	readonly window?: number;
@@ -174,6 +191,20 @@ interface Pane {
 	lastCursor: string;
 	/** In a mode (copy mode, a chooser). */
 	inMode: boolean;
+	/** Which (`#{pane_mode}`). */
+	mode: string;
+	/**
+	 * Copy mode as DevHub draws it (`copyMode.ts`): the mode's rows in an
+	 * engine of their own, shown in place of the pane's.
+	 */
+	copy:
+		| {
+				readonly vt: VtPane;
+				reading: boolean;
+				again: boolean;
+				state?: CopyState;
+		  }
+		| undefined;
 	/** `@devhub-nvim`: the socket a DevHub `nvim` in it named. */
 	socket: string;
 }
@@ -314,8 +345,8 @@ export class ControlClient {
 				else if (this.#menu !== undefined)
 					this.#menuStep(this.#menu.session.choose(message.index ?? -1));
 				return;
-			case "mouse-menu":
-				this.#mouseMenu(message);
+			case "mouse":
+				this.#mouse(message);
 				return;
 			case "chooser":
 				if (message.action === "close") this.#chooserStep({ kind: "close" });
@@ -518,6 +549,12 @@ export class ControlClient {
 					this.#o.post({ kind: "notice", text: event.text });
 				return;
 			case "other":
+				if (event.line.startsWith("%paste-buffer-changed ")) {
+					void this.#clipboard(
+						event.line.slice("%paste-buffer-changed ".length),
+					);
+					return;
+				}
 				if (event.line.trim() !== "" && !event.line.startsWith("%"))
 					this.#o.post({ kind: "notice", text: event.line });
 				return;
@@ -596,11 +633,11 @@ export class ControlClient {
 					this.#clientName,
 					"--",
 					...send,
-				]);
+				]).then(() => this.#copyMoved());
 			send = [];
 		};
 		for (const [index, key] of keys.entries()) {
-			const route = this.#router.route(key, Date.now());
+			const route = this.#router.route(key, Date.now(), this.#rootTable());
 			send.push(...route.send);
 			if (route.own !== undefined) {
 				flush();
@@ -646,10 +683,13 @@ export class ControlClient {
 		const options = await this.#command([
 			"display-message",
 			"-p",
-			["#{prefix}", "#{prefix2}", "#{repeat-time}"].join(FIELD),
+			["#{prefix}", "#{prefix2}", "#{repeat-time}", "#{mode-keys}"].join(FIELD),
 		]);
 		if (!keys.ok || !options.ok) return;
-		const [prefix, prefix2, repeat] = (options.lines[0] ?? "").split(FIELD);
+		const [prefix, prefix2, repeat, modeKeys] = (options.lines[0] ?? "").split(
+			FIELD,
+		);
+		this.#modeKeys = modeKeys ?? "emacs";
 		const prefixes = [prefix, prefix2].filter(
 			(p): p is string => p !== undefined && p !== "" && p !== "None",
 		);
@@ -682,7 +722,7 @@ export class ControlClient {
 			"#{pane_in_mode}" + FIELD + "#{pane_mode}",
 		]);
 		const [inMode, mode] = (state.lines[0] ?? "").split(FIELD);
-		if (!state.ok || inMode !== "1") return;
+		if (!state.ok || inMode !== "1" || COPY_MODES.has(mode ?? "")) return;
 		await this.#command(["copy-mode", "-q", "-t", target]);
 		this.#o.post({
 			kind: "notice",
@@ -915,9 +955,27 @@ export class ControlClient {
 			});
 			return;
 		}
-		// What a click opened is only its menu; a mouse binding's other arm
-		// (`send -M`) is the page's (it reports the click to the program).
-		if (mouse !== undefined) return;
+		if (mouse !== undefined) {
+			// `send-keys -M` hands the mouse on: to the pane's mode, whose
+			// table's binding for it runs; to a program, which the page
+			// reports it to itself.
+			if (/^\s*send(-keys)?\s+-M\s*$/.test(command)) {
+				const paneId = Number(mouse.target.slice(1));
+				const pane = mouse.target.startsWith("%")
+					? this.#panes.get(paneId)
+					: undefined;
+				if (pane !== undefined && COPY_MODES.has(pane.mode)) {
+					const table = this.#modeKeys === "vi" ? "copy-mode-vi" : "copy-mode";
+					const bound = this.#router.binding(table, mouse.key);
+					if (bound !== undefined)
+						await this.#dispatch(bound, { ...mouse, viaMode: true });
+				}
+				return;
+			}
+			if (mouse.target.startsWith("%"))
+				await this.#runText(aimAt(command, mouse.target));
+			return;
+		}
 		await this.#runText(command);
 	}
 
@@ -970,6 +1028,7 @@ export class ControlClient {
 			return;
 		}
 		await this.#run([line, this.#typeInto(["y"])]);
+		this.#copyMoved();
 	}
 
 	/**
@@ -1356,25 +1415,33 @@ export class ControlClient {
 	}
 
 	/**
-	 * A right-click the page did not give the pane's program: tmux's
-	 * `MouseDown3Pane` (or, on a window's tab, `MouseDown3Status`) binding,
-	 * with the click as its mouse.
+	 * A mouse event the page did not give the pane's program — a right-click,
+	 * the wheel — or one on a window's tab: tmux's binding for it
+	 * (`MouseDown3Pane`, `WheelUpPane`, `MouseDown3Status`) runs with it as
+	 * its mouse, in the mode's table while the pane is in copy mode.
 	 */
-	#mouseMenu(at: {
+	#mouse(at: {
+		key: string;
 		pane?: number;
 		window?: number;
 		x: number;
 		y: number;
-		meta: boolean;
 	}): void {
 		if (
 			this.#menu !== undefined ||
 			this.#prompt !== undefined ||
-			this.#popup !== undefined
+			this.#popup !== undefined ||
+			this.#chooser !== undefined
 		)
 			return;
-		const key = `${at.meta ? "M-" : ""}${at.window !== undefined ? "MouseDown3Status" : "MouseDown3Pane"}`;
-		const command = this.#router.binding("root", key);
+		const pane = at.pane === undefined ? undefined : this.#panes.get(at.pane);
+		const inCopy = pane !== undefined && COPY_MODES.has(pane.mode);
+		const table = inCopy
+			? this.#modeKeys === "vi"
+				? "copy-mode-vi"
+				: "copy-mode"
+			: "root";
+		const command = this.#router.binding(table, at.key);
 		if (command === undefined) return;
 		const target =
 			at.window !== undefined ? `@${String(at.window)}` : `%${String(at.pane)}`;
@@ -1382,8 +1449,10 @@ export class ControlClient {
 			[],
 			this.#dispatch(command, {
 				target,
+				key: at.key,
 				x: at.x,
 				y: at.y,
+				...(inCopy ? { viaMode: true } : {}),
 				...(at.window === undefined ? {} : { window: at.window }),
 			}),
 		);
@@ -1497,7 +1566,7 @@ export class ControlClient {
 			});
 			return;
 		}
-		void this.#run(lines);
+		void this.#run(lines).then(() => this.#copyMoved());
 	}
 
 	/** `send-keys -K` into this client's prompt: keys, or `-l` and text. */
@@ -1661,7 +1730,7 @@ export class ControlClient {
 		const seenPanes = new Set<TmuxId>();
 		const fresh: Pane[] = [];
 		for (const line of panes.lines) {
-			const [paneText, windowText, active, inMode, ...socket] =
+			const [paneText, windowText, active, inMode, mode, ...socket] =
 				line.split(FIELD);
 			const id = parseId(paneText);
 			const windowId = parseId(windowText);
@@ -1674,6 +1743,7 @@ export class ControlClient {
 				known.window = windowId;
 				known.inMode = inMode === "1";
 				known.socket = socket.join(FIELD);
+				this.#modeOf(known, mode ?? "");
 				continue;
 			}
 			const box =
@@ -1695,9 +1765,12 @@ export class ControlClient {
 				all: true,
 				lastCursor: "",
 				inMode: inMode === "1",
+				mode: "",
+				copy: undefined,
 				socket: socket.join(FIELD),
 			};
 			this.#panes.set(id, pane);
+			this.#modeOf(pane, mode ?? "");
 			fresh.push(pane);
 		}
 		for (const [id, pane] of [...this.#panes]) {
@@ -1762,11 +1835,108 @@ export class ControlClient {
 		pane.all = true;
 	}
 
+	/**
+	 * A buffer tmux made or changed: with `set-clipboard` on, tmux would
+	 * have set the outside terminal's clipboard (a copy in copy mode, a
+	 * `load-buffer -w`, a program's OSC 52), so DevHub sets the system's.
+	 */
+	async #clipboard(name: string): Promise<void> {
+		const [setting, buffer] = await Promise.all([
+			this.#command(["display-message", "-p", "#{set-clipboard}"]),
+			this.#command(["show-buffer", "-b", name]),
+		]);
+		if (!setting.ok || !buffer.ok || this.#ended) return;
+		if ((setting.lines[0] ?? "off") === "off") return;
+		this.#o.post({ kind: "clipboard", text: buffer.lines.join("\n") });
+	}
+
+	/** A pane entered or left copy mode: DevHub draws it, or stops. */
+	#modeOf(pane: Pane, mode: string): void {
+		if (pane.mode === mode) return;
+		pane.mode = mode;
+		if (COPY_MODES.has(mode)) {
+			if (pane.copy === undefined) {
+				const vt = this.#o.vt.open(pane.vt.cols, pane.vt.rows, 0);
+				if (this.#colors !== undefined) vt.setColors(this.#colors);
+				pane.copy = { vt, reading: false, again: false };
+			}
+			void this.#readCopy(pane);
+			return;
+		}
+		if (pane.copy !== undefined) {
+			pane.copy.vt.dispose();
+			pane.copy = undefined;
+			pane.all = true;
+			pane.dirty = true;
+			this.#o.post({ kind: "copy-mode-closed", pane: pane.id });
+			this.#schedule();
+		}
+	}
+
+	/** Every pane in copy mode read again: a key or a command may have moved it. */
+	#copyMoved(): void {
+		for (const pane of this.#panes.values())
+			if (pane.copy !== undefined) void this.#readCopy(pane);
+	}
+
+	/**
+	 * A pane's copy mode, read from tmux (`copyMode.ts`): its state, then the
+	 * rows it shows; one read at a time, once more if asked meanwhile.
+	 */
+	async #readCopy(pane: Pane): Promise<void> {
+		const copy = pane.copy;
+		if (copy === undefined || this.#ended) return;
+		if (copy.reading) {
+			copy.again = true;
+			return;
+		}
+		copy.reading = true;
+		try {
+			do {
+				copy.again = false;
+				const target = `%${String(pane.id)}`;
+				const answer = await this.#command([
+					"display-message",
+					"-p",
+					"-t",
+					target,
+					COPY_FORMAT,
+				]);
+				const state = answer.ok
+					? copyState(answer.lines.join("\n"))
+					: undefined;
+				if (state === undefined || !COPY_MODES.has(state.mode)) return;
+				const capture = await this.#command(copyCapture(state, target));
+				if (pane.copy !== copy || !capture.ok) return;
+				if (copy.vt.cols !== state.width || copy.vt.rows !== state.height)
+					copy.vt.resize(state.width, state.height);
+				copy.vt.reset();
+				copy.vt.write(copyScreen(capture.lines, state));
+				copy.state = state;
+				pane.all = true;
+				pane.dirty = true;
+				this.#o.post({
+					kind: "copy-mode",
+					pane: pane.id,
+					badge: state.badge,
+					scroll: state.scroll,
+					history: state.history,
+					selection: selectionSpans(state),
+					matches: matchSpans(capture.lines.map(plainLine), state.search),
+				});
+				this.#schedule();
+			} while (copy.again && pane.copy === copy && !this.#ended);
+		} finally {
+			copy.reading = false;
+		}
+	}
+
 	/** A pane's mode and socket, as `PANE_FACTS_FORMAT` gives them. */
 	#facts(paneId: TmuxId, value: string): void {
 		const pane = this.#panes.get(paneId);
 		if (pane === undefined) return;
-		const [inMode, ...socket] = value.split(FIELD);
+		const [inMode, mode, ...socket] = value.split(FIELD);
+		this.#modeOf(pane, mode ?? "");
 		const next = { inMode: inMode === "1", socket: socket.join(FIELD) };
 		if (next.inMode === pane.inMode && next.socket === pane.socket) return;
 		pane.inMode = next.inMode;
@@ -1824,6 +1994,19 @@ export class ControlClient {
 			}
 		}
 	}
+
+	/**
+	 * The table a key is looked up in with no prefix: the copy mode's while
+	 * the active pane is in it (`mode-keys`), as tmux does; else root.
+	 */
+	#rootTable(): string {
+		const active = this.#activePane();
+		const pane = active === undefined ? undefined : this.#panes.get(active);
+		if (pane === undefined || !COPY_MODES.has(pane.mode)) return "root";
+		return this.#modeKeys === "vi" ? "copy-mode-vi" : "copy-mode";
+	}
+
+	#modeKeys = "emacs";
 
 	#activePane(): TmuxId | undefined {
 		const window =
@@ -1929,7 +2112,7 @@ export class ControlClient {
 			const pane = this.#panes.get(box.pane);
 			if (pane === undefined || pane.syncing || !(pane.dirty || pane.all))
 				continue;
-			const frame = pane.vt.read(pane.all);
+			const frame = (pane.copy?.vt ?? pane.vt).read(pane.all);
 			pane.dirty = false;
 			pane.all = false;
 			const cursor = JSON.stringify(frame.cursor);
@@ -1972,7 +2155,10 @@ export class ControlClient {
 		this.#modeChecks.clear();
 		for (const resolve of this.#replies.splice(0))
 			resolve({ ok: false, lines: [] });
-		for (const pane of this.#panes.values()) pane.vt.dispose();
+		for (const pane of this.#panes.values()) {
+			pane.vt.dispose();
+			pane.copy?.vt.dispose();
+		}
 		this.#panes.clear();
 		this.#o.post({ kind: "ended", reason });
 		this.#o.ended(reason);

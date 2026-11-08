@@ -160,7 +160,12 @@ export class KeyRouter {
 		return this.#pending !== undefined;
 	}
 
-	route(key: string, now: number): KeyRoute {
+	/**
+	 * `root`: the table a key is looked up in after no prefix — the root
+	 * table, or the mode's (`copy-mode-vi`) while the active pane is in
+	 * copy mode, as tmux does.
+	 */
+	route(key: string, now: number, root = "root"): KeyRoute {
 		const pending = this.#pending;
 		if (pending !== undefined) {
 			this.#pending = undefined;
@@ -183,10 +188,15 @@ export class KeyRouter {
 			this.#pending = key;
 			return { send: [] };
 		}
-		return this.#bound("root", [key], now);
+		return this.#bound(root, [key], now, root);
 	}
 
-	#bound(table: string, keys: readonly string[], now: number): KeyRoute {
+	#bound(
+		table: string,
+		keys: readonly string[],
+		now: number,
+		root = "root",
+	): KeyRoute {
 		const key = keys[keys.length - 1];
 		const binding = this.#bindings.get(table)?.get(key);
 		if (binding === undefined) return { send: keys };
@@ -195,7 +205,7 @@ export class KeyRouter {
 			return {
 				send: [],
 				own: binding.command,
-				resetTable: table !== "root" && keys.length === 1,
+				resetTable: table !== root && keys.length === 1,
 			};
 		}
 		if (waiting !== undefined) {
@@ -203,7 +213,7 @@ export class KeyRouter {
 				send: [],
 				refused: { keys: keys.join(" "), command: waiting },
 				// The prefix was never sent; a table tmux was already in was.
-				resetTable: table !== "root" && keys.length === 1,
+				resetTable: table !== root && keys.length === 1,
 			};
 		}
 		const next = switchesTo(binding.command);

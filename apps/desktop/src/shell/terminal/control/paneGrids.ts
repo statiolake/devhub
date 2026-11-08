@@ -103,6 +103,15 @@ export interface ControlView {
   numbers:
     | Omit<Extract<ControlToPage, { kind: "display-panes" }>, "kind">
     | undefined;
+  /** Panes in copy mode: what is drawn over their rows (`copy-mode`). */
+  readonly copy: Map<
+    number,
+    Omit<Extract<ControlToPage, { kind: "copy-mode" }>, "kind" | "pane">
+  >;
+  /** Cells of a grid drawn in another look (a selection), and their own hl. */
+  readonly overrides: Map<number, Map<number, number>>;
+  /** The selection's colour (Neovim's Visual, the theme's selection). */
+  selection: number;
   /** The `display-menu` open now. */
   menu: Omit<Extract<ControlToPage, { kind: "menu" }>, "kind"> | undefined;
   readonly modes: Map<number, PaneModes>;
@@ -131,6 +140,9 @@ export function newControlView(fallback: {
     menu: undefined,
     chooser: undefined,
     numbers: undefined,
+    copy: new Map(),
+    overrides: new Map(),
+    selection: mixColors(fallback.foreground, fallback.background, 25),
     modes: new Map(),
     hlIds: new Map(),
   };
@@ -179,9 +191,13 @@ function applyFrame(
     for (let row = 0; row < frame.rows; row++) grid.dirty.add(row);
     changes.grids.add(id);
   }
+  const overrides = view.overrides.get(id);
   for (const row of frame.dirty) {
     if (row.y >= grid.height) continue;
     const at = row.y * grid.width;
+    // The row is the engine's again: what was drawn over it is redrawn.
+    if (overrides !== undefined)
+      for (let x = 0; x < grid.width; x++) overrides.delete(at + x);
     for (let x = 0; x < grid.width && x < row.cells.length; x++) {
       grid.chars[at + x] = row.cells[x];
       const styleId = row.styles[x];
@@ -217,6 +233,7 @@ export function applyControl(
     case "pane": {
       const { pane, frame } = message;
       applyFrame(view, String(pane), gridOf(pane), frame, changes);
+      if (view.copy.has(pane)) drawCopy(view, pane);
       view.cursors.set(pane, frame.cursor);
       view.modes.set(pane, message.modes);
       changes.cursor = true;
@@ -300,10 +317,95 @@ export function applyControl(
       if (view.numbers?.id === message.id) view.numbers = undefined;
       changes.cursor = true;
       return changes;
+    case "copy-mode": {
+      const { kind: _, pane, ...copy } = message;
+      view.copy.set(pane, copy);
+      drawCopy(view, pane);
+      changes.grids.add(gridOf(pane));
+      changes.cursor = true;
+      return changes;
+    }
+    case "copy-mode-closed":
+      view.copy.delete(message.pane);
+      undraw(view, gridOf(message.pane));
+      changes.grids.add(gridOf(message.pane));
+      changes.cursor = true;
+      return changes;
     case "notice":
+    case "clipboard":
     case "ended":
       return changes;
   }
+}
+
+/** A grid's cells drawn over put back to their own look. */
+function undraw(view: ControlView, id: number): void {
+  const overrides = view.overrides.get(id);
+  const grid = view.state.grids.get(id);
+  if (overrides === undefined || grid === undefined) return;
+  for (const [cell, hl] of overrides) {
+    grid.hls[cell] = hl;
+    grid.dirty.add(Math.floor(cell / grid.width));
+  }
+  overrides.clear();
+}
+
+/**
+ * A highlight drawn over another: its ink and attributes, on `ground`. One
+ * per pair, made the first time it is asked for.
+ */
+function over(view: ControlView, hl: number, ground: number): number {
+  const key = `over:${String(ground)}:${String(hl)}`;
+  let id = view.hlIds.get(key);
+  if (id === undefined) {
+    id = view.hlIds.size + 1;
+    view.hlIds.set(key, id);
+  }
+  const base = view.state.hl.get(hl) ?? {};
+  view.state.hl.set(id, {
+    ...base,
+    reverse: false,
+    background: ground,
+    ...(base.reverse === true
+      ? { foreground: base.background ?? view.state.defaults.background }
+      : {}),
+  });
+  return id;
+}
+
+/**
+ * Copy mode's selection and search matches over a pane's rows, in the
+ * selection colour (Neovim's Visual) and half of it.
+ */
+function drawCopy(view: ControlView, pane: number): void {
+  const id = gridOf(pane);
+  const copy = view.copy.get(pane);
+  const grid = view.state.grids.get(id);
+  undraw(view, id);
+  if (copy === undefined || grid === undefined) return;
+  let overrides = view.overrides.get(id);
+  if (overrides === undefined) {
+    overrides = new Map();
+    view.overrides.set(id, overrides);
+  }
+  const match = mixColors(view.selection, view.state.defaults.background, 50);
+  const paint = (
+    spans: readonly { y: number; x0: number; x1: number }[],
+    ground: number,
+  ) => {
+    for (const { y, x0, x1 } of spans) {
+      if (y < 0 || y >= grid.height) continue;
+      for (let x = x0; x <= x1 && x < grid.width; x++) {
+        const cell = y * grid.width + x;
+        const own = overrides.get(cell) ?? grid.hls[cell];
+        overrides.set(cell, own);
+        grid.hls[cell] = over(view, own, ground);
+      }
+      grid.dirty.add(y);
+    }
+  };
+  paint(copy.matches, match);
+  paint(copy.selection, view.selection);
 }
 
 /** Where each shown pane's grid goes, in cells of the window. */
