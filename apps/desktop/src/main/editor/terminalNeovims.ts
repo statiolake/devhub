@@ -733,6 +733,19 @@ export class TerminalNeovims {
 			panes.panes.map((pane) => [pane.pane, pane.socket]),
 		);
 		const first = watch.control === undefined;
+		// A control client attached again (an SSH host's connection came
+		// back): a Neovim whose UI ended with the old connection is tried
+		// again, as at a DevHub open (`reclaim`).
+		if (
+			panes.client !== "" &&
+			watch.control !== undefined &&
+			panes.client !== watch.control.panes.client
+		) {
+			for (const pane of watch.reading?.panes ?? []) {
+				this.dead.delete(deadKey(pane.paneId, pane.socket));
+			}
+			watch.control.hints = "";
+		}
 		const control = (watch.control ??= {
 			panes,
 			hints: "",

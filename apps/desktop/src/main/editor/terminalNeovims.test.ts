@@ -367,6 +367,23 @@ describe("TerminalNeovims", () => {
 			neovims.dispose();
 		});
 
+		it("tries a Neovim again once a control client attaches again", async () => {
+			const { neovims } = setup(parseTerminalNeovimReading(OUTPUT));
+			neovims.controlPanes("t", panes());
+			await vi.waitFor(() => {
+				expect(neovims.views()).toHaveLength(1);
+			});
+			// The connection to the host dropped: the UI ended, the client went.
+			neovims.ended("tnv:1");
+			neovims.controlPanes("t", panes({ client: "" }));
+			expect(neovims.views()).toEqual([]);
+			neovims.controlPanes("t", panes({ client: "client-8" }));
+			await vi.waitFor(() => {
+				expect(neovims.views()).toHaveLength(1);
+			});
+			neovims.dispose();
+		});
+
 		it("checks a page's report", () => {
 			const wire = { ...panes(), zoom: undefined };
 			expect(parseControlPanes(wire, 2)?.zoom).toBe(2);
