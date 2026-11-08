@@ -283,6 +283,8 @@ function useConversation(
   const [transcript, setTranscript] = useState<Transcript>(EMPTY_TRANSCRIPT);
   const [draft, setDraft] = useState<string | undefined>(undefined);
   const [inserted, setInserted] = useState<readonly ComposerInsertion[]>([]);
+  /** Bumped when the engine holding the conversation is replaced: attached afresh. */
+  const [attachments, setAttachments] = useState(0);
   const hiddenRef = useRef(hidden);
   const publishRef = useRef<() => void>(() => undefined);
   useEffect(() => {
@@ -348,11 +350,18 @@ function useConversation(
     };
     let attached = true;
     bridge.conversation
-      .attach(agentId, fold, (text) => {
-        // After the ones main held for the attachment, which were earlier.
-        if (current === undefined) earlyInserts.push(text);
-        else if (attached) insert([text]);
-      })
+      .attach(
+        agentId,
+        fold,
+        (text) => {
+          // After the ones main held for the attachment, which were earlier.
+          if (current === undefined) earlyInserts.push(text);
+          else if (attached) insert([text]);
+        },
+        () => {
+          if (attached) setAttachments((count) => count + 1);
+        },
+      )
       .then((attachment) => {
         if (!attached) return;
         current = {
@@ -377,6 +386,6 @@ function useConversation(
       // be gone, and main lets go of the page's attachments by itself.
       bridge.conversation.detach(agentId).catch(() => undefined);
     };
-  }, [agentId, reportFailure]);
+  }, [agentId, reportFailure, attachments]);
   return { transcript, draft, inserted };
 }

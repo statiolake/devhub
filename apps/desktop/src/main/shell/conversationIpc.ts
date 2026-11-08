@@ -9,7 +9,7 @@
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from "electron";
 import {
 	CONVERSATION_CHANNELS,
-	type ConversationAttachment,
+	type ConversationAttachReply,
 	type ConversationCommandWire,
 	type EmbedFileWire,
 } from "../../ipc/conversation.js";
@@ -104,6 +104,21 @@ export interface ConversationIpcOptions {
 	readonly personSent?: (agentId: AgentId) => void;
 	/** The app's one conversion of a failure into what crosses IPC. */
 	readonly fail: (error: unknown) => Error;
+	/**
+	 * The pages' ports to the conversation engine (`agentEngine/pagePorts.ts`),
+	 * for the conversations it runs (`ConversationHandle.pagePort`).
+	 */
+	readonly pagePorts?: PagePorts;
+}
+
+/** Each page's port to the conversation engine, handed out as `attach` needs one. */
+export interface PagePorts {
+	/** The engine generation `page` has a port to, handed out now if it has none to this one. */
+	portFor(page: WebContents): number;
+	/** The page went away: its port is let go of. */
+	gone(page: WebContents): void;
+	/** The engine was replaced: pages attach again. */
+	onReplaced(listener: () => void): void;
 }
 
 /** What the rest of main reaches of the Agents page's conversations. */
@@ -139,6 +154,7 @@ export function registerConversationIpc(
 		const gone = () => {
 			for (const agentId of attached) letGoOfEdits(agentId);
 			attached.clear();
+			options.pagePorts?.gone(page);
 		};
 		page.once("destroyed", gone);
 		page.on("render-process-gone", gone);
@@ -173,6 +189,13 @@ export function registerConversationIpc(
 		queued.push([agentId, revision, event]);
 	});
 
+	// A new engine replayed every conversation: the page attaches afresh.
+	options.pagePorts?.onReplaced(() => {
+		const page = options.agentsPage();
+		if (page === undefined || page.isDestroyed()) return;
+		page.send(CONVERSATION_CHANNELS.restarted);
+	});
+
 	/** Every request: from the Agents page, about an Agent, or refused in the app's own shape. */
 	const handle = <T>(
 		channel: string,
@@ -205,7 +228,7 @@ export function registerConversationIpc(
 
 	handle(
 		CONVERSATION_CHANNELS.attach,
-		async (agentId): Promise<ConversationAttachment> => {
+		async (agentId): Promise<ConversationAttachReply> => {
 			const page = options.agentsPage();
 			if (page === undefined)
 				throw new Error("the Agents page went away while it attached");
@@ -216,11 +239,11 @@ export function registerConversationIpc(
 			attached.add(agentId);
 			const inserted = held.get(agentId) ?? [];
 			held.delete(agentId);
-			return {
-				...conversation.snapshot(),
-				draft: options.drafts.get(agentId),
-				inserted,
-			};
+			const draft = options.drafts.get(agentId);
+			if (conversation.pagePort && options.pagePorts !== undefined) {
+				return { port: options.pagePorts.portFor(page), draft, inserted };
+			}
+			return { ...(await conversation.snapshot()), draft, inserted };
 		},
 	);
 

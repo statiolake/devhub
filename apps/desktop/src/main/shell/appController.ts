@@ -364,7 +364,14 @@ import {
 } from "./loginEnvironment.js";
 import { cliWithWindowTerminal } from "../services/windowTerminal.js";
 import { OperationDeadline } from "../terminal/command.js";
-import { wireAgents, type AgentWiring } from "./agentWiring.js";
+import {
+	cacheKeepSettingsOf,
+	limitResumeSettingsOf,
+	wireAgents,
+	type AgentWiring,
+} from "./agentWiring.js";
+import { EngineClient, electronEngineLauncher } from "../agentEngine/client.js";
+import { enginePagePorts } from "../agentEngine/pagePorts.js";
 import { EscalationStore } from "../orchestrator/escalationStore.js";
 import {
 	OrchestratorService,
@@ -558,7 +565,7 @@ import {
 	issueNumberFromBranch,
 	parseGitHubItemUrl,
 } from "../../model/github.js";
-import { requestId } from "../../model/conversation.js";
+import { requestId, type Usage } from "../../model/conversation.js";
 import type { GitHubItem } from "../../model/github.js";
 import { issuePromptReview, toDomainProfile } from "./issueAssignment.js";
 import {
@@ -1069,6 +1076,11 @@ export class AppController {
 		TerminalLauncherStatus
 	>();
 	private agentWiring: AgentWiring | undefined;
+	/**
+	 * Where the GUI Agents' conversations run (`agentEngine/`): a utility
+	 * process. `DEVHUB_CONVERSATIONS_IN_MAIN=1` runs them in main instead.
+	 */
+	private conversationEngine: EngineClient | undefined;
 	/** The Agents page's conversations, once registered: where words for a composer go. */
 	private conversationIpc: ConversationIpc | undefined;
 	/** "Send to Agent…" from the editors. See `sendToAgent.ts`. */
@@ -1547,7 +1559,19 @@ export class AppController {
 		const skill = this.writeAgentSkill(userDataPath);
 		const orchestratorSkill = this.writeOrchestratorSkill(userDataPath);
 		this.startOrchestratorService(userDataPath);
+		const engine =
+			process.env["DEVHUB_CONVERSATIONS_IN_MAIN"] === "1"
+				? undefined
+				: new EngineClient({
+						launch: electronEngineLauncher,
+						settings: () => ({
+							limitResume: limitResumeSettingsOf(this.settings.config),
+							cacheKeep: cacheKeepSettingsOf(this.settings.config),
+						}),
+					});
+		this.conversationEngine = engine;
 		this.agentWiring = wireAgents({
+			...(engine === undefined ? {} : { engine }),
 			// This Mac's skill is written at startup; another machine's is
 			// written there with its `devhub` command, when its terminal
 			// launcher is installed (`RemoteShellRuntime.terminalLauncher`).
@@ -1603,6 +1627,7 @@ export class AppController {
 				},
 			},
 			drafts: this.drafts,
+			...(engine === undefined ? {} : { pagePorts: enginePagePorts(engine) }),
 			agentsPage: () => shellWindow().agents.contents(),
 			// A continue of an Agent that is not idle is a question first
 			// (`Coordinator.askAbout`), and the button that asked cannot draw
@@ -1674,13 +1699,15 @@ export class AppController {
 		});
 		// The Sidebar's usage-limits readout, from what the GUI Agents report
 		// as well as from the background readers (`startUsageReaders`).
-		this.agentWiring.conversations.registry.onEvent(
-			usageLimitsListener(
-				this.usageLimits,
-				(agentId) => this.coordinator.model.agent(agentId)?.profile.kind,
-				(limits) => this.usageLimitsChanged(limits),
-			),
+		const usageLimits = usageLimitsListener(
+			this.usageLimits,
+			(agentId) => this.coordinator.model.agent(agentId)?.profile.kind,
+			(limits) => this.usageLimitsChanged(limits),
 		);
+		const usageOf = (agentId: AgentId, usage: Usage) =>
+			usageLimits(agentId, 0, { type: "usage", usage });
+		this.agentWiring.conversations.registry.onUsage(usageOf);
+		engine?.onUsage(usageOf);
 		// Everything restored from the state file describes the previous run,
 		// and the sessions on the socket are what is left of it. Nothing has to
 		// be told which session belongs where: each carries its own workspace
@@ -4403,6 +4430,9 @@ export class AppController {
 		// The managed Neovims too: they run on in tmux, and the next DevHub
 		// adopts them by their sockets.
 		this.managedNeovims?.dispose();
+		// The conversations stop being followed; their hosts run on in tmux,
+		// and the next DevHub replays them from their journals.
+		this.conversationEngine?.dispose();
 	}
 
 	//#endregion
@@ -10335,28 +10365,42 @@ export class AppController {
 				)
 					return undefined;
 				const conversation = await this.agentWiring.conversations.of(agent.id);
+				// Read once and again after each thing done to it: the transcript
+				// is the conversation engine's, and a read is a request there.
+				let { transcript } = await conversation.snapshot();
+				const reread = async () => {
+					({ transcript } = await conversation.snapshot());
+				};
 				return {
-					entries: () => conversation.snapshot().transcript.entries,
-					requests: () => conversation.snapshot().transcript.requests,
+					entries: () => transcript.entries,
+					requests: () => transcript.requests,
 					turn: () => {
-						const state = conversation.snapshot().transcript.state;
+						const { state } = transcript;
 						return state.phase === "ready" ? state.turn : state.phase;
 					},
 					failure: () => {
-						const state = conversation.snapshot().transcript.state;
+						const { state } = transcript;
 						return state.phase === "broken"
 							? `${state.failure.code}: ${state.failure.detail}`
 							: undefined;
 					},
-					usage: () => conversation.snapshot().transcript.usage,
-					submit: (text) => conversation.submit(text, []),
-					interrupt: () => conversation.command({ kind: "interrupt" }),
-					answer: (request, answer) =>
-						conversation.command({
+					usage: () => transcript.usage,
+					submit: async (text) => {
+						await conversation.submit(text, []);
+						await reread();
+					},
+					interrupt: async () => {
+						await conversation.command({ kind: "interrupt" });
+						await reread();
+					},
+					answer: async (request, answer) => {
+						await conversation.command({
 							kind: "answer",
 							request: requestId(request),
 							answer,
-						}),
+						});
+						await reread();
+					},
 				};
 			},
 			commands: () => {
@@ -11057,6 +11101,7 @@ export class AppController {
 		this.publishActions();
 		// `[agents] auto_compact_*` is read when a conversation changes; an
 		// idle one would not notice the setting turned on until too late.
+		this.conversationEngine?.settingsChanged();
 		this.agentWiring?.conversations.registry.reconsiderCacheKeeping();
 		// `general.workbench_discard_minutes` and `workbench_freeze` are read
 		// by a plan, and its deadline set by one: without a plan now, a frozen

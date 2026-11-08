@@ -4,7 +4,7 @@ import { CONVERSATION_CHANNELS } from "../../ipc/conversation.js";
 import type { AgentId } from "../../model/domain.js";
 import type { AgentDrafts } from "../agent/conversation/drafts.js";
 import { ConversationRegistry } from "../agent/conversation/registry.js";
-import type { AgentConversation } from "../agent/conversation/conversation.js";
+import type { ConversationHandle } from "../agent/conversation/handle.js";
 import type { GuiConversations } from "./agentWiring.js";
 import {
 	registerConversationIpc,
@@ -44,7 +44,7 @@ function harness(defer?: (send: () => void) => void) {
 	const page = fakePage();
 	const conversation = {
 		snapshot: () => ({ transcript: { entries: [] }, revision: 3 }),
-	} as unknown as AgentConversation;
+	} as unknown as ConversationHandle;
 	const conversations = {
 		registry: new ConversationRegistry(),
 		of: () => Promise.resolve(conversation),
@@ -108,7 +108,7 @@ describe("a conversation's events", () => {
 		let publish: (revision: number, event: never) => void = () => undefined;
 		conversations.registry.open(AGENT, (made) => {
 			publish = made;
-			return { start: () => undefined } as unknown as AgentConversation;
+			return { start: () => undefined } as unknown as ConversationHandle;
 		});
 		await invoke(CONVERSATION_CHANNELS.attach, AGENT);
 		publish(4, event("a"));
@@ -139,7 +139,7 @@ describe("a conversation's events", () => {
 		let publish: (revision: number, event: never) => void = () => undefined;
 		conversations.registry.open(AGENT, (made) => {
 			publish = made;
-			return { start: () => undefined } as unknown as AgentConversation;
+			return { start: () => undefined } as unknown as ConversationHandle;
 		});
 		publish(4, event("a"));
 		expect(due).toEqual([]);

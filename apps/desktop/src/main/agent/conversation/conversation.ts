@@ -106,6 +106,7 @@ import {
 	type EntryId,
 	type ImageRef,
 	type McpSignIn,
+	type McpState,
 	type PendingId,
 	type PendingMessage,
 	type RewindOutcome,
@@ -113,6 +114,10 @@ import {
 } from "../../../model/conversation.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import { ConversationRefused, ConversationStopped } from "./failures.js";
+import {
+	observeConversation,
+	type ConversationObservation,
+} from "./reading.js";
 import {
 	AUTO_COMPACT_COMMAND,
 	CACHE_KEEP_OFF,
@@ -221,6 +226,19 @@ export function openedLater(
 		sentLog: async () => (await host()).sentLog(),
 		journalSize: async () => (await host()).journalSize?.() ?? 0,
 	};
+}
+
+/**
+ * What the rest of DevHub reads of a conversation between its events: the
+ * round's observation (`observeConversation`), the session its CLI named, and
+ * its MCP servers (what a sign-in is offered for). Small, plain data, the same
+ * while the conversation says the same: it crosses from the conversation
+ * engine to main when it changes, where the transcript does not.
+ */
+export interface ConversationFacts {
+	readonly observation: ConversationObservation;
+	readonly sessionId: string | undefined;
+	readonly mcpServers: McpState["servers"];
 }
 
 export interface ConversationReading {
@@ -365,6 +383,22 @@ export class AgentConversation {
 			crashed: this.#crashed,
 			autoCompactAt: this.#cacheKeeper.dueAt(),
 			...(this.#offset < this.#restoringUntil ? { restoring: true } : {}),
+		};
+	}
+
+	/** What main reads of the conversation now (`ConversationFacts`); nothing of it is kept here. */
+	facts(): ConversationFacts {
+		const transcript = this.#transcript;
+		return {
+			observation: observeConversation({
+				transcript,
+				lost: this.#lost,
+				crashed: this.#crashed,
+				autoCompactAt: this.#cacheKeeper.dueAt(),
+				...(this.#offset < this.#restoringUntil ? { restoring: true } : {}),
+			}),
+			sessionId: transcript.session.sessionId,
+			mcpServers: transcript.mcp.servers,
 		};
 	}
 

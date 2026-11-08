@@ -1,10 +1,17 @@
 /**
  * The GUI Agents' conversations, as the Agents page reaches them.
  *
- * main holds each conversation's true `Transcript`; the page asks for it once
- * (`attach`) and is then sent every event after it, numbered, to fold into its
- * copy with the same `applyEvent` main used. Nothing else crosses: the page
- * never learns a protocol, and main never learns what the page drew.
+ * The conversation engine (`main/agentEngine/`) holds each conversation's
+ * true `Transcript`; the page asks for it once (`attach`) and is then sent
+ * every event after it, numbered, to fold into its copy with the same fold
+ * the engine used. Nothing else crosses: the page never learns a protocol,
+ * and nobody learns what the page drew.
+ *
+ * The snapshot and the events come over a `MessagePort` to the engine that
+ * main hands the page (`port`), so they never pass main; the rest of an
+ * attachment (the draft, the words held for the composer) and every request
+ * are main's. A conversation run in main itself — the engine given up on —
+ * sends its snapshot with the attachment and its events on `events`.
  *
  * Every request resolves when it has been done and rejects when it has not,
  * with the failure in the app's own error shape (`shell/failure.ts` reads it
@@ -59,6 +66,17 @@ export const CONVERSATION_CHANNELS = {
 	 * sends alone were 7% of main's time.
 	 */
 	events: "devhub:conversation:events",
+	/**
+	 * main → page: `({ generation })` with one transferred `MessagePort` — the
+	 * page's port to the conversation engine of that generation
+	 * (`main/agentEngine/protocol.ts`, `PageToEngine` and `EngineToPage`).
+	 */
+	port: "devhub:conversation:port",
+	/**
+	 * main → page: the conversation engine was replaced (it ended and was
+	 * started again, or given up on): every attachment is attached again.
+	 */
+	restarted: "devhub:conversation:restarted",
 	/**
 	 * main → page: `(agentId, text)` — words for the Agent's composer, after
 	 * its draft and not sent ("Send to Agent…", `main/shell/sendToAgent.ts`).
@@ -163,6 +181,17 @@ export interface ConversationAttachment {
 	readonly inserted: readonly string[];
 }
 
+/**
+ * What main answers an attach with: the whole attachment for a conversation
+ * run in main, or all but its transcript for one the engine runs, whose
+ * snapshot the page asks the engine of `port`'s generation for.
+ */
+export type ConversationAttachReply =
+	| ConversationAttachment
+	| (Omit<ConversationAttachment, "transcript" | "revision"> & {
+			readonly port: number;
+	  });
+
 /** Words for the composer, after what is in it: put there, never sent. */
 export type ConversationInsertListener = (text: string) => void;
 
@@ -181,6 +210,12 @@ export interface ConversationApi {
 		agentId: string,
 		onEvent: ConversationEventListener,
 		onInsert?: ConversationInsertListener,
+		/**
+		 * The engine holding the conversation was replaced: this attachment is
+		 * over, and the page attaches afresh (the new engine replayed the
+		 * journal, so the conversation is the same).
+		 */
+		onRestarted?: () => void,
 	): Promise<ConversationAttachment>;
 	detach(agentId: string): Promise<void>;
 	send(

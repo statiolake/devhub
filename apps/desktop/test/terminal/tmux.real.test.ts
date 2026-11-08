@@ -49,7 +49,7 @@ import {
   HostLink,
   type JournalLine,
 } from "../../src/main/agent/conversation/hostLink";
-import type { ConversationReading } from "../../src/main/agent/conversation/conversation";
+import type { ConversationFacts } from "../../src/main/agent/conversation/conversation";
 import { localRuntime } from "../../src/main/runtime/registry";
 import { AppModel } from "../../src/model/appModel";
 import {
@@ -2430,7 +2430,7 @@ describe.skipIf(TMUX === undefined)(
     async function roundsUntil(
       one: ReturnType<typeof devhub>,
       status: string,
-      also: (reading: ConversationReading) => boolean = () => true,
+      also: (facts: ConversationFacts) => boolean = () => true,
     ) {
       let last: unknown;
       for (let round = 0; round < 60; round += 1) {
@@ -2440,7 +2440,7 @@ describe.skipIf(TMUX === undefined)(
         );
         if (
           (last as { status?: string } | undefined)?.status === status &&
-          also((await one.wiring.conversations.of(AGENT)).reading())
+          also((await one.wiring.conversations.of(AGENT)).facts())
         ) {
           return last;
         }
@@ -2458,8 +2458,8 @@ describe.skipIf(TMUX === undefined)(
      * — the line that names the session, and the last one — come after it, in
      * the journal the round may be reading while they are written.
      */
-    function sessionNamed(reading: ConversationReading): boolean {
-      return reading.transcript.session.sessionId === SESSION;
+    function sessionNamed(facts: ConversationFacts): boolean {
+      return facts.sessionId === SESSION;
     }
 
     async function launchedGui(label: string) {
@@ -2493,7 +2493,9 @@ describe.skipIf(TMUX === undefined)(
     it("finds its conversation again from the journal, and reads as it did", async () => {
       const { test, home, model, first } = await launchedGui("gui-restart");
       await roundsUntil(first, "idle", sessionNamed);
-      const before = (await first.wiring.conversations.of(AGENT)).snapshot();
+      const before = await (
+        await first.wiring.conversations.of(AGENT)
+      ).snapshot();
 
       // DevHub goes: its conversation stops following, the host keeps running.
       await first.wiring.conversations.registry.close(AGENT);
@@ -2503,7 +2505,9 @@ describe.skipIf(TMUX === undefined)(
       const second = devhub(model, test.runtime, machineAt(home));
       const reading = await roundsUntil(second, "idle", sessionNamed);
       expect(reading).toMatchObject({ status: "idle", failure: undefined });
-      const after = (await second.wiring.conversations.of(AGENT)).snapshot();
+      const after = await (
+        await second.wiring.conversations.of(AGENT)
+      ).snapshot();
       expect(after.transcript).toEqual(before.transcript);
       // It was not greeted a second time: the greeting, and the one
       // question about its MCP servers the greeting's answer asked.

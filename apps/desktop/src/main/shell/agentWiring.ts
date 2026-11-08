@@ -46,8 +46,12 @@ import {
 	type LimitResumeRecord,
 	type LimitResumeSettings,
 } from "../agent/conversation/limitResume.js";
-import { observeConversation } from "../agent/conversation/reading.js";
 import { ConversationRegistry } from "../agent/conversation/registry.js";
+import {
+	localHandle,
+	type ConversationHandle,
+} from "../agent/conversation/handle.js";
+import type { EngineClient } from "../agentEngine/client.js";
 import {
 	codexGuiInstructions,
 	withDevhubSkill,
@@ -125,6 +129,12 @@ export interface AgentWiringOptions {
 	/** What each GUI Agent's conversation decided about a usage limit, kept across restarts. */
 	readonly limitResumes: AgentRecordStore<LimitResumeRecord>;
 	/**
+	 * DevHub's conversation engine (`agentEngine/`), where the GUI Agents'
+	 * conversations run. Without it, or once it has been given up on, they
+	 * run here in main.
+	 */
+	readonly engine?: EngineClient;
+	/**
 	 * The `/devhub` skill for Agents on `machine`, or nothing where there is
 	 * none (`agent/devhubSkill.ts`).
 	 */
@@ -185,7 +195,7 @@ export interface GuiConversations {
 	 * round that finds its session, or by the page that draws it, whichever is
 	 * first. The same conversation either way.
 	 */
-	of(agentId: AgentId): Promise<AgentConversation>;
+	of(agentId: AgentId): Promise<ConversationHandle>;
 	/**
 	 * The session a GUI Agent's CLI named, for its terminal mode to resume.
 	 * None while the CLI has not named one, which it does with its first turn:
@@ -276,63 +286,117 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		agentId: AgentId,
 		profile: AgentProfile,
 		root: string,
-	): AgentConversation => {
+	): ConversationHandle => {
 		// Known once the host is opened: on another machine the skill is a
 		// file DevHub writes there, which can be after this conversation is
 		// made. The adapter asks for its instructions when it opens a thread,
 		// which is after that.
 		let skill: DevhubSkill | undefined;
-		return (
-			registry.get(agentId) ??
-			registry.open(
-				agentId,
-				(publish) =>
-					new AgentConversation(
-						openedLater(async () => {
-							skill = await options.devhubSkill?.(machine);
-							const skilled = withOrchestratorSkill(
-								withDevhubSkill(profile, skill),
-								options.orchestratorSkill?.(machine, agentId),
-							);
-							return hostOn(
-								new HostLink(
-									options.machineRuntime(machine),
-									await stateDirectory(machine, agentId),
-								),
-								(session) => guiAgentCli(skilled, session),
-							);
-						}),
-						adapterFor(profile, {
-							bootId,
-							cwd: root,
-							clientVersion: options.clientVersion,
-							developerInstructions: () => {
-								const orchestrator = options.orchestratorSkill?.(
-									machine,
-									agentId,
-								);
-								return codexGuiInstructions(
-									skill,
-									orchestrator === undefined
-										? []
-										: [codexOrchestratorInstructions(orchestrator)],
-								);
-							},
-						}),
-						publish,
-						{
-							settings: () => limitResumeSettingsOf(options.settings.config),
-							record: {
-								get: () => options.limitResumes.get(agentId),
-								set: (record) => options.limitResumes.set(agentId, record),
-							},
-							clock: REAL_CLOCK,
-						},
-						{ settings: () => cacheKeepSettingsOf(options.settings.config) },
+		let prepared = false;
+		const skilledProfile = async () => {
+			skill = await options.devhubSkill?.(machine);
+			prepared = true;
+			return withOrchestratorSkill(
+				withDevhubSkill(profile, skill),
+				options.orchestratorSkill?.(machine, agentId),
+			);
+		};
+		const developerInstructions = () => {
+			const orchestrator = options.orchestratorSkill?.(machine, agentId);
+			return codexGuiInstructions(
+				skill,
+				orchestrator === undefined
+					? []
+					: [codexOrchestratorInstructions(orchestrator)],
+			);
+		};
+		/** The host as main opens it: for a conversation run here, or the engine's on another machine. */
+		const mainsHost = () =>
+			openedLater(async () => {
+				const skilled = await skilledProfile();
+				return hostOn(
+					new HostLink(
+						options.machineRuntime(machine),
+						await stateDirectory(machine, agentId),
 					),
-			)
+					(session) => guiAgentCli(skilled, session),
+				);
+			});
+		const existing = registry.get(agentId);
+		if (existing !== undefined) return existing;
+		const engine = options.engine;
+		if (engine?.available === true) {
+			if (profile.kind !== "claude" && profile.kind !== "codex")
+				throw new Error(`a ${profile.kind} Agent cannot be a GUI Agent`);
+			const kind = profile.kind;
+			return registry.open(agentId, () =>
+				engine.open(
+					agentId,
+					{
+						kind,
+						bootId,
+						cwd: root,
+						clientVersion: options.clientVersion,
+						resumeThreadId:
+							kind === "codex"
+								? codexStructuredArgs(profile.args).resumeThreadId
+								: undefined,
+						hostHere: machine === "local",
+					},
+					{
+						prepareHost: async () => {
+							const skilled = await skilledProfile();
+							return {
+								directory: await stateDirectory(machine, agentId),
+								cli: {
+									kind,
+									command: skilled.command,
+									args: [...skilled.args],
+									env: [...skilled.env],
+								},
+								instructions:
+									kind === "codex" ? developerInstructions() : undefined,
+							};
+						},
+						host: mainsHost,
+						record: () => options.limitResumes.get(agentId),
+						setRecord: (record) => options.limitResumes.set(agentId, record),
+						instructions: () =>
+							kind === "codex" && prepared
+								? developerInstructions()
+								: undefined,
+					},
+				),
+			);
+		}
+		return registry.open(agentId, (publish) =>
+			localHandle(
+				new AgentConversation(
+					mainsHost(),
+					adapterFor(profile, {
+						bootId,
+						cwd: root,
+						clientVersion: options.clientVersion,
+						developerInstructions,
+					}),
+					publish,
+					{
+						settings: () => limitResumeSettingsOf(options.settings.config),
+						record: {
+							get: () => options.limitResumes.get(agentId),
+							set: (record) => options.limitResumes.set(agentId, record),
+						},
+						clock: REAL_CLOCK,
+					},
+					{ settings: () => cacheKeepSettingsOf(options.settings.config) },
+				),
+			),
 		);
 	};
+
+	// An engine given up on took its conversations with it: each is made
+	// again, here, the next time it is asked for.
+	options.engine?.onGaveUp(() => registry.forgetAll());
 
 	/** Where an Agent runs and what it runs: what its sessions are read with. */
 	const placeOf = (agentId: AgentId) => {
@@ -393,8 +457,8 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				);
 			}
 			const listed = conversation
-				.reading()
-				.transcript.mcp.servers?.find((each) => each.name === server);
+				.facts()
+				.mcpServers?.find((each) => each.name === server);
 			if (listed === undefined || !listed.actions.includes("sign-in")) {
 				throw new ConversationRefused(
 					`${agent.displayName} offers no sign-in to an MCP server named ${server} now.`,
@@ -449,7 +513,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		},
 		async session(agentId) {
 			const conversation = await conversations.of(agentId);
-			return conversation.reading().transcript.session.sessionId;
+			return conversation.facts().sessionId;
 		},
 		async of(agentId) {
 			const agent = options.model().agent(agentId);
@@ -811,7 +875,8 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					);
 					// Once a round, and only here: the round is the clock.
 					conversation.reattach();
-					reading = observeConversation(conversation.reading());
+					if (about.kind === "codex") options.engine?.instructionsChanged(id);
+					reading = conversation.facts().observation;
 					send = (text) =>
 						conversation.command({
 							kind: "send",
