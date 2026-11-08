@@ -493,10 +493,13 @@ object) is applied as `devhub`, unless the person's config chose another
 colorscheme; see [themes.md](themes.md), "Neovim". A handler that throws is
 logged and changes nothing else.
 
-**devhub.nvim** is a Neovim colorscheme built on exactly this
-(`:colorscheme devhub`) for a Neovim DevHub does not draw: it reads the file
-synchronously from its `plugin/`, before the first redraw, and follows `User
-DevhubTheme`. See its README.
+**devhub.nvim** wears this very table (`:colorscheme devhub`), applied the
+same way, in a Neovim DevHub does not draw: it reads the file synchronously
+from its `plugin/`, before the first redraw, and follows `User DevhubTheme` and
+the file. In a Neovim DevHub draws it gives the colours DevHub applies, so
+neither order shows a frame of other colours. A host's panes have no file, so
+there it wears nothing; a Neovim DevHub draws there is dressed by DevHub.
+See its README.
 
 Three scopes survive underneath this, and they are about _subject_ rather than
 about routing: an Agent's own failure is drawn over that Agent's pane, a
