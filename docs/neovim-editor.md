@@ -219,7 +219,7 @@ DevHub restart.
 `:DevhubGuiDemo` opens an Outline beside the current window: its buttons jump
 that window to a function, or run `gg`, `G`, `:write` in it.
 
-### Toasts, inline images and rich floats
+### Notifications, inline images and rich floats
 
 The same rule, for things smaller than a window. `devhub_gui` sends them as
 one-way events on one RPC method (`devhub_gui_event`; main forwards them on
@@ -230,15 +230,21 @@ attaches again is told every image and rich float again.
 
 ```lua
 local gui = require('devhub_gui')          -- or require('devhub').gui (devhub.nvim)
-gui.notify{ title = 'Build', msg = 'done', level = 'warn' }   -- a native toast
+gui.notify{ title = 'Build', msg = 'done', level = 'warn' }   -- a notification
 local img = gui.image(0, 5, '~/shot.png', { height_rows = 10 }) -- under line 5
 img.clear()
 gui.rich_float(win, markdown_lines)        -- what devhub.nvim's LSP hook calls
 ```
 
-- **notify** — a toast at the top right of the editor, by level (`info`,
-  `warn`, `error`, `debug` or `vim.log.levels.*`), gone after 4–8 s or a
-  click. Not `ext_messages`: Neovim's messages stay Neovim's.
+- **notify** — fidget-like: compact lines at the bottom right, just above
+  the lowest window's status line, under the name of their source
+  (`group`), by level (`info`, `warn`, `error`, `debug` or
+  `vim.log.levels.*`), fading after 4–8 s (or a click). A `key` updates the
+  notification it named in place, so work in progress (`progress = true`,
+  `percent`, `done`) spins, shows its percentage and ticks when done (gone
+  2 s later). devhub.nvim's `setup{ notify = true }` makes `vim.notify` this
+  (its `title` is the source) and shows `LspProgress` (0.10+) the way fidget
+  does. Not `ext_messages`: Neovim's messages stay Neovim's.
 - **image** — an extmark's `virt_lines` reserve `height_rows` blank rows
   under the line, so Neovim lays them out (the cursor steps over them,
   `:vsplit` shows them twice) and DevHub paints the image there. A path is
@@ -280,6 +286,78 @@ through which `devhub_gui` reads `status` and `status-position`; the terminal
 is fitted that many rows taller and those rows are clipped
 (`TerminalSurface`'s `hiddenRows`), so the shell keeps every row it shows.
 
+### Components, views, inline cards and decorations
+
+The rule again, for what a plugin wants to show rather than a page: Neovim
+owns the state, the layout and the keys; DevHub only paints, and what it
+paints is **data**. A config describes content as declarative components
+(`shell/neovim/components.ts`: types, the checks a payload passes, and the
+layout decisions, pure and unit-tested; `ComponentView.tsx` draws them):
+`stack`/`hstack` (gap, padding, alignment, a raised `card`, a left `accent`
+bar, a ground, an indent), `text` runs, `markdown` (the rich float's
+renderer), `badge`, `kbd`, `button`, a tri-state `checkbox`, `progress`, a
+Nerd Font `icon`, an `avatar`, `spacer`/`divider`, `sparkline`, a small line
+`chart` and an `image`. Every colour is a highlight group's name (or a tone
+that names one), resolved by Neovim (`nvim_get_hl`) and sent with the tree,
+so a view wears the colorscheme and follows `:colorscheme`. Text is in
+DevHub's own (proportional) type, `mono` in the grid's face. There is no HTML
+and no script in it: a node with `on_click` gets an action number, and a
+click sends that number back to Neovim, where the function runs. A node of
+the wrong shape is dropped. `gui.open`'s HTML stays the escape hatch.
+
+The Lua is `main/editor/neovimGuiLayers.ts` (`LAYERS_LUA`), run into
+`devhub_gui` at every attach after `SETUP_LUA`; devhub.nvim's `gui.ui` builds
+and checks the trees and its `gui.view`/`gui.inline`/`gui.decorate` forward
+to it. The page's reducer is `shell/neovim/layers.ts`, its views
+`LayerViews.tsx`.
+
+```lua
+local gui = require('devhub').gui            -- devhub.nvim
+local ui = gui.ui
+local view = gui.view{ buf = buf, win = 'vsplit',
+  items = function(lnum, line) return ui.hstack{ ui.badge('M', { tone = 'changed' }), ui.text(line) } end,
+  on_click = function(lnum) end, keys = { { 'j/k', 'move' }, { '<CR>', 'open' } } }
+local card = gui.inline{ buf = 0, lnum = 87, id = 'thread:1', range = { 84, 87 },
+  component = ui.card{ accent = 'warn', ui.md('**Waiting** for the agent') } }
+local deco = gui.decorate{ buf = 0, range = { 23, 31 }, style = 'dim' }   -- 'highlight' | 'tag'
+```
+
+- **`gui.view`** — a panel that is a buffer: one buffer line per item (the
+  plugin writes the lines, so `/`, `5j`, marks and macros work), each item
+  a component painted over every window showing the buffer, as tall as it
+  draws — not bound to cells. The cursor line is the focused item, ringed
+  in the cursor's colour (`Cursor`) while the window is current; the list
+  scrolls its own way, in pixels, only as far as it takes to keep the
+  focused item in sight (`revealScroll`). A click moves the cursor there
+  (and into the window) and runs the node's `on_click`, else the view's;
+  the wheel scrolls the list and moves the cursor to the nearest item in
+  sight when its item leaves (`wheelFocus`). An edit to the buffer
+  (`on_lines`) or `view:update()` draws it again; `keys` is a hint line at
+  the bottom. A view covers its window's grid, cursor included.
+- **`gui.inline`** — a card under a line, in the rows an extmark's
+  `virt_lines` reserve (the image plumbing, again on every scroll, fold,
+  edit and window change). The page measures the card at the width it is
+  drawn and sends back the rows it takes (`_inline_rows`); Lua reserves
+  exactly that. The height depends on the width only and each change is
+  asked about once, so it settles at once; a card out of sight is measured
+  ahead (at its window's width), so scrolling to it does not jump. A card
+  just above the top is drawn clipped (`topfill`), one below the bottom
+  cut by the window. The cursor on its `range` marks it active (a ring);
+  its keys are the plugin's buffer-local maps on those lines.
+- **`gui.decorate`** — a line range (an extmark, so it follows edits)
+  dimmed, highlighted (a tint and a bar in a group's colour) or tagged (a
+  pill at its right), painted over every window showing it, diff windows
+  included.
+
+In plain Neovim (or a terminal), devhub.nvim's calls do nothing: a view is
+its buffer's text, a card reserves nothing.
+
+**review-relay.** devhub.nvim's `:ReviewRelay` is the first adapter: the
+review panel is a view, each thread a card under its lines (markdown
+comments, you / agent, Reply and Resolve, `r` and `s` on the thread's
+lines), reading and writing through review-relay's CLI and endpoints and
+following its event stream. See devhub.nvim's README.
+
 ### Integrations
 
 - `devhub <file>`, `devhub -g file:line:col`, `devhub --wait`, a
@@ -311,8 +389,16 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
   message grid.
 - A GUI window's web page still gives `<C-w>` to Neovim (it has no shell
   to want it); only the terminal follows the `:terminal` model.
-- An image does not take part in the 90 ms scroll slide: it jumps to its
-  new place when Neovim reports it.
+- An image, an inline card and a decoration do not take part in the 90 ms
+  scroll slide: they jump to their new place when Neovim reports it.
+- A view is laid out by the browser and scrolled in pixels; Neovim's own
+  `topline` in that window is not what is shown (only the cursor line
+  is). Items are all drawn (no virtualisation; a view keeps its first 5000
+  lines).
+- An inline card's height is whole rows: up to a row of its slot is blank
+  under it.
+- Notifications sit above the lowest window's status line, over whatever
+  is there (a panel's hint line included).
 - A rich float's rendering is usually shorter than Neovim's text of it, so
   the float can be taller than its content; when it is longer, the float
   scrolls itself (the wheel) as well as following Neovim's topline.
@@ -327,33 +413,15 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
 
 ## Phase 2
 
-**GUI plugin bridge for devhub.nvim.** Started: `require('devhub').gui`
+**GUI plugin bridge for devhub.nvim.** Done: `require('devhub').gui`
 (devhub.nvim) forwards `open`, `send`, `on_message`, `close`, `notify`,
-`image` and `rich_float` to the `devhub_gui` DevHub injects — one
-implementation, owned by the end that speaks the RPC — queues calls made
-before the attach until `User DevhubGui`, and does nothing outside DevHub
-(`notify` falls back to `vim.notify`). Still to come, with the same rule —
-every surface is a Neovim object:
-
-```lua
-local gui = require('devhub').gui
-local panel = gui.panel{
-  title = 'Tests', html = …, -- or component = 'markdown' | 'image' | 'diff'
-  win = { split = 'right', size = 50 },  -- or float = { relative = 'cursor', … }
-  keys = { ['<CR>'] = function(ctx) … end },  -- keys while the panel has focus
-  on_message = function(msg) … end,
-}
-panel:send(value); panel:close()
-gui.decorate(buf, extmark_id, { image = path, height = 8 })  -- an image in
-                            -- virt_lines space, anchored to an extmark
-gui.notify{ title, body, level }   -- a native toast (ext_messages-free)
-```
-
-Panels get DevHub's theme tokens as CSS variables and a typed `devhub` object
-(`send`, `onMessage`, `nvim.request(method, …)` for a whitelisted subset).
-Native rendering where it adds value: diagnostics and virtual text drawn from
-extmarks (`ext_hlstate` + `win_extmark`), inline images in `virt_lines` space,
-LSP hover and signature help in DevHub floats.
+`image`, `rich_float`, `view`, `inline` and `decorate` to the `devhub_gui`
+DevHub injects — one implementation, owned by the end that speaks the RPC —
+queues calls made before the attach until `User DevhubGui`, and does nothing
+outside DevHub (`notify` falls back to `vim.notify`). Still to come:
+diagnostics and virtual text drawn from extmarks (`ext_hlstate` +
+`win_extmark`), a component for a diff hunk, and more adapters
+(incremental diff review, pahcer) on the same layers.
 
 **Terminal overlay.** `:DevhubTerminal` grows into the integrated terminal of
 VS Code: several terminals (`:DevhubTerminal new`, numbered buffers), each a
