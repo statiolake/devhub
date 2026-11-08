@@ -240,10 +240,28 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   new cell in 70 ms outside Insert mode (none with reduced motion).
 - Each window gets an overlay scrollbar from `win_viewport`, shown while the
   view moves and faded out after.
-- A window that scrolls a few rows (0.10+: `win_viewport`'s `scroll_delta`;
-  at most a third of its height) slides into place in 90 ms, clipped to its
-  own box; a bigger jump (`<C-d>`, `G`) is not animated, nor anything with
-  reduced motion.
+- A window scrolls in pixels (`smoothScroll.ts`; 0.10+, which says how far
+  a window scrolled in `win_viewport`'s `scroll_delta`): the trackpad and
+  the wheel move its text pixel for pixel while Neovim's `topline` stays a
+  whole line of Neovim's. Each time Neovim scrolls a window, what was on
+  screen becomes a _ghost_ (an image of the text area); the canvas and the
+  ghost are moved by transforms inside a clipping element of the text area
+  (`.nvim-scroll-port`, the compositor's work, nothing repainted), and
+  between them cover every position the display can be at. The wheel keeps
+  Neovim ahead of the display by a line, or by as far as the wheel goes
+  while Neovim answers (the round trip is measured), less than a window at
+  a time: in Normal mode exactly that many lines (`<C-e>`/`<C-y>` with `normal!`
+  in the window under the pointer, current window unchanged, unless the
+  person mapped the wheel); in any other mode Neovim's own wheel. At rest
+  Neovim is brought back to the nearest line and the display eases onto
+  it, so what is shown is Neovim's grid again, exactly. A scroll Neovim
+  makes itself (`<C-d>`, `<C-f>`, `zz`, `j` past the edge, a search) eases
+  from the old view to the new in 90 ms, already under way on the first
+  frame drawn (keys are never held); a jump of a window or more (`G`) is
+  not eased. The cursor rides with its text (a transform), a winbar stays
+  put, a click lands on the line under the pointer. Not for floats or the
+  message grid, not on 0.9, and with reduced motion only the wheel's own
+  movement.
 - `keys.ts` — a `keydown` as key notation: `<C-…>`, `<M-…>` for Option when
   `[terminal] mac_option_is_meta` says it is Meta (left/right tracked as in
   DevHub's terminals), `<D-…>` for Cmd, named keys, `<lt>` and friends.
@@ -262,9 +280,16 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
 - `mouse.ts` — `nvim_input_mouse` with the grid under the pointer (floats
   first; a framed float only inside its lines, which toward a float edge to
   edge with it go on to its cells' edge), drags kept on the press's grid,
-  wheel/trackpad pixels accumulated into line steps.
+  a window's vertical wheel in pixels (above); sideways, with a modifier
+  or over anything else, pixels accumulated into line steps.
 - Resize: the view's size over the cell size, `nvim_ui_try_resize`.
-- Focus: `nvim_ui_set_focus` (FocusGained/FocusLost).
+- Focus: `nvim_ui_set_focus` (FocusGained/FocusLost), told once per
+  change. The editor has the keyboard when its textarea is focused _and_
+  its view has the keys (`document.hasFocus()`, followed on the window's
+  `focus`/`blur`): a page keeps its focused element while the Sidebar, an
+  Agent or a terminal view has them. Without it the block cursor is
+  hollow, a bar or underline (and the command line's caret) faint and
+  steady.
 - Widgets in DevHub's chrome: the completion menu at its anchor cell (flipped
   above near the bottom, kind icons, scrolls to the selected item, click to
   select), the command line as a palette-like bar (firstc, cursor, special
@@ -336,7 +361,9 @@ img.clear()
   the lowest window's status line, under the name of their source
   (`group`), by level (`info`, `warn`, `error`, `debug` or
   `vim.log.levels.*`), fading after 4–8 s (or a click). Each source is a
-  small card in the colorscheme's floats' colours (`NormalFloat`, else
+  card, every card of the stack one width (the widest's, 280–480 px) on
+  one right edge as VS Code's and Zed's, a line leading with its mark
+  (level, spinner, tick), in the colorscheme's floats' colours (`NormalFloat`, else
   `Normal`; the levels in the diagnostics' colours), with `gui.popup`'s
   hairline and a soft shadow, so it reads over any text; a line whose
   time is up fades and folds away, and a card whose every line is
@@ -520,8 +547,10 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
   from DevHub's palette: leave it off in DevHub.
 - A GUI window's web page still gives `<C-w>` to Neovim (it has no shell
   to want it); only the terminal follows the `:terminal` model.
-- An image, an inline card and a decoration do not take part in the 90 ms
-  scroll slide: they jump to their new place when Neovim reports it.
+- An image, an inline card, a decoration and a float anchored to a buffer
+  position do not take part in pixel scrolling: they are where Neovim
+  puts them, which while the wheel turns is up to its lead (a line or
+  two) from the text they belong to, exact again at rest.
 - A view is laid out by the browser and scrolled in pixels; Neovim's own
   `topline` in that window is not what is shown (only the cursor line
   is). Items are all drawn (no virtualisation; a view keeps its first 5000
@@ -575,12 +604,20 @@ cursor; and, from the list below, 1–5 and 9–11 (round 1), then 7's fold
 column and 6's message panel, with 3–5 matched by highlight name
 (`ext_hlstate`) instead of colour (round 2; round 2 also gave
 notifications a card, signature help its active parameter and the tab
-strip a current tab joined to the editor). The yardstick for chrome
+strip a current tab joined to the editor), then 8, 12 and 13 (round 3:
+pixel scrolling; round 3 also gave a notification stack one width, a
+spinner shown once, and the cursor a hollow look while another DevHub
+view has the keyboard). The yardstick for chrome
 (separators, bars, menus, scrollbars) is VS Code and Zed; the text area
 stays cell-aware, as a modal editor's is. Verified on 0.11.5 and 0.12.6
 with a real config (splits, floats and panels, the command line, the
 completion menu, IME preedit, `:terminal`, diff mode, folds, CJK,
-`linespace`): a full-window scroll costs what it did before. Candidates, by visual impact and then by compatibility risk (the
+`linespace`): a full-window scroll costs what it did before. Round 3 again
+on both, with the wheel over splits, diff (`scrollbind`), floats and the
+command line, in Insert mode and in `:terminal`; wheel to screen, measured
+in the page under Xvfb: 0.1–2 ms while Neovim's lead covers it (the
+display moves in the wheel's own event), one round trip (10–40 ms) for the
+first line of a gesture, against 20–100 ms per step before. Candidates, by visual impact and then by compatibility risk (the
 least risky first within a band):
 
 1. _Window separators_ (`│` in a whole cell column) — done: each half of
@@ -656,15 +693,24 @@ ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
    `statuscolumn` that draws its own fold marks keeps them. Nothing is
    added when `foldcolumn` is 0: a chevron needs a column Neovim reserves,
    and inventing one in the number column would put a GUI-only target in
-   a cell Neovim thinks is a digit's. Signs were left: gitsigns' bars are
+   a cell Neovim thinks is a digit's. Round 3 looked again at VS Code's
+   hover chevron beside the line numbers: drawing it over the number
+   column would need every visible line's fold level from Lua on each
+   hover and redraw, cover a digit or the sign before it, and give the
+   mouse a target the keyboard does not have; not default-safe. The clean
+   way is the person's: `foldcolumn=auto:1` (a column only where a fold
+   is, drawn as chevrons here) or a `statuscolumn` with its own marks. Signs were left: gitsigns' bars are
    already drawn geometrically, continuous across `linespace`, and
    diagnostics' signs are the config's icons, centred by the icon fitting.
    Line numbers keep their weight (a lighter weight read as disabled
    against the code).
-8. _Indent guides and `listchars`_ (`│`, `▏`, `·`, `→`): drawn geometrically
-   already, but a guide is a cell-centred line broken by `linespace`
-   nowhere and coloured by its highlight; draw them hairline and dimmer,
-   aligned to the indent's first column as editors do. Low risk.
+8. _Indent guides_ — done (round 3): a guide plugin's line
+   (indent-blankline, snacks.indent, mini.indentscope, hlchunk; known by
+   its groups, `ext_hlstate`) is one light line at the left edge of the
+   indent column, solid and continuous across `linespace`, in the
+   plugin's colour, whatever character it chose (`▎` was a quarter cell,
+   `╎` dashed, `│` centred), as VS Code and Zed draw guides. Not dimmed:
+   the colour is the colorscheme's. `listchars` stay text.
 9. _Diagnostic virtual text and inlay hints_ — done where the
    colorscheme gives them a ground (`DiagnosticVirtualText*`,
    `LspInlayHint` with a `bg`, asked with the theme): their runs are pills
@@ -684,14 +730,17 @@ ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
     cursor's foreground, and the blink (`guicursor`'s) fades in and out
     over 120 ms of its phases, as VS Code's "smooth" blink; a hard blink
     with reduced motion.
-12. _Blended backdrops_ (snacks' `backdrop`, a full-screen float with
-    `winblend`): drawn cell for cell with each character's ground mixed.
-    Recognise a blank full-screen float with `winblend` and draw a dim
-    overlay (a CSS layer with its colour and opacity), cheaper and smooth.
-    Low risk.
-13. _`scrolloff` and the last row's padding_: behaviour, not drawing —
-    kept. Pixel-smooth scrolling between rows (the 90 ms slide already
-    hides the jumps) is as far as it goes without changing `topline`.
+12. _Blended backdrops_ — done (round 3): a float of only blank cells in
+    one ground with `winblend` (snacks' `backdrop`; its `Normal` and
+    `EndOfBuffer` rows are two highlights of one colour) is one element
+    tinted with that ground at `100 - blend` percent, no bitmap: the same
+    pixels Neovim's compositor mixes (checked against the canvas it
+    replaced), without an editor-sized canvas to paint.
+13. _Scrolling by whole rows_ — done (round 3): pixel scrolling (The page,
+    above). Neovim is led rather than the grid oversized: a window's grid
+    stays the size Neovim gave it, and what the display needs beyond it is
+    the ghost of what Neovim drew before. `scrolloff` and the last row's
+    padding stay behaviour, kept.
 
 **Also:** dev containers (Neovim in the container through `docker exec`, its
 socket reached by a relay like the `devhub` command's), delivering `nvim` to
