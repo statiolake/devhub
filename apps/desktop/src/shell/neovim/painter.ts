@@ -13,7 +13,7 @@
 
 import type { GridBox, HlAttr, NeovimUiState, RedrawChanges } from "./redraw";
 import type { CellMetrics } from "./mouse";
-import { fitIcon, glyphKind, glyphShapes, type Shape } from "./glyphs";
+import { boxArms, fitIcon, glyphKind, glyphShapes, type Shape } from "./glyphs";
 import {
   floatClusters,
   framePieces,
@@ -847,7 +847,7 @@ export class GridPainter {
     for (const run of runs) {
       this.paintGround(ctx, state, box, grid.chars, base, run, y);
     }
-    if (box.grid === 1) this.paintSeparators(ctx, grid.chars, base, row, y);
+    if (box.grid === 1) this.paintSeparators(ctx, state, grid, base, row, y);
     this.paintShaped(ctx, state, box, row, y);
     this.skip.clear();
     this.paintBars(ctx, state, box, row, y);
@@ -899,12 +899,21 @@ export class GridPainter {
    */
   private paintSeparators(
     ctx: CanvasRenderingContext2D,
-    chars: readonly string[],
+    state: NeovimUiState,
+    grid: {
+      readonly chars: readonly string[];
+      readonly hls: ArrayLike<number>;
+    },
     base: number,
     row: number,
     y: number,
   ): void {
     const { width: cw, height: ch } = this.metrics;
+    const { chars } = grid;
+    const across = (c: string) => {
+      const arms = boxArms(c);
+      return arms !== undefined && arms.e > 0 && arms.w > 0 && arms.n === 0;
+    };
     for (const sep of this.separators) {
       if (sep.row !== row) continue;
       if (!isSeparatorLine(chars[base + sep.col] ?? "")) continue;
@@ -914,6 +923,26 @@ export class GridPainter {
       ctx.fillRect(x, y, mid - x, ch);
       ctx.fillStyle = cssColor(sep.right);
       ctx.fillRect(mid, y, x + cw - mid, ch);
+      // A status line drawn as a line (`─`, a person's `stl:`) beside it
+      // meets the separator's line instead of stopping half a cell short.
+      for (const [dc, stub] of [
+        [-1, "╴"],
+        [1, "╶"],
+      ] as const) {
+        const next = base + sep.col + dc;
+        if (!across(chars[next] ?? "")) continue;
+        const fg = resolveColors(
+          state.hl.get(grid.hls[next] ?? 0),
+          state.defaults,
+        ).fg;
+        const shapes = glyphShapes(
+          stub,
+          { x, y, w: cw, h: ch },
+          this.dpr,
+          this.font.size,
+        );
+        if (shapes) this.paintShapes(ctx, shapes, fg);
+      }
     }
   }
 

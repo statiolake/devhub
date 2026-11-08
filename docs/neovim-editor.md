@@ -550,8 +550,9 @@ least risky first within a band):
    column — so a cursor line does not bleed in; a status line's cell
    where one is), and the line, already a device pixel or so through the
    middle, is all that is left between: splits meet edge to edge like
-   editor groups. A blank separator (`vert: `) is a band by choice and
-   stays one. Clicks and drags on the column stay Neovim's.
+   editor groups. A status line drawn as a line beside it (`─`, a
+   person's `stl:`) meets that line instead of stopping half a cell short.
+   A blank separator (`vert: `) is a band by choice and stays one. Clicks and drags on the column stay Neovim's.
 2. _Statusline and winbar as cell rows_ — done: a status line (grid 1's
    row under a window, not the command line's `cmdheight` rows) and a
    winbar (a window's top margin) is a bar of its commonest colour; runs of
