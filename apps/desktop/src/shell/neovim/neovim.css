@@ -58,11 +58,21 @@
   image-rendering: auto;
 }
 
+/*
+ * A float without a border (or with a blank one, left out: `GridBox.crop`)
+ * wears DevHub's frame. One with a border of lines is framed by it, as
+ * Neovim draws it: only a shadow under it, never a second frame.
+ */
 .nvim-float {
   border-radius: 6px;
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--primary) 10%, transparent),
     0 8px 24px rgb(0 0 0 / 28%);
+}
+
+.nvim-float.nvim-float-lined {
+  border-radius: 0;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 22%);
 }
 
 .nvim-cursor {

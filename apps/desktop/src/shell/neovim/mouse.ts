@@ -34,11 +34,13 @@ export function hitTest(
   for (let i = boxes.length - 1; i >= 0; i -= 1) {
     const box = boxes[i];
     if (box === undefined || box.grid === 1) continue;
+    // A float's left-out blank border is not there: a click falls through.
+    const crop = box.crop;
     if (
-      row >= box.row &&
-      row < box.row + box.height &&
-      col >= box.col &&
-      col < box.col + box.width
+      row >= box.row + (crop?.top ?? 0) &&
+      row < box.row + box.height - (crop?.bottom ?? 0) &&
+      col >= box.col + (crop?.left ?? 0) &&
+      col < box.col + box.width - (crop?.right ?? 0)
     ) {
       return { grid: box.grid, row: row - box.row, col: col - box.col };
     }

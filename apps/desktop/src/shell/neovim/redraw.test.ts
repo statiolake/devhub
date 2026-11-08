@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyRedraw,
   charOffsetOfByte,
+  floatBorder,
   gridRowText,
   initialUiState,
   layoutGrids,
@@ -112,6 +113,43 @@ describe("the redraw reducer", () => {
     ]);
     const float = layoutGrids(state).find((b) => b.grid === 4);
     expect([float?.row, float?.col]).toEqual([18, 50]);
+  });
+
+  it("leaves out a float's blank border and keeps a border of lines", () => {
+    const state = initialUiState();
+    applyRedraw(state, [
+      ["grid_resize", [1, 80, 24], [4, 6, 3], [5, 6, 3]],
+      ["win_float_pos", [4, 1001, "NW", 1, 2, 2, true, 50]],
+      ["win_float_pos", [5, 1002, "NW", 1, 10, 2, true, 50]],
+      // 'solid': blank cells around "hi".
+      ["grid_line", [4, 1, 1, [["h"], ["i"]], false]],
+      ["win_viewport_margins", [4, 1001, 1, 1, 1, 1]],
+      // 'rounded'.
+      ["grid_line", [5, 0, 0, [["╭"], ["─", 0, 4], ["╮"]], false]],
+      ["win_viewport_margins", [5, 1002, 1, 1, 1, 1]],
+    ]);
+    const boxes = layoutGrids(state);
+    const solid = boxes.find((b) => b.grid === 4);
+    expect(solid?.crop).toEqual({ top: 1, right: 1, bottom: 1, left: 1 });
+    expect(solid?.lined).toBeUndefined();
+    // Where Neovim put it: the text area stays in its place.
+    expect([solid?.row, solid?.col, solid?.width]).toEqual([2, 2, 6]);
+    const rounded = boxes.find((b) => b.grid === 5);
+    expect(rounded?.crop).toBeUndefined();
+    expect(rounded?.lined).toBe(true);
+    // No border (or 0.9, which does not say): neither.
+    expect(floatBorder(state.grids.get(4)!, undefined)).toEqual({});
+    expect(
+      floatBorder(state.grids.get(4)!, {
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+      }),
+    ).toEqual({});
+    // A winbar is text in the top margin: kept.
+    applyRedraw(state, [["grid_line", [4, 0, 1, [["W"]], false]]]);
+    expect(layoutGrids(state).find((b) => b.grid === 4)?.lined).toBe(true);
   });
 
   it("places windows on grid 1 and floats against their anchor, stacked by zindex", () => {

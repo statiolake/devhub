@@ -88,6 +88,14 @@ export interface WindowState {
   };
 }
 
+/** Cells on each side of a grid's text area. */
+export interface Margins {
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+  readonly left: number;
+}
+
 /** `mode_info_set`'s entry for one mode: how the cursor looks in it. */
 export interface ModeInfo {
   readonly name: string;
@@ -141,6 +149,12 @@ export interface NeovimUiState {
   readonly grids: Map<number, Grid>;
   /** Which window each grid is, as `win_pos` and `win_viewport` say. */
   readonly gridWins: Map<number, number>;
+  /**
+   * 0.10+ `win_viewport_margins`, by grid: the cells around a window's text
+   * area — a float's border, a winbar. (It can come before the window's
+   * position.)
+   */
+  readonly margins: Map<number, Margins>;
   readonly windows: Map<number, WindowState>;
   readonly hl: Map<number, HlAttr>;
   defaults: { foreground: number; background: number; special: number };
@@ -204,6 +218,7 @@ export function initialUiState(
   return {
     grids: new Map(),
     gridWins: new Map(),
+    margins: new Map(),
     windows: new Map(),
     hl: new Map(),
     defaults: { ...fallback },
@@ -435,6 +450,7 @@ function applyEvent(
       const id = num(args[0]);
       state.grids.delete(id);
       state.gridWins.delete(id);
+      state.margins.delete(id);
       state.windows.delete(id);
       changes.grids.add(id);
       changes.layout = true;
@@ -537,6 +553,26 @@ function applyEvent(
       if (delta !== 0) {
         const grid = num(args[0]);
         changes.scrolled.set(grid, (changes.scrolled.get(grid) ?? 0) + delta);
+      }
+      return;
+    }
+    case "win_viewport_margins": {
+      const grid = num(args[0]);
+      const margins = {
+        top: num(args[2]),
+        bottom: num(args[3]),
+        left: num(args[4]),
+        right: num(args[5]),
+      };
+      const known = state.margins.get(grid);
+      if (
+        known?.top !== margins.top ||
+        known.bottom !== margins.bottom ||
+        known.left !== margins.left ||
+        known.right !== margins.right
+      ) {
+        state.margins.set(grid, margins);
+        changes.layout = true;
       }
       return;
     }
@@ -734,6 +770,46 @@ export interface GridBox {
   readonly z: number;
   readonly float: boolean;
   readonly win: number | undefined;
+  /**
+   * A float's border is blank cells (`'solid'`, a table of spaces): they
+   * are left out — the float shows its text area where Neovim put it, in
+   * DevHub's own frame, as with no border — and a click there falls through.
+   */
+  readonly crop?: Margins;
+  /** A float with a border of lines, drawn as Neovim says: no frame of DevHub's. */
+  readonly lined?: boolean;
+}
+
+/**
+ * How a float's border shows: `crop` when all its cells are blank, `lined`
+ * when it draws something, neither without one (or before 0.10, which does
+ * not say).
+ */
+export function floatBorder(
+  grid: Grid,
+  margins: Margins | undefined,
+): { crop?: Margins; lined?: boolean } {
+  if (!margins) return {};
+  const { top, right, bottom, left } = margins;
+  if (top + right + bottom + left === 0) return {};
+  if (top + bottom >= grid.height || left + right >= grid.width)
+    return { lined: true };
+  const blank = (row: number, from: number, to: number) => {
+    for (let col = from; col < to; col += 1) {
+      const ch = grid.chars[row * grid.width + col] ?? "";
+      if (ch !== "" && ch !== " ") return false;
+    }
+    return true;
+  };
+  // The edges only: this runs on every paint.
+  for (let row = 0; row < grid.height; row += 1) {
+    const ok =
+      row < top || row >= grid.height - bottom
+        ? blank(row, 0, grid.width)
+        : blank(row, 0, left) && blank(row, grid.width - right, grid.width);
+    if (!ok) return { lined: true };
+  }
+  return { crop: margins };
 }
 
 /**
@@ -815,6 +891,7 @@ export function layoutGrids(state: NeovimUiState): GridBox[] {
         z: 100 + p.zindex,
         float: true,
         win: p.win,
+        ...floatBorder(grid, state.margins.get(window.grid)),
       };
     }
     boxes.set(window.grid, box);

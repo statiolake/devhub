@@ -51,6 +51,24 @@ describe("the pointer", () => {
     });
   });
 
+  it("lets a click through a float's left-out border", () => {
+    const solid = [
+      ...boxes,
+      {
+        ...box(6, 10, 10, 20, 4, 160),
+        crop: { top: 1, right: 1, bottom: 1, left: 1 },
+      },
+    ];
+    // The border row: the window under it.
+    expect(hitTest(solid, cell, 8 * 12, 16 * 10).grid).toBe(2);
+    // The text area: the float's own cell, counted from its grid's corner.
+    expect(hitTest(solid, cell, 8 * 12, 16 * 11)).toEqual({
+      grid: 6,
+      row: 1,
+      col: 2,
+    });
+  });
+
   it("falls back to grid 1 between windows (a separator, the command line)", () => {
     expect(hitTest(boxes, cell, 8 * 40 + 1, 16 * 3)).toEqual({
       grid: 1,

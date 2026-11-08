@@ -342,6 +342,43 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		h.ui.client.close();
 	});
 
+	it("leaves out a float's blank border and keeps a border of lines", async () => {
+		const h = await attached(60, 20);
+		const has010 = (await h.ui.request("nvim_exec_lua", [
+			"return vim.fn.has('nvim-0.10') == 1",
+			[],
+		])) as boolean;
+		if (!has010) return; // 0.9 sends no win_viewport_margins
+		await h.ui.request("nvim_exec_lua", [
+			"local buf = vim.api.nvim_create_buf(false, true); vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'hello' }); _G.f = vim.api.nvim_open_win(buf, false, { relative = 'editor', row = 2, col = 3, width = 10, height = 2, border = 'rounded' })",
+			[],
+		]);
+		const float = () => layoutGrids(h.state).find((b) => b.float);
+		await h.until(() => float()?.lined === true, "a border of lines");
+		expect(float()?.crop).toBeUndefined();
+		await h.ui.request("nvim_exec_lua", [
+			"vim.api.nvim_win_set_config(_G.f, { border = 'solid' })",
+			[],
+		]);
+		await h.until(() => float()?.crop !== undefined, "the blank border");
+		expect(float()).toMatchObject({
+			row: 2,
+			col: 3,
+			width: 12,
+			height: 4,
+			crop: { top: 1, right: 1, bottom: 1, left: 1 },
+		});
+		expect(float()?.lined).toBeUndefined();
+		await h.ui.request("nvim_exec_lua", [
+			"vim.api.nvim_win_set_config(_G.f, { border = 'none' })",
+			[],
+		]);
+		await h.until(() => float()?.width === 10, "no border");
+		expect(float()?.crop).toBeUndefined();
+		expect(float()?.lined).toBeUndefined();
+		h.ui.client.close();
+	});
+
 	it("sends toasts, and places an image and a rich float where their windows show them", async () => {
 		const h = await attached(60, 20);
 		const hasBase64 = (await h.ui.request("nvim_exec_lua", [

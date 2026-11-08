@@ -161,7 +161,11 @@ interface GridCanvas {
   readonly ctx: CanvasRenderingContext2D;
   width: number;
   height: number;
+  /** The crop it was sized for (`GridBox.crop`). */
+  crop?: string;
 }
+
+const NO_CROP = { top: 0, right: 0, bottom: 0, left: 0 } as const;
 
 export class GridPainter {
   private readonly canvases = new Map<number, GridCanvas>();
@@ -258,25 +262,32 @@ export class GridPainter {
         fresh = true;
       }
       const { canvas } = entry;
+      // A float's blank border is left out: the canvas is its text area,
+      // where Neovim put it (`paintRow` draws the grid shifted by it).
+      const crop = box.crop ?? NO_CROP;
+      const cropKey = `${String(crop.top)},${String(crop.right)},${String(crop.bottom)},${String(crop.left)}`;
       canvas.style.display = "";
-      canvas.style.left = `${String(box.col * this.metrics.width)}px`;
-      canvas.style.top = `${String(box.row * this.metrics.height)}px`;
+      canvas.style.left = `${String((box.col + crop.left) * this.metrics.width)}px`;
+      canvas.style.top = `${String((box.row + crop.top) * this.metrics.height)}px`;
       canvas.style.zIndex = String(box.z);
       canvas.classList.toggle("nvim-float", box.float);
+      canvas.classList.toggle("nvim-float-lined", box.lined === true);
       if (
         entry.width !== grid.width ||
         entry.height !== grid.height ||
+        entry.crop !== cropKey ||
         fresh ||
         forceAll
       ) {
-        const w = grid.width * this.metrics.width;
-        const h = grid.height * this.metrics.height;
+        const w = (grid.width - crop.left - crop.right) * this.metrics.width;
+        const h = (grid.height - crop.top - crop.bottom) * this.metrics.height;
         canvas.width = Math.max(1, Math.ceil(w * this.dpr));
         canvas.height = Math.max(1, Math.ceil(h * this.dpr));
         canvas.style.width = `${String(w)}px`;
         canvas.style.height = `${String(h)}px`;
         entry.width = grid.width;
         entry.height = grid.height;
+        entry.crop = cropKey;
         fresh = true;
       }
       const rows =
@@ -302,7 +313,16 @@ export class GridPainter {
     if (!grid || row >= grid.height) return;
     const { ctx } = entry;
     const { width: cw, height: ch, baseline } = this.metrics;
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const crop = box.crop ?? NO_CROP;
+    if (row < crop.top || row >= grid.height - crop.bottom) return;
+    ctx.setTransform(
+      this.dpr,
+      0,
+      0,
+      this.dpr,
+      -crop.left * cw * this.dpr,
+      -crop.top * ch * this.dpr,
+    );
     const y = row * ch;
     ctx.save();
     ctx.beginPath();
