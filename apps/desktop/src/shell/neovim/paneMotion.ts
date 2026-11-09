@@ -432,6 +432,42 @@ export interface CellRect {
   readonly height: number;
 }
 
+/** What `placeGroup` writes to: a painter's motion group's elements. */
+export interface GroupElements {
+  readonly outer: HTMLElement;
+  readonly clipA: HTMLElement;
+  readonly clipB: HTMLElement;
+  readonly content: HTMLElement;
+}
+
+/**
+ * A moving pane's group at `place`, as transforms and opacity only: the
+ * outer clip to its left and top edges, the inner one to its right and
+ * bottom (both the surface's `size`), its ground filling what they cut (the
+ * inner clip's box, cut by the outer, is exactly the rectangle), and its
+ * content moved from where it is laid out (`laid`, its grid's first cell
+ * at rest) to `place`'s origin.
+ */
+export function placeGroup(
+  group: GroupElements,
+  place: Place,
+  layer: number,
+  laid: { readonly x: number; readonly y: number },
+  size: { readonly width: number; readonly height: number },
+  ground: string,
+): void {
+  const { left: L, top: T, right: R, bottom: B } = place.rect;
+  const { width: W, height: H } = size;
+  group.outer.style.zIndex = String(layer);
+  group.outer.style.opacity = place.opacity >= 1 ? "" : String(place.opacity);
+  group.clipA.style.transform = `translate(${String(L)}px, ${String(T)}px)`;
+  group.clipB.style.transform = `translate(${String(R - L - W)}px, ${String(B - T - H)}px)`;
+  group.clipB.style.background = ground;
+  const dx = place.x - laid.x;
+  const dy = place.y - laid.y;
+  group.content.style.transform = `translate(${String(W - R + dx)}px, ${String(H - B + dy)}px)`;
+}
+
 /** Reduce Motion: every transition is placed at once. */
 export function reducedMotion(): boolean {
   return (

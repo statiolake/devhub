@@ -69,6 +69,7 @@ import {
 import { MetaComposition, OptionKeys } from "../surfaces/optionKey";
 import { BaseKeys, layoutMapSource } from "../surfaces/baseKeys";
 import type { MacOptionIsMeta } from "../../model/macOption";
+import { WindowMotion } from "./windowMotion";
 
 /** DevHub's theme, for a Neovim that sets no colours of its own. */
 function themeColors(): {
@@ -109,6 +110,8 @@ export class NeovimEditor {
   private pending: RedrawChanges = emptyChanges();
   private frame = 0;
   private readonly painter: GridPainter;
+  /** The windows moving as their layout changes (docs/pane-motion.md). */
+  private readonly windowMotion: WindowMotion;
   private readonly gridLayer: HTMLDivElement;
   private readonly band: HTMLDivElement;
   private readonly cursor: HTMLDivElement;
@@ -194,6 +197,7 @@ export class NeovimEditor {
     this.band.append(this.gridLayer);
     host.append(this.band, this.preedit);
     this.painter = new GridPainter(this.gridLayer, this.fontSpec());
+    this.windowMotion = new WindowMotion(this.painter, this.gridLayer);
     this.gridLayer.style.font = fontOf(this.painter.fontSpec());
     this.input.style.font = this.gridLayer.style.font;
     this.bindInput();
@@ -456,6 +460,7 @@ export class NeovimEditor {
     window.clearTimeout(this.themeTimer);
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
     if (this.scrollTick !== 0) cancelAnimationFrame(this.scrollTick);
+    this.windowMotion.dispose();
     this.band.remove();
     this.preedit.remove();
   }
@@ -485,7 +490,17 @@ export class NeovimEditor {
     if (changes.colors || changes.layout) this.askTheme();
     this.boxes = layoutGrids(this.state);
     this.host.style.background = cssColor(this.state.defaults.background);
-    this.painter.paint(this.state, changes, this.boxes, forceAll);
+    const theme = this.paintTheme();
+    this.windowMotion.paint(this.state, this.boxes, {
+      now: performance.now(),
+      cmdheight: theme.cmdheight,
+      // A border dragged follows the pointer at once.
+      immediate: this.sashDragged,
+      separator: cssColor(theme.separator ?? this.state.defaults.foreground),
+      draw: () => {
+        this.painter.paint(this.state, changes, this.boxes, forceAll);
+      },
+    });
     this.askFloatLabels();
     this.askFloatAnchors();
     this.placeCursor(changes.scrolled.has(this.state.cursor.grid));

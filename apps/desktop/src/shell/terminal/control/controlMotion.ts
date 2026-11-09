@@ -13,6 +13,7 @@ import {
 } from "../../neovim/painter";
 import {
   classify,
+  placeGroup,
   rowShift,
   type Change,
   type Place,
@@ -263,18 +264,14 @@ export function applyMotion(
     const m = moving.get(pane);
     if (track === undefined || m === undefined) continue;
     const group = painter.motionGroup(gridOf(pane), CONTROL_Z.panes);
-    const { left: L, top: T, right: R, bottom: B } = place.rect;
-    const { width: W, height: H } = size;
-    group.outer.style.zIndex = String(track.layer);
-    group.outer.style.opacity = place.opacity >= 1 ? "" : String(place.opacity);
-    group.clipA.style.transform = `translate(${String(L)}px, ${String(T)}px)`;
-    group.clipB.style.transform = `translate(${String(R - L - W)}px, ${String(B - T - H)}px)`;
-    // The pane's ground fills its clip, wider or narrower than its grid:
-    // the inner clip's box, cut by the outer, is exactly the rectangle.
-    group.clipB.style.background = ground;
-    const dx = place.x - m.box.x * cell.width;
-    const dy = place.y - m.box.y * cell.height;
-    group.content.style.transform = `translate(${String(W - R + dx)}px, ${String(H - B + dy)}px)`;
+    placeGroup(
+      group,
+      place,
+      track.layer,
+      { x: m.box.x * cell.width, y: m.box.y * cell.height },
+      size,
+      ground,
+    );
     edgesOf(group, place.rect, extent, m.active);
   }
   return at;

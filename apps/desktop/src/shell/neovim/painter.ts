@@ -540,6 +540,7 @@ export class GridPainter {
   /** Each window's pane, by grid; the boundaries' hairlines and stubs. */
   private readonly panes = new Map<number, HTMLDivElement>();
   private chrome: HTMLDivElement[] = [];
+  private boundariesHidden = false;
   /** Grounds of panes laid out by someone else (`placeGrounds`), by key. */
   private readonly grounds = new Map<number, HTMLDivElement>();
   private chromeKey = "";
@@ -733,16 +734,66 @@ export class GridPainter {
    * pane showed before its grid was resized, for the rows that leave it
    * as it moves (`docs/pane-motion.md`).
    */
-  picture(grid: number): HTMLCanvasElement | undefined {
+  picture(
+    grid: number,
+    region?: { x: number; y: number; w: number; h: number },
+  ): HTMLCanvasElement | undefined {
     const entry = this.canvases.get(grid);
     if (entry === undefined || entry.width < 0) return undefined;
+    const source = entry.canvas;
+    const r = region ?? {
+      x: 0,
+      y: 0,
+      w: parseFloat(source.style.width),
+      h: parseFloat(source.style.height),
+    };
+    const d = this.dpr;
     const copy = document.createElement("canvas");
-    copy.width = entry.canvas.width;
-    copy.height = entry.canvas.height;
-    copy.style.width = entry.canvas.style.width;
-    copy.style.height = entry.canvas.style.height;
-    copy.getContext("2d")?.drawImage(entry.canvas, 0, 0);
+    copy.width = Math.max(1, Math.round(r.w * d));
+    copy.height = Math.max(1, Math.round(r.h * d));
+    copy.style.width = `${String(r.w)}px`;
+    copy.style.height = `${String(r.h)}px`;
+    copy
+      .getContext("2d")
+      ?.drawImage(
+        source,
+        Math.round(r.x * d),
+        Math.round(r.y * d),
+        copy.width,
+        copy.height,
+        0,
+        0,
+        copy.width,
+        copy.height,
+      );
     return copy;
+  }
+
+  /** How wide a boundary between windows is drawn (`placePanes`). */
+  hairline(): number {
+    const { width: cw, height: ch } = this.metrics;
+    const shape = glyphShapes(
+      "│",
+      { x: 0, y: 0, w: cw, h: ch },
+      this.dpr,
+      this.font.size,
+    )?.find((p) => p.kind === "rect");
+    return shape?.kind === "rect" ? shape.w : 1 / this.dpr;
+  }
+
+  /** A window's pane's ground as drawn (`placePanes`), as CSS. */
+  groundOf(grid: number): string | undefined {
+    return this.panes.get(grid)?.style.background;
+  }
+
+  /**
+   * The boundaries between windows' panes hidden while the panes move:
+   * each moving pane draws the lines on its own edges; they are placed
+   * again at rest.
+   */
+  hideBoundaries(hidden: boolean): void {
+    this.boundariesHidden = hidden;
+    for (const el of this.chrome) el.style.display = hidden ? "none" : "";
   }
 
   /** The grids whose panes are moving now. */
@@ -1583,6 +1634,7 @@ export class GridPainter {
       el.style.width = `${String(p.w)}px`;
       el.style.height = `${String(p.h)}px`;
       el.style.background = cssColor(p.c);
+      if (this.boundariesHidden) el.style.display = "none";
       this.put(el, 1, "boundary");
       return el;
     });
