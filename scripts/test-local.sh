@@ -348,6 +348,9 @@ stage_app() {
 		local args=()
 		# Chromium refuses to run as root with its sandbox on.
 		[ "$(id -u)" = 0 ] && args+=(--electron-arg=--no-sandbox)
+		# The app runs `tmux` from the PATH, as on a Mac (Homebrew's, current):
+		# here that is DevHub's own, not Ubuntu's 3.4 (see provision_tmux).
+		[ -x "$TEST_TMUX" ] && PATH="$(dirname "$TEST_TMUX"):$PATH"
 		xvfb-run -a -s "-screen 0 1280x1024x24" scripts/smoke_packaged_app.py --layout "$layout" "${args[@]}"
 	else
 		scripts/smoke_packaged_app.py --source

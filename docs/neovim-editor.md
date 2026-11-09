@@ -988,6 +988,21 @@ follows it wherever a Neovim lives, and nothing on screen leaves:
 
 ## What works
 
+With DevHub's own Neovim (0.12.6, bundled), in a DevHub run under Xvfb on
+Linux with the dotfiles' config and settings and the machine's own Neovim
+0.9.5 first on the PATH: `nvim` typed in a Workspace's pane runs the
+bundled one (`:version` 0.12.6, `$VIMRUNTIME` and `v:progpath` the
+bundle's) drawn over the pane; lazy.nvim installed every plugin, blink.cmp
+fetched its prebuilt library and a plugin's build step (review-relay's Go
+build) ran; the bundled parsers, and all 311 of neovim-treesitter-binaries'
+Linux parsers, load; `devhub -g` opened in the `devhub-nvim` window and
+`:restart` there was followed (a new bundled server, the keeper's pane
+kept, the overlay drawn again). Against an sshd on localhost (glibc 2.39,
+Neovim 0.9.5 on its PATH): opening the Workspace delivered
+`~/.devhub-server/nvim/0.12.6`, and `nvim` typed in its pane ran that one,
+drawn as an overlay, the config's plugins installed on the host.
+Earlier versions' verification below stands for what did not change.
+
 Verified against Neovim 0.9.5, 0.11.5 and 0.12.6 (`neovimUi.real.test.ts`, and a
 DevHub run under Xvfb; on 0.11.5 with a real lazy.nvim config: devhub.nvim's
 theme, blink.cmp in insert and `:` mode, the snacks picker, fidget): typing,
