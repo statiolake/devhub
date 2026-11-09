@@ -1,6 +1,6 @@
 /**
  * A file DevHub is asked to open (`devhub <file>`, a conversation's file
- * link, Send to Agent's reference), as the Neovim editor's open: what
+ * link), as the Neovim editor's open: what
  * `AppController.openInEditor` hands on.
  */
 

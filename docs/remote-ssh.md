@@ -266,45 +266,14 @@ DevHub's control socket is reverse-forwarded onto the host (`ssh -O forward -R ~
 
 ### The `devhub` command on a host
 
-A pane on a host has a `devhub` on its PATH, and it is **DevHub's, not
-upstream's**.
+A pane on a host has a `devhub` on its PATH, and it is DevHub's own. A tmux
+pane inherits the tmux **server's** environment, the session's own
+`new-session -e` entries and, for `PATH`, the environment of the client that
+created the session (see "The PATH a pane gets", below), so the control socket
+is written *into* the shim rather than exported.
 
-Upstream's `bin/remote-cli/devhub` ships in the tarball — `gulpfile.reh.ts`
-writes it from `resources/server/bin/remote-cli/code-linux.sh` under
-`product.applicationName`, which for DevHub is `devhub` — and it can never work
-in a DevHub terminal. It is a client for one environment variable,
-`VSCODE_IPC_HOOK_CLI`, and without it it prints *"Command is only available in
-WSL or inside a Visual Studio Code terminal."* and exits.
-
-That variable never arrives, for three independent reasons, any one of which
-is enough:
-
-1. **A tmux pane does not inherit the pty's environment.** The REH's terminal
-   channel creates `VSCODE_IPC_HOOK_CLI` per terminal and hands it to the
-   process it spawns — which here is the launcher, not the pane's shell. What a
-   pane does inherit is the tmux **server's** environment, the session's own
-   `new-session -e` entries — and, for `PATH` specifically, the environment of
-   the **client that created the session**, which beats both of the others.
-   See "The PATH a pane gets", below.
-2. **That server environment is DevHub's**, resolved for the machine and used
-   to start the server over SSH — never composed by the REH's pty host.
-3. **DevHub strips the whole `VSCODE_*` family** from terminal environments on
-   purpose (`main/shell/loginEnvironment.ts`), and `bin/remote-cli` is not on a
-   pane's PATH for the same reason.
-
-This is worth stating rather than rediscovering: it is the same fact that makes
-the control socket be written *into* the launcher script instead of exported,
-and it is why delivering `VSCODE_IPC_HOOK_CLI` into a pane was never the fix.
-The check, inside a DevHub terminal on a host, is:
-
-```
-printenv VSCODE_IPC_HOOK_CLI; command -v devhub
-```
-
-The first is empty. The second is DevHub's shim.
-
-So DevHub ships its own, speaking DevHub's own control protocol over the socket
-that is **already** reverse-forwarded onto the host. Nothing new is opened:
+It speaks DevHub's own control protocol over the socket that is **already**
+reverse-forwarded onto the host. Nothing new is opened:
 
 - the command is the app's own Go binary, installed under
   `~/.devhub-server/devhub/<build>/bin/devhub` (above)
@@ -337,21 +306,12 @@ fields, because they answer two questions:
   is credited to the asking Agent.
 
 Agents started on a host get `/devhub` as on this Mac. When the machine's
-launcher is installed, DevHub also writes the skill's `SKILL.md` to
+`devhub` command is installed, DevHub also writes the skill's `SKILL.md` to
 `~/.devhub/terminal/skill-<tag>/.claude/skills/devhub/` (0700 directory, 0600
 file), naming the host's shim by its full path; a Claude Agent there is given
 `--add-dir=<that directory>`, and a Codex GUI Agent's `developerInstructions`
 point at that `SKILL.md`. A skill that cannot be written is logged and skipped;
 the Agents start without it.
-
-Why a reverse-forwarded socket and not upstream's remote CLI path
-(`VSCODE_IPC_HOOK_CLI` → server → client window): that path exists only in
-terminals the REH's own pty host made (see above), it ends in a workbench
-window rather than in DevHub's main process, and an Agent DevHub starts in tmux
-— with no workbench window open at all — has no window to go through. The
-socket needs only the ssh master DevHub already holds. In a container the same
-shim talks to the same kind of socket, made by a relay in `listen` mode under
-`docker exec` (`docs/remote-containers.md`), so every machine has one protocol.
 
 Security: the forwarded socket is `~/.devhub/terminal/control-<tag>.sock` in
 a 0700 directory owned by the person's account, named by a digest of this
@@ -392,28 +352,6 @@ rule of its own.
 `DEVHUB_ORIGIN` stays on `new-session -e`, where it works: the client-beats-all
 behaviour is `PATH`'s alone.
 
-#### The answer says what to run, and what it needs to run
-
-`terminal-profile` answers with a program, its arguments **and the environment
-that program needs**. The third is not decoration. A tmux DevHub shipped to a
-host carries its own compiled terminfo database and is told where it is with
-`TERMINFO`; nothing else on that machine knows. Every tmux client DevHub starts
-itself is given it — but the workbench's integrated terminal is started by VS
-Code's pty host from the launcher script, so the answer is the only channel
-there is. Without it the client on a bare host refuses with
-
-```
-missing or unsuitable terminal: xterm-256color
-```
-
-and the tab closes as fast as it opened, which is what a host with no terminfo
-database at all did.
-
-It rides in the command line through `env`, because the launcher `exec`s the
-answer and a shell takes no assignments in front of an `exec`. `env` execs too,
-so the pty still holds the tmux client itself. A machine whose tmux needs
-nothing added — this Mac — gets no `env` and the line it always had.
-
 `-`, `--wait` and `--goto` are the same `stdin.ts`, `wait.ts` and `goto.ts` the
 local command uses — that is the point of there being one protocol. Two things
 the shim says that the local launcher does not have to:
@@ -424,14 +362,7 @@ the shim says that the local launcher does not have to:
 - nothing about how to start DevHub, because there is no way to. DevHub runs on
   the machine the window is on, and this socket is forwarded from it. A
   `devhub` there that finds nothing listening says
-  `DevHub is not listening on <socket>` — the same sentence the launcher prints
-  from the same situation, rather than a second explanation of one fact
-
-A remote `--wait` marker is a path **on the host**, and the workbench is told so
-with a `vscode-remote://` URI. Sent as `file:` it would be deleted on this Mac
-while the CLI over there polled a file nothing would ever remove, and
-`git commit` on the host would hang forever after the tab was closed with no
-error anywhere.
+  `DevHub is not listening on <socket>`
 
 ### Agents and terminals on the host
 
@@ -470,7 +401,7 @@ one it is holding.
   state: its Workspaces come up with the runtime failure that names the host,
   and the next successful round is when they recover.
 - **A machine no Workspace is on any more is let go of** — its tmux adapter, its
-  launcher installation and its ssh connection together. The sessions over
+  `devhub` command installation and its ssh connection together. The sessions over
   there are untouched; reopening a Workspace on that host finds them again by
   their markers, which is what a restart does too.
 
@@ -484,63 +415,42 @@ a button that was never there.
 ### What a first real run must check
 
 Nothing here can be verified without a reachable host. A packaged build or a
-source run started by `apps/desktop/scripts/dev.sh` will do — the latter
-installs the server `scripts/build_reh.py` built into its `dist/reh`. In order:
+source run started by `apps/desktop/scripts/dev.sh` will do. In order:
 
-0. **The authority resolves at all.** The window comes up with `SSH: <host>` in
-   the status bar rather than sitting on "Opening Remote…". On the host,
-   `~/.devhub-server/bin/<key>/bin/devhub-server` and `.devhub-installed`
-   exist, `~/.devhub-server/.<key>.sock` is a socket and `.<key>.pid` names a
-   live process; on the Mac, `lsof -nP -iTCP@127.0.0.1 -sTCP:LISTEN` shows the
-   forwarded port and the `ssh` holding it. Reopening the same host a second
-   time must *not* add a second line to `~/.devhub-server/.<key>.log` — the
-   running server is adopted, not restarted.
-1. `ls -l ~/.devhub/terminal/` on the host after opening an ssh window: the
-   launcher is there, mode 0755, and `js/package.json` says `{"type":"module"}`.
-2. `~/.devhub-server/bin/<key>/node --version` runs — the key's first half is
-   the commit `devhub --version` prints.
-3. `ls -l ~/.devhub/terminal/control-*.sock` is a socket, and
-   `printf '{"kind":"terminal-profile","machine":"ssh:<host>","root":null}\n' |
-nc -U ~/.devhub/terminal/control-<tag>.sock` answers a line of JSON. If it
-   answers nothing, the forward is the thing that failed; check whether the
-   host's sshd left a stale socket, and whether `AllowStreamLocalForwarding` is
-   on (some hardened sshd configurations turn it off, and that is a refusal
-   DevHub cannot work around).
-4. Opening a terminal in the remote window attaches to a tmux session on the
-   _host_ (`tmux -L devhub list-sessions` there shows it, and `ps` on the Mac
-   shows no new tmux).
-5. Closing the terminal tab leaves the session running and closes the client;
-   reopening reattaches to the same session with its scrollback.
-6. Two windows on two different hosts with folders at the same path get two
+1. `ls -l ~/.devhub/terminal/` on the host after opening an ssh Workspace:
+   `bin-<tag>/devhub` is there, mode 0755.
+2. `ls -l ~/.devhub/terminal/control-*.sock` is a socket, and `devhub
+   --version` in a pane there answers. If it does not, the forward is the
+   thing that failed; check whether the host's sshd left a stale socket, and
+   whether `AllowStreamLocalForwarding` is on (some hardened sshd
+   configurations turn it off, and that is a refusal DevHub cannot work
+   around).
+3. The Workspace's terminal attaches to a tmux session on the _host_
+   (`tmux -L devhub list-sessions` there shows it, and `ps` on the Mac shows
+   no new tmux).
+4. Two Workspaces on two different hosts with folders at the same path get two
    different sessions.
-7. `tmux -L devhub list-sessions` on the host shows a `workspace-…` session for
+5. `tmux -L devhub list-sessions` on the host shows a `workspace-…` session for
    the folder and, once an Agent is created from the row, an `agent-…` one
    beside it — and `tmux -L devhub list-sessions` on the Mac shows neither.
-8. Creating an Agent from an ssh row starts it on the host: the process is in
+6. Creating an Agent from an ssh row starts it on the host: the process is in
    `ps` there and not here, its status leaves "Starting runtime", and text sent
    to it arrives in its pane.
-9. `devhub --metrics` names the host with a connected runtime, a median round
+7. `devhub --metrics` names the host with a connected runtime, a median round
    trip and the reconcile interval derived from it. A LAN host should settle at
    the 500 ms floor; a slow one should be visibly slower and should _not_ make
    the local Agents slower.
-10. Stopping the host mid-session: the Workspaces on it show the runtime
-    failure naming the host, the local Workspaces are unaffected, and bringing
-    the host back recovers on the next round with no restart.
-11. A host with no `tmux`: git, the branch and the Issue row still work, and
-    only the terminal and the Agent refuse, with the sentence naming `tmux` and
-    the host.
-12. A host with neither bash nor zsh (a Synology NAS): a Claude Agent starts,
+8. Stopping the host mid-session: the Workspaces on it show the runtime
+   failure naming the host, the local Workspaces are unaffected, and bringing
+   the host back recovers on the next round with no restart.
+9. A host with no `tmux`: git, the branch and the Issue row still work, and
+   only the terminal and the Agent refuse, with the sentence naming `tmux` and
+   the host.
+10. A host with neither bash nor zsh (a Synology NAS): a Claude Agent starts,
     `~/.devhub-server/bash/<version>/bin/bash --version` answers there, and
     `tr '\0' '\n' < /proc/<pid>/environ | grep SHELL` for the CLI shows both
     `SHELL` and `CLAUDE_CODE_SHELL` pointing at it — while a terminal on the
     same host still runs busybox `sh`.
-13. **Reconnecting.** `ssh -O exit <host>` from a terminal on the Mac, or a real
-    sleep and wake: the workbench notices, reconnects through a fresh
-    `resolve()`, and the extension host on the host is the *same process* —
-    `.<key>.pid` has not changed and the log has not grown. A workbench that
-    came back with a new server is a resolve that was not idempotent, and it
-    would take every language server on that machine with it each time a lid
-    closed.
 
 ## Two facts about running one by hand
 
@@ -728,27 +638,17 @@ require.
 What a host is given, what it is not, and what it must be told about
 itself. Each of these was a live failure before it was a rule.
 
-### No asking program on a host
-
-`devhub-terminal`'s asking program answered VS Code's integrated terminal,
-and no workbench runs on a host, so none is written there: a host's entry
-below has `path: null` once its `devhub` is installed.
-
 ### Whether it got there is in `devhub --metrics`
 
     "terminalLauncher": [
-      { "machine": "local", "installed": true,
-        "path": "…/devhub/devhub-terminal", "reason": null },
       { "machine": "ssh:build.example.com", "installed": false,
-        "path": null, "reason": "…" }
+        "reason": "…" }
     ]
 
-One entry per machine a window has been opened on; absent means nothing has
-asked for that machine yet, which is a different answer from failed. With
-`installed: true` a `reason` is the launcher being there but unable to reach
-DevHub's control socket. A window is never refused for this — a folder somebody
-can edit is worth more than no folder — so this reading, and not the window, is
-where "does this DevHub have terminals, and where" is answered.
+One entry per machine that has been asked; absent means nothing has asked for
+that machine yet, which is a different answer from failed. With
+`installed: true` a `reason` is the `devhub` command being there but unable to
+reach DevHub's control socket.
 
 ### A Workspace's root is canonical on its own machine
 
@@ -769,6 +669,4 @@ A host's tmux gets workspace sessions and Agent sessions and nothing else. The
 bootstrap config still has to create some session — a tmux server with none
 exits — so on a machine that is not this one that anchor (named `scratch`, for
 historical reasons) is retired as soon as the session replacing it exists, and
-only when its whole marker tuple proves it is DevHub's own. A workbench
-terminal on a host, started in a directory no Workspace there contains, is
-refused in words rather than given a session on this Mac's Scratch.
+only when its whole marker tuple proves it is DevHub's own.

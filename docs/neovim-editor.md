@@ -7,9 +7,8 @@ GUI for it, drawn through Neovim's UI protocol exactly over its tmux pane:
 
 - `nvim` typed in a pane — of the Workspace's terminal or an Agent's — or run
   by `git commit`, `crontab -e`, `$EDITOR` (see Neovim in a terminal);
-- the Workspace's one `devhub-nvim` window, where `devhub <file>`, a
-  conversation's file link and Send to Agent's reference open (see
-  Integrations).
+- the Workspace's one `devhub-nvim` window, where `devhub <file>` and a
+  conversation's file link open (see Integrations).
 
 Neovim owns the buffers, the windows and their layout, the modes, the
 plugins and the language servers; DevHub draws, and adds GUI-native widgets
@@ -892,8 +891,8 @@ that do the same.
 
 ### Integrations
 
-- `devhub <file>`, `devhub -g file:line:col`, `devhub --wait`, a
-  conversation's file link and Send to Agent's reference open in the
+- `devhub <file>`, `devhub -g file:line:col`, `devhub --wait` and a
+  conversation's file link open in the
   Workspace's `devhub-nvim` window (`:drop`, the cursor placed, folds
   opened), made when it is not there. The Workspace is selected (beside the
   asking Agent, for a link from one), tmux is switched to that window, and

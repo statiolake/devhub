@@ -73,20 +73,26 @@ empty Electron cache.
 | packaged `Resources/app` | the `code-oss-dev/` workbench bundle, built-ins and asar, plus four REH tarballs | 21 MB |
 | nightly | four REH builds (12–27 min each) before the app job | the app job only |
 
-## What is left to delete
+## What went after
 
-These no longer have a VS Code to drive them and are unreachable, but are
-woven through code that stays, so they are a later step:
+What no longer had a VS Code to drive it but was woven through code that
+stayed went in a second step:
 
-- the workbench *view* plumbing in `shell/shellWindow.ts` and
-  `shell/workbenchView.ts`, the `workbench` children of `windowLayout.ts`,
-  the `workbench` layout kind in the model and the Task Manager's workbench
-  rows (`diagnostics/taskTree.ts`);
-- the `terminal-profile` control request and the terminal launcher's asking
-  program (`terminal/devhubTerminal.ts`), which answered VS Code's integrated
-  terminal; the remote launcher still installs the host's `devhub` command
-  beside it;
-- the `EditorAttachment` (`host` | `devContainer`) in the model and the state
-  file, now always `host`;
-- passages of `docs/window-and-pages.md` and `docs/remote-ssh.md` that
-  describe the above.
+- the workbench *view* plumbing (`WorkbenchView`, the views and what they
+  attached in `ShellWindow`, the `editor` and `attached` children of
+  `windowLayout.ts`), a question scoped to one workbench, the `workbench`
+  layout kind (the Workspace alone is `editor`), the application menu's
+  takeover of `setApplicationMenu`, and the Task Manager's VS Code row;
+- "Send to Agent…", whose only sender was the workbench;
+- workbench freezing: the freeze targets, the listen-queue and traffic
+  readers and the process-group anchor (`devhub-pgrp-anchor`);
+- the `terminal-profile` control request and `devhub-terminal`, the
+  launcher and asking program that answered VS Code's integrated terminal.
+  A host is still given DevHub's `devhub` command and the `/devhub` skill
+  (`Runtime.terminalLauncher`, `terminalLauncher` in `devhub --metrics`);
+- the `EditorAttachment` (a dev container) in the model: a state file's
+  `editor` is not read, and the next save drops it; a closed entry's
+  `dev_container` likewise.
+
+No settings key went with them: the ones that fed the workbench were
+retired with it (above).

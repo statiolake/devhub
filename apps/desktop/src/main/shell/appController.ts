@@ -4231,12 +4231,9 @@ export class AppController {
 	/**
 	 * What has to be true again whenever the projection changes.
 	 *
-	 * The menu describes the model, so it is rebuilt; and a workspace that has
-	 * just appeared is a workbench that should already be starting, for the
-	 * same reason the restored ones are — nobody should wait for one at the
-	 * moment they ask to see it. Both are idempotent, and both are here rather
-	 * than at each place a snapshot is sent, so neither can be forgotten at one
-	 * of them.
+	 * The menu describes the model, so it is rebuilt, and so on below. Each is
+	 * idempotent, and each is here rather than at each place a snapshot is
+	 * sent, so none can be forgotten at one of them.
 	 */
 	private projectionChanged(): void {
 		refreshMenu();
@@ -4245,7 +4242,7 @@ export class AppController {
 		// and it is a fact about the projection like the menu and the title —
 		// so it is answered here, where everything that follows the projection
 		// is answered, rather than by a page that can only be seen when there
-		// is no workbench over it. See `windowAttention.ts`.
+		// is no view over it. See `windowAttention.ts`.
 		this.attention.observe(this.snapshot());
 		this.agentNotifier.observe(this.snapshot());
 		// The arrangement is a function of the projection like everything else
@@ -4272,11 +4269,6 @@ export class AppController {
 		// An Agent gone idle, or a box ticked, is when an automatic action may
 		// be due.
 		this.runAutomaticActions();
-		// Which workbenches exist follows the projection and the selection —
-		// a Workspace added or gone, one shown that is asleep, the cap — so
-		// every change is a plan. See `workbenchLifecycle.ts`.
-		// What is on screen follows the selection, wherever the selection
-		// changed — a menu command, a restored session, or the page.
 	}
 
 	/**

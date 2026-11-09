@@ -2,10 +2,10 @@
 
 DevHub is one window with several web contents in it. This is what owns what.
 
-(What is said below about *workbenches* — VS Code windows laid into DevHub's
-window as views — describes code that no longer has a VS Code to drive it:
-see `docs/without-vscode.md`, "What is left to delete". Nothing creates a
-workbench view any more.)
+A Workspace's editor area is its terminal page, with the Neovims in it drawn
+over their panes (`docs/neovim-editor.md`). It used to be a VS Code workbench
+laid into the window as a view; that went with VS Code
+(`docs/without-vscode.md`).
 
 It is written as the answer to five questions that used to have more than one
 answer each: where anything is drawn, what each page may ask for, where a
@@ -18,10 +18,9 @@ wrong. Every one of them is now decided in exactly one place.
 arrangement to a list of children — each with a rectangle, a visibility and a
 position in the list. **The list's order is the z-order**, lowest first:
 
-    the window's own page → the Sidebar → every workbench (the one on screen
-    last among them) → whatever those workbenches attached to themselves →
-    the Agents → every terminal pane → the notices → the questions → the
-    tooltip
+    the window's own page → the Sidebar → every editor area (the one on
+    screen last among them) → the Agents → every terminal pane → the notices
+    → the questions → the tooltip
 
 The tooltip is on top of everything, the questions included. Not because it
 may stand over a modal — it may not: a question coming up takes the tooltip
@@ -52,9 +51,8 @@ and labels and the click's point in its own coordinates (`showContextMenu`),
 main adds where it laid the Sidebar and pops a `Menu` up over the window, and
 the page runs whichever item's id comes back, the way its own buttons do. It
 used to be a DOM box in the Sidebar's page, clipped by the Sidebar's view —
-to nothing on a collapsed rail. A native menu is above every view, is drawn and
-keyed the way every Mac menu is, and is what the workbench's context menus
-already are; so the window has one kind of context menu.
+to nothing on a collapsed rail. A native menu is above every view and is drawn
+and keyed the way every Mac menu is.
 
 `ShellWindow.layout()` is the only thing that reads it, and it is the only
 thing that calls `setBounds` or `setVisible` on anything. Nothing else in
@@ -66,40 +64,16 @@ runs at the display's full rate and reports itself visible, and nothing
 appears. The same view, at the same rectangle on screen, added to the window's
 own `contentView` draws and animates. Nothing automated can show this —
 `win.capturePage()` does not include child views either — so it is written
-down here rather than guarded by a screenshot test, and the tests that stand
-in for it are about the _shape_: what a workbench attaches ends up in the
-window's child list and never in the workbench's own.
-
-So every view in this window is a **sibling**, including the ones a workbench
-opens for itself — VS Code's integrated Browser
-(`workbench.action.browser.open`) is the one that exists today. It is a child
-kind of its own, `attached`, ordered immediately after the workbench it
-belongs to and below everything the shell draws over the content area.
-
-`WorkbenchView.contentView` is what makes that possible without a second
-owner of the layout. VS Code believes it is the window's content view; it is a
-container that registers what it is given with `ShellWindow` and wraps that
-view so the two things VS Code says about it become _wishes_:
-
-- the rectangle its renderer measured, which is in the **workbench's own
-  document** — the only frame a renderer can measure in. `windowLayout()`
-  translates it by that workbench's rectangle and clips it to it, so the
-  browser follows the Sidebar, the split and the window's size with no round
-  trip through any page, and can never draw over the Sidebar or an Agent's
-  pane;
-- whether VS Code wants it drawn, which is half the answer. It is drawn when
-  that wish is true _and_ its workbench is the one on screen, so selecting
-  another Workspace takes it away and coming back brings it back where it was.
-
-The workbench going away takes everything it attached out of the window with
-it; nothing else would.
+down here rather than guarded by a screenshot test: every view in this
+window is a **sibling** in the window's own child list, the Neovims drawn over
+a terminal's panes included.
 
 No page measures anything the owner decides. The window's own page used to
-leave a hole for the workbench, measure it with a `ResizeObserver` and report
+leave a hole for the editor, measure it with a `ResizeObserver` and report
 it back, which made main's idea of the layout a page's idea of it one frame
 late and made every window resize a round trip through a renderer. Now main
 computes the rectangle and _tells_ the page (`workbenchAreaChanged`), and the
-page draws its own states into the same rectangle the workbench is laid into.
+page draws its own states into the same rectangle the editor is laid into.
 
 **A page's own box is not the window.** `window.innerWidth` inside a
 `WebContentsView` is that view's width, and it is stale for a while after main
@@ -126,9 +100,9 @@ role.)
 | a Neovim              | `neovim.html`        | a Neovim drawn from its UI protocol exactly over its terminal pane (`general.editor = "neovim"`)                           | the projection, the appearance, `neovim` (attach, calls, GUI windows), `openExternalUrl` — [neovim-editor.md](neovim-editor.md)                                                                                                                                                                |
 | the notices           | `toasts.html`        | what the application has to say, over whatever is on screen, and the notice center                                         | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `noticeSettings`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`, `focusSurface`                                                                                                      |
 | the tooltip           | `tooltip.html`       | one box with a row's facts in it, over whatever is on screen; its GitHub pages are links                                   | `tooltipText` in; `tooltipSize`, `tooltipPointer`, `openExternalUrl` (GitHub pages only) and `writeClipboard` (a row's paths) out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                         |
-| the questions         | `picker.html`        | every sheet DevHub stops on, over every workbench                                                                          | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
+| the questions         | `picker.html`        | every sheet DevHub stops on, over every view                                                                               | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
 | Settings              | `settings.html`      | its own window                                                                                                             | `SETTINGS_CHANNELS` in full, plus the failure contract every page has                                                                                                                                                                                                                          |
-| Task Manager          | `task-manager.html`  | its own window: what each Workspace, workbench and Agent costs ([task-manager.md](task-manager.md))                        | `TASK_MANAGER_CHANNELS` in full, plus the failure contract every page has                                                                                                                                                                                                                      |
+| Task Manager          | `task-manager.html`  | its own window: what each Workspace and Agent costs (           [task-manager.md](task-manager.md))                        | `TASK_MANAGER_CHANNELS` in full, plus the failure contract every page has                                                                                                                                                                                                                      |
 
 Every one of them also has `raiseFailure` and `onTheme`, which is what "a
 DevHub page" means.
@@ -199,31 +173,24 @@ drawn as an ordinary row (`sidebarWorkspaces` hands it out as `orchestrator`,
 apart from `scratch` and `rows`), and its Agents other than the orchestrator
 are the row's children, drawn by the same `AgentTree` every Workspace's
 Agents are. A child selected is an ordinary Agent selection — its pane, full
-or beside the root's workbench. The root's workbench itself is that Workspace
-selected, and the content area is its workbench as for Scratch; the
+or beside the root's editor. The root's editor itself is that Workspace
+selected, and the content area is its editor as for Scratch; the
 Orchestrator row stays highlighted, and its right-click **Show Editor** is
 the way there from the Sidebar (the Files tab's エディタで開く is the other).
 
 ## A close asks once, then acts
 
 Closing a Workspace asks every question it has before it does anything, and
-then asks nothing. What it would lose — busy Agents, running terminals, and
-the workbench's unsaved editors, by the names their tabs show — is one
-confirmation on the picker (`close-confirmation`); a dirty worktree is the
+then asks nothing. What it would lose — busy Agents and running terminals — is
+one confirmation on the picker (`close-confirmation`); a dirty worktree is the
 three-way sheet before it, because whether the folder survives decides whether
-there is anything left to close. A workbench whose unsaved editors could not be
-read is said to be so on that sheet and is never read as clean. When the close
-removes a worktree, the confirmation carries that disposition and the sheet says
-so in a "Worktree" row: a clean worktree with unsaved editors stops only here.
+there is anything left to close. When the close removes a worktree, the
+confirmation carries that disposition and the sheet says so in a "Worktree"
+row. A Neovim's unsaved buffers are its own to ask about (`:qa` in it).
 
-Once the person has chosen to close, the close carries the answer out:
-`closeEditor` discards the workbench's unsaved work (the request
-`patches/vscode/0004-devhub-reads-and-discards-unsaved-editors.patch` adds),
-and only then unloads it. Unloading first made VS Code raise its own "do you
-want to save?" as a second question in the middle of an answered close, and the
-close sat at "closing" until its deadline with that dialog stranded over it.
-Every request a close makes to a workbench has a deadline, and a step that
-fails reaches the person down the one failure path below.
+Once the person has chosen to close, the close carries the answer out. Every
+step has a deadline, and a step that fails reaches the person down the one
+failure path below.
 
 **A close lands on the next row of what held it, and on the previous one
 when there is no next.** An Agent is held by its Workspace, so closing one
@@ -325,8 +292,8 @@ never raised again; what began here is raised and never drawn here.**
 `main/shell/publishAudience.ts` is the only thing that decides who is told.
 App-scoped failures go to the `toasts` view — a page with no model, no
 snapshot and nothing else that could fail while it is telling you something
-failed — and it is a child of the shell window, so a notice is drawn _over_ a
-workbench, which the window's own page could never do.
+failed — and it is a child of the shell window, so a notice is drawn _over_
+every other view, which the window's own page could never do.
 
 The Settings window is the one exception, and it is about being seen rather
 than about routing: a failure that began there is drawn there, because a report
@@ -390,7 +357,7 @@ recoloured correctly, and one on its own page would not have. `chromeAudience`
 states the rule instead of it being a coincidence, and the test on it is that
 every page with `onTheme` is in it.
 
-The palette is DevHub's own answer, not a workbench's. `[appearance] theme`
+The palette is DevHub's own answer. `[appearance] theme`
 selects a colour theme — one name, or `light:<name>,dark:<name>` as Ghostty
 spells it — among DevHub's built-in themes and the file's own
 `[themes.<name>]` tables, and the appearance the process is in
@@ -508,8 +475,8 @@ fills that page, because there is nothing behind it to draw instead.
 and `keyboardChild(layoutInput())` is the only answer to "where do the keys
 go". Focus is a function of the same state the layout is a function of — all
 of it, not only the arrangement: `layout()` places the keyboard again whenever
-that answer changes, so a workbench that was chosen before it existed (a
-folder just opened, one on another machine, one being rebuilt) gets the keys
+that answer changes, so an editor that was chosen before it existed (a
+folder just opened, one on another machine) gets the keys
 when it arrives rather than leaving them on the window's own page, where they
 went while there was nothing else.
 
@@ -523,7 +490,7 @@ DOM and an Agent's DOM were in one document, so a click on a row left the
 keyboard on that row while the Agent was what was on screen. Two views cannot
 have that problem.
 
-Measured in a split, with the Agent selected and the window key: the workbench
+Measured in a split, with the Agent selected and the window key: the editor
 answers `document.hasFocus()` with `false` and the Agents view with `true` —
 exactly one view at a time, in both directions. No view-level blur is needed.
 
@@ -567,41 +534,13 @@ whether it had asked.
 Opening a folder is choosing it, new or not — the model's `open_folder`
 selects the Workspace it adds exactly as it selects one that was already open.
 It did not use to: a new folder was added and left unselected, and what put
-somebody in it was its workbench reporting its own folder back as a second
-`open_folder`, which found the Workspace and selected it. When a workbench
-DevHub builds stopped reporting itself, `Cmd+Q F` stopped arriving anywhere.
+somebody in it was the editor reporting its own folder back as a second
+`open_folder`.
 
-Where the keys go _inside_ a workbench is the workbench's own business, with
-one exception: **a toggle that lands on an editor lands in its editor group.**
-`Cmd+Q Cmd+J` going Agent → editor and `Cmd+Q Shift+J` arriving at an editor —
-Scratch on the way out, or the editor it came from on the way back — and
-`Cmd+Q Shift+O` coming back from the Orchestrator screen to an editor focus
-that workbench's active editor group (`workbench.action.focusActiveEditorGroup`),
-not its integrated terminal, so the keyboard is in the text and not just on the
-view. Every other way of choosing the same workbench — a sidebar click, `Cmd+Q
-N/P`, a digit, the pickers — leaves it wherever it was last typed into.
-
-The intent is `Landing` in `chords.ts`, carried by the effect (`focus:
-"editor"`) and spent by the placement that ends the move:
-`focusSurface("editor")`, which forwards the command to the workbench the
-keyboard has just been put in, when it is one. Nothing is kept between the
-asking and the landing, because the move, the arrangement it publishes and
-the placement are one synchronous call in main. (It used to be armed on one
-side and spent on the other, from when the arrangement came back up from a
-page a round trip later; `Shift+J`, whose destination only the model knows,
-could not have been armed for at all.) A landing on an Agent means nothing —
-an Agent is a terminal already — and one on a workbench that is starting,
-restarting or gone, behind a question, or while DevHub is not in front is
-simply not had: the move still happens.
-
-**Inside a workbench the keyboard lands where VS Code leaves it.** Main puts
-the keys in a workbench's contents; where they land in it is whatever element
-had the focus there last, as in VS Code. There is no safety net that moves a
-focus left on `<body>`: where a DevHub change lost the focus, the change puts
-it back itself (DevHub Vim's `:q` in a comment widget focuses the widget's
-editor before the widget folds or goes, docs/vim.md). Notices never take the keys (`ToastsView.place`); the notice
-center does only when asked for (Show Notifications), and hands them back
-with `focusSurface` when it closes.
+Where a DevHub change lost the focus, the change puts it back itself. Notices
+never take the keys (`ToastsView.place`); the notice center does only when
+asked for (Show Notifications), and hands them back with `focusSurface` when
+it closes.
 
 **`]` and `[` step from the tab you are on.** Every tab stands on its own row
 of the tab order — the list `N`/`P` walk and a Workspace's close lands by,
@@ -615,31 +554,6 @@ step from its `Cmd+J` partner (`pairedAgentId`) instead, which skipped the
 Workspace's own first Agents whenever the partner was further down; before
 that it stepped from nowhere, which is Scratch's first Agent.
 
-**A workbench has no secondary side bar.** DevHub already docks its own
-panes beside the editor, and a second VS Code side bar there competed with
-them — one more thing that came and went at the side, Chat opening in it by
-default and maximizing it when VS Code thought it should. So in DevHub that part is never shown, and
-everything it would hold is in the primary side bar: Chat, an extension's
-`secondarySidebar` view containers, and anything a person had moved there
-before.
-
-It is decided in the workbench, in two halves. The patch
-(`patches/vscode/0012-no-secondary-side-bar.patch`) makes the layout never
-show or maximize the part (a layout saved with it open, or maximized, comes
-back without it), gives a view container registered for it the primary side
-bar as its default location — so it lands there, and "Reset Location" puts it
-back there — and takes out what would show it or move something into it: its
-toggles in the title bar's layout control, the Appearance menu and Customize
-Layout, `Cmd+Alt+B`, its Command Palette entries (focus, maximize,
-next/previous view, the panel's move to it), "Move To ▸ Secondary Side Bar" on
-an activity bar icon and "New Secondary Side Bar Entry" in Move Focused View.
-The overlay's `devhubNoAuxiliaryBar.contribution.ts` moves to the primary side
-bar any view container that is in the secondary one anyway — a saved custom
-location, a command or extension moving a view there — saved the way a
-person's move is, and makes `workbench.action.toggleAuxiliaryBar` and
-`workbench.action.focusAuxiliaryBar`, which a keybinding or an extension may
-still run, toggle and focus the primary side bar.
-
 ## Chords are answered in main
 
 `keyboard.ts` installs `before-input-event` on every WebContents DevHub owns,
@@ -649,15 +563,11 @@ work: it sits in front of every surface, and a completed chord is
 
 So after the prefix the keyboard has to be in a WebContents, and while a chord
 is armed DevHub keeps it in one: it stays where the prefix was typed, and any
-move DevHub would make meanwhile (the workbench that had it being replaced —
-waking, restarting, crashed — or a workbench chosen before it existed
-arriving) goes to the window's own page instead, which is never swapped; the
-move it stood for is made when the chord ends (`ShellWindow.chordArmedChanged`).
-A key in no WebContents goes to the menu bar, which is often the workbench's;
-there is no second road for chords through menu accelerators. A workbench menu
-item that falls back to an empty window because no workbench has the keyboard
-(New Text File, New Window — `OpenContext.MENU`) opens nothing, rather than
-Scratch (`devhubWindowsMainService.ts`).
+move DevHub would make meanwhile (the view that had it being replaced, or one
+chosen before it existed arriving) goes to the window's own page instead,
+which is never swapped; the move it stood for is made when the chord ends
+(`ShellWindow.chordArmedChanged`). A key in no WebContents goes to the menu
+bar; there is no second road for chords through menu accelerators.
 
 It is not in front of an input method. On macOS Chromium hands a key to the
 input method first (`interpretKeyEvents:`), and a key the input method takes
@@ -708,9 +618,9 @@ shell splits inside it with tmux's own keys.
 
 **Whose terminal is on screen.** The terminal and its Agent are a set: a
 terminal is on screen only while its Agent is. The view's Agent's: the
-selected Agent (full or beside its workbench), or — with a Workspace's row
+selected Agent (full or beside its editor), or — with a Workspace's row
 selected beside an Agent — the Agent that Workspace pairs with
-(`pairedAgentId`, the one `Cmd+Q Cmd+J` goes to). The workbench alone shows no
+(`pairedAgentId`, the one `Cmd+Q Cmd+J` goes to). The editor alone shows no
 Agent, so it shows no terminal: the paired Agent's keeps running hidden, its
 `open` untouched, and is back when that Agent is. Switching Agents shows each
 one's own terminal, if it has one open; the one left behind keeps running,
@@ -720,7 +630,7 @@ with no Agents has no terminal.
 **`Cmd+Q V`** (`toggle_terminal`) starts the view's Agent's terminal the
 first time, with the keyboard in it, and after that hides and shows the pane
 without touching the session. On a Workspace with no Agent it says so (a
-`terminal_needs_agent` notice) rather than doing nothing; on the workbench
+`terminal_needs_agent` notice) rather than doing nothing; on the editor
 alone it says to switch to the Agent (`Cmd+Q Cmd+J`) or split (`Cmd+Q Z`)
 (`terminal_needs_agent_view`) and changes nothing. `Cmd+Q S` and the
 bare arrows after the prefix are unbound (they were the pane tree's split
@@ -745,12 +655,12 @@ share of the content area on the right and the Agent gets what is left
 (`contentRect`). In a split the editor keeps the whole left half, exactly as
 without a terminal, and the right half is a column: the Agent on top, the
 terminal at the bottom taking its share of the height (`placeTerminalBelow`,
-`terminalStacked`). With the workbench alone there is no terminal. One child
+`terminalStacked`). With the editor alone there is no terminal. One child
 per Agent terminal (`terminal`) is stacked above the Agents and below every
 layer — the one on screen at its rectangle, every other hidden. The divider
 between Agent and terminal is the strip no view covers, drawn on the window's
-own page from `terminalSeam` on the workbench area main pushes (upright, or
-level when `stacked`), exactly as the workbench/Agent seam is; dragging it
+own page from `terminalSeam` on the editor area main pushes (upright, or
+level when `stacked`), exactly as the editor/Agent seam is; dragging it
 previews (`previewLayout({ terminalShare })`) and commits
 `resize_agent_terminal` (with `stacked: true` for the split's).
 
@@ -760,7 +670,7 @@ whether the terminal has the keyboard (`AppModel.paneFocus`): a chord moves
 it, a click into a view reports it (`ShellWindow.onContentFocused`), and any
 selection takes it back to the content. `Cmd+Q O` walks the panes on screen —
 Agent → terminal with a full Agent, editor → Agent → terminal in a split,
-nothing to walk with the workbench alone — and wraps. `Cmd+Q X` with the terminal in front closes it
+nothing to walk with the editor alone — and wraps. `Cmd+Q X` with the terminal in front closes it
 (and its session).
 
 **Ending.** A terminal's pane goes when its session does: the shell exited, or
@@ -789,7 +699,7 @@ typed only when this call starts it) and prints the handle — the tmux
 executable, the server's socket, the session and the active pane (`%N`) — so
 the Agent drives it with plain `tmux -S <socket> send-keys -t %N -l …` and
 reads it with `capture-pane -p`. `terminal status` (or `show`) says whether it
-is open, visible (open, and its Agent on screen — never with the workbench
+is open, visible (open, and its Agent on screen — never with the editor
 alone) and focused and lists every tmux pane in the session with
 where it is in its window (`top-left`, `bottom-right`, … from
 `#{pane_left}`/`#{pane_top}`), so "the bottom-right pane" of a terminal the
@@ -818,9 +728,8 @@ default key — when it already has a gesture elsewhere or is rare:
 PATH**, the launcher from `main/cli/install.ts`, whichever editor the Workspace
 has) are today (`PALETTE_ONLY_COMMANDS`).
 `navigate_back` and `navigate_forward` are `Cmd+Q H` / `Cmd+Q L` (Vim's left and
-right): `Cmd+[` / `Cmd+]` still work unprefixed on DevHub's own pages, but over a
-workbench the brackets belong to VS Code, and as chords they already belong to
-the Agent cycle.
+right): `Cmd+[` / `Cmd+]` still work unprefixed on DevHub's own pages, and as
+chords they already belong to the Agent cycle.
 
 The stroke is the character `:`, not a physical key, so it is Shift+; on a US
 layout and the unshifted key beside L on a JIS one (`chordKeys.ts`).
@@ -832,7 +741,7 @@ snapshot — an Agent's commands are not offered with a workspace selected, Back
 is not offered with nowhere to go back to. Commands run from the palette are
 remembered in memory (eight, most recent first) and lead the list.
 
-It is the ordinary picker on the modal layer, so it draws over a workbench as
+It is the ordinary picker on the modal layer, so it draws over the window as
 every other sheet does: typing filters with the shared scorer
 (`model/fuzzy.ts`, matching the title and the id), the arrows and Ctrl-N /
 Ctrl-P move, Return runs and Escape closes. The sheet closes with the chosen
@@ -850,9 +759,8 @@ table and not in the Chord Help sheet, which lists what `Cmd+Q` leads to.
 
 They are decided **per web contents**, the way the Mac's editing keys are
 (`main/shell/editingCommands.ts`, and `main/shell/terminalZoom.ts` beside it).
-A VS Code workbench binds the same chord to zooming the window, so claiming
-these keys for the application would take that away from every editor DevHub
-hosts. The rule is one line: they mean a zoom **only on the Agents page**, and
+Claiming these keys for the application would take them from Neovim and the
+terminal. The rule is one line: they mean a zoom **only on the Agents page**, and
 everywhere else they are not touched. A modal is not an exception to that, it
 is an instance of it — a question that is up holds the keyboard, so the
 keystroke arrives from the picker's view and matches nothing. Main asks its own
@@ -942,7 +850,7 @@ selection passes over it — so Back skips what `Cmd+Q N`/`P` only flicked past:
 | `Cmd+Q N`/`P`, `Cmd+Q 0`–`9`, the tab picker, the Sidebar walked from the keyboard (its Return included), `Cmd+Q Shift+J`, a selection repaired after a close, a command line that does not take focus                                                                                                                                                                                | no                    |
 | Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                                                                                                                                                                                                                                  | no                    |
 
-"In it" means its views: a workbench (and what it hosts), the Agents' page (a
+"In it" means its views: the Agents' page (a
 GUI conversation or a TUI's xterm) and a terminal pane (`pane.html`) and the Neovim
 editor (`neovim.html`) — `isDestinationSurface` in
 `historyKeys.ts`. The Sidebar is choosing where to go, not being somewhere, and
@@ -979,35 +887,20 @@ newest 100 entries are kept. Each arrow is disabled when there is nowhere it
 would go, answered by the same rule the move obeys. History is per session:
 the state file says where the window opens, and Back starts there.
 
-**Two histories, and the editor's wins over an editor.** A VS Code workbench
-has its own Back and Forward over cursor positions
-(`workbench.action.navigateBack`/`navigateForward`). Every input is therefore
-decided by the surface it lands on, the way the zoom keys are:
-
-| Input                                       | Over DevHub's own pages (window, Sidebar, Agents)      | Over a workbench                                   |
-| ------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------- |
-| `Cmd+[` / `Cmd+]`                           | app history (`main/shell/historyKeys.ts`)              | untouched — VS Code's Outdent/Indent Line          |
-| `Ctrl+-` / `Ctrl+Shift+-`                   | untouched (a terminal's control character)             | untouched — VS Code's own Back/Forward             |
-| mouse buttons 4/5 (`MouseEvent.button` 3/4) | app history (`shell/historyButtons.ts`)                | VS Code's own, by its `mouseBackForwardToNavigate` |
-| `app-command` `browser-backward`/`-forward` | app history (Windows/Linux only; never fires on macOS) | untouched                                          |
-| trackpad `swipe` left/right                 | app history                                            | untouched                                          |
-| the title bar's arrows                      | **always app history**                                 | **always app history**                             |
-
 `Cmd+[`/`Cmd+]` are the Mac's own Back and Forward (Finder, Safari, Xcode),
-free on every DevHub page, and the workbench is left with its bindings intact.
-The arrows always walk the app's history: they are the shell's chrome, above
-every surface, and an arrow whose meaning changed with which pane last had the
-keyboard could not be predicted by looking at it. Keys and gestures raised in
-main are declined while a question is up, as the zoom is; the window-level
-gestures, which say nothing about where the pointer was, are decided by where
-the keyboard is (`ShellWindow.focusTarget`). With the title bar hidden
+answered on DevHub's own pages (`main/shell/historyKeys.ts`); mouse buttons
+4/5 (`shell/historyButtons.ts`), a trackpad swipe and the title bar's arrows
+walk the same history. Keys and gestures raised in main are declined while a
+question is up, as the zoom is; the window-level gestures, which say nothing
+about where the pointer was, are decided by where the keyboard is
+(`ShellWindow.focusTarget`). With the title bar hidden
 (`appearance.title_bar = "hidden"`) there are no arrows, and the keys and the
 mouse still work.
 
 ## Attention is the Dock
 
 There is no ring drawn around the window. A DOM overlay in the window's own
-page is behind every workbench view, which is to say hidden exactly when there
+page is behind every child view, which is to say hidden exactly when there
 is something to say — so an unread Agent is announced by the _window_: a Dock
 badge, and a critical bounce while DevHub is not in front. See
 `main/shell/windowAttention.ts`.
@@ -1134,301 +1027,12 @@ screen changes nothing here; macOS hides the lights and the bar stays drawn.
 
 ## What it costs
 
-One main process, one renderer per page (nine, of which Settings and Task Manager exist only
-while they are open, and the terminal pane once per terminal), and one per workbench — though several workbench views can
-share a renderer, which Chromium's same-site grouping decides.
-
-A workbench is a renderer, an extension host and its language servers and
-watchers, so one per Workspace adds up. DevHub keeps them the way Chrome and
-Edge keep tabs: **frozen** when not on screen — every one of its processes
-stopped with SIGSTOP, so it touches no memory and macOS compresses and swaps
-its pages first, and continued with SIGCONT instantly, its state intact, its
-connections still open — and **discarded** (closed) only after it has been
-frozen a long while. Restarting a workbench is what used to hurt: a CPU spike,
-seconds of waiting, and every server an extension hosted (vscode-review-relay's
-loopback API, say) gone with it. Freezing costs none of that.
-
-### States and transitions
-
-Each folder's workbench is in one phase at a time (`WorkbenchPhase` in
-`workbenchPlan.ts`):
-
-| Phase                                     | What it is                                                           |
-| ----------------------------------------- | -------------------------------------------------------------------- |
-| _absent_                                  | not started in this run: its placeholder until it is asked for       |
-| _starting_ (cause start, restart or wake) | an open in flight, or a view whose page has not loaded               |
-| _running_                                 | its view loaded; _settled_ once it has finished starting             |
-| _frozen_                                  | every process of it stopped (SIGSTOP)                                |
-| _discarding_                              | thawed, being unloaded                                               |
-| _discarded_                               | closed (frozen long, or stopped); its placeholder shows its frame    |
-| _restart-waiting_, _gave-up_, _parked_    | failed: backing off, given up on, unavailable until Retry or Locate… |
-
-```text
-absent     ─ asked (Enter, Start) / requested ───────────────▶ starting
-starting   ─ loaded ──────────────────────────────────────────▶ running
-running    ─ hidden 3 s, settled, nothing keeps it (fresh probe) ▶ frozen
-           ─ stopped (Cmd+Q Shift+E) ─────────────────────────▶ discarding ─▶ discarded
-frozen     ─ shown / asked / requested / held / a connection ─▶ running
-           ─ frozen workbench_discard_minutes / stopped ──────▶ discarding ─▶ discarded
-discarded  ─ asked (Enter, Start) / requested ───────────────▶ starting (wake)
-```
-
-### The planner and its driver
-
-What every workbench should be doing is decided by one pure function,
-`decide` (`workbenchPlan.ts`), from facts and nothing else; it reads no clock
-and keeps nothing. The facts per workbench (`WorkbenchFacts`): its phase,
-local or not, shown, asked for (an ask, or a DevHub request waiting on it),
-held (DevHub talking to it, thaw only), closing, asked to freeze (Sleep) or to
-stop (`Cmd+Q Shift+E`), when it was last shown and
-when it was hidden, settled, the renderer's last answer about what a freeze
-would interrupt (`Probe`), when its sockets last carried traffic, when a
-connection last arrived for it, and whether its renderer process also draws
-another workbench. `WorkbenchLifecycle` (`workbenchLifecycle.ts`) holds the
-facts, turns events into them — an open settled, a view loaded or died, a
-probe answered, traffic, a connection, an unload finished — and, on every
-`plan`, asks `decide`, moves each phase to match its answer (so a second plan
-asks nothing twice) and hands the effects to the one executor,
-`AppController.reconcileWorkbenches`: open, probe, freeze, thaw, discard,
-dispose, report giving up or a stop that did not happen, and the placeholder
-for each slot. The executor
-runs a plan on every projection change, every event and every action that
-completes, and at `nextDeadline` (a probe due again, traffic or a grace
-running out, a discard due, a backoff over) — one timer, no others.
-
-The rules (tested on fact fixtures in `workbenchPlan.test.ts`, races
-included):
-
-- **Nothing starts until it is asked for.** Not at launch, not in the
-  background, not by opening or selecting a Workspace (`Cmd+Q F`, a folder
-  from the command line, VS Code's own open, `devhub --tell workspace open`,
-  a click on its row): its editor area is the placeholder ("Editor not
-  running — press Enter to start", and a Start button) until Enter or the
-  button asks for it (`wakeEditor`, an `asked` ask), or a DevHub request that
-  needs it running waits on it — a file routed to it (`devhub <file>`,
-  `devhub -`, `--wait`, a conversation's file link), Scratch's empty window,
-  a dev container reopened or rebuilt. Asked, it starts at once, however many
-  others are starting.
-- **Shown, asked for or requested keeps it.** The shown workbench is never
-  frozen, and a frozen one that is shown, asked for, requested, held or
-  closing is thawed at once.
-- **A person can stop one.** `Cmd+Q Shift+E` (`stop_editor`; `Cmd+Q E`,
-  `focus_editor`, is taken) stops the selected Workspace's workbench — the
-  Workspace's row or one of its Agents — whether it is on screen, hidden or
-  frozen: the plan is asked (`LifecycleInput.stop`) and discards it, closing
-  it exactly as a long frozen one is closed (below: thawed, unsaved editors
-  backed up by hot exit, the same last-moment checks), and the slot goes back
-  to the placeholder, with the frame it left; Enter starts it again (a
-  wake). It is not stopped while it is starting, while its Workspace closes,
-  while a DevHub request or hold needs it, or when it is SSH or a dev
-  container (`stopRefusal`), nor when the unload is called off (unsaved
-  editors with `files.hotExit` off, a veto): each of those is said, as a
-  notice (`editor_not_stopped`), and it keeps running.
-- **Settled.** A started workbench is probed every second until it has
-  settled: its window has reached VS Code's last lifecycle phase
-  (Eventually), its installed extensions are registered, and its renderer's
-  and window utilities' CPU (from `app.getAppMetrics()`) has stayed under
-  10 % for three seconds. Until then it is not frozen.
-- **Freeze aggressively.** A running local workbench that is not on screen is
-  frozen as soon as it has settled and nothing keeps it awake. The keep-awake
-  reasons are one table, `AWAKE_RULES`: shown, asked for, held by DevHub,
-  closing, not local, still starting, sharing its renderer (hard — a person's
-  Sleep does not override them); hidden less than 3 s ago
-  (`FREEZE_GRACE_MS`), network traffic on its sockets in the last 30 s, a
-  connection that arrived in the last 30 s, and busy (soft). Busy is
-  what the renderer says when it is probed: a debug session, a running task,
-  an integrated terminal with a program in front of its shell. A DevHub
-  terminal is tmux and never counts — it runs under the shared pty host,
-  which is never stopped. **The grace after hiding:** a workbench that has
-  just stopped being shown is neither probed nor frozen until 3 s after it
-  was hidden — the planner's deadline, not a timer of its own — and a freeze
-  always follows a probe taken after that grace (and since its last thaw).
-  VS Code reports a terminal busy only about 2 s after its command starts
-  (`ChildProcessMonitor`: a 1 s debounce after input, then `ps`), and a
-  frozen workbench is never probed again, so without the grace a command
-  started just before switching away was frozen while it ran — an
-  output-heavy one then stalls on the pty's flow control. Shown again within
-  the grace, nothing was asked and nothing happens. A workbench started
-  hidden (a request for it) and never shown has no grace: it freezes once it
-  has settled, on the probe that settled it. A probe answered after the person
-  came back freezes nothing: the decision is made from the facts as they are
-  when the answer lands. A busy one is probed again every 15 s.
-- **A hidden workbench gives back its TextMate worker.** The worker's
-  Oniguruma heap is a WebAssembly memory that grows to what the largest file
-  it tokenized needed (70 MB resident after ~460 KB of TypeScript) and never
-  shrinks. The renderer ends the worker when it answers the probe of a hidden
-  workbench (once per hiding, so before the freeze), and every 30 s while its
-  page stays hidden if the worker has sent nothing for 30 s (freezing off, or
-  something keeping it awake); never while the page is shown
-  (`devhubActivity/browser/hiddenTokenizerWorker.ts`,
-  `patches/vscode/0015-textmate-worker-can-be-released.patch`). Models keep
-  their tokens; each binds to a new worker, which tokenizes it from scratch,
-  when it next needs one — an edit, an editor opening it, lines it is asked
-  for — and one the old worker had not finished binds again as soon as the
-  page is shown. The main thread's own Oniguruma heap (~40 MB after large
-  files) stays: `vscode-oniguruma` loads its WebAssembly once per page and
-  every grammar holds scanners in it.
-- **Discard after a while.** Frozen for `general.workbench_discard_minutes`
-  (default 60, `0` never), it is thawed and closed as VS Code unloads every
-  window on Cmd+Q (`UnloadReason.QUIT`: unsaved editors backed up by hot exit,
-  storage written, extensions deactivated) and its view destroyed. Asked at
-  the last moment before the unload (`mayDiscard`): shown, asked for or held
-  meanwhile calls it off, and so do unsaved editors with `files.hotExit` off.
-  Started again, it opens through the ordinary open path, whose
-  `registerFolderBackup` hands it the same backup folder, so VS Code restores
-  its editors, layout and unsaved changes.
-- **Freezing can be turned off.** `general.workbench_freeze = false` (default
-  `true`; Settings → Editors, "Freeze hidden editors") is a fact of the plan
-  (`PlanFacts.freeze`): nothing is frozen — not on hiding, not on the Task
-  Manager's Sleep, which is then not offered — so nothing is discarded either,
-  since a discard follows a freeze, and a workbench frozen when it turns off
-  is thawed by the next plan (`why: freezing is off`). The probes until a
-  start has settled, and a person's stop, go on as before. It applies live:
-  an accepted setting plans at once.
-
-**Everything that talks to a workbench goes through the lifecycle**
-(`AppController.holdWorkbench`): a file routed to it, a reattach, Scratch's
-empty window, a container's file, a close asking about unsaved work. The
-request is a fact of the plan that follows at once — a frozen workbench is
-thawed then and there, before the request's first message — and with `start`
-a discarded or not yet started one is started and waited for (the one start
-that is not Enter: what DevHub was asked to show in it needs it); nothing freezes
-it while the request stands. A close's questions (`thaw`) never start a
-workbench just to ask it.
-
-### Freezing, thawing, and a connection
-
-The processes of a workbench (`freezeTargets.ts`): its renderer
-(`webContents.getOSProcessId()`), the utility processes VS Code started for
-its window alone — named `<name> [<window id>]` in `UtilityProcess.getAll()`:
-its extension host(s) and its file watcher — and everything under them. Never
-Electron's other processes (main, GPU, network, VS Code's shared process and
-pty host, DevHub's pages), never anything under the pty host (the integrated
-terminals' shells and the tmux clients DevHub's terminal tabs are), never tmux
-wherever it turns up. `WorkbenchFreezer` (`workbenchProcesses.ts`) stops the
-renderer and the window's utilities at once, from what main knows, then the
-rest of the tree once one `ps` has answered (a thaw meanwhile wins). Thawing
-is synchronous and in reverse: the language servers and extension hosts
-first, the renderer last, so the renderer resumes to an extension host that
-already answers. Every frozen workbench is thawed when DevHub quits (a
-stopped process ends on nothing but SIGKILL), and on Node's `exit`.
-
-**Only what is exclusively the workbench's is ever stopped.** Before it
-stops anything, main lists what must not be (`foreignPids`): main itself and
-its parent; every Electron process that is neither a renderer nor a utility
-process (`app.getAppMetrics()` type other than `Tab`/`Utility`: the GPU
-process above all, which draws every page of the window); and the process of
-every other WebContents in DevHub (`webContents.getAllWebContents()`): the
-shell, the Sidebar, the Agents page, the toasts, the picker, every terminal
-pane, every other workbench, every view the workbench attached. Chromium,
-not DevHub, decides which contents share a renderer process, so this is
-asked of the contents as they are, not assumed from their URLs. A foreign pid
-is never stopped and never walked into, even when main named it as the
-workbench's own (`freezeTargets`' `foreign`); a workbench whose renderer is
-foreign is not frozen at all, and the planner keeps one whose renderer also
-hosts anything else awake (`sharedRenderers`, from every live WebContents,
-not only the workbench views). A SIGSTOP on a shared process would stop the
-page in it with the workbench — the whole window, for the GPU process or the
-shell — and nothing would continue it.
-
-**Nothing stays stopped that the lifecycle does not know to be frozen.**
-Each plan is told which folders the freezer holds stopped
-(`LifecycleInput.stopped`); one whose phase is no longer `frozen` — it
-failed while frozen, its view went, it is no longer wanted — is thawed in that
-plan, before any dispose or open (`thawed: its processes were stopped while
-<phase>` in the log). A freeze of a folder the freezer still holds continues
-what the earlier one stopped first, so no record is dropped with its
-processes still stopped. Each completed freeze says what it stopped:
-`[devhub] workbench '<folder>' frozen: stopped <pids> (renderer <pid>,
-utilities <pids>)`.
-
-**A hangup ends freezing for the run.** Stopped processes in DevHub's
-process group are what the kernel's orphaned-process-group rule hangs up
-(`processGroupAnchor.ts`), and the SIGHUP ends every renderer, the GPU and
-network processes and the extension hosts while main, which answers SIGHUP
-itself (`quitTrace.ts`), stays up behind a window whose pages are gone. A
-freeze needs the anchor holding, and none happens once main has taken a
-SIGHUP in this run (`hungUpAt`): one hangup means the anchor did not hold on
-this machine, and another freeze would do it again.
-
-A stopped process cannot `accept()`, but the kernel still completes the
-handshake of a TCP connection to its listening socket and queues it. So while
-anything is frozen, `WorkbenchSensors` reads every listen queue twice a second,
-one reading for all frozen pids (`listenQueues.ts`): on macOS `netstat -Lan -p
-tcp` (`qlen`), joined on the local address with the owners `lsof` read when
-the workbench was frozen (a stopped process opens no socket, so they hold); on
-Linux `/proc/net/tcp{,6}`'s backlog joined on the inode with
-`/proc/<pid>/fd`. A connection waiting thaws the workbench in the next plan,
-with no delay of its own — the latency is the poll, 0.25 s on average and
-0.5 s at worst, plus one `netstat` — and keeps it up for a 30 s grace, so a
-CLI like vscode-review-relay's just works. Only TCP; a Unix-domain socket
-does not thaw a workbench.
-
-Traffic is sampled every 10 s while a local workbench runs
-(`socketTraffic.ts`): on macOS `nettop -P -L 1 -x -n -J bytes_in,bytes_out`,
-traffic being a per-process total that moved between two readings; on Linux
-`ss -Htinp`'s `lastsnd`/`lastrcv`. Socket traffic on the workbench's tree in
-the last 30 s keeps it from being frozen, so a workbench whose ports are
-talking does not churn between frozen and thawed.
-
-A frozen renderer is not a hung one. A workbench view holds Electron's
-`unresponsive` back from VS Code while frozen and for 10 s after a thaw
-(`ResponsivenessGate` in `workbenchView.ts`), so the "window is not
-responding" dialog and its sampling profiler never start for one; the patch
-`0014-rpc-protocol-ignores-a-stopped-clock.patch` makes VS Code's
-renderer↔extension-host responsiveness check (`RPCProtocol`) start its
-countdown again when its own check ran long after it was due — its process
-was stopped — rather than declare the other side unresponsive across the
-freeze.
-
-**Remote workbenches are excluded from freezing and discarding for now.** An
-SSH or dev container workbench's extension host is on the far machine, and
-stopping the local renderer alone would stall its connection's heartbeat. They
-start when asked for, like any other, and stay up: `Cmd+Q Shift+E` does not
-stop one.
-
-### Placeholders, the Task Manager, the log
-
-The placeholder (`Discarded` in `SurfaceState.tsx`) is the whole editor area
-of a workbench that is not running — not started yet, stopped, or discarded:
-the frame it left (none for one never started), grey under a quiet scrim of
-`--canvas`, one centred line — "Editor not running — press Enter to start" —
-and a Start button under it. It fades in on `--motion-slow` /
-`--ease-standard` (none under reduced motion). The button takes DOM focus
-when it appears and whenever the page gets the keyboard back (main puts the
-keys in the window's page while no workbench stands in the slot); Enter, the
-button or a click anywhere on the area calls `wakeEditor` (an ask, `asked`),
-and every other key does nothing — DevHub's `Cmd+Q` chords still work, since
-main takes them before any page. Started, it shows the "Starting VS Code…"
-spinner (over the dim frame, if there is one) until the view has loaded, and
-the keyboard goes into the workbench when it arrives. A frozen workbench needs no
-placeholder: it is thawed the moment it is shown, and its view still holds its
-last frame.
-
-What the slot shows is the phase (`placeholderOf`), sent to the page whenever
-it changes (`editorPlaceholder`), so it cannot outlive its state: "Restarting
-the editor…" while restart-waiting or reopening after a failure, the "not
-running" line (and the frame) while not started yet or discarded, and
-"Starting VS Code…" while starting (the view `hidden` in the arrangement, a
-split keeping its Agent); the frame lives in memory only. Only a change is sent, so
-the page, once it listens, asks for every placeholder standing
-(`replayEditorPlaceholders`, `WorkbenchLifecycle.standing`). A workbench that
-dies unasked is opened again after a backoff that doubles from 250 ms
-(`editorSupervisor.ts`), and after five failures in a row it is given up on
-and its Workspace made unavailable (Retry or Locate… bring the placeholder
-back, and Enter starts it); one that dies while discarding is simply
-discarded.
-
-The Task Manager shows each workbench's phase (running, starting, frozen,
-discarding, discarded, not started, restarting, failed), and its Sleep is a
-freeze now (`LifecycleInput.freeze`): past the soft reasons — the grace
-after hiding included — never past the hard ones. Every transition, every ask, every probe that keeps a hidden one
-up (said once per reason) and every discard called off is a line
-`[devhub] workbench '<folder>' …` in main's log
-(`<userData>/logs/devhub-main.log`, `DevHub: Open Log`).
+One main process and one renderer per page (Settings and the Task Manager
+exist only while they are open, a terminal pane once per terminal, and a
+Neovim's page once per Neovim on screen).
 
 Time to the first editor, measured on an isolated instance from the process's
-own start to the first workbench's `did-finish-load`, six runs each, before
+own start to the first editor's `did-finish-load`, six runs each, before
 stage 0 and after stage 4:
 
 |        | median | runs                                            |

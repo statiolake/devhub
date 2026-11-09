@@ -45,10 +45,10 @@ export interface SettingsAgentProfileWire {
  * `light:<name>,dark:<name>` — naming a built-in theme or one of the file's
  * `[themes.<name>]` (`SettingsCustomThemeWire`, carried whole so a save keeps
  * them). DevHub's window, its terminals and the Neovims it draws are all
- * derived from it; a VS Code workbench keeps its own theme.
+ * derived from it.
  *
  * `mode` decides which half applies — *which appearance is this process in*,
- * which is the OS's question (see `main/shell/appFence.ts`).
+ * which is the OS's question (see `main/shell/appearanceMode.ts`).
  */
 export interface SettingsAppearanceWire {
 	/** `auto`, `light` or `dark` — see `model/config.ts`. */

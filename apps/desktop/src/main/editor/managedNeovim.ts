@@ -1,10 +1,9 @@
 /**
  * The Neovim DevHub manages for each Workspace: where files DevHub opens go.
  *
- * With `[general] editor = "neovim"` a Workspace's editor area is its
- * terminal (its `ws-` tmux session, `docs/neovim-editor.md`), and
- * `devhub <file>`, a conversation's file link and Send to Agent's reference
- * open in this: `nvim --headless --listen <socket>` on the Workspace's
+ * A Workspace's editor area is its terminal (its `ws-` tmux session,
+ * `docs/neovim-editor.md`), and `devhub <file>` and a conversation's file
+ * link open in this: `nvim --headless --listen <socket>` on the Workspace's
  * machine, in the session's one `devhub-nvim` window, made when it is not
  * there. Each open selects that window and names the socket on its pane
  * (`EditorPanes.show`), and the terminal draws DevHub's GUI over the pane

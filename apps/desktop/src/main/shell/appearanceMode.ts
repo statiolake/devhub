@@ -2,16 +2,14 @@
  * Which appearance DevHub runs in, and the one place that says so.
  *
  * `nativeTheme.themeSource` is a process-wide fact: it decides what Electron
- * reports the system appearance to be — to every native surface DevHub draws,
- * and to `window.autoDetectColorScheme` in every workbench, which picks between
- * its own preferred light and dark themes from it. Because it is one value for the
- * whole application, no workbench may write it; `appFence.ts` refuses those
- * writes and hands the one remaining way through to this class.
+ * reports the system appearance to be — to every native surface DevHub draws
+ * and to every page's `prefers-color-scheme`. It is one value for the whole
+ * application, and this class is the one thing that writes it.
  *
  * So this is not a palette and it paints nothing directly. It sets what the
  * appearance *is*, and DevHub picks the half of `[appearance] theme` from
  * that (`shellTheme.ts`, on `nativeTheme`'s `updated`). Choosing Dark here
- * recolours DevHub at once; a workbench follows it with its own settings.
+ * recolours DevHub at once.
  */
 
 /** What DevHub tells Electron, for each appearance it can be asked for. */

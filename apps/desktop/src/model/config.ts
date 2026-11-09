@@ -469,8 +469,8 @@ export interface AppearanceConfig {
    * Which appearance DevHub runs in: `auto`, `light` or `dark`.
    *
    * Not a palette. This is the answer DevHub gives the OS — it decides what
-   * Electron reports the system appearance to be, for every native surface in
-   * the process and for `window.autoDetectColorScheme` in each workbench — and
+   * Electron reports the system appearance to be, for every native surface and
+   * every page in the process — and
    * so which half of `theme` DevHub wears. See `shell/appearanceMode.ts`.
    */
   readonly mode: string;

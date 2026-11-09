@@ -1,7 +1,7 @@
 # The Task Manager
 
 `DevHub: Task Manager` in the command palette (`Cmd+Q :`, `open_task_manager`)
-opens a window that says what each Workspace, workbench and Agent costs this
+opens a window that says what each Workspace and Agent costs this
 Mac, now: memory, CPU and how many processes, in the shape the Sidebar has
 rather than as a flat process list. The same command closes it while it is the
 window in front, as `Cmd+Q Shift+,` does Settings. It is palette only
@@ -9,9 +9,8 @@ window in front, as `Cmd+Q Shift+,` does Settings. It is palette only
 day, and no key is spent on it; a person who wants one binds it in
 `[keybindings]`.
 
-It exists to answer "why is my Mac slow" with facts — the first thing a
-memory-pressure-driven freeze would need — and to act on the answer:
-freeze a workbench, stop an Agent, end a runaway process.
+It exists to answer "why is my Mac slow" with facts, and to act on the answer:
+stop an Agent, end a runaway process.
 
 ## The window
 
@@ -31,7 +30,7 @@ total, and DevHub's own total: footprint, in RAM, CPU, processes.
 
 **The table** is a tree, heaviest first at every level by Footprint, In RAM
 or CPU (the segmented control, or a column heading). A Workspace is open down to its
-workbench's, terminal's and Agents' processes, and DevHub, tmux and Other are
+terminal's and Agents' processes, and DevHub, tmux and Other are
 folded; ↑ ↓ ← → walk and fold it as the Sidebar's tree is walked,
 and Escape closes the window. Numbers are right-aligned tabular figures with
 their unit. Each row has two memory figures, each summed over its subtree:
@@ -42,17 +41,15 @@ their unit. Each row has two memory figures, each summed over its subtree:
 - **In RAM**: what of it is resident now.
 
 A short track ahead of the footprint is the row's share of DevHub's total
-footprint; the part in RAM is solid and the rest faint, so a workbench whose
-pages were compressed or swapped out (one that is frozen, say) keeps its
-length and loses its fill. A row of 15% or more is in the accent. A row's actions show
+footprint; the part in RAM is solid and the rest faint, so a row whose pages
+were compressed or swapped out keeps its length and loses its fill. A row of 15% or more is in the accent. A row's actions show
 under the pointer or with the row selected:
 
-| Row               | Actions                                                                                                                             |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Workspace         | Show                                                                                                                                |
-| VS Code workbench | Sleep (local, awake and not on screen), Show; its state: awake, starting, going to sleep, sleeping, not started, restarting, failed |
-| Agent             | Stop (the Agent's own stop, with its question in the main window), Show                                                             |
-| a process         | End… (not on DevHub's own processes)                                                                                                |
+| Row       | Actions                                                                 |
+| --------- | ----------------------------------------------------------------------- |
+| Workspace | Show                                                                    |
+| Agent     | Stop (the Agent's own stop, with its question in the main window), Show |
+| a process | End… (not on DevHub's own processes)                                    |
 
 **Copy Snapshot** puts the table on the clipboard as text, with the real
 names: the header with the breakdown and what the two memory columns are
@@ -69,10 +66,8 @@ most specific owner wins.
 
 ```text
 Workspace
-├─ VS Code ─ Renderer, Extension host (and what it started: rust-analyzer,
-│            tsserver.js, …), File watcher, Terminal tab (a tmux client the
-│            pty host started)
-├─ Terminal ─ every pane of its ws- session, with its tree (zsh, nvim, …)
+├─ Terminal ─ every pane of its ws- session, with its tree (zsh, nvim, …),
+│             and the clients showing it
 └─ Agent ─ its session's pane tree (the CLI, or a GUI Agent's host and
            app-server), the clients showing it, its own Terminal (tm-), and
            a GUI Agent's Journal stream
@@ -83,16 +78,11 @@ Other ─ whatever an Electron process started that none of the above accounts
         for (a git, an ssh), said with what started it
 ```
 
-- **Which processes are Electron's**: `app.getAppMetrics()`. A utility's name
-  is VS Code's where VS Code started it (`UtilityProcess.getAll()`), which is
-  how an extension host and a file watcher are known to be a workbench's: they
-  are named `extension-host [<window id>]` and `file-watcher [<window id>]`,
-  and a workbench's window id is its view's id. A row says the name as words
-  (`File watcher`), without the window id.
+- **Which processes are Electron's**: `app.getAppMetrics()`. A row says a
+  utility's name as words (`Terminal host (pty)`).
   DevHub's own processes are shown without what they started — main starts
   everything — and what they started is attributed by the anchors below it,
   or is Other.
-- **A workbench's renderer** is its view's `webContents.getOSProcessId()`.
 - **tmux**: one `tmux` client per refresh (`TmuxTerminalRuntime.processPanes`)
   reads every marked pane's `#{pane_pid}` with its markers (context,
   Workspace, Agent), every client's `#{client_pid}` and session, and the
@@ -144,12 +134,9 @@ language server whose pages were compressed shows a few MB in RAM and
 hundreds in its footprint.
 
 **CPU** is `ps`'s `%cpu`: on macOS a recent average, on Linux the average over the
-process's whole life. Only this Mac's processes are seen: a workbench on an
-ssh host or in a dev container shows its renderer and nothing of the far
-side, and an Agent on another machine shows nothing. A process that left
-DevHub's tree (a daemon that reparented itself to launchd) is not seen; nor
-are a workbench's webviews, which run in renderers DevHub does not name —
-those are under Other as `Renderer`.
+process's whole life. Only this Mac's processes are seen: what a Workspace or
+an Agent on another machine runs there shows nothing. A process that left
+DevHub's tree (a daemon that reparented itself to launchd) is not seen.
 
 ## System memory and pressure
 
@@ -191,25 +178,9 @@ process's `/proc/<pid>/status`, and `getAppMetrics`. A window nobody can see cos
 ## Ending a process
 
 End… is offered only on a process that is not one of DevHub's own — never
-main, the GPU, a utility (an extension host among them), a renderer, the tmux
+main, the GPU, a utility, a renderer, the tmux
 server or a tmux client. Main asks first, as a sheet on the window, saying
 what it is, its pid and its memory. It then checks the pid is a row the last
 snapshot offered End on and still runs the command line that row showed — a
 pid reused in between is somebody else's process and is left alone — and
 sends that one process SIGTERM.
-
-## Sleep
-
-Sleep is the workbench lifecycle's own freeze (`main/shell/workbenchPlan.ts`):
-the next plan is asked to freeze that workbench now (`LifecycleInput.freeze`),
-past what would otherwise keep a hidden one up (a task, a debug session, a
-busy terminal, network traffic) but never past the hard reasons — it is on
-screen, asked for, closing, still starting, sharing its renderer, or a far
-one. It is offered only for a running local workbench that is not on screen.
-Frozen, it resumes instantly when shown, asked for or connected to, and is
-discarded after `general.workbench_discard_minutes`. With
-`general.workbench_freeze = false` nothing is frozen, so Sleep is not offered
-(and a Sleep asked anyway freezes nothing). A workbench row shows its
-state: running, starting, frozen, discarding, discarded, not started,
-restarting or failed; watch a frozen one's memory there to see macOS compress
-and swap it.

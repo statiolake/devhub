@@ -127,10 +127,6 @@ rather than an imitation of one. See
 A Claude Code or Codex Agent can instead be a **GUI Agent**: the same tmux
 session runs the CLI in its structured mode, and DevHub draws the
 conversation itself. See [`docs/agent-gui.md`](docs/agent-gui.md).
-From the editor, **Send to Agent…** (the context menu, the Command Palette,
-`Cmd+Alt+K`) puts the selection, with a reference to its file and lines, in
-the input box of one of the Workspace's Agents, shown beside the editor — see
-[Send the editor's selection to an Agent](docs/agent-gui.md#send-the-editors-selection-to-an-agent).
 
 **Terminal** — tmux. One persistent session per Workspace — Scratch is one.
 It is what the Workspace shows, so quitting DevHub does not end it. Each tmux server also has an anchor session

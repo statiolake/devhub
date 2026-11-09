@@ -53,8 +53,8 @@ orchestrator's folder.
   and the one at the old root is an ordinary row again. An orchestrator
   started with a `--root` other than the setting is the same: its folder is
   the row's while it runs.
-- **Its editor** (the root's VS Code, for skills and `decisions.md`) is the
-  Workspace selected: the content area is its workbench, as Scratch's is
+- **Its editor** (the root's Neovim, for skills and `decisions.md`) is the
+  Workspace selected: the content area is its editor, as Scratch's is
   when Scratch is selected, and the Orchestrator row stays the highlighted
   one. It is reached by the row's right-click **Show Editor**, by the Files
   tab's **エディタで開く** (which opens the folder first, unselected, when it
@@ -79,9 +79,8 @@ orchestrator's folder.
 - With no orchestrator, the right half says so and offers **Start
   Orchestrator**, from `[orchestrator]` below (in `~/orchestrator` unless
   `root` says otherwise; the folder is made if it is missing).
-- Freezing and Back/Forward are unchanged: its helpers are Agents and its
-  editor is a Workspace's workbench, frozen, thawed and entered in the
-  history as Scratch's are; an entry for one of them highlights the
+- Back/Forward are unchanged: its helpers are Agents and its editor is a
+  Workspace's, entered in the history as Scratch's are; an entry for one of them highlights the
   Orchestrator row as its own selection does.
 - A restart opens on Scratch rather than on this row: the row is not written
   into `state.json`, so an older DevHub can still read the file.
@@ -245,7 +244,7 @@ as a URI component (`/` in a path excepted, `:` in a path as `%3A`):
 | -------------------------------------------------- | ---------------------------------------------------------------------- |
 | `devhub:agent/<id or 4+ prefix>`                   | the agent (`select_context`)                                           |
 | `devhub:workspace/<id or name>`                    | the workspace (`select_context`)                                       |
-| `devhub:file/<path without its leading />[:L[:C]]` | the file, in the workbench of the open workspace whose folder holds it |
+| `devhub:file/<path without its leading />[:L[:C]]` | the file, in the editor of the open workspace whose folder holds it    |
 | `devhub:escalation/<id>`                           | the Orchestrator row, with the escalation open                         |
 | `devhub:orchestrator`                              | the Orchestrator row                                                   |
 | `devhub:session/<session id>`                      | the agent running that session (resuming one stays `/resume`)          |
@@ -353,7 +352,7 @@ it keeps what it decided (`decisions.md`) and its skills (`.claude/skills`).
 the folder's `.gitignore` ignores; dot-folders stay. A file opens over the
 tree the way an escalation opens over the board, read-only: Markdown with
 the conversation's renderer, other text as a highlighted code block, images
-(SVG included) inline. **エディタで開く** opens it in the workbench of the
+(SVG included) inline. **エディタで開く** opens it in the editor of the
 Workspace that contains it — the Orchestrator row's own — as `devhub <file>` would,
 and that too is a place in Back and Forward.
 

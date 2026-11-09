@@ -51,12 +51,6 @@ text dropped (`shell/surfaces/xtermSession.ts`); one that starts on any other
 key — the right Option under `"left"`, every Option under `false`, an IME — is
 untouched, so Option+E then e is still `é`.
 
-VS Code's integrated terminal is not covered: it reads
-`terminal.integrated.macOptionIsMeta` (a boolean; no left-only choice), and
-DevHub writes no terminal settings into the workbench (see
-`main/workbenchDefaults.ts`). Nor is the editor: VS Code dispatches `alt+…`
-keybindings by key code, so they work with Option on a Mac regardless.
-
 ```toml
 [terminal]
 mac_option_is_meta = "left"   # left Option is Meta (ESC-prefixed); right Option composes
@@ -80,7 +74,7 @@ DevHub restarts and SSH reconnects. The pane draws nothing (the Neovim is
 headless); DevHub draws it, over that pane, like any Neovim in a terminal.
 
 Then DevHub selects the Workspace (beside the asking Agent, for a conversation
-link, exactly as the VS Code routing does), opens the file over RPC, and
+link), opens the file over RPC, and
 shows the window: one tmux queue names the socket on the pane
 (`@devhub-nvim`, which is what the overlay reads), `select-window`s it and
 `select-pane`s it (`showEditorPaneArgs`). The keyboard goes to the Neovim
@@ -148,9 +142,7 @@ early — with "Neovim exited before it opened its socket" — if the pane has
 already gone, which is what a broken config that `:cq`s looks like.
 
 **Closing a Workspace** kills the managed pane and unlinks the socket, in the
-close's `editor` step, after its workbench (if it has one) has agreed to
-close. Its
-unsaved buffers are protected the way any running program in the Workspace's
+close's `editor` step. Its unsaved buffers are protected the way any running program in the Workspace's
 session is: the close confirmation counts a pane running something other than
 the shell as busy work, so the person is asked first. **Quitting DevHub** only
 closes the RPC connections; Neovim keeps running in tmux and is adopted on the
@@ -165,37 +157,29 @@ the jump is refused — not a pane that flashes and closes.
 
 ## File-open routing
 
-The rule that picks _which Workspace_ is unchanged (`routeOpen`,
-`routeAgentOpen`); with `general.editor = "neovim"` the file goes to that
-Workspace's `devhub-nvim` window, shown in its terminal
-(`AppController.openInEditor`; Scratch is selected first, as a workbench's
-start would), and otherwise to its workbench
-(`AppController.openRouted`), through the lifecycle (`holdWorkbench`): a frozen
-workbench is thawed and a discarded or not yet started one started before the
-file reaches it — a file is the one ask besides Enter that starts a workbench;
-`devhub <folder>` only selects the Workspace. Scratch is a Workspace like any
-other.
+The rule that picks _which Workspace_ is `routeOpen` (`routeAgentOpen` for a
+link from an Agent); the file goes to that Workspace's `devhub-nvim` window,
+shown in its terminal (`AppController.openInEditor`; Scratch is selected
+first). `devhub <folder>` only selects the Workspace. Scratch is a Workspace
+like any other.
 
-| Entrance                                          | Where it opens                                     |
-| ------------------------------------------------- | -------------------------------------------------- |
-| `devhub <file>` on this Mac                       | the containing Workspace's workbench, or Scratch's |
-| `devhub -g <file>:<line>:<col>`                   | caret at the position                              |
-| `devhub --wait <file>`                            | `filesToWait`                                      |
-| `devhub <folder>`                                 | the Workspace selected, its workbench not started  |
-| Conversation file link, Send to Agent's reference | split beside the Agent, workbench in front         |
-| Finder Open With / Dock drop / `open -a`          | via `openFromCli`, as above                        |
-| `devhub` on an SSH host, an SSH Workspace         | that Workspace's remote workbench                  |
-| `devhub` in a dev container                       | the window attached to that container              |
-| VS Code's own open (`openInBrowserWindow`)        | DevHub's Workspace / Scratch rule                  |
+| Entrance                                  | Where it opens                                   |
+| ----------------------------------------- | ------------------------------------------------ |
+| `devhub <file>` on this Mac               | the containing Workspace's Neovim, or Scratch's  |
+| `devhub -g <file>:<line>:<col>`           | caret at the position                            |
+| `devhub --wait <file>`                    | `filesToWait`                                    |
+| `devhub <folder>`                         | the Workspace selected                           |
+| Conversation file link                    | split beside the Agent, the editor in front      |
+| Finder Open With / Dock drop / `open -a`  | via `openFromCli`, as above                      |
+| `devhub` on an SSH host, an SSH Workspace | that Workspace's Neovim, on its host             |
 
 ## Theme
 
 The chrome and the terminal palette come from the colour theme DevHub's own
 settings select (`[appearance] theme`, a built-in theme or a `[themes.<name>]`
-of the file's; see [themes.md](themes.md)), not from a workbench. That source
-never needed a workbench — it paints the window from a cold start and with
-every workbench frozen or discarded — and DevHub's own terminals (Agent panes
-and their terminals) wear the theme's own colours.
+of the file's; see [themes.md](themes.md)). It paints the window from a cold
+start, and DevHub's own terminals (Agent panes and their terminals) wear the
+theme's own colours.
 
 The programs inside the terminal are told the theme too — `DEVHUB_THEME`,
 `DEVHUB_FZF_COLORS` and the rest in every new pane's environment, a
