@@ -242,6 +242,39 @@ export function overlayRect(
 }
 
 /**
+ * Where an overlay's view goes in the window, its terminal's view being at
+ * `terminal`: on its pane (`shown`, `views`), inside the terminal's view.
+ * While tmux does not show the pane (another window, a zoomed sibling, copy
+ * mode) the view is hidden at the pane's last place: the pane keeps its
+ * size in tmux, and the page sizes Neovim's grid from its view, so a hidden
+ * view the terminal's size would make the Neovim that size until its pane
+ * is shown again. One never shown yet is put over the whole terminal.
+ */
+export function overlayBounds(
+	terminal: OverlayRect,
+	shown: OverlayRect | undefined,
+	last: OverlayRect | undefined,
+): OverlayRect {
+	if (shown !== undefined) {
+		return {
+			x: terminal.x + shown.x,
+			y: terminal.y + shown.y,
+			width: Math.min(shown.width, terminal.width - shown.x),
+			height: Math.min(shown.height, terminal.height - shown.y),
+		};
+	}
+	if (last !== undefined) {
+		return {
+			x: terminal.x + last.x,
+			y: terminal.y + last.y,
+			width: last.width,
+			height: last.height,
+		};
+	}
+	return terminal;
+}
+
+/**
  * A control-mode terminal's panes, as its page draws them (`controlPanes`),
  * in the page's CSS pixels and in cells.
  */
@@ -825,10 +858,17 @@ export class TerminalNeovims {
 			}
 			watch.control.hints = "";
 		}
+		// Until tmux is read for it, the sockets the last reading found
+		// stand: a pane's overlay is not ended and made again (a second page,
+		// a second UI) for a page that started speaking for its terminal.
 		const control = (watch.control ??= {
 			panes,
 			hints: "",
-			confirmed: new Map(),
+			confirmed: new Map(
+				(watch.reading?.panes ?? [])
+					.filter((pane) => pane.socket !== "")
+					.map((pane) => [pane.paneId, pane.socket]),
+			),
 		});
 		control.panes = panes;
 		this.applyControl(watch);

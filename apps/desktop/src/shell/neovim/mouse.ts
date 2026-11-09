@@ -182,17 +182,7 @@ export class WheelAccumulator {
   }
 }
 
-/** How many columns and rows fit in a box of this many pixels. */
-export function gridSizeFor(
-  width: number,
-  height: number,
-  cell: CellMetrics,
-): { cols: number; rows: number } {
-  return {
-    cols: Math.max(10, Math.floor(width / cell.width)),
-    rows: Math.max(3, Math.floor(height / cell.height)),
-  };
-}
+export { gridSizeFor } from "./gridSize";
 
 /** A window border a drag resizes: its line, in grid 1's cells. */
 export interface Sash {

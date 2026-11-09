@@ -995,6 +995,18 @@ the picker) is drawn over the Neovim, which stays shown under it
 Neovim of the pane in it.
 A terminal not on screen is not read; its overlays keep their pages, hidden.
 
+**Its size is its pane's.** The page asks Neovim for the grid its view holds
+(`nvim_ui_try_resize`), so the view is the pane: hidden, it stays at the
+pane's last place, not the terminal's (tmux keeps a hidden pane's size), and a
+view a pixel short of its pane's cells — the edges are put on whole pixels,
+and a Retina cell is 16.5 px — still holds them (`gridSize.ts`). Neovim draws
+every UI at the smallest one's size, so a page that goes (its overlay ended,
+its terminal closed) takes its UI with it (`NeovimEditors`); a UI left behind
+held the Neovim at that page's last size, which no pane growing could undo.
+A page that starts speaking for its terminal in control mode keeps the
+overlays the last reading of tmux found, rather than ending and making them
+again.
+
 In tmux control mode (`[terminal] tmux_control_mode`, `docs/terminal-mode.md`)
 nothing is polled: the terminal's page draws each pane at the rectangle tmux's
 layout gives it, so it says those rectangles itself whenever they change

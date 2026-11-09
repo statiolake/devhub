@@ -8,6 +8,7 @@ import {
 	forwardedKey,
 	LeftOption,
 	isTmuxKey,
+	overlayBounds,
 	overlayRect,
 	parseTerminalNeovimReading,
 	TerminalNeovims,
@@ -17,6 +18,7 @@ import {
 	type TerminalNeovimReading,
 } from "./terminalNeovims.js";
 import { neovimShimScript, neovimShimZshenv } from "./terminalNeovimShim.js";
+import { gridSizeFor } from "../../shell/neovim/gridSize.js";
 
 const pane = (fields: string) => fields.split(" ").join("\t");
 const OUTPUT = [
@@ -92,6 +94,92 @@ describe("where an overlay goes", () => {
 				{ x: 0, y: 0, width: 640, height: 480, zoom: 1.5 },
 			),
 		).toEqual({ x: 0, y: 30, width: 480, height: 690 });
+	});
+});
+
+describe("an overlay's grid", () => {
+	// The cell sizes a Mac gives Menlo 12 at line height 1.2 and nearby
+	// settings: on a Retina screen a cell is a half pixel (16.5), elsewhere
+	// whole; the panes' first cell where the page has it, fractional too.
+	const cells = [
+		{ width: 7, height: 16 },
+		{ width: 7, height: 16.5 },
+		{ width: 7.5, height: 14.5 },
+		{ width: 8, height: 17.25 },
+	];
+	it("is its pane's cells wherever the pane is, after a split, a resize or a zoom", () => {
+		const misses: string[] = [];
+		for (const cell of cells) {
+			const cols = 120;
+			const rows = 50;
+			const screen = {
+				x: 4.25,
+				y: 2.5,
+				width: cols * cell.width,
+				height: rows * cell.height,
+				zoom: 1,
+			};
+			const client = {
+				name: "c",
+				width: cols,
+				height: rows,
+				keyTable: "root",
+				statusTop: 0,
+				prefixes: [],
+			};
+			for (let top = 0; top < rows - 3; top += 1) {
+				for (let height = 3; top + height <= rows; height += 1) {
+					const left = top % 30;
+					const width = 10 + ((top * 7 + height) % (cols - left - 10));
+					const rect = overlayRect(
+						{
+							paneId: "%1",
+							windowActive: true,
+							paneActive: true,
+							zoomed: false,
+							left,
+							top,
+							width,
+							height,
+							inMode: false,
+							socket: "s",
+						},
+						client,
+						screen,
+					);
+					const grid = gridSizeFor(rect!.width, rect!.height, cell);
+					if (grid.cols !== width || grid.rows !== height) {
+						misses.push(
+							`${String(cell.width)}x${String(cell.height)} at ${String(left)},${String(top)} ${String(width)}x${String(height)}: ${String(grid.cols)}x${String(grid.rows)}`,
+						);
+					}
+				}
+			}
+		}
+		expect(misses.slice(0, 5)).toEqual([]);
+	});
+	it("keeps its pane's place while tmux does not show the pane", () => {
+		const terminal = { x: 300, y: 40, width: 900, height: 700 };
+		const pane = { x: 0, y: 352, width: 900, height: 348 };
+		expect(overlayBounds(terminal, pane, pane)).toEqual({
+			x: 300,
+			y: 392,
+			width: 900,
+			height: 348,
+		});
+		// Hidden (another window, a zoomed sibling): where it was, not the
+		// whole terminal, so its Neovim keeps the pane's size meanwhile.
+		expect(overlayBounds(terminal, undefined, pane)).toEqual({
+			x: 300,
+			y: 392,
+			width: 900,
+			height: 348,
+		});
+		expect(overlayBounds(terminal, undefined, undefined)).toEqual(terminal);
+		// Shown, never past its terminal's view.
+		expect(
+			overlayBounds({ ...terminal, width: 500 }, { ...pane, x: 100 }, pane),
+		).toMatchObject({ x: 400, width: 400 });
 	});
 });
 
@@ -350,6 +438,20 @@ describe("TerminalNeovims", () => {
 			await new Promise((resolve) => setTimeout(resolve, 200));
 			// Only the sockets changing is a reading of tmux: none here.
 			expect(ports.read.mock.calls.length).toBe(reads);
+			neovims.dispose();
+		});
+
+		it("keeps a polled overlay when its page starts speaking for the terminal", async () => {
+			const { neovims } = setup(parseTerminalNeovimReading(OUTPUT));
+			await vi.waitFor(() => {
+				expect(neovims.views()).toHaveLength(1);
+			});
+			// The page's first report, before tmux was read again: the same
+			// overlay, not a new one (a second page, a second UI on the Neovim).
+			neovims.controlPanes("t", panes());
+			expect(neovims.views().map((view) => view.key)).toEqual(["tnv:1"]);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(neovims.views().map((view) => view.key)).toEqual(["tnv:1"]);
 			neovims.dispose();
 		});
 

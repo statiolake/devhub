@@ -96,6 +96,8 @@ function sendEvent(page: NeovimPage, event: NeovimPageEvent): void {
 export class NeovimEditors {
 	private readonly attached = new Map<string, Attached>();
 	private readonly buffers = new Map<string, string>();
+	/** The pages whose end lets go of their UIs (`release`). */
+	private readonly watched = new WeakSet<NeovimPage>();
 	/** The UIs main runs itself: no host, or one given up on. */
 	private readonly local: NeovimUiSessions<NeovimPage>;
 
@@ -159,10 +161,44 @@ export class NeovimEditors {
 		if (!isOverlayKey(request.workspaceId)) {
 			return { ok: false, message: "That Neovim is not DevHub's to draw." };
 		}
+		if (!this.watched.has(page)) {
+			this.watched.add(page);
+			page.once("destroyed", () => {
+				this.release(page);
+			});
+		}
 		const reply = await this.attachTo(page, request);
+		// The page went while it attached: what attached is nobody's.
+		if (reply.ok && page.isDestroyed()) {
+			const key = request.workspaceId;
+			if (this.attached.get(key)?.page === page) this.attached.delete(key);
+			this.letGo(key, reply.hosted);
+			return { ok: false, message: "The Neovim page has gone." };
+		}
 		if (reply.ok) overlays.attached(request.workspaceId);
 		else overlays.ended(request.workspaceId);
 		return reply;
+	}
+
+	/**
+	 * A page has gone (its overlay ended, its terminal closed): its UI is let
+	 * go of with it. Neovim draws every UI at the smallest one's size, so a
+	 * UI left attached without a page would hold the Neovim at whatever size
+	 * that page last had — the next page over the pane could never grow it.
+	 * The Neovim itself runs on; its end is said by its pane, not here.
+	 */
+	private release(page: NeovimPage): void {
+		for (const [key, entry] of [...this.attached]) {
+			if (entry.page !== page) continue;
+			this.attached.delete(key);
+			this.letGo(key, entry.hosted);
+		}
+	}
+
+	private letGo(key: string, hosted: number | undefined): void {
+		this.buffers.delete(key);
+		if (hosted === undefined) this.local.detach(key);
+		else this.options.host?.detach(key);
 	}
 
 	private async attachTo(

@@ -51,6 +51,7 @@ import { scrimColor, type ShellPalette } from "../../ipc/palette.js";
 import {
 	forwardedKey,
 	LeftOption,
+	overlayBounds,
 	type KeyInput,
 	type OverlaidPanes,
 	type OverlayRect,
@@ -258,6 +259,8 @@ export class ShellWindow {
 			readonly view: ChromeView;
 			readonly terminalId: string;
 			rect: OverlayRect | undefined;
+			/** Its pane's rectangle when it was last shown (`overlayBounds`). */
+			last: OverlayRect | undefined;
 		}
 	>();
 	private terminalNeovims: TerminalNeovimHooks = NO_TERMINAL_NEOVIMS;
@@ -654,6 +657,7 @@ export class ShellWindow {
 			const known = this.overlayViews.get(view.key);
 			if (known !== undefined) {
 				known.rect = view.rect;
+				known.last = view.rect ?? known.last;
 				continue;
 			}
 			const page = new ChromeView(
@@ -691,7 +695,12 @@ export class ShellWindow {
 					target?.sendInputEvent(forwarded);
 				}
 			});
-			this.overlayViews.set(key, { view: page, terminalId, rect: view.rect });
+			this.overlayViews.set(key, {
+				view: page,
+				terminalId,
+				rect: view.rect,
+				last: view.rect,
+			});
 			if (this.pageOpened) page.openPage();
 		}
 		this.layout();
@@ -747,19 +756,10 @@ export class ShellWindow {
 	): void {
 		for (const entry of this.overlayViews.values()) {
 			if (entry.terminalId !== terminalId) continue;
-			const inner = entry.rect;
-			const shown = visible && inner !== undefined;
 			entry.view.place(
 				this.window,
-				inner === undefined
-					? rect
-					: {
-							x: rect.x + inner.x,
-							y: rect.y + inner.y,
-							width: Math.min(inner.width, rect.width - inner.x),
-							height: Math.min(inner.height, rect.height - inner.y),
-						},
-				shown,
+				overlayBounds(rect, entry.rect, entry.last),
+				visible && entry.rect !== undefined,
 			);
 		}
 		if (page === undefined) return;
