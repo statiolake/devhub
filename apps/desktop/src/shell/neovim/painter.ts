@@ -515,6 +515,8 @@ export class GridPainter {
   /** Each window's pane, by grid; the boundaries' hairlines and stubs. */
   private readonly panes = new Map<number, HTMLDivElement>();
   private chrome: HTMLDivElement[] = [];
+  /** Grounds of panes laid out by someone else (`placeGrounds`), by key. */
+  private readonly grounds = new Map<number, HTMLDivElement>();
   private chromeKey = "";
   /** The window the cursor was last in, for `NormalNC`. */
   private currentWin: number | undefined;
@@ -1469,6 +1471,45 @@ export class GridPainter {
     });
   }
 
+  /**
+   * Panes laid out by someone else (tmux's, in a control-mode terminal):
+   * each one's ground, in CSS pixels, under its grid in level `z`, reaching
+   * into the border beside it as `placePanes` does for Neovim's windows.
+   */
+  placeGrounds(
+    grounds: readonly {
+      readonly key: number;
+      readonly z: number;
+      readonly x: number;
+      readonly y: number;
+      readonly w: number;
+      readonly h: number;
+      readonly colour: number;
+    }[],
+  ): void {
+    const keep = new Set<number>();
+    for (const g of grounds) {
+      keep.add(g.key);
+      let el = this.grounds.get(g.key);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "nvim-pane";
+        this.grounds.set(g.key, el);
+      }
+      this.put(el, g.z, "pane");
+      el.style.left = `${String(g.x)}px`;
+      el.style.top = `${String(g.y)}px`;
+      el.style.width = `${String(g.w)}px`;
+      el.style.height = `${String(g.h)}px`;
+      el.style.background = cssColor(g.colour);
+    }
+    for (const [key, el] of this.grounds) {
+      if (keep.has(key)) continue;
+      el.remove();
+      this.grounds.delete(key);
+    }
+  }
+
   /** A float scrollbar's thumb (`floatScrollbars`) as a thin rounded bar. */
   private thumbClip(): string {
     const { width: cw } = this.metrics;
@@ -1772,9 +1813,12 @@ export class GridPainter {
         const tag = document.createElement("div");
         tag.className = "nvim-frame-label";
         const pad = Math.max(4, Math.round(cw * 0.5));
-        tag.style.left = px(label.x - pad);
+        // On whole device pixels: a half pixel is snapped edge by edge,
+        // a label a pixel taller or shorter than its neighbour.
+        const snap = (v: number) => Math.round(v * this.dpr) / this.dpr;
+        tag.style.left = px(snap(label.x - pad));
         tag.style.minWidth = px(label.w + 2 * pad);
-        tag.style.top = px(label.cy - textHeight / 2);
+        tag.style.top = px(snap(label.cy - textHeight / 2));
         tag.style.height = px(textHeight);
         tag.style.lineHeight = px(textHeight);
         tag.style.padding = `0 ${px(pad)}`;

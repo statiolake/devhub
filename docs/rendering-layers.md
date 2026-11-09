@@ -192,7 +192,19 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   the app after `:only | vsplit`). **Fixed** ("Neovim editor: windows are
   panes with a boundary between them"): panes and boundaries (above).
 - The control surface's separators and outlines are elements
-  (`ControlTerminalSurface.tsx:459-510`): follows the rule.
+  (`ControlTerminalSurface.tsx:459-510`): follows the rule. Since "Control
+  surface: tmux's panes reach half into its borders, the boundary centred
+  on the edge" the panes are panes as the Neovim editor's windows are:
+  each pane's ground (`GridPainter.placeGrounds`) reaches exactly half
+  into tmux's one-cell border beside it, so panes split across and down
+  line up; the hairline (1 px) and the active and synchronized panes'
+  outlines (2 px, dashed for the synced) are centred on the shared edge,
+  computed from tmux's layout; tmux's border cells are not drawn. A
+  zoomed pane has no boundary. **Open**: a Neovim overlay on a pane is
+  still the pane's cells only (`overlayRect`), so where Neovim's ground
+  differs from the terminal's a strip of the terminal's shows between the
+  overlay and the boundary (half a cell less half the line); the overlay
+  should reach the boundary too, its grid inset by as much.
 
 ### Colour sampling from neighbours
 
@@ -213,7 +225,9 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   `ControlTerminalSurface.tsx:470-506` the hairlines and outlines sit at
   `(x + 0.5) × cell`: on a 16.5 px cell at 2× these are half device pixels,
   which Chromium snaps per edge, so a 2 px outline can come out 3 or 5
-  device pixels. **Open**: snap with `Math.round(v × dpr) / dpr`.
+  device pixels. **Fixed** (with the control surface's panes above): the
+  label's left and top, the hairlines' and outlines' edges and the panes'
+  grounds are snapped with `Math.round(v × dpr) / dpr`.
 - Canvases, scroll offsets (`smoothScroll.ts` `snap`) and slides are on
   whole device pixels.
 
@@ -231,4 +245,6 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 3. ~~Separators as elements~~ fixed: panes and boundaries.
 4. `underFrames` replaced by a clip of the framed floats.
 5. The control surface's z table; prompt over a popup.
-6. Device-pixel snapping of labels, hairlines and outlines.
+6. ~~Device-pixel snapping of labels, hairlines and outlines~~ fixed.
+7. A Neovim overlay on a tmux pane reaching the pane's boundary, its grid
+   inset by half a cell (the seam above).

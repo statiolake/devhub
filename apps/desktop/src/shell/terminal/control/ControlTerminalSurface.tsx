@@ -451,27 +451,66 @@ export function ControlTerminalSurface({
       const boxes = paneBoxes(view).filter((box) => !clear.has(box.grid));
       painter.paint(view.state, merged, boxes, merged.layout);
       drawHoles(cut);
-      // The separators, and the active (and synchronized) panes' outlines
-      // as stretches of them, recoloured and thicker (`paneOutlines`).
-      const outlines = paneOutlines(view.panes);
+      // tmux's panes as panes with a boundary between them, as the Neovim
+      // editor's windows are (docs/rendering-layers.md, "Panes and
+      // boundaries"): each pane's ground reaches exactly half into the
+      // border cell beside it, so panes split across and down line up, and
+      // the boundary is a hairline on the shared edge. tmux's border cells
+      // are not drawn. All on whole device pixels.
+      const dpr = window.devicePixelRatio || 1;
+      const snap = (v: number) => Math.round(v * dpr) / dpr;
       const totalWidth = view.cols * width;
       const totalHeight = view.rows * height;
-      // An outline is 2px, on the hairline's middle where that is on whole
-      // device pixels; each piece runs on over the corner it shares with
-      // the next, so the corners are square and filled.
+      painter.placeGrounds(
+        view.panes
+          .filter((p) => !clear.has(gridOf(p.pane)))
+          .map((p) => {
+            const x0 = p.x > 0 ? snap((p.x - 0.5) * width) : p.x * width;
+            const x1 =
+              p.x + p.width < view.cols
+                ? snap((p.x + p.width + 0.5) * width)
+                : (p.x + p.width) * width;
+            const y0 = p.y > 0 ? snap((p.y - 0.5) * height) : p.y * height;
+            const y1 =
+              p.y + p.height < view.rows
+                ? snap((p.y + p.height + 0.5) * height)
+                : (p.y + p.height) * height;
+            return {
+              key: p.pane,
+              z: 1,
+              x: x0,
+              y: y0,
+              w: x1 - x0,
+              h: y1 - y0,
+              colour: view.state.defaults.background,
+            };
+          }),
+      );
+      // The boundaries, and the active (and synchronized) panes' outlines
+      // as stretches of them, recoloured and thicker (`paneOutlines`): a
+      // 1px hairline and a 2px outline, each centred on the shared edge;
+      // each outline piece runs on over the corner it shares with the
+      // next, so the corners are square and filled.
+      const outlines = paneOutlines(view.panes);
       const thick = 2;
-      const shift = (window.devicePixelRatio || 1) >= 2 ? 0.5 : 0;
+      const edge = (cells: number, size: number) => snap(cells * size);
       lines.replaceChildren(
         ...plainBorders(borders(view.panes), outlines).map((line) => {
           const el = document.createElement("div");
           el.className = line.vertical
             ? "control-border-v"
             : "control-border-h";
-          el.style.left = `${String((line.x + (line.vertical ? 0.5 : 0)) * width)}px`;
-          el.style.top = `${String((line.y + (line.vertical ? 0 : 0.5)) * height)}px`;
-          if (line.vertical)
-            el.style.height = `${String(line.length * height)}px`;
-          else el.style.width = `${String(line.length * width)}px`;
+          if (line.vertical) {
+            const top = edge(line.y, height);
+            el.style.left = `${String(snap(edge(line.x + 0.5, width) - 0.5))}px`;
+            el.style.top = `${String(top)}px`;
+            el.style.height = `${String(edge(line.y + line.length, height) - top)}px`;
+          } else {
+            const left = edge(line.x, width);
+            el.style.left = `${String(left)}px`;
+            el.style.top = `${String(snap(edge(line.y + 0.5, height) - 0.5))}px`;
+            el.style.width = `${String(edge(line.x + line.length, width) - left)}px`;
+          }
           return el;
         }),
         ...outlines.map((line) => {
@@ -480,28 +519,28 @@ export function ControlTerminalSurface({
           if (line.active) el.dataset.active = "true";
           el.dataset.vertical = String(line.vertical);
           const along = (from: number, to: number, total: number) => {
-            const a = from > 0 ? from - shift : 0;
-            const b = to < total ? to - shift + thick : total;
+            const a = from > 0 ? from - thick / 2 : 0;
+            const b = to < total ? to + thick / 2 : total;
             return [a, b - a] as const;
           };
           if (line.vertical) {
             const [top, length] = along(
-              line.y * height,
-              (line.y + line.length) * height,
+              edge(line.y, height),
+              edge(line.y + line.length, height),
               totalHeight,
             );
-            el.style.left = `${String((line.x + 0.5) * width - shift)}px`;
+            el.style.left = `${String(edge(line.x + 0.5, width) - thick / 2)}px`;
             el.style.top = `${String(top)}px`;
             el.style.width = `${String(thick)}px`;
             el.style.height = `${String(length)}px`;
           } else {
             const [left, length] = along(
-              line.x * width,
-              (line.x + line.length) * width,
+              edge(line.x, width),
+              edge(line.x + line.length, width),
               totalWidth,
             );
             el.style.left = `${String(left)}px`;
-            el.style.top = `${String((line.y + 0.5) * height - shift)}px`;
+            el.style.top = `${String(edge(line.y + 0.5, height) - thick / 2)}px`;
             el.style.width = `${String(length)}px`;
             el.style.height = `${String(thick)}px`;
           }
