@@ -56,6 +56,7 @@ durations and curves:
 | something leaving                                                   | `--motion-exit` 140 ms                          | `--ease-exit`     | fades, half a rise, in place                                          |
 | a change of place (FLIP glide)                                      | 240 ms (`GLIDE_MS`)                             | `--ease-standard` | `translate()` only                                                    |
 | a disclosure opening or closing                                     | `--motion-slow`                                 | `--ease-standard` | its own block size                                                    |
+| panes and Neovim windows as their layout changes (`docs/pane-motion.md`) | 167 ms (zoom 250, a key's step 83, a drag 0; a window or tab switch WinUI's slide, 300 ms) | WinUI's point to point `(0.55, 0.55, 0, 1)` (`paneMotion.ts`) | `translate()` of nested clips and content, `opacity` |
 
 Repeating motion (the activity dots, a spinner) is what something is doing
 now; it is the only motion with no end, and it stops under Reduce Motion.
@@ -190,7 +191,9 @@ because a followed transcript moves by every pixel of it.
   across a scroll; a notification line rises and fades in at its full
   height and fades out in place; the completion and tmux menus keep their
   bar's gutter. Panes moving as a layout changes are
-  `docs/pane-motion.md`'s.
+  `docs/pane-motion.md`'s, held by `paneMotion.test.ts`,
+  `controlMotion.test.ts` and `windowMotion.test.ts`: every transition
+  ends on the resting placement exactly.
 - `apps/desktop/src/shell/glide.test.tsx`: a glide starts where the
   element was and ends on its place; what is new rises; Reduce Motion moves
   nothing.

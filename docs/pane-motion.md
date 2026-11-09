@@ -2,11 +2,12 @@
 
 How DevHub's panes move when their layout changes: tmux's panes on the
 control surface (`shell/terminal/control/`) and Neovim's windows in the
-editor (`shell/neovim/`). This is a design. No code follows it yet. Read
-it with `docs/rendering-layers.md` ("Panes and boundaries"),
+editor (`shell/neovim/`). It is built: variant A, with the person's
+changes (below, "As built"). Read it with `docs/motion.md` (the rules for
+the whole app, of which this is the panes' part),
+`docs/rendering-layers.md` ("Panes and boundaries"),
 `docs/terminal-mode.md` ("The surface") and `docs/neovim-editor.md`
-("The page"). If a `docs/motion.md` with motion rules for the whole app
-lands, this file becomes a section of it.
+("The page").
 
 What the person asked for:
 
@@ -14,6 +15,181 @@ What the person asked for:
 
 They added that they find Windows' window motion more pleasant than
 macOS'. Windows 11 is the main reference here, with Hyprland second.
+
+## As built
+
+The person chose variant A (below) and changed four things:
+
+> 基本はAを取りつつ…
+
+- **Content follows its anchor.** 「コンテンツがどこにアンカーがあってどこが固定されてるのかを意識して、それが移動するようなレイアウトが発生したら一緒にアニメしたほうが良い」.
+  A pane's content is not only glued to its top-left corner: where the
+  same lines are in the old and the new picture says where it moves.
+- **Zoom recedes the others** (variant B's counter-motion), without
+  stretching anything.
+- **A window or tab switch slides**, in the windows' order, like virtual
+  desktops: WinUI's horizontal slide, not a fade.
+- **A resize drag is immediate.** 「マウスに対する応答性が必要」.
+
+What each change does now:
+
+| Change | tmux (control surface) | Neovim editor | Time, curve |
+| --- | --- | --- | --- |
+| Split right / below (the new pane after) | The split pane's far edge travels to the new boundary, the new pane is uncovered in place. Its content follows its anchor: a shell kept at the foot of a shorter pane (tmux keeps the cursor line) rises with the edge, and the rows that leave the grid scroll out under it | The same; a window that scrolled to keep its cursor line in view moves its lines by the rows its `topline` moved | 167 ms, point to point |
+| Split left / above (the new pane before) | The kept pane's near edge travels away and its text travels with it: to the right after a split to the left. Split above: a shell kept at the foot stays put while the top edge comes down over its first rows | The same | 167 ms |
+| Close | The neighbours grow over the gone pane's last picture; one whose left or top edge moves carries its text; one that gains rows at the top (tmux brings history back) moves its text down with the edge | The same, the gone window's status line with it | 167 ms |
+| Equalize, swap, move, maximize | Every edge that moved, one clock | The same (`<C-w>=`, `<C-w>\|`, `<C-w>_`) | 167 ms |
+| Resize by key, one step (up to 5 cells) | The edges that moved | The same | 83 ms |
+| Resize steps less than 250 ms apart (a held key) | At once | At once | 0 |
+| Resize drag | At once, each committed cell under the pointer (a boundary can be dragged now: `resize-pane` per cell; the commit does not wait for the pictures) | At once (the sash drag) | 0 |
+| Zoom | The zoomed pane grows over the others from its own rectangle (its final grid, clipped); the others slide away from it, 30% of its edge's travel, and fade out under it | (no zoom in Neovim) | 250 ms, point to point |
+| Unzoom | The zoomed pane shrinks to its rectangle; the others come back from 30% away, fading in, under it | | 250 ms |
+| Window switch / tab switch | The next window (by index) slides in from the right over the last, which slides 150 px on and fades; the previous one from the left | The same for a tab (`gt`, `gT`, `:tabnext`), by the tabs' order | in 300 ms on (0.1, 0.9, 0.2, 1); out 150 ms on (0.7, 0, 1, 0.5) |
+| First attach, surface resize, Reduce Motion | At once | At once | 0 |
+| A window with a Neovim drawn over one of its panes | At once (below) | (its own windows move, in its page) | 0 |
+
+### How the anchors are found
+
+- **tmux.** A committed layout is held, with the messages after it,
+  until every resized or new pane's picture at its new size has come
+  (`waitingFor`: the engine reads a resized pane again a round trip
+  after `%layout-change`; at most 100 ms; a drag waits for nothing). So a
+  pane's clip and its new content start in the same frame. Then the old
+  and the new grid's rows are compared as text (`rowShift`): each row
+  that is not blank and appears once in each picture votes for how many
+  rows it moved, over the columns both have; the shift most rows agree
+  on wins, the smaller on a tie, 0 when nothing matches (the content
+  stays glued to the pane's top). The new grid starts drawn where that
+  puts the old lines (`anchorOf`) and moves to its resting place with the
+  clip, on the same clock. The rows of the old picture that the new grid
+  does not hold (scrolled off the top of a shorter pane) are a copy of
+  the old canvas, cut once to those rows, under the new grid in the
+  pane's content (`leaving`): they leave under the moving edge rather
+  than vanish at the first frame. tmux's scroll position and history
+  size are not needed: what is on the two screens says it.
+- **Neovim.** One flush is one commit (`win_pos`, the grids' new sizes
+  and rows together). A window in both layouts moves its content by the
+  rows its `topline` moved between the two `win_viewport`s
+  (`viewportShift`): Neovim scrolled it to keep the cursor line in view,
+  so the cursor line stays where it was on screen and goes with the
+  edge. Its leaving rows are its old picture's, as on tmux.
+- Horizontally, content is glued to its pane's left edge: neither tmux
+  nor Neovim shifts a row sideways when a pane is resized.
+
+The end is exact: a track whose time is up answers its resting place
+itself, and the resting path draws the frame after the last.
+
+### What moves together
+
+- **One group per pane** (`GridPainter.motionGroup`, made at a
+  transition's start, let go at its end): two nested clips the surface's
+  size, each moved by a transform, cut the pane's rectangle; the inner
+  clip's box is the pane's ground; the content inside holds the grid's
+  parts (ground, canvas or scroll port, riders, cursor, covers, slides)
+  in the surface's pixels, moved by a transform. At rest the parts are in
+  their level, as before. Per frame only `transform` and `opacity` are
+  written.
+- **Boundaries** are hidden at the start; each moving pane draws lines on
+  its own edges (a 1 px element stretched by `scale`): the hairline, and
+  on tmux the active pane's 2 px outline. The shared boundaries are
+  placed again by the resting path.
+- **Status lines** (Neovim, `laststatus=2`): the row of grid 1 under each
+  window is copied into a strip at its clip's foot, from its content's
+  left; a gone window keeps its old one. The new grid 1 is under the
+  groups, which cover it wherever a window is.
+- **The cursor** is in its pane's content: on tmux it is moved into the
+  active pane's group while panes move; on Neovim it is already in its
+  grid's clip.
+- **Clicks hit what is drawn**: on tmux a press is mapped through the
+  visual rectangles of the panes in the committed layout, topmost first,
+  to the cell of its grid drawn under the pointer (`paneUnder`).
+- **A layout that moves nothing** (tmux's notice of the active pane, a
+  rename) leaves a running transition to reach the layout it was going
+  to.
+
+### Choices, and why
+
+- **Zoom: slide and fade, no scale.** Scaling a canvas resamples its
+  glyphs off the device pixels: at 2× the text shimmers and thins, and a
+  scaled pane's edge would no longer meet the hairlines. The growing pane
+  covers most of the others within the first half of the 250 ms anyway;
+  what shows is their outer part moving away and fading, which reads as
+  receding without touching a glyph.
+- **The switch: WinUI's horizontal slide, overlapped.** WinUI's
+  `SlideNavigationTransitionInfo` (`FromRight`/`FromLeft`,
+  `microsoft-ui-xaml` `dxaml/phone/lib/ThemeTransitions.cpp`) moves the
+  page going away 150 px on (0.7, 0, 1, 0.5) in 150 ms, hides it, then
+  brings the new one 200 px on (0.1, 0.9, 0.2, 1) in 300 ms: 450 ms in
+  all, the new page invisible for the first 150. Here they run at once:
+  the arriving window is drawn opaque over the leaving one from the
+  first frame, so what is typed shows at once where it stays and no text
+  is drawn twice. The curves, offsets and durations are WinUI's. The
+  entrance curve is front-loaded (90% in about 70 ms) and creeps for
+  its last few pixels; that is Windows' own feel for pages.
+- **Neovim tabs slide too.** A tab is the same thing as a tmux window: an
+  ordered sibling page. A tab switch is one flush like any layout change,
+  so the gone windows' pictures and status lines leave and the new tab's
+  windows arrive, by the tabs' order. Grid 1 (the tab's background, the
+  command line) does not move; DevHub's tab strip changes at once.
+- **Key resizes: 83 ms for a single step, at once when they repeat.** A
+  single step is 90% done in about 40 ms and the key is never held, so it
+  costs no responsiveness; steps less than 250 ms apart (a held key, a
+  repeat binding) are placed at once, so a stream of them never trails.
+- **Not moved, documented:** a tmux window with a Neovim drawn over one
+  of its panes is placed at once (that Neovim is a view of its own, which
+  this page cannot move; a cut is better than a Neovim that jumps while
+  its pane glides). Neovim floats anchored to a window (`relative='win'`)
+  are placed where Neovim puts them, at their final place, not with
+  their window's visual origin.
+
+### Reflow, not animated
+
+Asked as a stretch: when a width change rewraps text (Neovim with
+`wrap`, a shell's output tmux rewraps), move each logical line's block
+from its old rows to its new ones. Not shipped, because it cannot be done
+within the rules:
+- The moving blocks would be pieces of the final grid in separate
+  layers. A canvas can be shown in one place only, so each block would be
+  a copy of its rows. A copy is frozen: what the program draws during
+  the 167 ms (a key typed into the pane, the shell's redraw after
+  SIGWINCH) would not show until the copies are dropped, which breaks
+  "what is typed shows where it stays". Copying every frame instead is a
+  repaint per frame, not transform and opacity.
+- Neither side says where a logical line's rows are cheaply: tmux's
+  line-joining is not in the frames the page gets (`VtFrame` rows carry no
+  wrap flag; it would be a protocol change), and `win_viewport` gives
+  `topline`/`botline`, not the wrapped rows of each line in between;
+  asking Neovim would delay the first frame by a round trip.
+- What is done instead: the shift most rows agree on (`rowShift`) moves
+  the content as a whole, so unwrapped lines follow and a rewrapped
+  block lands in its final wrap with the rest.
+
+### Checked
+
+- `paneMotion.test.ts`: the curve; a transition's end is its resting
+  place itself whatever the last tick; edges on device pixels; never past
+  the end; an interruption starts where it is drawn; `rowShift`; a
+  prompt kept at the foot rises with its edge and stays in its clip;
+  content travels with a split to the left; zoom and unzoom; the switch.
+- `controlMotion.test.ts` (jsdom): a split frame by frame through
+  `applyMotion`: the last frame before the end draws the resting
+  rectangles (`restPlace`, which the resting path places) to the device
+  pixel, with no content offset left; only transforms are written; a
+  click maps to the cell drawn; a shell's anchor and its leaving rows;
+  what a commit waits for; what a change is.
+- `windowMotion.test.ts`: a window's rest is its pane's (`placePanes`)
+  with its status line; a split ends on its rests; `topline` moves the
+  text.
+- In the app (Xvfb, 2×, the person's settings, tmux.conf and Neovim
+  config): each change run with motion and again with Reduce Motion
+  emulated; the resting DOM after the motion (every pane's ground,
+  canvas and boundary, as rectangles) equals the one placed at once, for
+  split right, left, below and above, zoom, unzoom and close on tmux, and
+  vsplit, split, close, `<C-w>=` and a tab switch in Neovim; every frame
+  after the last moving one is that resting frame. Recordings at real and
+  quarter speed: splits in four directions, close, zoom, unzoom, window
+  switch both ways, a boundary drag (tmux and Neovim), typing during a
+  split, a split undone 60 ms in.
 
 ## The rules
 
@@ -122,9 +298,11 @@ whose left or top edge moves carries its text with it: the right pane
 after a close slides left, because its text really moves there. Its
 right and bottom edges only reveal or hide.
 
-## Each transition
+## Each transition (the design)
 
-Durations are for the recommended variant (A).
+Durations are for the recommended variant (A). What was built differs
+where the person asked ("As built", above): zoom, the switch and the
+drag.
 
 | Change | Event | What moves | Duration |
 | --- | --- | --- | --- |
