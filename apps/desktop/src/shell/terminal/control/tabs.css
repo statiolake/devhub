@@ -1,0 +1,182 @@
+/* The window tabs and the status line around them (`WindowStrip.tsx`),
+   after the phase 4 mock A, "a pill in the pond": no line under the panes,
+   only space; the active window a faint pill, the rest quiet ink; the index
+   a keycap. Its look is here alone, as tokens (`docs/terminal-mode.md`). */
+
+.control-tabs {
+  --tabs-ink: var(--terminal-foreground, currentColor);
+  --tabs-height: 26px;
+  /* The space between the panes and the line: nothing else divides them. */
+  --tabs-space: 4px;
+  --tabs-font-size: 12px;
+  --tabs-quiet: color-mix(in srgb, var(--tabs-ink) 55%, transparent);
+  --tabs-pill: color-mix(in srgb, var(--tabs-ink) 10%, transparent);
+  --tabs-radius: 6px;
+  --tabs-key-border: color-mix(in srgb, currentColor 40%, transparent);
+  --tabs-bold: 600;
+  --tabs-dim: 0.6;
+  --tabs-bell: var(--terminal-ansi-red, var(--tabs-ink));
+  --tabs-activity: color-mix(in srgb, var(--tabs-ink) 70%, transparent);
+  --tabs-side-ink: color-mix(in srgb, var(--tabs-ink) 60%, transparent);
+
+  position: relative;
+  display: grid;
+  height: var(--tabs-height);
+  flex: none;
+  align-items: center;
+  margin-top: var(--tabs-space);
+  color: var(--tabs-quiet);
+  column-gap: 8px;
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-size: var(--tabs-font-size);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  letter-spacing: 0.005em;
+  line-height: 1;
+}
+
+/* `status-position top`: over the panes, the space below it. */
+.control-tabs[data-position="top"] {
+  order: -1;
+  margin-top: 0;
+  margin-bottom: var(--tabs-space);
+}
+
+.control-tabs-left,
+.control-tabs-right {
+  overflow: hidden;
+  padding: 0 6px;
+  color: var(--tabs-side-ink);
+  font-size: 11.5px;
+  white-space: pre;
+}
+
+/* `status-justify absolute-centre`: centred on the whole line. */
+.control-tabs[data-justify="absolute-centre"] .control-tabs-left,
+.control-tabs[data-justify="absolute-centre"] .control-tabs-right {
+  min-width: var(--tabs-side);
+}
+
+.control-tabs-right {
+  text-align: right;
+}
+
+.control-tabs-middle {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.control-tabs[data-justify="centre"] .control-tabs-middle,
+.control-tabs[data-justify="absolute-centre"] .control-tabs-middle {
+  justify-content: center;
+}
+
+.control-tabs[data-justify="right"] .control-tabs-middle {
+  justify-content: flex-end;
+}
+
+.control-tabs-list {
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+/* More windows than even their keycaps fit: the row fades at its ends, and
+   the active one is kept in view. */
+.control-tabs-list[data-overflow="true"] {
+  mask-image: linear-gradient(
+    90deg,
+    transparent,
+    #000 16px,
+    #000 calc(100% - 16px),
+    transparent
+  );
+}
+
+/* What every tab would measure, unfolded and folded. */
+.control-tabs-ruler {
+  position: absolute;
+  overflow: visible;
+  left: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.control-tab {
+  position: relative;
+  display: flex;
+  height: 20px;
+  flex: none;
+  align-items: center;
+  padding: 0 8px 0 4px;
+  border: 0;
+  margin: 0;
+  background: none;
+  border-radius: var(--tabs-radius);
+  color: inherit;
+  font: inherit;
+  gap: 6px;
+  white-space: pre;
+}
+
+.control-tab[aria-current="true"] {
+  background: var(--tabs-pill);
+  color: var(--tabs-ink);
+}
+
+.control-tab[data-folded="true"] {
+  padding: 0 2px;
+}
+
+.control-tab-key {
+  display: grid;
+  min-width: 15px;
+  height: 15px;
+  box-sizing: border-box;
+  padding: 0 3px;
+  border: 1px solid var(--tabs-key-border);
+  border-radius: 4px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  place-items: center;
+}
+
+.control-tab[aria-current="true"] .control-tab-key {
+  font-weight: inherit;
+}
+
+.control-tab-zoom {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  fill: none;
+  opacity: 0.8;
+  stroke: currentColor;
+  stroke-width: 1.3;
+}
+
+.control-tab-dot {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.control-tab-dot[data-alert="bell"] {
+  background: var(--tabs-bell);
+}
+
+.control-tab-dot[data-alert="activity"] {
+  background: var(--tabs-activity);
+}
+
+/* A folded tab keeps its dot on the keycap's shoulder. */
+.control-tab[data-folded="true"] .control-tab-dot {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  box-shadow: 0 0 0 1.5px var(--terminal-background, Canvas);
+}

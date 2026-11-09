@@ -60,6 +60,54 @@ export interface WindowInfo {
 	readonly active: boolean;
 	/** Its panes' rectangles, as shown (a zoomed pane alone), in cells. */
 	readonly zoomed: boolean;
+	/** Its tab, as the person's status line formats it; absent until read. */
+	readonly tab?: WindowTab;
+}
+
+/** A colour tmux names: one of the 256 (the theme's 16 first), or 24-bit RGB. */
+export type StatusColor = { readonly index: number } | { readonly rgb: number };
+
+/** What a tmux style says that DevHub draws: its attributes and its ink. */
+export interface StatusStyle {
+	readonly bold?: boolean;
+	readonly dim?: boolean;
+	readonly italic?: boolean;
+	readonly underline?: boolean;
+	readonly strikethrough?: boolean;
+	readonly fg?: StatusColor;
+}
+
+/** Text tmux expanded, in the style its `#[...]` gave it. */
+export interface StatusRun extends StatusStyle {
+	readonly text: string;
+}
+
+/**
+ * A window's tab (`ptyHost/control/statusLine.ts`): its
+ * `window-status-format` (`-current-format` for the active one) expanded by
+ * tmux, the leading `#I` cut out as the keycap and the padding trimmed.
+ */
+export interface WindowTab {
+	/** The format led with `#I`: the index is drawn as a keycap. */
+	readonly key: boolean;
+	readonly label: readonly StatusRun[];
+	/** `window-status-style`, or `window-status-current-style` for the active one. */
+	readonly style: StatusStyle;
+	readonly bell: boolean;
+	readonly activity: boolean;
+	/** The colour `window-status-bell-style` / `-activity-style` names, if any. */
+	readonly alert?: StatusColor;
+}
+
+/** The session's status line as DevHub draws it: around the tabs. */
+export interface StatusLine {
+	/** `status` is not `off`. */
+	readonly shown: boolean;
+	readonly position: "top" | "bottom";
+	readonly justify: "left" | "centre" | "right" | "absolute-centre";
+	/** `status-left` / `status-right`, expanded by tmux and trimmed. */
+	readonly left: readonly StatusRun[];
+	readonly right: readonly StatusRun[];
 }
 
 export interface PaneBox {
@@ -145,6 +193,8 @@ export type ControlToPage =
 			readonly client: string;
 			/** `prefix` and `prefix2` as tmux names keys, `None` left out. */
 			readonly prefixes: readonly string[];
+			/** The status line around the tabs; absent until read. */
+			readonly status?: StatusLine;
 	  }
 	| {
 			readonly kind: "pane";

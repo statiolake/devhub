@@ -231,17 +231,17 @@ takes — per dirty row, each cell's text (a grapheme whole, `""` for a wide
 character's right half) and an interned style id, and the cursor — so the
 read cost is DevHub's real one, not a library's best case.
 
-| | xterm.js 6.0.0 headless | libghostty-vt 1.0.0 (ReleaseFast, `simd128`) |
-| --- | --- | --- |
-| parse, colored `ls -lR` log (13.6 MB) | 68 MB/s | 45 MB/s |
-| parse, full-screen truecolor TUI redraws (16 MB) | 92 MB/s | 53 MB/s |
-| parse, CJK / emoji / combining text (8 MB) | 48 MB/s | 34 MB/s |
-| the same three with a frame read every 256 KiB | 59 / 60 / 47 MB/s | 39 / 27 / 26 MB/s |
-| read a whole 200×50 viewport for the painter | 1.15 ms p50, 2.4 p99 | 2.8 ms p50, 7.0 p99 |
-| one echoed key: write + read its dirty row | 9.5 µs p50, 95 µs p99 | 27 µs p50, 140 µs p99 |
-| memory per pane, 10 000 lines of scrollback | 30.6 MiB RSS | 16.0 MiB RSS |
-| start-up | 11 ms to load the module | 7.5 ms to compile, instantiate and check it |
-| **cell widths that agree with tmux 3.7c** (20 graphemes: CJK, emoji with skin tones, ZWJ families, flags, VS16, combining marks, ZWSP) | **14–16 of 20** in every mode (default, `unicode11`, `unicode-graphemes`) | **20 of 20** |
+|                                                                                                                                        | xterm.js 6.0.0 headless                                                   | libghostty-vt 1.0.0 (ReleaseFast, `simd128`) |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------------------------------- |
+| parse, colored `ls -lR` log (13.6 MB)                                                                                                  | 68 MB/s                                                                   | 45 MB/s                                      |
+| parse, full-screen truecolor TUI redraws (16 MB)                                                                                       | 92 MB/s                                                                   | 53 MB/s                                      |
+| parse, CJK / emoji / combining text (8 MB)                                                                                             | 48 MB/s                                                                   | 34 MB/s                                      |
+| the same three with a frame read every 256 KiB                                                                                         | 59 / 60 / 47 MB/s                                                         | 39 / 27 / 26 MB/s                            |
+| read a whole 200×50 viewport for the painter                                                                                           | 1.15 ms p50, 2.4 p99                                                      | 2.8 ms p50, 7.0 p99                          |
+| one echoed key: write + read its dirty row                                                                                             | 9.5 µs p50, 95 µs p99                                                     | 27 µs p50, 140 µs p99                        |
+| memory per pane, 10 000 lines of scrollback                                                                                            | 30.6 MiB RSS                                                              | 16.0 MiB RSS                                 |
+| start-up                                                                                                                               | 11 ms to load the module                                                  | 7.5 ms to compile, instantiate and check it  |
+| **cell widths that agree with tmux 3.7c** (20 graphemes: CJK, emoji with skin tones, ZWJ families, flags, VS16, combining marks, ZWSP) | **14–16 of 20** in every mode (default, `unicode11`, `unicode-graphemes`) | **20 of 20**                                 |
 
 A first round ran on the only wasm reachable then (npm's
 `@gkoreli/ghostty-vt-js` 0.6.0: a pre-1.0 snapshot, ReleaseSmall): the
@@ -374,9 +374,31 @@ picks it by the setting and mounts the other one when it changes.
   stream); Retry and every connect put the keys in the terminal when it is
   on screen and nothing outside it has them. A surface never shown is not
   attached; a hidden one tells its client, which stops sending rows.
-- **The window strip** under the panes is provisional — the session's
-  windows, the index in a small keycap, the active one standing out — until
-  phase 4's tabs are designed from a mock.
+- **The window tabs** (`WindowStrip.tsx`, its look `tabs.css` alone; the
+  phase 4 mock A, "a pill in the pond"): no line under the panes, 4px of
+  space; the active window a faint pill (foreground 10%) with its name bold,
+  the rest at 55%; the index a keycap; names in the UI font. Everything is
+  tmux's, as data (`ptyHost/control/statusLine.ts`), never painted cells:
+  each window's `window-status-format` (`-current-format` for the active one)
+  expanded per window, a leading `#I` cut out as the keycap and the padding
+  trimmed, `#[...]` kept as the runs' styles; `window-status-current-style`
+  (the person's `bold`) as the tab's; `window_bell_flag` a dot in the
+  theme's red (or the colour `window-status-bell-style` names),
+  `window_activity_flag` a dot in the ink, `window_zoomed_flag` a corner
+  mark; `status-left` / `status-right` at the ends; `status-justify` and
+  `status-position` (top puts the line above the panes) place it, `status
+off` hides it. A `refresh-client -B` subscription to every window (`@*`)
+  and one to the status line keep it: tmux checks once a second and sends
+  only a change, which carries what `%window-*` notifications do not
+  (`pane_current_command`, a bell). When the tabs do not fit, the inactive
+  ones farthest from the active one fold to their keycap, which keeps its
+  dot on its shoulder; past that, the row fades at its ends with the active
+  one in view. Windows are chosen with tmux's keys; a click selects one too
+  (as tmux's own status line does) and keeps the keys in the terminal, and a
+  right-click opens tmux's window menu. Checked in the app with the
+  person's tmux.conf, Min Light and Min Dark: five windows and a split, a
+  bell and activity arriving live, a zoom, 370 px wide, a theme switch, and
+  `status-position top` / `status-justify left` / a `status-right` set live.
 - **Neovim over a pane** (`docs/neovim-editor.md`, "Neovim in a terminal"):
   the page says where each pane is drawn and what it is
   (`reportTerminalPanes`), and the overlay is placed from that, with no
@@ -419,15 +441,15 @@ lines of 100 columns a second; CPU is per process kind over 20 s, in % of
 one core. Throughput is `cat` of a 29.7 MB, 300 000-line file until the
 shell's next command runs.
 
-| | xterm.js path | control mode |
-| --- | --- | --- |
-| key to paint, idle (60 keys) | p50 7.5, p90 13.3, p99 19.9 ms | p50 6.2–6.4, p90 7.2–12.1, p99 18.0–20.6 ms |
-| key to paint beside 3 streaming panes (120 keys) | p50 7.4, p90 14.9, p99 21.2 ms | p50 6.1–6.8, p90 15.8–17.6, p99 21.7–22.4 ms |
-| CPU while streaming: renderers | 29.9–30.4% | 17.3–18.6% |
-| … GPU process (compositing) | 9.0–9.2% | 36.0–39.5% |
-| … pty host / tmux server / main | 4.8 / 2.4–2.6 / 2.7–2.9% | 5.5–5.7 / 1.3 / 2.0–2.1% |
-| `cat` 29.7 MB | 1.06–1.10 s | 1.74–1.85 s |
-| CPU during the `cat` (first 8 s): pty host / tmux server | 6.0–6.9 / 13.1–13.9% | 16.5–18.2 / 15.4–16.9% |
+|                                                          | xterm.js path                  | control mode                                 |
+| -------------------------------------------------------- | ------------------------------ | -------------------------------------------- |
+| key to paint, idle (60 keys)                             | p50 7.5, p90 13.3, p99 19.9 ms | p50 6.2–6.4, p90 7.2–12.1, p99 18.0–20.6 ms  |
+| key to paint beside 3 streaming panes (120 keys)         | p50 7.4, p90 14.9, p99 21.2 ms | p50 6.1–6.8, p90 15.8–17.6, p99 21.7–22.4 ms |
+| CPU while streaming: renderers                           | 29.9–30.4%                     | 17.3–18.6%                                   |
+| … GPU process (compositing)                              | 9.0–9.2%                       | 36.0–39.5%                                   |
+| … pty host / tmux server / main                          | 4.8 / 2.4–2.6 / 2.7–2.9%       | 5.5–5.7 / 1.3 / 2.0–2.1%                     |
+| `cat` 29.7 MB                                            | 1.06–1.10 s                    | 1.74–1.85 s                                  |
+| CPU during the `cat` (first 8 s): pty host / tmux server | 6.0–6.9 / 13.1–13.9%           | 16.5–18.2 / 15.4–16.9%                       |
 
 What it says: keys reach the screen as fast or faster in control mode, and
 the page's own work under streaming is down by 40%; tmux does less (it no
@@ -488,8 +510,9 @@ binding that holds a waiting command beside others (not one command, not an
 
 Open, in order:
 
-- **Phase 4** (the tabs mock, then deleting the xterm.js path and the
-  setting) is next; not started.
+- **Phase 4**: the tabs are done (mock A, above, "The window tabs");
+  deleting the xterm.js path, the pty clients of the pty host and the
+  `tmux_control_mode` key together is next.
 - **SSH hosts' `tmux` on PATH.** A host's pane (and a popup there) finds the
   host's own `tmux`, which may not talk to DevHub's 3.7c server. The clean
   fix is two places, both to be checked against an sshd: `panePath`
@@ -509,7 +532,7 @@ Open, in order:
 - `pnpm install` writing `node-pty: set this to true or false` into
   `pnpm-workspace.yaml`: checked on main with pnpm 11.20.0 and an empty
   store — a fresh install writes nothing since 0bbbc5c2 (`allowBuilds:
-  node-pty: false` is pnpm 11's format); without that line it writes the
+node-pty: false` is pnpm 11's format); without that line it writes the
   placeholder. A checkout from before 0bbbc5c2 still does.
 
 - **Popups.** A popup's command runs as the popup's pane's: `$TMUX_PANE`
@@ -544,12 +567,9 @@ Open, in order:
   marks) carries the y / Y copies. `%paste-buffer-changed` is where a
   copy that tmux made (`copy-pipe`, `load-buffer -w`) reaches the system
   clipboard.
-- **Tabs (phase 4).** The window strip's data is `layout.windows` (index,
-  name, active, zoomed); the person's `window-status-format` and
-  `window-status-current-format` can be read with `show -gv` and expanded
-  per window with `display-message -p -t @<id>`, as data, never by
-  reading painted cells. Mock first; then delete the xterm.js path, the
-  pty clients of the pty host and the `tmux_control_mode` key together.
+- **Tabs (phase 4).** Done: "The window tabs", above. Next, delete the
+  xterm.js path, the pty clients of the pty host and the
+  `tmux_control_mode` key together.
 
 ### What waits on a control client, until DevHub draws it
 
@@ -605,7 +625,7 @@ aliases, options and layouts), and the page draws it as one line over the
 panes' last row (`prompt.css`), where tmux draws its prompt. The prompt and
 its `-I` input are expanded by tmux against the active pane
 (`display-message -p`); Up/Down walk tmux's history of the prompt's `-T`
-type (`show-prompt-history`). What the answer *means* is left to tmux: the
+type (`show-prompt-history`). What the answer _means_ is left to tmux: the
 binding is run as written with `-b` (so it does not hold the client's queue)
 and the answer typed into tmux's own prompt on the same command line —
 `send-keys -K C-u`, the answer with `-l`, `Enter`, once per `-p` prompt; for

@@ -28,6 +28,8 @@ import type {
   ControlToPage,
   PageToControl,
   PaneBox,
+  StatusColor,
+  StatusLine,
 } from "../../../ipc/terminalControl";
 import { pasteBytes, sgrMouse, tmuxKey } from "./controlKeys";
 import { surfaceBridge } from "../surfaceBridge";
@@ -41,6 +43,7 @@ import {
   type ControlView,
 } from "./paneGrids";
 import type { TerminalSurfaceProps } from "../TerminalSurface";
+import { WindowStrip } from "./WindowStrip";
 
 /**
  * A terminal surface in tmux control mode (`[terminal] tmux_control_mode`,
@@ -84,6 +87,18 @@ function palette256(ansi: readonly number[]): number[] {
   return out;
 }
 
+/** A colour tmux names, in the theme's palette: its 16 first, then xterm's. */
+function cssOfStatusColor(
+  color: StatusColor,
+  palette: readonly number[] | undefined,
+): string {
+  const rgb =
+    "rgb" in color ? color.rgb : (palette?.[color.index] ?? undefined);
+  return rgb === undefined
+    ? "currentColor"
+    : `#${rgb.toString(16).padStart(6, "0")}`;
+}
+
 function colorsOf(palette: TerminalPalette | undefined) {
   const foreground = rgbOfCss(palette?.foreground ?? "") ?? 0xd0d0d0;
   const background = rgbOfCss(palette?.background ?? "") ?? 0x1e1e1e;
@@ -119,6 +134,7 @@ export function ControlTerminalSurface({
   const [error, setError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
   const [tabs, setTabs] = useState<ControlView["windows"]>([]);
+  const [status, setStatus] = useState<StatusLine | undefined>();
   const [shown, setShown] = useState(!hidden);
   if (!hidden && !shown) setShown(true);
   const controllerRef = useRef<{
@@ -735,7 +751,10 @@ export function ControlTerminalSurface({
         return;
       }
       if (message.kind === "pane") lastSeq = Math.max(lastSeq, message.seq);
-      if (message.kind === "layout") setTabs(message.windows);
+      if (message.kind === "layout") {
+        setTabs(message.windows);
+        setStatus(message.status);
+      }
       schedule(applyControl(view, message));
     };
 
@@ -1065,6 +1084,8 @@ export function ControlTerminalSurface({
           ...(palette
             ? {
                 "--terminal-foreground": palette.foreground,
+                // A bell is said in the theme's red (ANSI 1).
+                "--terminal-ansi-red": palette.ansi[1],
                 "--terminal-selection": palette.selectionBackground,
                 color: palette.foreground,
               }
@@ -1086,28 +1107,13 @@ export function ControlTerminalSurface({
         role="application"
         aria-label={`${surfaceLabel} terminal`}
       />
-      {tabs.length > 0 && (
-        <nav className="control-windows" aria-label="tmux windows">
-          {tabs.map((w) => (
-            <button
-              key={w.id}
-              type="button"
-              className="control-window"
-              aria-current={w.active ? "true" : undefined}
-              onMouseDown={(event) => event.preventDefault()}
-              data-window={w.id}
-              onClick={() => controllerRef.current?.selectWindow(w.id)}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                controllerRef.current?.windowMenu(w.id, event.clientX);
-              }}
-            >
-              <span className="control-window-index">{w.index}</span>
-              {w.name}
-            </button>
-          ))}
-        </nav>
-      )}
+      <WindowStrip
+        windows={tabs}
+        status={status}
+        color={(c) => cssOfStatusColor(c, colors.palette)}
+        onSelect={(id) => controllerRef.current?.selectWindow(id)}
+        onMenu={(id, x) => controllerRef.current?.windowMenu(id, x)}
+      />
       {notice !== undefined && (
         <div className="control-notice" role="status">
           {notice}

@@ -36,11 +36,22 @@ import {
 	type PaneBox,
 	type PaneModes,
 	type SessionPane,
+	type StatusLine,
 	type WindowInfo,
+	type WindowTab,
 } from "../../../ipc/terminalControl.js";
 import type { LibGhosttyVt, VtPane } from "../vt/libghosttyVt.js";
 import { KeyRouter, parseBindings, waitingCommand } from "./keyGuard.js";
 import { PopupJob, popupInput, type PopupPty } from "./popup.js";
+import {
+	STATUS_FORMAT,
+	STATUS_SUBSCRIPTION,
+	TAB_FIELD_COUNT,
+	TAB_FORMAT,
+	TABS_SUBSCRIPTION,
+	parseStatus,
+	parseTab,
+} from "./statusLine.js";
 import {
 	ChooserSession,
 	chooserOf,
@@ -217,6 +228,8 @@ interface Window {
 	visible: LayoutNode | undefined;
 	activePane: TmuxId | undefined;
 	zoomed: boolean;
+	/** Its tab as the status line formats it (`statusLine.ts`). */
+	tab: WindowTab | undefined;
 }
 
 export class ControlClient {
@@ -232,6 +245,7 @@ export class ControlClient {
 	#activeWindow: TmuxId | undefined;
 	#clientName = "";
 	#prefixes: readonly string[] = [];
+	#status: StatusLine | undefined;
 	#cols: number;
 	#rows: number;
 	#visible = true;
@@ -420,6 +434,23 @@ export class ControlClient {
 			"-B",
 			`${PANE_FACTS}:%*:${PANE_FACTS_FORMAT}`,
 		]);
+		// The status line DevHub draws (`statusLine.ts`): read now, then kept.
+		const status = await this.#command([
+			"display-message",
+			"-p",
+			STATUS_FORMAT,
+		]);
+		if (status.ok) this.#status = parseStatus(status.lines.join("\n"));
+		await this.#command([
+			"refresh-client",
+			"-B",
+			`${STATUS_SUBSCRIPTION}::${STATUS_FORMAT}`,
+		]);
+		await this.#command([
+			"refresh-client",
+			"-B",
+			`${TABS_SUBSCRIPTION}:@*:${TAB_FORMAT}`,
+		]);
 		const name = await this.#command([
 			"display-message",
 			"-p",
@@ -517,6 +548,21 @@ export class ControlClient {
 				void this.#continue(event.pane);
 				return;
 			case "subscription-changed": {
+				if (event.name === TABS_SUBSCRIPTION) {
+					const window =
+						event.window === undefined
+							? undefined
+							: this.#windows.get(event.window);
+					if (window !== undefined) this.#setTab(window, event.value);
+					return;
+				}
+				if (event.name === STATUS_SUBSCRIPTION) {
+					const status = parseStatus(event.value);
+					if (JSON.stringify(status) === JSON.stringify(this.#status)) return;
+					this.#status = status;
+					this.#postLayout();
+					return;
+				}
 				if (event.name !== PANE_FACTS || event.pane === undefined) return;
 				this.#facts(event.pane, event.value);
 				return;
@@ -1684,6 +1730,7 @@ export class ControlClient {
 				"#{window_zoomed_flag}",
 				"#{window_layout}",
 				"#{window_visible_layout}",
+				TAB_FORMAT,
 				"#{window_name}",
 			].join(FIELD),
 		]);
@@ -1698,8 +1745,10 @@ export class ControlClient {
 		if (!windows.ok || !panes.ok || this.#ended) return;
 		const seenWindows = new Set<TmuxId>();
 		for (const line of windows.lines) {
-			const [session, idText, index, active, zoomed, layout, visible, ...name] =
+			const [session, idText, index, active, zoomed, layout, visible, ...rest] =
 				line.split(FIELD);
+			const tab = rest.slice(0, TAB_FIELD_COUNT).join(FIELD);
+			const name = rest.slice(TAB_FIELD_COUNT);
 			const id = parseId(idText);
 			if (id === undefined || layout === undefined) continue;
 			this.#session = session;
@@ -1712,10 +1761,12 @@ export class ControlClient {
 				visible: undefined,
 				activePane: undefined,
 				zoomed: false,
+				tab: undefined,
 			};
 			window.index = Number(index);
 			window.name = name.join(FIELD);
 			window.zoomed = zoomed === "1";
+			window.tab = parseTab(tab);
 			try {
 				window.layout = parseLayout(layout);
 				window.visible =
@@ -2044,6 +2095,14 @@ export class ControlClient {
 		}));
 	}
 
+	/** A window's tab changed (`TABS_SUBSCRIPTION`). */
+	#setTab(window: Window, value: string): void {
+		const tab = parseTab(value);
+		if (JSON.stringify(tab) === JSON.stringify(window.tab)) return;
+		window.tab = tab;
+		this.#postLayout();
+	}
+
 	#postLayout(): void {
 		if (this.#ended) return;
 		const windows = [...this.#windows.values()]
@@ -2054,6 +2113,7 @@ export class ControlClient {
 				name: w.name,
 				active: w.id === this.#activeWindow,
 				zoomed: w.zoomed,
+				...(w.tab === undefined ? {} : { tab: w.tab }),
 			}));
 		this.#o.post({
 			kind: "layout",
@@ -2073,6 +2133,7 @@ export class ControlClient {
 			),
 			client: this.#clientName,
 			prefixes: this.#prefixes,
+			...(this.#status === undefined ? {} : { status: this.#status }),
 		});
 	}
 

@@ -75,44 +75,6 @@
   caret-color: transparent;
 }
 
-/* Provisional: the session's windows, until phase 4's tabs are designed
-   (docs/terminal-mode.md). The active one stands out; the rest are quiet. */
-.control-windows {
-  display: flex;
-  flex: none;
-  gap: 2px;
-  padding-top: 2px;
-  font: 12px var(--font-ui, system-ui, sans-serif);
-}
-
-.control-window {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  color: inherit;
-  cursor: default;
-  font: inherit;
-  opacity: 0.55;
-}
-
-.control-window[aria-current="true"] {
-  background: color-mix(in srgb, currentColor 12%, transparent);
-  opacity: 1;
-}
-
-.control-window-index {
-  min-width: 1.4em;
-  padding: 0 4px;
-  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
-  border-radius: 4px;
-  font-size: 10px;
-  text-align: center;
-}
-
 /* What DevHub did not do, said quietly (`keyGuard.ts`). */
 .control-notice {
   position: absolute;

@@ -57,6 +57,38 @@ describe("tmux control mode", () => {
 		]);
 	});
 
+	it("says which window or pane a subscription's value is about", () => {
+		expect(
+			parse(
+				"%subscription-changed t $0 @4 1 - : 1|0| 1 zsh:api \n",
+				"%subscription-changed p $0 @4 1 %7 : x : y\n",
+				"%subscription-changed s $0 - - - :  * \n",
+			),
+		).toEqual([
+			{
+				type: "subscription-changed",
+				name: "t",
+				window: 4,
+				pane: undefined,
+				value: "1|0| 1 zsh:api ",
+			},
+			{
+				type: "subscription-changed",
+				name: "p",
+				window: 4,
+				pane: 7,
+				value: "x : y",
+			},
+			{
+				type: "subscription-changed",
+				name: "s",
+				window: undefined,
+				pane: undefined,
+				value: " * ",
+			},
+		]);
+	});
+
 	it("collects a command's answer, says whose it was and whether it failed", () => {
 		const events = parse(
 			"%begin 1 289 0\n%end 1 289 0\n",
