@@ -24,7 +24,6 @@ import {
   type RedrawChanges,
 } from "./redraw";
 import {
-  ABOVE_GRID,
   GridPainter,
   ICON_FAMILY,
   cssColor,
@@ -32,6 +31,7 @@ import {
   rgbOfCss,
   resolveColors,
   type FontSpec,
+  type OverPart,
 } from "./painter";
 import { neovimCellFont } from "./cellFont";
 import { escapeInputText, keyToNeovim } from "./keys";
@@ -201,11 +201,12 @@ export class NeovimEditor {
   }
 
   /**
-   * The editor's band (`neovim.css`): where what the page lays over a grid
-   * goes, so it stacks with the grids by their z and under DevHub's own.
+   * Where what the page lays over `grid` as `part` goes (`GridPainter.over`):
+   * in the editor's band, in the grid's own clip, at the grid's stacking
+   * order.
    */
-  editorBand(): HTMLElement {
-    return this.band;
+  over(grid: number, part: OverPart): HTMLElement {
+    return this.painter.over(grid, part);
   }
 
   /**
@@ -556,25 +557,15 @@ export class NeovimEditor {
 
   /**
    * The cursor rides with its window's text while that scrolls in pixels
-   * (a transform, so it does not glide behind it), hidden while its row is
-   * outside the window's text area.
+   * (a transform, so it does not glide behind it); its grid's clip cuts it
+   * where the text area ends.
    */
   private placeCursorScroll(): void {
-    const { grid, row } = this.state.cursor;
+    const { grid } = this.state.cursor;
     const off = this.painter.scrollOffset(grid);
     const ride = off === 0 ? this.painter.floatShift(grid) : -off;
     this.cursor.style.transform =
       ride === 0 ? "" : `translateY(${String(ride)}px)`;
-    const box = this.boxes.find((b) => b.grid === grid);
-    const m = this.state.margins.get(grid);
-    const ch = this.painter.cell().height;
-    const y = row * ch - off;
-    const shown =
-      off === 0 ||
-      !box ||
-      (y >= (m?.top ?? 0) * ch - 0.5 &&
-        y + ch <= (box.height - (m?.bottom ?? 0)) * ch + 0.5);
-    this.cursor.style.visibility = shown ? "" : "hidden";
   }
 
   /**
@@ -622,14 +613,7 @@ export class NeovimEditor {
             ch,
             area,
           )
-        : rideArea(
-            parseFloat(el.style.top),
-            parseFloat(el.style.height),
-            rows,
-            off,
-            ch,
-            area,
-          );
+        : rideArea(rows, off, ch);
       Object.assign(el.style, rideStyle(ride));
     }
   }
@@ -929,9 +913,13 @@ export class NeovimEditor {
       mode?.blinkwait ?? 0,
       `${String(at.x)},${String(at.y)},${this.state.mode.name},${String(focused)}`,
     );
-    this.cursor.style.zIndex = String(
-      (this.boxes.find((b) => b.grid === grid)?.z ?? 0) + ABOVE_GRID.cursor,
-    );
+    // In its grid's own clip: over what rides the text and under what
+    // covers the cells (`PART_Z`), cut by the grid's text area as the
+    // text is, also while that scrolls in pixels.
+    const parent = this.boxes.some((b) => b.grid === grid)
+      ? this.painter.over(grid, "cursor")
+      : this.gridLayer;
+    if (this.cursor.parentElement !== parent) parent.append(this.cursor);
     // The IME's candidate window opens at the textarea: keep it on the
     // cursor — the command line's, while the bar is up.
     const ime = this.cmdlineCaret() ?? at;
@@ -1170,10 +1158,13 @@ export class NeovimEditor {
         at.col,
       ]);
     };
-    // A GUI window and a popup are DevHub's: their own clicks and wheel.
+    // A GUI window, a view, a card and a popup are DevHub's: their own
+    // clicks and wheel (the first three are in the grids' layer, in their
+    // window's clip).
     const ownedByGui = (event: Event) =>
-      (event.target as HTMLElement).closest(".nvim-gui-window, .nvim-popup") !==
-      null;
+      (event.target as HTMLElement).closest(
+        ".nvim-gui-window, .nvim-popup, .nvim-view, .nvim-inline-card",
+      ) !== null;
     layer.addEventListener("mousedown", (event) => {
       if (ownedByGui(event)) return;
       event.preventDefault();

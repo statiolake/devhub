@@ -24,7 +24,8 @@ import { markPieces, type MdMark } from "./components";
 import type { GridBox } from "./redraw";
 import { toastGroups, type Decorations, type Toast } from "./decorations";
 import { veilMargin, veilMask, veilSigma, type VeilLine } from "./veil";
-import { ABOVE_GRID } from "./painter";
+import type { OverPart } from "./painter";
+import { createPortal } from "react-dom";
 
 interface Cell {
   readonly width: number;
@@ -318,12 +319,15 @@ export function InlineImages({
   boxes,
   cell,
   ride,
+  over,
 }: {
   readonly decorations: Decorations;
   readonly boxes: readonly GridBox[];
   readonly cell: Cell;
   /** Move them to their text (`riders.ts`) once laid out. */
   readonly ride: () => void;
+  /** The element a grid's riders go in, its own clip. */
+  readonly over: (grid: number, part: OverPart) => HTMLElement;
 }) {
   useLayoutEffect(ride);
   return (
@@ -332,9 +336,8 @@ export function InlineImages({
         const src = decorations.images.get(place.id);
         const box = boxes.find((b) => b.win === place.win);
         if (src === undefined || !box) return null;
-        return (
+        return createPortal(
           <div
-            key={`${String(place.id)}:${String(place.win)}`}
             className="nvim-inline-image"
             data-ride-win={place.win}
             data-ride-base={place.base}
@@ -343,7 +346,6 @@ export function InlineImages({
               top: (box.row + place.row) * cell.height,
               width: place.width * cell.width,
               height: place.rows * cell.height,
-              zIndex: box.z + ABOVE_GRID.riders,
             }}
           >
             <img
@@ -352,7 +354,9 @@ export function InlineImages({
               draggable={false}
               style={{ height: place.rows * cell.height }}
             />
-          </div>
+          </div>,
+          over(box.grid, "riders"),
+          `${String(place.id)}:${String(place.win)}`,
         );
       })}
     </>

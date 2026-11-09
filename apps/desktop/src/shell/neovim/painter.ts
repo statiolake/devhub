@@ -398,26 +398,34 @@ function radii(corners: FloatCorners, r: number): string {
  * element per `GridBox.z` (`GridPainter.level`): the windows' at 1, each
  * float zindex's at 100 + zindex, a tmux popup's at its own. Inside it the
  * shadow under a panel of floats, then a framed float's ring and lines, then
- * the grids (a canvas, or a window's scroll port), then what lies over a
- * grid (a winbar held while the text scrolls, lines sliding into place),
- * then a frame's title and footer.
+ * the grids (a canvas, or a window's scroll port), then what rides a grid's
+ * text (inline images, cards, line decorations), then what lies over a grid
+ * (a winbar held while the text scrolls, lines sliding into place), then the
+ * cursor, then what covers a grid's cells whole (a GUI window, a view),
+ * then a frame's title and footer. Riders, the cursor and covers are the
+ * page's, each in its grid's own clipping element (`GridPainter.over`).
  */
 export const PART_Z = {
   shadow: 0,
   frames: 1,
   grid: 2,
-  over: 3,
-  labels: 4,
+  riders: 3,
+  over: 4,
+  cursor: 5,
+  covers: 6,
+  labels: 7,
 } as const;
 
-/**
- * What the page lays over a grid, at the grid's z plus this (its level is at
- * the z itself): what rides the grid's text (inline images, cards, line
- * decorations), then the cursor, then what covers the grid's cells whole (a
- * GUI window, a view). Declared, so the cursor is never over a GUI window or
- * under a decoration because of which was put in the page first.
- */
-export const ABOVE_GRID = { riders: 1, cursor: 2, covers: 3 } as const;
+/** What the page lays over a grid, in that grid's clip (`GridPainter.over`). */
+export type OverPart = "riders" | "cursor" | "covers";
+
+/** A grid's clip for one `OverPart`, and the element its content goes in. */
+interface OverClip {
+  readonly clip: HTMLDivElement;
+  readonly inner: HTMLDivElement;
+  readonly grid: number;
+  readonly part: OverPart;
+}
 
 /** One ground under a panel of floats (`placeClusters`). */
 interface Piece {
@@ -466,6 +474,10 @@ export class GridPainter {
   private readonly canvases = new Map<number, GridCanvas>();
   /** One stacking element per `GridBox.z`, by z (`PART_Z`). */
   private readonly levels = new Map<number, HTMLDivElement>();
+  /** Each grid's clips for what the page lays over it, by grid and part. */
+  private readonly overs = new Map<string, OverClip>();
+  private lastBoxes: readonly GridBox[] = [];
+  private lastMargins: NeovimUiState["margins"] = new Map();
   /** Each window grid's pixel scrolling, by grid. */
   private readonly scrolls = new Map<number, ScrollSlot>();
   /** One shadow per panel of floats (`floats.ts`), by what it looks like. */
@@ -634,6 +646,82 @@ export class GridPainter {
     el.style.zIndex = String(PART_Z[part]);
   }
 
+  /**
+   * The element what the page lays over `grid` as `part` goes in: inside a
+   * clip of the grid's own (its text area; a cover, the whole grid), in the
+   * grid's level at `PART_Z[part]`, so it stacks with the grid by
+   * declaration and is cut by the grid's edges as its text is. Its content
+   * is placed in the editor's pixels, as the grids are.
+   */
+  over(grid: number, part: OverPart): HTMLElement {
+    const key = `${String(grid)}:${part}`;
+    let entry = this.overs.get(key);
+    if (!entry) {
+      const clip = document.createElement("div");
+      clip.className = `nvim-clip nvim-clip-${part}`;
+      clip.style.display = "none";
+      const inner = document.createElement("div");
+      inner.className = "nvim-clip-inner";
+      clip.append(inner);
+      entry = { clip, inner, grid, part };
+      this.overs.set(key, entry);
+      const box = this.lastBoxes.find((b) => b.grid === grid);
+      if (box) this.placeOver(entry, box);
+      else this.root.append(clip);
+    }
+    return entry.inner;
+  }
+
+  /** The clips of what lies over the grids, where the grids are now. */
+  private placeOvers(state: NeovimUiState, boxes: readonly GridBox[]): void {
+    this.lastBoxes = boxes;
+    this.lastMargins = state.margins;
+    for (const [key, entry] of this.overs) {
+      const box = boxes.find((b) => b.grid === entry.grid);
+      if (box) {
+        this.placeOver(entry, box);
+      } else if (!state.grids.has(entry.grid)) {
+        // Gone: what the page still has in it goes with it.
+        entry.clip.remove();
+        this.overs.delete(key);
+      } else {
+        entry.clip.style.display = "none";
+      }
+    }
+  }
+
+  private placeOver(entry: OverClip, box: GridBox): void {
+    const { width: cw, height: ch } = this.metrics;
+    let top = 0;
+    let bottom = box.height;
+    let left = 0;
+    let right = box.width;
+    if (entry.part !== "covers") {
+      // The text area: a window's without its winbar, a float's without
+      // its border (Neovim's margins count it) or blank border.
+      const crop = cropOf(box);
+      const m = this.lastMargins.get(box.grid);
+      top = Math.min(box.height, Math.max(crop.top, m?.top ?? 0));
+      bottom = Math.max(
+        top,
+        box.height - Math.max(crop.bottom, m?.bottom ?? 0),
+      );
+      left = Math.min(box.width, Math.max(crop.left, m?.left ?? 0));
+      right = Math.max(left, box.width - Math.max(crop.right, m?.right ?? 0));
+    }
+    const x = (box.col + left) * cw;
+    const y = (box.row + top) * ch;
+    const { clip, inner } = entry;
+    this.put(clip, box.z, entry.part);
+    clip.style.display = "";
+    clip.style.left = `${String(x)}px`;
+    clip.style.top = `${String(y)}px`;
+    clip.style.width = `${String((right - left) * cw)}px`;
+    clip.style.height = `${String((bottom - top) * ch)}px`;
+    inner.style.left = `${String(-x)}px`;
+    inner.style.top = `${String(-y)}px`;
+  }
+
   /** Levels nothing is drawn in any more. */
   private dropEmptyLevels(): void {
     for (const [z, el] of this.levels) {
@@ -793,6 +881,7 @@ export class GridPainter {
       }
       if (smooth) this.placeScroll(state, box);
     }
+    this.placeOvers(state, boxes);
     this.dropEmptyLevels();
   }
 

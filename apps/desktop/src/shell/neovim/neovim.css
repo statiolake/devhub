@@ -978,3 +978,23 @@
 .nvim-host .completion-menu {
   z-index: var(--nvim-band-menu);
 }
+
+/* What the page lays over a grid, in the grid's own clip
+   (`GridPainter.over`): its text area (a cover: the whole grid). The inner
+   element is moved back by the clip's place, so what is in it is placed in
+   the editor's pixels, as the grids are. */
+.nvim-clip {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.nvim-clip-inner {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+:where(.nvim-clip-inner > *) {
+  pointer-events: auto;
+}

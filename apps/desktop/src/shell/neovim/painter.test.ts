@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  ABOVE_GRID,
   PART_Z,
   gridBlends,
   isOwnGround,
@@ -67,11 +66,20 @@ describe("a leaf canvas's alpha", () => {
 });
 
 describe("a level's parts", () => {
-  it("stack by declared order: shadow, frames, grid, over, labels", () => {
+  it("stack by declared order, the page's riders, cursor and covers among them", () => {
     const order = Object.entries(PART_Z)
       .sort(([, a], [, b]) => a - b)
       .map(([part]) => part);
-    expect(order).toEqual(["shadow", "frames", "grid", "over", "labels"]);
+    expect(order).toEqual([
+      "shadow",
+      "frames",
+      "grid",
+      "riders",
+      "over",
+      "cursor",
+      "covers",
+      "labels",
+    ]);
   });
 
   it("are never ordered by their place in the page", async () => {
@@ -85,14 +93,19 @@ describe("a level's parts", () => {
 });
 
 describe("what the page lays over a grid", () => {
-  it("is riders, then the cursor, then what covers the grid's cells", () => {
-    expect(ABOVE_GRID.riders).toBeLessThan(ABOVE_GRID.cursor);
-    expect(ABOVE_GRID.cursor).toBeLessThan(ABOVE_GRID.covers);
-  });
-
-  it("stays under the next float's zindex band only by its own z", () => {
-    // Windows are at 1, floats at 100 + zindex: a window's overlays never
-    // reach a float.
-    expect(1 + ABOVE_GRID.covers).toBeLessThan(100);
+  it("is in the grid's own clip, never cut or hidden by hand", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const read = (name: string) =>
+      readFile(new URL(name, import.meta.url), "utf8");
+    // The cursor is not hidden when its row leaves the text area, and no
+    // rider is cut by a clip-path of its own: their clip cuts them.
+    expect(await read("./editor.ts")).not.toMatch(/cursor\.style\.visibility/);
+    expect(await read("./riders.ts")).not.toMatch(/cutTop|cutBottom/);
+    for (const name of [
+      "./LayerViews.tsx",
+      "./DecorationViews.tsx",
+      "./NeovimApp.tsx",
+    ])
+      expect(await read(name)).not.toMatch(/zIndex: box\.z/);
   });
 });

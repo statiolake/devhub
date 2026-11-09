@@ -40,7 +40,8 @@ import type {
   ViewPlace,
 } from "./layers";
 import { placePopup, popupMaxWidth, popupScrollTop } from "./popup";
-import { ABOVE_GRID } from "./painter";
+import type { OverPart } from "./painter";
+import { createPortal } from "react-dom";
 import type { GridBox } from "./redraw";
 
 interface Cell {
@@ -65,6 +66,11 @@ export interface LayerHost {
   readonly refocus: () => void;
   /** Move what rides the windows' text to it (`riders.ts`). */
   readonly ride: () => void;
+  /**
+   * The element what lies over a grid goes in: its own clip, in its
+   * stacking order (`GridPainter.over`).
+   */
+  readonly over: (grid: number, part: OverPart) => HTMLElement;
 }
 
 /** Riders laid out again: placed on the text before the frame is drawn. */
@@ -113,14 +119,10 @@ export function GuiViews({
         const content = layers.views.get(place.id);
         const box = host.boxes.find((b) => b.win === place.win);
         if (!content || !box) return null;
-        return (
-          <GuiView
-            key={`${String(place.id)}:${String(place.win)}`}
-            content={content}
-            place={place}
-            box={box}
-            host={host}
-          />
+        return createPortal(
+          <GuiView content={content} place={place} box={box} host={host} />,
+          host.over(box.grid, "covers"),
+          `${String(place.id)}:${String(place.win)}`,
         );
       })}
     </>
@@ -186,7 +188,6 @@ function GuiView({
     top: box.row * cell.height,
     width: box.width * cell.width,
     height: box.height * cell.height,
-    zIndex: box.z + ABOVE_GRID.covers,
     background: rgbCss(theme.bg),
     color: rgbCss(theme.fg),
     ["--nvim-ring" as string]: ring,
@@ -335,9 +336,8 @@ export function InlineCards({
     // One window measures; another of a different width only paints.
     const measures = !measured.has(place.id);
     measured.add(place.id);
-    return (
+    return createPortal(
       <div
-        key={`${String(place.id)}:${String(place.win)}`}
         className="nvim-inline-slot"
         data-ride-win={place.win}
         data-ride-base={place.base}
@@ -346,7 +346,6 @@ export function InlineCards({
           top: (box.row + place.row) * cell.height,
           width: place.width * cell.width,
           height: place.rows * cell.height,
-          zIndex: box.z + ABOVE_GRID.riders,
         }}
       >
         <InlineCard
@@ -381,7 +380,9 @@ export function InlineCards({
             host.refocus();
           }}
         />
-      </div>
+      </div>,
+      host.over(box.grid, "riders"),
+      `${String(place.id)}:${String(place.win)}`,
     );
   });
   const ahead = layers.measureInlines.map((m) => {
@@ -492,9 +493,8 @@ export function LineDecorations({
         const content = layers.decos.get(place.id);
         const box = host.boxes.find((b) => b.win === place.win);
         if (!content || !box) return null;
-        return (
+        return createPortal(
           <Decoration
-            key={`${String(place.id)}:${String(place.win)}:${String(index)}`}
             content={content}
             host={host}
             place={place}
@@ -503,9 +503,10 @@ export function LineDecorations({
               top: (box.row + place.row) * cell.height,
               width: place.width * cell.width,
               height: place.rows * cell.height,
-              zIndex: box.z + ABOVE_GRID.riders,
             }}
-          />
+          />,
+          host.over(box.grid, "riders"),
+          `${String(place.id)}:${String(place.win)}:${String(index)}`,
         );
       })}
     </>

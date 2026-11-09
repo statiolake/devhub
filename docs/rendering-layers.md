@@ -46,8 +46,16 @@ What follows the rule in code:
   tmux popup at 50, the chooser's preview at 60). Inside a level its parts
   stack by `PART_Z` — a panel's shadow, a framed float's ring and lines, the
   grid (its canvas, or a window's scroll port holding canvas over ghost),
-  what lies over a grid (a pinned winbar, a slide), the frame's labels —
-  never by which element was appended last.
+  what rides its text (inline images, cards, decorations), what lies over
+  a grid (a pinned winbar, a slide), the cursor, what covers its cells (GUI
+  windows, views), the frame's labels — never by which element was
+  appended last.
+- `GridPainter.over(grid, part)`: what the page lays over a grid — riders,
+  the cursor, covers — is in a clip of that grid's own in its level
+  (`overflow: hidden` at the grid's text area: a window's without its
+  winbar, a float's without its border; a cover's, the whole grid). React
+  renders into it by a portal; its content keeps the editor's coordinates
+  (the clip's inner element is moved back by the clip's place).
 - Bands (`neovim.css`, `--nvim-band-*`): the editor is stacked in bands,
   each one stacking context, so nothing in one is drawn over a band above
   it, whatever its own z-index. `.nvim-host` is a band of the surface,
@@ -56,8 +64,8 @@ What follows the rule in code:
   host, bottom to top:
   - **editor** (`.nvim-editor`, made by `NeovimEditor`): Neovim's
     composition — the levels, and what the page lays over a grid by its z
-    (riders, the cursor, GUI windows and views, a React portal into the
-    band). A float's 100 + zindex orders it among the grids and nothing
+    (riders, the cursor, GUI windows and views, in its
+    clip). A float's 100 + zindex orders it among the grids and nothing
     else: which-key at 1000 is still under every band above.
   - **popup**: `gui.popup` (hovers, LSP floats). Asked for by a key and
     closed by the next cursor move, so a float must not hide what was just
@@ -116,7 +124,9 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   **Fixed** ("Neovim editor: the cursor stacks over riders and under GUI
   windows, by declaration"): `ABOVE_GRID` puts riders at the grid's z + 1,
   the cursor at + 2 and what covers the cells (GUI windows, views) at + 3.
-  Clipping them by the window's layer is still open (below).
+  Since replaced by parts of the grid's level (`PART_Z`), in the grid's own
+  clip (below): a float at zindex 50's cursor (+ 2) no longer ties a float
+  at 52.
 - `neovim.css:181,277,389,501,559,807` and `editor.ts:972` DevHub's own
   overlays (popup 300, preedit 300/401, command-line window 390, command
   line 400, status 500, toasts 600) share one integer space with floats at
@@ -148,8 +158,12 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 - `editor.ts:551-560` the cursor is hidden (`visibility`) when its row
   scrolls out of the text area, and `riders.ts` cuts riders with a computed
   `clip-path`: both because they are not children of the window's clipping
-  element. **Open**: put the cursor and the riders inside the window's
-  layer and let `overflow: hidden` clip them.
+  element. **Fixed** ("Neovim editor: the cursor and riders are clipped by
+  their grid's own element"): `GridPainter.over`; a guard test fails on a
+  `cursor.style.visibility`, a rider's own cut or a `zIndex: box.z` in the
+  views. Checked in the app at 2x: a card half past its window's bottom
+  edge, at rest and mid-scroll, is cut at the edge; the cursor in a
+  bordered float is in a clip of the float's three text rows.
 
 ### Chrome painted into a grid canvas
 
@@ -191,7 +205,8 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 ## Remaining, in order of impact
 
 1. ~~Declared overlay tiers~~ fixed: bands.
-2. Cursor and riders inside their window's layer, clipped by it.
+2. ~~Cursor and riders inside their window's layer~~ fixed: their grid's
+   clip.
 3. Separators as elements, from grounds the windows state.
 4. `underFrames` replaced by a clip of the framed floats.
 5. The control surface's z table; prompt over a popup.

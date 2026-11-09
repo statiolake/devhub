@@ -52,7 +52,6 @@ import {
 import { cmdlineLayout, cmdlineLead, textCells } from "./cmdline";
 import { routeMessages } from "./messages";
 import {
-  ABOVE_GRID,
   ICON_FAMILY,
   cssColor,
   fontOf,
@@ -591,7 +590,7 @@ function NeovimSurface({
     editorRef.current?.placeRiders();
   }, []);
   const layerHost: LayerHost | undefined =
-    nvim && cell
+    nvim && cell && editor
       ? {
           cell,
           boxes,
@@ -608,6 +607,7 @@ function NeovimSurface({
             editor?.focus();
           },
           ride,
+          over: (grid, part) => editor.over(grid, part),
         }
       : undefined;
 
@@ -640,128 +640,123 @@ function NeovimSurface({
       ) : null}
       <div className="nvim-host" ref={hostRef} aria-label="Neovim">
         {nvim && cell && editor
-          ? createPortal(
-              <>
-                {guiWindowsInPaintOrder(guiWindows.windows, primaryWindow).map(
-                  ({ id, win }) => {
-                    const box = boxes.find((b) => b.win === win);
-                    const content = guiContent.get(id);
-                    if (!box || !content) return null;
-                    if (primaryWindow.get(id) !== win) {
-                      // The same GUI buffer in a second window: its content lives
-                      // in one place (one page), so this one
-                      // says where, and a click takes the cursor there.
-                      return (
-                        <div
-                          key={`${String(id)}:${String(win)}`}
-                          className="nvim-gui-window nvim-gui-elsewhere"
-                          style={{
-                            left: box.col * cell.width,
-                            top: box.row * cell.height,
-                            width: box.width * cell.width,
-                            height: box.height * cell.height,
-                            zIndex: box.z + ABOVE_GRID.covers,
-                            background: cssColor(nvim.defaults.background),
-                          }}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            send("nvim_set_current_win", [win]);
-                          }}
-                        >
-                          <span>
-                            {content.title || "GUI window"} is shown in another
-                            window
-                          </span>
-                        </div>
-                      );
-                    }
-                    // Inside a float's border: those cells are Neovim's to draw.
-                    const inset = guiWindows.windows.some(
-                      (w) => w.id === id && w.win === win && w.border === true,
-                    )
-                      ? 1
-                      : 0;
-                    const style = {
-                      left: (box.col + inset) * cell.width,
-                      top: (box.row + inset) * cell.height,
-                      width: (box.width - 2 * inset) * cell.width,
-                      height: (box.height - 2 * inset) * cell.height,
-                      zIndex: box.z + ABOVE_GRID.covers,
-                      background: cssColor(nvim.defaults.background),
-                    };
-                    const current = win === guiWindows.current;
-                    return (
-                      <div
-                        key={id}
-                        data-gui-id={id}
-                        className={[
-                          "nvim-gui-window",
-                          current ? "nvim-gui-current" : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                        style={style}
-                        onMouseDownCapture={() => {
-                          if (!current) send("nvim_set_current_win", [win]);
-                        }}
-                        onKeyDownCapture={(event) => {
-                          if (
-                            event.ctrlKey &&
-                            (event.key === "w" || event.key === "W")
-                          ) {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            send("nvim_input", ["<C-w>"]);
-                            editor?.focus();
-                            return;
-                          }
-                        }}
-                      >
-                        <iframe
-                          title={content.title}
-                          ref={(frame) => {
-                            if (frame) frames.current.set(id, frame);
-                            else frames.current.delete(id);
-                          }}
-                          sandbox="allow-scripts allow-forms allow-popups"
-                          {...(content.url !== undefined
-                            ? { src: content.url }
-                            : {
-                                srcDoc: guiDocument(
-                                  content.html ?? "",
-                                  {
-                                    fg: cssColor(nvim.defaults.foreground),
-                                    bg: cssColor(nvim.defaults.background),
-                                  },
-                                  content.keyboard,
-                                ),
-                              })}
-                        />
-                      </div>
-                    );
-                  },
-                )}
-                <InlineImages
-                  decorations={decorations}
-                  boxes={boxes}
-                  cell={cell}
-                  ride={ride}
-                />
-                {layerHost ? (
-                  <>
-                    <LineDecorations layers={layers} host={layerHost} />
-                    <InlineCards layers={layers} host={layerHost} />
-                    <GuiViews layers={layers} host={layerHost} />
-                  </>
-                ) : null}
-              </>,
-              editor.editorBand(),
+          ? guiWindowsInPaintOrder(guiWindows.windows, primaryWindow).map(
+              ({ id, win }) => {
+                const box = boxes.find((b) => b.win === win);
+                const content = guiContent.get(id);
+                if (!box || !content) return null;
+                if (primaryWindow.get(id) !== win) {
+                  // The same GUI buffer in a second window: its content lives
+                  // in one place (one page), so this one
+                  // says where, and a click takes the cursor there.
+                  return createPortal(
+                    <div
+                      className="nvim-gui-window nvim-gui-elsewhere"
+                      style={{
+                        left: box.col * cell.width,
+                        top: box.row * cell.height,
+                        width: box.width * cell.width,
+                        height: box.height * cell.height,
+                        background: cssColor(nvim.defaults.background),
+                      }}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        send("nvim_set_current_win", [win]);
+                      }}
+                    >
+                      <span>
+                        {content.title || "GUI window"} is shown in another
+                        window
+                      </span>
+                    </div>,
+                    editor.over(box.grid, "covers"),
+                    `${String(id)}:${String(win)}`,
+                  );
+                }
+                // Inside a float's border: those cells are Neovim's to draw.
+                const inset = guiWindows.windows.some(
+                  (w) => w.id === id && w.win === win && w.border === true,
+                )
+                  ? 1
+                  : 0;
+                const style = {
+                  left: (box.col + inset) * cell.width,
+                  top: (box.row + inset) * cell.height,
+                  width: (box.width - 2 * inset) * cell.width,
+                  height: (box.height - 2 * inset) * cell.height,
+                  background: cssColor(nvim.defaults.background),
+                };
+                const current = win === guiWindows.current;
+                // In its window's clip: a cover, over the cursor
+                // (`PART_Z`). The clip stays while the grid does, so
+                // the iframe is never moved (which would load it again).
+                return createPortal(
+                  <div
+                    data-gui-id={id}
+                    className={[
+                      "nvim-gui-window",
+                      current ? "nvim-gui-current" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    style={style}
+                    onMouseDownCapture={() => {
+                      if (!current) send("nvim_set_current_win", [win]);
+                    }}
+                    onKeyDownCapture={(event) => {
+                      if (
+                        event.ctrlKey &&
+                        (event.key === "w" || event.key === "W")
+                      ) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        send("nvim_input", ["<C-w>"]);
+                        editor?.focus();
+                        return;
+                      }
+                    }}
+                  >
+                    <iframe
+                      title={content.title}
+                      ref={(frame) => {
+                        if (frame) frames.current.set(id, frame);
+                        else frames.current.delete(id);
+                      }}
+                      sandbox="allow-scripts allow-forms allow-popups"
+                      {...(content.url !== undefined
+                        ? { src: content.url }
+                        : {
+                            srcDoc: guiDocument(
+                              content.html ?? "",
+                              {
+                                fg: cssColor(nvim.defaults.foreground),
+                                bg: cssColor(nvim.defaults.background),
+                              },
+                              content.keyboard,
+                            ),
+                          })}
+                    />
+                  </div>,
+                  editor.over(box.grid, "covers"),
+                  String(id),
+                );
+              },
             )
           : null}
         {nvim && cell && editor ? (
           <>
+            <InlineImages
+              decorations={decorations}
+              boxes={boxes}
+              cell={cell}
+              ride={ride}
+              over={(grid, part) => editor.over(grid, part)}
+            />
             {layerHost ? (
               <>
+                <LineDecorations layers={layers} host={layerHost} />
+                <InlineCards layers={layers} host={layerHost} />
+                <GuiViews layers={layers} host={layerHost} />
                 <Popups
                   layers={layers}
                   host={layerHost}
