@@ -1,196 +1,13 @@
 /**
- * The executable VS Code spawns for a DevHub terminal.
- *
- * DevHub's terminals live in a tmux server DevHub owns, and the argv that
- * attaches to one is DevHub's to compute — the session name, the socket and
- * the marker protocol belong to the terminal runtime and must not be spelled
- * anywhere else. So the integrated terminal does not run a shell: it runs this
- * launcher, which asks DevHub over the control socket (the `terminal-profile`
- * request) and `exec`s the answer.
- *
- * `exec` is the whole of how a tmux client's lifetime is tied to its terminal.
- * VS Code hangs up the pty when the terminal goes away, and a hangup reaches
- * the process the pty is holding — so that process must be tmux itself. The
- * asking runs as a child that has already exited by then (see
- * `devhubTerminal.ts`), leaving nothing between the pty and the client. Anything
- * left in between would make "the client dies with its terminal" depend on that
- * process passing a signal along, and a client that survives its terminal is one
- * nobody can see, close, or count.
- *
- * Why a file on disk rather than an extension-contributed profile. A
- * contributed profile is only a profile once the extension host has registered
- * the manifest *and* `TerminalProfileService` has refreshed its contributed
- * list — a throttled refresh that does a pty-host round trip first. A terminal
- * created on window load (the panel is visible, there are no persistent
- * sessions to restore, so `TerminalViewPane` creates one immediately) happens
- * before all of that and silently gets the OS shell: a plain zsh outside tmux.
- * A profile whose `path` is a real executable has no such window: it is a path
- * VS Code can spawn the moment it is asked.
- *
- * Why the script is *generated* on every startup, like the `devhub` CLI's
- * launcher in `../cli/install.ts`: it records the two absolute facts a launcher
- * cannot discover on its own — which binary runs it as Node (the app's own
- * Electron, since a system Node is exactly the thing in doubt) and which
- * control socket this DevHub is listening on. Regenerating means a moved or
- * updated app is never running yesterday's paths, and a second DevHub on
- * another profile never talks to the first one's socket.
- *
- * The socket is written *into* the script rather than read from the
- * environment because `DEVHUB_*` is a family a terminal is not supposed to
- * inherit — see `../shell/loginEnvironment.ts`. The machine the launcher was
- * written for is in there for the same reason, and for one more: a launcher on
- * another machine is another launcher, and a directory without a machine names
- * a different folder on every one of them.
- *
- * There is one of these per machine, not one per DevHub. A workbench's terminal
- * runs where its pty host runs, so an ssh window's launcher is a file on the
- * host, written there by `Runtime.terminalLauncher` from this same text with
- * that host's paths in it — the REH's `node`, its copy of the asking program,
- * and DevHub's control socket reverse-forwarded onto it. See
- * `docs/remote-ssh.md`.
- *
- * Who names this file to VS Code is the other half, and it is not a setting.
- * It was one — `terminal.integrated.profiles.osx` and the default that named
- * it, written into `User/settings.json` — and a settings file is the person's:
- * a dotfiles tool rewrote it wholesale, the keys went with it, and the next
- * reload was a plain zsh again. So the path goes onto the window configuration
- * DevHub opens each window with (`AppController.windowTerminalLauncher` →
- * `devhubTerminalLauncher`, see `../services/windowTerminal.ts`), and the patched
- * `TerminalProfileService` lists it as the `devhub` profile beside the
- * person's own and makes it the default unless they set
- * `terminal.integrated.defaultProfile.<os>` themselves — the one terminal
- * setting it reads, and only ever to step aside; nothing here writes it. See
- * `patches/vscode/0003-devhub-terminal-is-the-terminal.patch`; `terminal.integrated.enablePersistentSessions` is forced off in the
- * same patch and for the same reason — a tmux session outlives the window
- * already, so a restored tab is a second, empty client for a session that is
- * still running.
- *
- * Only the tasks and automation shells are left alone: they ask for a shell to
- * run one command in and throw away, which is `terminal.integrated.
- * automationProfile.osx` and is nothing this launcher answers.
+ * DevHub's own files on a machine it is not running on: the `devhub` command's
+ * shim and where it, the forwarded control socket and the `/devhub` skill go
+ * (`RemoteShellRuntime.terminalLauncher`).
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, posix } from "node:path";
+import { posix } from "node:path";
 import type { ShellMachineId } from "../runtime/runtime.js";
-import { shellQuote, shellQuoteArgv } from "../runtime/quote.js";
-
-/** The launcher's file name, next to the control socket it talks to. */
-export const TERMINAL_LAUNCHER_NAME = "devhub-terminal";
-
-/**
- * The name of the variable the launcher tells the asking program which machine
- * it is on with.
- *
- * The same reason the socket is written into the script rather than read from
- * the environment: it is a fact about *this* launcher, and a launcher on
- * another machine is another launcher. See `enclosingRoot` for what the answer
- * turns on — two machines with the same `/srv/app` are one root to a matcher
- * that is not told which machine is asking.
- */
-export const DEVHUB_TERMINAL_MACHINE = "DEVHUB_TERMINAL_MACHINE";
-
-export interface TerminalLauncherRequest {
-	/** The binary the launcher execs — the app's own Electron, or a REH's node. */
-	readonly execPath: string;
-	/** The compiled entry point that binary runs as Node. */
-	readonly entryScript: string;
-	/** The control socket of the DevHub this launcher belongs to. */
-	readonly socketPath: string;
-	/** The machine this launcher is written for: `local`, `ssh:<host>`, or a container. */
-	readonly machine: ShellMachineId;
-}
-
-export function terminalLauncherScript(
-	request: TerminalLauncherRequest,
-): string {
-	return [
-		"#!/bin/sh",
-		"# Generated by DevHub on startup — do not edit, and do not copy.",
-		"#",
-		"# The three paths below name one running DevHub. They are rewritten every",
-		"# time it starts, which is why moving or updating the app needs nothing",
-		"# done to this file, and why a copy of it is a launcher for a DevHub that",
-		"# may no longer be there.",
-		"#",
-		"# Ask DevHub for the argv, then *become* it. The asking is a child, so",
-		"# that Node exits before tmux starts, and what VS Code's pty holds is the",
-		"# tmux client itself — the process a hangup has to reach. A tmux client",
-		"# that ran as a grandchild would outlive the pty whenever the process in",
-		"# between failed to pass the hangup on, and a client that outlives the",
-		"# terminal showing it is a client nobody can see or close.",
-		// The binary is named absolutely and is not on any PATH, so a missing
-		// one is `exec: not found` from `/bin/sh` — a sentence about a shell,
-		// about a path nobody typed. On a remote machine it is the likeliest
-		// failure of the three (the REH is installed by the connection, and a
-		// launcher can be written before one has been), so it says which file.
-		`if [ ! -x ${shellQuote(request.execPath)} ]; then`,
-		`\techo ${shellQuote(`devhub-terminal: ${request.execPath} is not there to run, so this window has no terminal session to attach to.`)} >&2`,
-		"\texit 1",
-		"fi",
-		`devhub_argv=$(DEVHUB_CONTROL_SOCKET=${shellQuote(request.socketPath)} \\`,
-		`${DEVHUB_TERMINAL_MACHINE}=${shellQuote(request.machine)} \\`,
-		"ELECTRON_RUN_AS_NODE=1 \\",
-		`${shellQuote(request.execPath)} ${shellQuote(request.entryScript)} "$@") || exit $?`,
-		"# An empty answer with a zero status is not an answer. Without this the",
-		"# `exec` below would have no arguments, and a shell that execs nothing",
-		"# carries on reading its input — which is a bare shell on the pty, the",
-		"# one outcome this launcher exists to make impossible.",
-		'if [ -z "$devhub_argv" ]; then',
-		'\techo "devhub-terminal: DevHub answered without a command line." >&2',
-		"\texit 1",
-		"fi",
-		'eval "exec $devhub_argv"',
-		"",
-	].join("\n");
-}
-
-/**
- * One shell word per argument, for the launcher to `exec`.
- *
- * The quoting is the launcher's own — `shellQuote` is what wrote the paths
- * into the script above — so the argv crosses the one gap between DevHub and
- * `/bin/sh` in the language the receiving side actually parses. Nothing here
- * ever sees a word split on a space in a path.
- *
- * The environment the command needs rides in the same line, through `env`,
- * which is the only way it can: the launcher `exec`s this, and a shell will not
- * take variable assignments in front of an `exec`. `env` replaces itself with
- * the command, so what the pty holds is still the tmux client itself and not a
- * process standing between the two — which is the whole shape this launcher
- * exists to keep. Nothing is prefixed when there is nothing to add, so the
- * ordinary local line is exactly what it has always been.
- */
-export function terminalCommandLine(command: {
-	readonly file: string;
-	readonly args: readonly string[];
-	readonly env?: Readonly<Record<string, string>>;
-}): string {
-	const assignments = Object.entries(command.env ?? {})
-		.sort(([left], [right]) => (left < right ? -1 : 1))
-		.map(([name, value]) => `${name}=${value}`);
-	const argv = [command.file, ...command.args];
-	return shellQuoteArgv(
-		assignments.length === 0 ? argv : ["env", ...assignments, ...argv],
-	);
-}
-
-/**
- * Write the launcher and return its path, for the profile that names it.
- *
- * Nothing is caught: a DevHub that cannot write its own launcher has no
- * terminals, and starting anyway would leave every terminal falling back to
- * whatever VS Code picks — which is the silent failure this file exists to end.
- */
-export function installTerminalLauncher(
-	launcherPath: string,
-	request: TerminalLauncherRequest,
-): string {
-	mkdirSync(dirname(launcherPath), { recursive: true });
-	writeFileSync(launcherPath, terminalLauncherScript(request), { mode: 0o755 });
-	return launcherPath;
-}
+import { shellQuote } from "../runtime/quote.js";
 
 /**
  * The `devhub` command DevHub puts on a host: a shim on the pane's PATH that
@@ -244,17 +61,11 @@ export function remoteCliScript(request: {
 	].join("\n");
 }
 
-/** Where the launcher lives, given the user-data directory. */
-export function terminalLauncherPath(userDataPath: string): string {
-	return join(userDataPath, "devhub", TERMINAL_LAUNCHER_NAME);
-}
-
 /**
  * The directory DevHub owns on a machine that is not the one it runs on.
  *
- * Under `dataFolderName` because that is already DevHub's on any machine, and
- * in a subdirectory of it because the rest of that folder belongs to VS Code's
- * own remote CLI and extensions and is rewritten by them.
+ * `~/.devhub/terminal`, where it has always been, so a host DevHub reached
+ * before keeps one directory of DevHub's rather than two.
  */
 export const REMOTE_DEVHUB_DIRECTORY = ".devhub/terminal";
 
@@ -339,48 +150,4 @@ export function remoteCliBinDirectory(
 		REMOTE_DEVHUB_DIRECTORY,
 		`${REMOTE_CLI_DIRECTORY_PREFIX}-${remoteProfileTag(controlSocketPath)}`,
 	);
-}
-
-/**
- * The directory a terminal belongs to, from what the launcher was started in.
- *
- * The profile carries no arguments and nothing is resolved into it. VS Code
- * spawns the terminal in the cwd it computed for it — the workspace folder when
- * the window has one, the user's home when it does not
- * (`terminalEnvironment.ts#getCwd`) — so the launcher simply asks where it is,
- * and DevHub answers which of its sessions that directory is in.
- *
- * A cwd is always absolute; anything that is not is a runtime that could not
- * say where it was, and `null` — the Scratch context — is the honest answer to
- * that rather than a guess.
- */
-export function terminalRoot(directory: string | undefined): string | null {
-	if (directory === undefined || !directory.startsWith("/")) return null;
-	return directory;
-}
-
-/**
- * Which of these workspace roots contains `directory`, if any.
- *
- * One rule, and the same one for every window: a terminal belongs to the
- * workspace its directory is in, and to Scratch when no workspace contains it.
- * The folderless window is not a case of its own — VS Code starts its terminal
- * in the user's home, no workspace is rooted there, and Scratch is what falls
- * out of the rule.
- *
- * The longest match wins, so a workspace nested inside another one gets its own
- * terminals rather than its parent's. Matching is on whole path segments: a
- * root of `/work/app` does not contain `/work/app-old`.
- */
-export function enclosingRoot(
-	roots: readonly string[],
-	directory: string | null,
-): string | null {
-	if (directory === null) return null;
-	let best: string | null = null;
-	for (const root of roots) {
-		if (directory !== root && !directory.startsWith(`${root}/`)) continue;
-		if (best === null || root.length > best.length) best = root;
-	}
-	return best;
 }

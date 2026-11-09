@@ -531,9 +531,7 @@ describe("provider output parsing", () => {
       parseRecords(Buffer.from("a\u001fb\\036\u001fc\u001e\n"), 3),
     ).toEqual([["a", "b\\036", "c"]]);
     // An escaped answer that stops mid-record is still malformed.
-    expect(() =>
-      parseRecords(Buffer.from("a\\037b\\037c\n"), 3),
-    ).toThrow();
+    expect(() => parseRecords(Buffer.from("a\\037b\\037c\n"), 3)).toThrow();
   });
 });
 

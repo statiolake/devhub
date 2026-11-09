@@ -296,17 +296,12 @@ export interface RuntimeReading {
 }
 
 /**
- * What a machine needs in order to have a `devhub-terminal` on it.
- *
- * On the machine DevHub runs on that is the script it already wrote for
- * itself; on any other it is the `devhub` command and the `/devhub` skill
- * (`RemoteShellRuntime.terminalLauncher`): the socket the command talks to,
- * and the skill's text. The command itself is the runtime's `devhub`
- * delivery.
+ * What a machine DevHub does not run on needs in order to have DevHub's
+ * `devhub` command and the `/devhub` skill (`RemoteShellRuntime.terminalLauncher`):
+ * the socket the command talks to, and the skill's text. The command itself
+ * is the runtime's `devhub` delivery.
  */
 export interface TerminalLauncherSpec {
-	/** The launcher DevHub wrote at startup, for the machine it is running on. */
-	readonly localLauncherPath: string;
 	/** DevHub's control socket, on the machine DevHub is running on. */
 	readonly controlSocketPath: string;
 	/**
@@ -389,22 +384,15 @@ export function userTmuxConfigDigest(text: string): string {
 	return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 32);
 }
 
-/** A machine's `devhub-terminal`, and whether it can reach DevHub. */
+/** A machine's `devhub` command, and whether it can reach DevHub. */
 export interface TerminalLauncher {
 	/**
-	 * The path a workbench on that machine names as its terminal profile —
-	 * `undefined` on a machine DevHub does not run on, where no workbench
-	 * runs and none is written.
-	 */
-	readonly path: string | undefined;
-	/**
-	 * `undefined` when the launcher can reach DevHub's control socket; the
+	 * `undefined` when the command can reach DevHub's control socket; the
 	 * sentence saying why it cannot, otherwise.
 	 *
-	 * Not a throw, because a window that cannot have a DevHub terminal is still
-	 * a window a person asked for, and not a silence either: the launcher run
-	 * from that window says the same thing in the terminal tab, and this says it
-	 * in the log and in `devhub --metrics`.
+	 * Not a throw, because a machine whose panes cannot reach DevHub is still
+	 * a machine a person works on, and not a silence either: this says it in
+	 * the log and in `devhub --metrics`.
 	 */
 	readonly unreachable: string | undefined;
 	/**
@@ -614,8 +602,8 @@ export interface Runtime {
 	watchGitDirectory(worktree: string, onChange: () => void): Promise<Watcher>;
 
 	/**
-	 * The `devhub-terminal` a workbench on this machine runs, installed if need
-	 * be. Idempotent: one install per machine per DevHub start.
+	 * DevHub's `devhub` command on this machine, installed if need be.
+	 * Idempotent: one install per machine per DevHub start.
 	 */
 	terminalLauncher(spec: TerminalLauncherSpec): Promise<TerminalLauncher>;
 

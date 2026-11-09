@@ -784,7 +784,6 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "sessions_unreadable":
     case "usage_unreadable":
       return "agent";
-    case "terminal_launcher_unavailable":
     case "terminal_needs_agent":
     case "terminal_needs_agent_view":
     case "workspace_sessions_left_running":

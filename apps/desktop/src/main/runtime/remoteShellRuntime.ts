@@ -1274,9 +1274,6 @@ export abstract class RemoteShellRuntime {
 	 * and the machine and `exec`s it: two facts the binary cannot discover,
 	 * written into a file rather than exported, because `DEVHUB_*` is a
 	 * family a terminal is not supposed to inherit.
-	 *
-	 * No terminal launcher is written here any more: its asking program
-	 * answered VS Code's integrated terminal, and no workbench runs on a host.
 	 */
 	async terminalLauncher(
 		spec: TerminalLauncherSpec,
@@ -1310,7 +1307,6 @@ export abstract class RemoteShellRuntime {
 		);
 		const skill = await this.#installSkill(paths, spec);
 		return {
-			path: undefined,
 			unreachable: await this.publishControlSocket(
 				paths.socket,
 				spec.controlSocketPath,

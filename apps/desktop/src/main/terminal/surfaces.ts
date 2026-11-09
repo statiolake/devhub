@@ -12,7 +12,6 @@
  * makes the terminal survive a window close, a workspace switch, and a restart.
  */
 
-import type { TerminalProfileAnswer } from "../cli/protocol.js";
 import {
 	TerminalFailure,
 	type TerminalAttachReceipt,
@@ -190,52 +189,6 @@ export class TerminalSurfaces {
 			throw terminalFailureFromPort(failure);
 		} finally {
 			permit.release();
-		}
-	}
-
-	/**
-	 * The argv that attaches a client to a target's session — for a client
-	 * DevHub does not run itself.
-	 *
-	 * A workbench's integrated terminal is that client. It is spawned by VS
-	 * Code's pty host from a terminal profile, so DevHub cannot hand it a PTY;
-	 * it can only hand it the command line. Everything that makes attaching
-	 * safe still happens here and only here: the session is ensured, the list
-	 * is read back, and the full marker triple is compared, so the profile that
-	 * comes out names a session DevHub has just proven it owns. A profile that
-	 * merely said `new -A -s <name>` would create an unmarked session on
-	 * DevHub's own socket the first time it missed — a session close inspection
-	 * could only count, never name.
-	 */
-	async profile(
-		target: TerminalTarget,
-		cancel = new CancellationToken(),
-	): Promise<TerminalProfileAnswer> {
-		const runtime = await this.runtimeFor(target.machine);
-		const release = await runtime.acquireOperation(cancel);
-		try {
-			const deadline = OperationDeadline.in(runtime.timeoutMs);
-			await runtime.ensureUnlocked(target, cancel);
-			const sessions = await runtime.listSessionsUnlocked(cancel, deadline);
-			const identity = runtime.targetIdentity(target, sessions);
-			const exact = sessions.find(
-				(session) =>
-					session.name === identity.sessionName &&
-					sessionMatches(session, identity),
-			);
-			if (!exact) throw new TerminalFailure("session_unavailable");
-			return {
-				file: runtime.tmuxPath(),
-				args: runtime.attachArgv(exact.name),
-				// The executable's own needs travel with the executable. This
-				// client is started by VS Code's pty host and not by DevHub, so
-				// this is the only channel there is for them.
-				env: runtime.tmuxRequires(),
-			};
-		} catch (failure: unknown) {
-			throw terminalFailureFromPort(failure);
-		} finally {
-			release();
 		}
 	}
 

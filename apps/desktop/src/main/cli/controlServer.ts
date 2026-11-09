@@ -20,7 +20,6 @@ import {
 	type ControlOpenRequest,
 	type ControlRequest,
 	type ControlResponse,
-	type TerminalProfileAnswer,
 } from "./protocol.js";
 import type { TellCommand } from "./tell/command.js";
 import { tellFromWords } from "./tell/request.js";
@@ -58,18 +57,6 @@ export interface ControlHandlers {
 		machine?: string | undefined,
 		as?: string | undefined,
 	): Promise<{ readonly message: string; readonly data: unknown }>;
-	/**
-	 * The command line the workbench rooted at `root` — or the folderless one,
-	 * for `null` — starts its integrated terminal with.
-	 *
-	 * `machine` is the `RuntimeId` of the computer that `root` is a path on, so
-	 * that a path is matched against the Workspaces that are actually on it.
-	 */
-	terminalProfile(
-		machine: string,
-		root: string | null,
-		workspace: string | undefined,
-	): Promise<TerminalProfileAnswer>;
 }
 
 export interface ControlServer {
@@ -226,20 +213,6 @@ export async function answerControlRequest(
 				return { ok: true, message: await handlers.metrics() };
 			case "tell":
 				return await answerTell(request, handlers);
-			case "terminal-profile": {
-				const profile = await handlers.terminalProfile(
-					request.machine,
-					request.root,
-					request.workspace,
-				);
-				return {
-					ok: true,
-					// The sentence is for a log and for a person who sends this
-					// request by hand; the profile is the answer.
-					message: `${profile.file} ${profile.args.join(" ")}`,
-					profile,
-				};
-			}
 		}
 	} catch (error) {
 		return { ok: false, message: failureText(error) };
@@ -302,8 +275,8 @@ async function answerTell(
  *
  * A typed command is the person's next operation, exactly as a click in the
  * window is, and it retires what their last one left on screen by the same
- * rule. A ping, a `--wait` ending, and a workbench asking for its host or its
- * terminal are nobody's next operation, and neither is a `tell`, which is
+ * rule. A ping and a `--wait` ending are nobody's next operation, and neither
+ * is a `tell`, which is
  * mostly an Agent asking. Total, so a new request is a compile error here
  * until somebody says which it is.
  */
@@ -318,7 +291,6 @@ function typedByPerson(request: ControlRequest): boolean {
 		case "ping":
 		case "wait-ended":
 		case "tell":
-		case "terminal-profile":
 			return false;
 	}
 }

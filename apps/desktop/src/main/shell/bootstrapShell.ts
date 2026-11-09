@@ -45,10 +45,6 @@ import { refreshMenu } from "./menu.js";
 import { startControlServer } from "../cli/controlServer.js";
 import { processGroupAnchor } from "./processGroupAnchor.js";
 import { controlSocketPath } from "../cli/protocol.js";
-import {
-	installTerminalLauncher,
-	terminalLauncherPath,
-} from "../terminal/launcher.js";
 import { activeProfile } from "../../model/profile.js";
 import {
 	customThemesOf,
@@ -66,37 +62,6 @@ export async function bootstrapShell(userDataPath: string): Promise<void> {
 	// First, so that it holds before the first background workbench is frozen:
 	// a freeze waits for it (`processGroupAnchor.ts`).
 	processGroupAnchor();
-	// The terminal launcher for this machine, written before any window exists
-	// because the local `Runtime` does not install one — it hands back the path
-	// this line wrote. See `terminal/launcher.ts` and `runtime/local.ts`.
-	//
-	// Its path is deliberately *not* put into `process.env`. It used to be, so
-	// that every process descending from this one read it; but a workbench
-	// window on another machine descends from this one too, and inherited this
-	// Mac's launcher — a path that host has never heard of — whenever its own
-	// could not be named. One question with two answerers is the bug, so there
-	// is now one answerer: `AppController.openEditorView` tells each window
-	// which launcher is its own, and a window it cannot tell is told so
-	// explicitly. See `loginEnvironment.windowTerminalLauncher`.
-	installTerminalLauncher(terminalLauncherPath(userDataPath), {
-		// The binary running this process is the app's own Electron, in a
-		// checkout and in a bundle alike — the same fact the `devhub` CLI's
-		// launcher is written with.
-		execPath: process.execPath,
-		entryScript: join(
-			APP_ROOT,
-			"out",
-			"main",
-			"terminal",
-			"devhubTerminalEntry.js",
-		),
-		socketPath: controlSocketPath(userDataPath),
-		// This launcher is the one for the machine DevHub is running on. A
-		// window on another machine gets another launcher, written there,
-		// naming that machine — see `Runtime.terminalLauncher`.
-		machine: "local",
-	});
-
 	// The settings DevHub runs on, loaded before anything is made from them:
 	// the window is made with `appearance.title_bar` and in the colour theme
 	// they name, and everything after asks the same object
@@ -231,8 +196,6 @@ export async function bootstrapShell(userDataPath: string): Promise<void> {
 		metrics: () => controller.metricsFromCli(),
 		tell: (command, origin, machine, as) =>
 			controller.tellFromCli(command, origin, machine, as),
-		terminalProfile: (machine, root, workspace) =>
-			controller.terminalProfileFor(machine, root, workspace),
 	});
 
 	// macOS: the dock icon brings the shell back after its window was hidden.

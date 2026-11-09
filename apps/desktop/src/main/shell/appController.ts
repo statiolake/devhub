@@ -92,11 +92,7 @@ import {
 } from "../agent/conversation/embedFiles.js";
 import type { FileSelection } from "../cli/fileSelection.js";
 import { WaitSelectionReturns } from "../cli/waitReturn.js";
-import type {
-	ControlOpenRequest,
-	ControlPosition,
-	TerminalProfileAnswer,
-} from "../cli/protocol.js";
+import type { ControlOpenRequest, ControlPosition } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
 import { isDevhubLink } from "../../model/devhubLink.js";
 import { fileSelection } from "../agent/conversation/pathLinks.js";
@@ -157,10 +153,7 @@ import {
 	type OperationRefusal,
 	type RefusedOperation,
 } from "./agentFailure.js";
-import {
-	AppModel,
-	type NavigationSelection,
-} from "../../model/appModel.js";
+import { AppModel, type NavigationSelection } from "../../model/appModel.js";
 import { activeProfile } from "../../model/profile.js";
 import {
 	customThemesOf,
@@ -246,11 +239,7 @@ import {
 	type TerminalPreflight,
 	type WorkspaceTerminalTarget,
 } from "../terminal/ports.js";
-import {
-	enclosingRoot,
-	remoteProfileTag,
-	terminalLauncherPath,
-} from "../terminal/launcher.js";
+import { remoteProfileTag } from "../terminal/launcher.js";
 import { controlSocketPath } from "../cli/protocol.js";
 import { OperationDeadline } from "../terminal/command.js";
 import {
@@ -2632,96 +2621,6 @@ export class AppController {
 
 	get terminalRuntime(): TerminalWiring | undefined {
 		return this.terminalsWiring;
-	}
-
-	/**
-	 * How a workbench's integrated terminal attaches to DevHub's session.
-	 *
-	 * A terminal in DevHub is a tmux session on DevHub's socket, and it always
-	 * was; what changed is who runs the client. It used to be a surface of
-	 * DevHub's own with an xterm and a PTY beside the workbench; it is now the
-	 * workbench's integrated terminal, which is a better terminal than DevHub
-	 * will ever write and is where a person looks for one. So DevHub keeps the
-	 * half only it can do — owning the socket, the names and the markers — and
-	 * hands out the command line for the half VS Code does.
-	 *
-	 * What arrives is the directory VS Code started the terminal in, and there
-	 * is one rule for turning it into a session: it belongs to the Workspace
-	 * that contains it, and to Scratch — today's daily-folder Workspace — when
-	 * no Workspace does.
-	 */
-	async terminalProfileFor(
-		machine: string,
-		root: string | null,
-		workspaceKey?: string,
-	): Promise<TerminalProfileAnswer> {
-		const wiring = this.terminalsWiring;
-		if (!wiring) throw new Error("the terminal runtime is not running");
-		// A window that named its Workspace: one attached to a dev container,
-		// whose DevHub terminal runs on this Mac in a directory that need not be
-		// inside the Workspace. The key is the answer, not the directory.
-		if (workspaceKey !== undefined) {
-			const named = this.workspaceForEditorKey(workspaceKey);
-			if (named === undefined) {
-				throw new Error(
-					`No Workspace ${workspaceKey} is open, so there is no terminal session for this window.`,
-				);
-			}
-			// Only this Mac's launcher names a Workspace: it is what an attached
-			// window's DevHub terminal runs (`devhubTerminalLocal`).
-			const asking = runtimeMachine(machine);
-			if (asking !== "local") {
-				throw new Error(
-					`A terminal on ${asking} named Workspace ${workspaceKey}, and only a terminal on this Mac does that.`,
-				);
-			}
-			const on = runtimeIdFor(named.location);
-			// The session is where the Workspace is; the terminal is here. On
-			// this Mac that is the session's own command, and on a host it is
-			// that command over ssh — see `Runtime.commandFromHere`.
-			return runtimeById(on).commandFromHere(
-				await wiring.service.surfaces.profile(
-					workspaceTarget(on, named.id, named.root),
-				),
-			);
-		}
-		// Only the Workspaces on the machine that is asking. A path is a path on
-		// one computer: `/srv/app` on two hosts is two folders, and a matcher
-		// given both roots would answer one of them with the other's session —
-		// which is not a slower answer, it is a shell in the wrong place.
-		const workspaces = this.coordinator.model.workspaces.filter(
-			(candidate) => runtimeIdFor(candidate.location) === machine,
-		);
-		const enclosing = enclosingRoot(
-			workspaces.map((candidate) => candidate.root),
-			root,
-		);
-		const workspace = workspaces.find(
-			(candidate) => candidate.root === enclosing,
-		);
-		// The session is on the machine that asked, because that is the machine
-		// its tmux server is on: a workbench's integrated terminal runs where
-		// its pty host runs, and an argv naming this Mac's socket would attach
-		// nothing over there. The target carries the machine, so the adapter
-		// that answers is that machine's and not whichever one is at hand.
-		const asking = runtimeMachine(machine);
-		if (!workspace) {
-			// Scratch is a folder on this Mac, so there is no Scratch on a host
-			// to fall back to: a terminal over there in a directory no Workspace
-			// contains has no session, and saying so is the honest end of it.
-			if (asking !== "local") {
-				throw new Error(
-					`${root ?? "this directory"}${runtimeById(asking).where} is not inside any Workspace DevHub has open there, so there is no terminal session for it.`,
-				);
-			}
-			const scratch = this.scratchWorkspace();
-			return wiring.service.surfaces.profile(
-				workspaceTarget(asking, scratch.id, scratch.root),
-			);
-		}
-		return wiring.service.surfaces.profile(
-			workspaceTarget(asking, workspace.id, workspace.root),
-		);
 	}
 
 	/**
@@ -6421,19 +6320,16 @@ export class AppController {
 	}
 
 	/**
-	 * The `devhub-terminal` a window on this machine names, installed if need be.
+	 * The `devhub` command on this machine, installed if need be.
 	 *
 	 * One answer per machine, remembered, because installing it is files written
-	 * over a network and a socket forwarded, and a second window on the same
-	 * host must not redo either. It is not remembered *across* a failure: a host
-	 * that was unreachable when the first window opened is asked again by the
-	 * second, which is how it recovers without a restart.
+	 * over a network and a socket forwarded, and a second ask for the same host
+	 * must not redo either. It is not remembered *across* a failure: a host that
+	 * was unreachable when first asked is asked again by the second, which is
+	 * how it recovers without a restart.
 	 *
 	 * However it ends, it ends in `launcherStatus`, which is what `devhub
-	 * --metrics` prints. A launcher that could not be installed is otherwise a
-	 * line in a log nobody has open and a terminal tab that says it a window at
-	 * a time; the whole of "does this DevHub have terminals, and where" belongs
-	 * in one reading.
+	 * --metrics` prints, so "where can a pane reach DevHub" is one reading.
 	 */
 	private terminalLauncherFor(runtime: Runtime): Promise<TerminalLauncher> {
 		const existing = this.launchers.get(runtime.id);
@@ -6445,7 +6341,6 @@ export class AppController {
 				this.launcherStatus.set(runtime.id, {
 					machine: runtime.id,
 					installed: true,
-					path: launcher.path,
 					reason: launcher.unreachable,
 				});
 			},
@@ -6453,7 +6348,6 @@ export class AppController {
 				this.launcherStatus.set(runtime.id, {
 					machine: runtime.id,
 					installed: false,
-					path: undefined,
 					reason: failureText(error),
 				});
 				if (this.launchers.get(runtime.id) === installed) {
@@ -6465,7 +6359,7 @@ export class AppController {
 	}
 
 	/**
-	 * Ask one machine for its launcher.
+	 * Ask one machine for its `devhub` command.
 	 *
 	 * `async` so that everything here — a user-data directory that is not there
 	 * yet, a bundle the build did not produce — fails the returned promise
@@ -6478,11 +6372,10 @@ export class AppController {
 		const userDataPath = this.userDataPath;
 		if (userDataPath === undefined) {
 			throw new Error(
-				"a terminal launcher was asked for before the runtimes were started",
+				"a `devhub` command was asked for before the runtimes were started",
 			);
 		}
 		return runtime.terminalLauncher({
-			localLauncherPath: terminalLauncherPath(userDataPath),
 			controlSocketPath: controlSocketPath(userDataPath),
 			skillText: devhubSkillText,
 		});

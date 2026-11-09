@@ -206,11 +206,10 @@ export function runtimeIdFor(location: WorkspaceLocation): RuntimeId {
 /**
  * A machine's name as it arrived from outside, checked.
  *
- * The `terminal-profile` request carries one, written into a launcher script
- * on the machine that runs it, and a request is not a place a type holds. A
- * name that is not one of the two shapes is a request DevHub cannot answer,
- * and it says so rather than falling back to this machine — which would open
- * a shell here for a terminal over there.
+ * A `devhub` on a host carries one, written into its shim on the machine that
+ * runs it, and a request is not a place a type holds. A name that is not one
+ * of the two shapes is a request DevHub cannot answer, and it says so rather
+ * than falling back to this machine.
  */
 /**
  * The machine an id names — the inverse of `Runtime.id`.

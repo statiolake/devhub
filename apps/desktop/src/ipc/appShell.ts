@@ -413,24 +413,9 @@ export type AppErrorCodeWire =
 	 */
 	| "workbench_settings_unreadable"
 	/**
-	 * A window opened on a machine whose `devhub-terminal` could not be put
-	 * there, so that window has no DevHub terminal.
-	 *
-	 * Its own code because, like the settings file, the consequence is a
-	 * *missing* feature rather than a failed action: the folder is open and
-	 * editable, and the one thing that is not there is the thing nobody would
-	 * think to check until they pressed Ctrl+` and got a bare shell.
-	 */
-	| "terminal_launcher_unavailable"
-	/**
 	 * The `devhub` command inside a dev container (and the control-socket relay
 	 * it talks through) could not be installed, so `devhub` run in there does
 	 * not reach DevHub.
-	 *
-	 * Not `terminal_launcher_unavailable`: an attached window's DevHub terminal
-	 * runs on the Workspace's own machine and does not depend on anything in
-	 * the container, so a failure in there is a fact about the container's
-	 * command, not about the window's terminal.
 	 */
 	| "dev_container_command_unavailable"
 	/**
@@ -572,8 +557,6 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	git_fetch_failed: "The latest changes could not be fetched from the remote.",
 	workbench_settings_unreadable:
 		"The editor's settings file is not valid JSON.",
-	terminal_launcher_unavailable:
-		"This window has no DevHub terminal: its launcher could not be installed.",
 	dev_container_command_unavailable:
 		"The devhub command does not work inside this dev container.",
 	// It names no host, because the detail does: one workspace's close can

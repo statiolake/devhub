@@ -239,7 +239,7 @@ describe("what a round costs on each machine", () => {
 // could not be installed showed in one log line and in the terminal tab of
 // each window that wanted it, which is exactly where nobody was looking when
 // the packaged app opened every window without one.
-describe("whether each machine has a terminal launcher", () => {
+describe("whether each machine has a devhub command", () => {
 	it("says where it is, per machine, installed or not", () => {
 		const report = metricsReport({
 			takenAt: 0,
@@ -259,13 +259,11 @@ describe("whether each machine has a terminal launcher", () => {
 				{
 					machine: "local",
 					installed: true,
-					path: "/data/devhub/devhub/devhub-terminal",
 					reason: undefined,
 				},
 				{
 					machine: "ssh:build-box.example.com",
 					installed: false,
-					path: undefined,
 					reason: "the bundle is not there",
 				},
 			],
@@ -275,13 +273,11 @@ describe("whether each machine has a terminal launcher", () => {
 			{
 				machine: "local",
 				installed: true,
-				path: "/data/devhub/devhub/devhub-terminal",
 				reason: undefined,
 			},
 			{
 				machine: "ssh:build-box.example.com",
 				installed: false,
-				path: undefined,
 				reason: "the bundle is not there",
 			},
 		]);

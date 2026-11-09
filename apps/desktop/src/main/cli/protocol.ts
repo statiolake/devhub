@@ -97,8 +97,7 @@ export type ControlRequest =
 			readonly cwd: string;
 			/**
 			 * Which computer `path` is a path on: `local`, or `ssh:<host>` — a
-			 * `RuntimeId`, the same key `terminal-profile` carries and the same
-			 * key everything else about a machine is filed under.
+			 * `RuntimeId`, the key everything about a machine is filed under.
 			 *
 			 * Absent means `local`, because that is what every caller that
 			 * cannot say is: the launcher in this Mac's PATH, and a Finder
@@ -203,19 +202,6 @@ export type ControlRequest =
 			readonly profileId: string;
 			readonly args: readonly string[];
 			readonly cwd: string;
-	  }
-	| {
-			readonly kind: "terminal-profile";
-			readonly machine: string;
-			readonly root: string | null;
-			/**
-			 * The Workspace, by its key, when the window already knows which
-			 * one it is and the directory cannot say: a workbench attached to a
-			 * dev container runs its DevHub terminal on this Mac, in a directory
-			 * that is not necessarily inside the Workspace — a folder on a host
-			 * has no directory here at all. Absent, the directory decides.
-			 */
-			readonly workspace?: string;
 	  };
 
 /**
@@ -229,29 +215,6 @@ export type ControlRequest =
  */
 export type ControlOpenRequest = Extract<ControlRequest, { kind: "open" }>;
 
-/** The command line a workbench's integrated terminal is started with. */
-export interface TerminalProfileAnswer {
-	readonly file: string;
-	readonly args: readonly string[];
-	/**
-	 * What that command needs in its environment in order to be itself.
-	 *
-	 * Part of the answer and not of the launcher, because it belongs to the
-	 * executable and the executable is chosen here: a tmux DevHub shipped to a
-	 * host carries its own compiled terminfo database, and `TERMINFO` is how it
-	 * is told to read that rather than the host's — which on a bare appliance is
-	 * not there at all. A launcher written before any of that was known could
-	 * only have guessed.
-	 *
-	 * It was missing, and the whole of the symptom was a terminal tab that
-	 * opened and closed: `missing or unsuitable terminal: xterm-256color`, from
-	 * a tmux that could not find a single terminal description on the machine.
-	 *
-	 * Empty on a machine whose tmux needs nothing added, which is this one.
-	 */
-	readonly env: Readonly<Record<string, string>>;
-}
-
 export interface ControlResponse {
 	readonly ok: boolean;
 	/**
@@ -259,16 +222,6 @@ export interface ControlResponse {
 	 * install transcript are several lines, and they are still one answer.
 	 */
 	readonly message: string;
-	/**
-	 * The one answer that is data rather than a sentence.
-	 *
-	 * Every other request on this socket is a person asking for something and
-	 * reading the reply; `terminal-profile` is a workbench asking for an argv,
-	 * and an argv squeezed through a human sentence would have to be parsed
-	 * back out of it. Absent on every other answer, and on a failed one — a
-	 * failure is a sentence, whoever is reading.
-	 */
-	readonly profile?: TerminalProfileAnswer;
 	/** A `tell` answer, as data: what `devhub --tell --json` prints. */
 	readonly data?: unknown;
 	/** A `tell` answer: `--json` was asked for, so the command prints `data`. */
@@ -354,18 +307,6 @@ export function parseControlRequest(line: string): ControlRequest {
 				profileId: requireString(record["profileId"], "profileId"),
 				args: requireStrings(record["args"], "args"),
 				cwd: requireAbsolute(record["cwd"], "cwd"),
-			};
-		case "terminal-profile":
-			return {
-				kind: "terminal-profile",
-				machine: requireString(record["machine"], "machine"),
-				root:
-					record["root"] === null
-						? null
-						: requireAbsolute(record["root"], "root"),
-				...(record["workspace"] === undefined
-					? {}
-					: { workspace: requireString(record["workspace"], "workspace") }),
 			};
 		default:
 			throw new Error(`unknown control request: ${String(record["kind"])}`);

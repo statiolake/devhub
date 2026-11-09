@@ -649,7 +649,6 @@ describe("the terminal launcher on the host", () => {
 	}
 
 	const spec: TerminalLauncherSpec = {
-		localLauncherPath: "/data/devhub/devhub/devhub-terminal",
 		controlSocketPath: "/data/devhub/devhub/control.sock",
 	};
 
@@ -660,7 +659,6 @@ describe("the terminal launcher on the host", () => {
 	it("installs the app's own devhub there, and no Node, asking program or launcher", async () => {
 		const launcher = await runtimeWith().terminalLauncher(spec);
 		expect(launcher.unreachable).toBeUndefined();
-		expect(launcher.path).toBeUndefined();
 		const binary = DEVHUB_ON_HOST(remoteHome);
 		expect(await readFile(binary)).toEqual(Buffer.from(FAKE_DEVHUB_BYTES));
 		expect((await stat(binary)).mode & 0o777).toBe(0o755);

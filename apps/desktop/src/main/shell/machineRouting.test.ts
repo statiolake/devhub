@@ -4,7 +4,7 @@
  * The negative assertion is everywhere else: every existing suite still passes,
  * because nothing about a Workspace on this Mac changed. What those cannot show
  * is the thing this step was for — that a Workspace on a host gets *that host's*
- * tmux server, *that host's* PTY and *that host's* `devhub-terminal`, and that
+ * tmux server, *that host's* PTY and *that host's* `devhub` command, and that
  * a round about one machine says nothing about the other. A site that kept one
  * adapter for everything would pass every local suite and be exactly the bug
  * the per-machine registry exists to make impossible.
@@ -89,7 +89,6 @@ class FakeMachine implements Runtime {
 	}
 	terminalLauncher(_spec: TerminalLauncherSpec): Promise<TerminalLauncher> {
 		return Promise.resolve({
-			path: `${this.homeDirectory}/.devhub/devhub-terminal`,
 			unreachable: undefined,
 			binDirectory: `${this.homeDirectory}/.devhub/terminal/bin-tag`,
 		});

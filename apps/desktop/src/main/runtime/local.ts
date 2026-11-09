@@ -464,21 +464,17 @@ export class LocalRuntime implements Runtime {
 	}
 
 	/**
-	 * The launcher DevHub already wrote for itself, at startup.
-	 *
-	 * Nothing is installed here and nothing is forwarded: this machine is the
-	 * one the control socket is bound on, and `bootstrapShell` wrote the script
-	 * that names it before any window existed. The remote arm does the work; the
-	 * seam is what lets a caller ask both the same question.
+	 * Nothing to install: this machine is the one the control socket is bound
+	 * on. The remote arm does the work; the seam is what lets a caller ask both
+	 * the same question.
 	 */
 	async terminalLauncher(
-		spec: TerminalLauncherSpec,
+		_spec: TerminalLauncherSpec,
 	): Promise<TerminalLauncher> {
 		// No bin directory: `devhub` on this machine is the launcher the person
 		// installed on their own PATH, and DevHub does not get to put another
 		// one in front of it.
 		return {
-			path: spec.localLauncherPath,
 			unreachable: undefined,
 			binDirectory: undefined,
 		};

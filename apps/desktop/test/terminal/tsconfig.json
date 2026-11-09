@@ -1,7 +1,7 @@
 {
   // The PTY test's own build.
   //
-  // The node-dependent terminal tests run under VS Code's Electron as Node, so
+  // The node-dependent terminal tests run under DevHub's Electron as Node, so
   // they need JavaScript, not TypeScript — and they must not wait on the whole
   // main process compiling, or be broken by an unrelated file that does not. It
   // inherits the main process's compiler settings so the modules are built
@@ -17,8 +17,6 @@
   "include": [
     "../../src/ipc/terminal.ts",
     "../../src/main/terminal/pty.ts",
-    "../../src/main/terminal/launcher.ts",
-    "../../src/main/terminal/devhubTerminalEntry.ts",
     "../../src/main/terminal/attachments.ts",
     "../../src/main/terminal/service.ts",
     "../../src/main/terminal/childRun.ts",

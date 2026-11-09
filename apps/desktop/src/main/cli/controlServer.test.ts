@@ -36,7 +36,6 @@ function everythingSaysOk(): ControlHandlers {
 		metrics: () => Promise.resolve("ok"),
 		tell: () => Promise.resolve({ message: "ok", data: {} }),
 		version: () => Promise.resolve("ok"),
-		terminalProfile: () => Promise.resolve({ file: "tmux", args: [], env: {} }),
 		personStarted: () => undefined,
 	};
 }
@@ -103,21 +102,6 @@ describe("the DevHub control socket", () => {
 			metrics: () => {
 				calls.push("metrics");
 				return Promise.resolve('{"processes":[]}');
-			},
-			terminalProfile: (machine, root, workspace) => {
-				calls.push(
-					`profile ${machine} ${root ?? "scratch"}${workspace === undefined ? "" : ` for ${workspace}`}`,
-				);
-				if (root === "/work/gone") {
-					return Promise.reject(
-						new Error("no DevHub workspace is rooted at /work/gone"),
-					);
-				}
-				return Promise.resolve({
-					file: "/usr/bin/tmux",
-					args: ["-L", "devhub", "attach-session", "-t", "ws-abc"],
-					env: { TERMINFO: "/home/dev/.devhub-server/tmux/3.7c/terminfo" },
-				});
 			},
 		});
 	});
@@ -488,89 +472,6 @@ describe("the DevHub control socket", () => {
 			startControlServer(socketPath, everythingSaysOk()),
 		).rejects.toThrow(/already listening/);
 	});
-
-	it("answers a workbench's terminal profile with the argv, not a sentence", async () => {
-		const answer = await ask(
-			socketPath,
-			`${JSON.stringify({
-				kind: "terminal-profile",
-				machine: "local",
-				root: "/work/a",
-			})}\n`,
-		);
-		expect(answer.profile).toEqual({
-			file: "/usr/bin/tmux",
-			args: ["-L", "devhub", "attach-session", "-t", "ws-abc"],
-			// What the executable needs to be itself travels with it: a tmux
-			// DevHub shipped to a host reads the terminfo database that came
-			// with it, and nothing else on that machine knows where it is.
-			env: { TERMINFO: "/home/dev/.devhub-server/tmux/3.7c/terminfo" },
-		});
-		expect(calls).toEqual(["profile local /work/a"]);
-	});
-
-	it("takes a folderless workbench as the Scratch context", async () => {
-		const answer = await ask(
-			socketPath,
-			`${JSON.stringify({ kind: "terminal-profile", machine: "local", root: null })}\n`,
-		);
-		expect(answer.ok).toBe(true);
-		expect(calls).toEqual(["profile local scratch"]);
-	});
-
-	// A path is a path on one machine. Two hosts with the same `/srv/app` are
-	// one root to a matcher that was not told which of them is asking, and the
-	// session it would answer with is on the wrong computer — so the field is
-	// required rather than defaulted to this one.
-	it("refuses a terminal profile that does not say which machine asked", async () => {
-		const answer = await ask(
-			socketPath,
-			`${JSON.stringify({ kind: "terminal-profile", root: "/srv/app" })}\n`,
-		);
-		expect(answer.ok).toBe(false);
-		expect(answer.message).toContain("machine");
-		expect(calls).toEqual([]);
-	});
-
-	it("carries the Workspace a window named through to the answer", async () => {
-		await ask(
-			socketPath,
-			`${JSON.stringify({
-				kind: "terminal-profile",
-				machine: "local",
-				root: "/Users/dev",
-				workspace: "ssh://build/srv/app",
-			})}\n`,
-		);
-		expect(calls).toEqual(["profile local /Users/dev for ssh://build/srv/app"]);
-	});
-
-	it("carries the machine the launcher is on through to the answer", async () => {
-		await ask(
-			socketPath,
-			`${JSON.stringify({
-				kind: "terminal-profile",
-				machine: "ssh:build-box.example.com",
-				root: "/srv/app",
-			})}\n`,
-		);
-		expect(calls).toEqual(["profile ssh:build-box.example.com /srv/app"]);
-	});
-
-	it("reports a workbench DevHub has no session for, with no profile", async () => {
-		const answer = await ask(
-			socketPath,
-			`${JSON.stringify({
-				kind: "terminal-profile",
-				machine: "local",
-				root: "/work/gone",
-			})}\n`,
-		);
-		expect(answer).toEqual({
-			ok: false,
-			message: "no DevHub workspace is rooted at /work/gone",
-		});
-	});
 });
 
 describe("a command the person typed", () => {
@@ -603,10 +504,6 @@ describe("a command the person typed", () => {
 		[
 			"resolve-remote",
 			{ kind: "resolve-remote", machine: "ssh:build-box", attempt: 1 },
-		],
-		[
-			"terminal-profile",
-			{ kind: "terminal-profile", machine: "local", root: null },
 		],
 	])("is not what DevHub's own machinery asks: %s", async (_kind, request) => {
 		const personStarted = vi.fn();

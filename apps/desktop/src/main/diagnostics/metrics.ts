@@ -143,17 +143,14 @@ export interface MetricsReport {
 	 */
 	readonly runtimes: readonly RuntimeCostReading[];
 	/**
-	 * Whether each machine has a DevHub terminal launcher on it, and where.
+	 * Whether each machine has DevHub's `devhub` command on it.
 	 *
-	 * A machine whose launcher could not be installed still gets its windows —
-	 * a folder somebody can edit is worth more than no folder — so the only
-	 * places that failure showed were one line in a log and one sentence in a
-	 * terminal tab, per window. "This DevHub has no terminals, and here is the
-	 * sentence saying why" is a fact about DevHub, and this is where facts
-	 * about DevHub are read.
+	 * A machine whose command could not be installed is still worked on, so
+	 * the only other place that failure shows is a line in a log. This is
+	 * where facts about DevHub are read.
 	 *
-	 * One entry per machine a window has been opened on; a machine nothing has
-	 * asked for is simply absent, which is a different answer from failed.
+	 * One entry per machine that has been asked; a machine nothing has asked
+	 * for is simply absent, which is a different answer from failed.
 	 */
 	readonly terminalLauncher: readonly TerminalLauncherStatus[];
 	/**
@@ -196,15 +193,13 @@ export interface MetricsReport {
 	readonly notices: NoticesReading;
 }
 
-/** One machine's answer to "is there a `devhub-terminal` on it". */
+/** One machine's answer to "is there a `devhub` command on it". */
 export interface TerminalLauncherStatus {
 	readonly machine: RuntimeId;
 	readonly installed: boolean;
-	/** Where it is, when it is. */
-	readonly path: string | undefined;
 	/**
 	 * Why it is not there, or — with `installed` — why it cannot reach DevHub's
-	 * control socket, which is a launcher that will run and then say so.
+	 * control socket, which is a command that will run and then say so.
 	 */
 	readonly reason: string | undefined;
 }
