@@ -257,8 +257,8 @@ function presentationFrom(split: boolean | undefined): SurfacePresentation {
 
 function layoutWire(layout: SurfaceLayout): LayoutWire {
   switch (layout.kind) {
-    case "workbench":
-      return { kind: "workbench", editorKey: surfaceKeyName(layout.editor) };
+    case "editor":
+      return { kind: "editor", editorKey: surfaceKeyName(layout.editor) };
     case "agent":
       return { kind: "agent", agentKey: surfaceKeyName(layout.agent) };
     case "split":
@@ -745,12 +745,8 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "settings_refused":
       return "config";
     case "file_not_found":
-    case "editor_provider_missing":
-    case "editor_port_unavailable":
     case "editor_unavailable":
-    case "editor_restarting":
     case "editor_restart_exhausted":
-    case "editor_not_stopped":
       return "editor";
     case "agent_not_connected":
     case "agent_exited":
@@ -804,8 +800,6 @@ export function errorWireAt(
     code === "terminal_needs_agent_view" ||
     // Pressing the chord again is the retry, and it goes further back.
     code === "closed_not_reopened" ||
-    // Pressing the chord again is the retry, once what kept it is gone.
-    code === "editor_not_stopped" ||
     // Trying again opens the same missing file.
     code === "file_not_found"
       ? []
@@ -814,8 +808,6 @@ export function errorWireAt(
         ? ["open_settings"]
         : code === "native_unavailable" ||
             code === "persistence_degraded" ||
-            code === "editor_provider_missing" ||
-            code === "editor_port_unavailable" ||
             code === "editor_unavailable" ||
             code === "editor_restart_exhausted"
           ? ["retry", "open_settings"]

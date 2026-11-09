@@ -2,10 +2,10 @@
  * One reading of what DevHub is costing, as JSON.
  *
  * Electron knows the CPU and memory of every process in the app but calls a
- * workbench renderer nothing more than "renderer"; DevHub knows which
- * workspace each renderer is and whether the person is looking at it, but
- * knows nothing about CPU. Neither half answers "is the workbench I cannot see
- * still burning a core" — joining them is the whole point of this file, and
+ * renderer nothing more than "renderer"; DevHub knows which of its pages each
+ * renderer is and whether the person is looking at it, but knows nothing about
+ * CPU. Neither half answers "is the page I cannot see still burning a core" —
+ * joining them is the whole point of this file, and
  * the join is a pure function so it can be tested without an app.
  */
 
@@ -16,32 +16,20 @@ import type { NoticesReading } from "./notices.js";
 import type { WorkspaceRepositoryRound } from "./rounds.js";
 
 /**
- * What DevHub knows about one of its own renderers.
- *
- * Both kinds: a workbench, and one of DevHub's own chrome pages. It used to be
- * workbenches only, which was the right shape while the window held one page
- * and N workbenches — a reading then named everything it could. The window is
- * becoming a tree of child views, one per region, so a reading that could not
- * name them would answer "did splitting the pages cost anything" with a list
- * of anonymous renderers.
+ * What DevHub knows about one of its own renderers: one of its pages. The
+ * window is a tree of child views, one per region, so a reading that could
+ * not name them would answer "did splitting the pages cost anything" with a
+ * list of anonymous renderers.
  */
 export interface ViewIdentity {
 	/** The OS process the renderer runs in. This is what joins it to a metric. */
 	readonly pid: number;
 	/** The `webContents` id, which is how the rest of DevHub names a view. */
 	readonly id: number;
+	/** What this view is showing: `chrome:<name>` for one of DevHub's pages. */
+	readonly surfaceKey: string;
 	/**
-	 * What this view is showing: a workspace's surface key for a workbench, or
-	 * `chrome:<name>` for one of DevHub's own pages. `undefined` is a workbench
-	 * the model has no surface for — one being torn down, or one not yet
-	 * adopted.
-	 */
-	readonly surfaceKey: string | undefined;
-	/**
-	 * Whether this view is on screen.
-	 *
-	 * For a workbench that is "the one the person is looking at", and at most
-	 * one is. For a chrome child it is "in the window's child list" — which for
+	 * Whether this view is on screen: "in the window's child list" — which for
 	 * `toasts` and `picker` is a fact that follows what they have to draw, and
 	 * is the one thing worth reading back about them: a layer that is present
 	 * with nothing on it is a rectangle taking clicks for no reason.
@@ -64,8 +52,8 @@ export interface ProcessReading {
 	readonly name: string | undefined;
 	readonly cpuPercent: number;
 	readonly memoryKb: number;
-	/** Present only for a process DevHub recognises as one of its workbenches. */
-	readonly workbench: ViewIdentity | undefined;
+	/** Present only for a process DevHub recognises as one of its pages. */
+	readonly view: ViewIdentity | undefined;
 }
 
 /** The main process's own CPU time, as the OS has charged it. */
@@ -272,7 +260,7 @@ export function metricsReport(input: MetricsInput): MetricsReport {
 			name: metric.name,
 			cpuPercent: metric.cpu.percentCPUUsage,
 			memoryKb: metric.memory.workingSetSize,
-			workbench: byPid.get(metric.pid),
+			view: byPid.get(metric.pid),
 		}))
 		.sort((left, right) => right.cpuPercent - left.cpuPercent);
 	return {

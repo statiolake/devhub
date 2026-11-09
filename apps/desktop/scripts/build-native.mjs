@@ -1,5 +1,5 @@
 /**
- * DevHub's two macOS helpers, built into `out/native`:
+ * DevHub's native helpers, built into `out/native`:
  *
  * - `devhub-footprint`, every process's physical footprint for the Task
  *   Manager (`src/main/native/footprint.c`, see
@@ -9,9 +9,6 @@
  *   while a chord is armed (`src/main/native/inputSource.c`, see
  *   `src/main/shell/inputSourceHelper.ts`).
  *
- * - `devhub-pgrp-anchor`, which holds DevHub's process group un-orphaned
- *   while workbenches are frozen (`src/main/native/processGroupAnchor.c`, see
- *   `src/main/shell/processGroupAnchor.ts`). Plain POSIX: built everywhere.
  * - `devhub-exec-clean`, which starts a child with only its stdio open
  *   (`src/main/native/execClean.c`, see `src/main/terminal/cleanSpawn.ts`).
  *   Linux only: macOS's `posix_spawn` already inherits nothing else.
@@ -41,33 +38,6 @@ copyFileSync(
   `${root}/vendor/libghostty-vt/ghostty-vt.wasm`,
   `${root}/out/vt/ghostty-vt.wasm`,
 );
-
-// `devhub-pgrp-anchor`, which keeps DevHub's process group from being
-// orphaned while a workbench is frozen (`src/main/native/processGroupAnchor.c`,
-// see `src/main/shell/processGroupAnchor.ts`). Plain POSIX, so it is built
-// everywhere: without it no workbench is frozen. Off macOS a machine with no
-// C compiler says so and goes on, as the macOS-only helpers do there.
-try {
-  execFileSync(
-    process.platform === "darwin" ? "clang" : "cc",
-    [
-      "-O2",
-      "-Wall",
-      "-Wextra",
-      "-Werror",
-      ...(process.platform === "darwin" ? ["-mmacosx-version-min=12.0"] : []),
-      "-o",
-      "out/native/devhub-pgrp-anchor",
-      "src/main/native/processGroupAnchor.c",
-    ],
-    { cwd: root, stdio: "inherit" },
-  );
-} catch (error) {
-  if (process.platform === "darwin") throw error;
-  console.log(
-    `build:native: devhub-pgrp-anchor not built (${error.message}); workbenches will not be frozen`,
-  );
-}
 
 // `devhub-exec-clean`, which starts a program with nothing of its parent's
 // open but stdio (`src/main/native/execClean.c`, see

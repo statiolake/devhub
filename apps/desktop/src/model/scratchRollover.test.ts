@@ -74,7 +74,7 @@ describe("Scratch is today's daily-folder Workspace", () => {
     expect(snapshot.workspaces.map((one) => one.label)).toEqual(["Scratch"]);
     expect(snapshot.workspaces[0]?.root).toBe("/data/junk/20260923");
     expect(snapshot.layout).toEqual({
-      kind: "workbench",
+      kind: "editor",
       editor: { kind: "workspace-editor", workspaceId: TODAY },
     });
   });

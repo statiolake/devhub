@@ -4359,7 +4359,7 @@ export class AppController {
 		// else is how "the editor is on screen" and "no editor is on screen"
 		// came to be two true answers to one question.
 		const editorKey =
-			layout.kind === "workbench" || layout.kind === "split"
+			layout.kind === "editor" || layout.kind === "split"
 				? this.editorKeyForSurfaceKey(layout.editorKey)
 				: undefined;
 		// The Workspace's terminal is its editor area, its page made the first

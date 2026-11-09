@@ -1920,12 +1920,12 @@ export function sameContext(
  * cross this seam.
  *
  * There are two kinds, and there used to be five. A terminal is no longer a
- * DevHub Surface — it is the workbench's integrated terminal, on the same tmux
- * session it always was — so `workspace-terminal` names nothing the shell page
+ * DevHub Surface — it is the Workspace's editor area, on the same tmux session
+ * it always was — so `workspace-terminal` names nothing the shell page
  * can put on screen. The tmux runtime still owns those sessions and still
  * spells their keys that way on the wire it shares with the Agents; what is
  * gone is the idea that a person could *select* one. Scratch's editor was the
- * third, `global-editor`, until Scratch became a Workspace with a workbench
+ * third, `global-editor`, until Scratch became a Workspace with an editor
  * like any other.
  */
 export type SurfaceKey =
@@ -1946,7 +1946,7 @@ export function surfaceKeyName(key: SurfaceKey): string {
  *
  * This is what the Activity ring became, and it is smaller than one on
  * purpose. A context no longer offers a choice of things to look at: a
- * Workspace *is* its workbench, full width, and an Agent is that same workbench
+ * Workspace *is* its editor, full width, and an Agent is that same editor
  * with the Agent's pane beside it. Nothing chooses, so nothing can be disabled,
  * and there is no state in which the selection and what is on screen disagree.
  *
@@ -1955,7 +1955,7 @@ export function surfaceKeyName(key: SurfaceKey): string {
  * answer to "why can I not see it".
  */
 export type SurfaceLayout =
-  | { readonly kind: "workbench"; readonly editor: SurfaceKey }
+  | { readonly kind: "editor"; readonly editor: SurfaceKey }
   | { readonly kind: "agent"; readonly agent: SurfaceKey }
   | {
       readonly kind: "split";
@@ -1972,14 +1972,14 @@ export type SurfaceLayout =
 /**
  * How much of the content area the thing you selected takes.
  *
- * Selecting an Agent used to mean one arrangement — the workbench, with the
+ * Selecting an Agent used to mean one arrangement — the editor, with the
  * Agent's pane beside it — so the layout could be read off the context alone.
  * It cannot any more: the same Agent is either the whole content area or half
  * of it, and which one is what the person asked for when they selected it.
  * Plain click, Return: `full`. Option-click, Option-Return: `beside`.
  *
  * It is a property of the *selection*, not of the Agent. Opening an Agent
- * beside the workbench and later opening the same Agent on its own are two
+ * beside the editor and later opening the same Agent on its own are two
  * selections of one Agent, so nothing about the Agent itself changes and
  * nothing has to be stored on it or remembered between launches.
  *

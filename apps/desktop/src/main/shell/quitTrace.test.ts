@@ -2,7 +2,6 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	callerOf,
-	hungUpAt,
 	installQuitTrace,
 	resetQuitTraceForTests,
 } from "./quitTrace.js";
@@ -50,12 +49,9 @@ describe("installQuitTrace", () => {
 		const signals = new EventEmitter();
 		const lines: string[] = [];
 		installQuitTrace(app, signals, (line) => lines.push(line));
-		expect(hungUpAt()).toBeUndefined();
 		signals.emit("SIGHUP", "SIGHUP");
 		expect(app.calls).toEqual([]);
 		expect(lines.join("\n")).toMatch(/SIGHUP received — ignored/);
-		// Remembered: the freezer stops nothing after a hangup.
-		expect(hungUpAt()).toBeTypeOf("number");
 	});
 
 	it("quits on SIGTERM and SIGINT, saying which", () => {

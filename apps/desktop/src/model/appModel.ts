@@ -1277,7 +1277,7 @@ export class AppModel {
   isWorkspaceVisible(id: WorkspaceId): boolean {
     if (!this.windowFocusedValue) return false;
     const layout = this.resolveLayout(this.selectionValue);
-    if (layout.kind !== "workbench" && layout.kind !== "split") return false;
+    if (layout.kind !== "editor" && layout.kind !== "split") return false;
     return (
       layout.editor.kind === "workspace-editor" &&
       layout.editor.workspaceId === id
@@ -1944,7 +1944,7 @@ export class AppModel {
           agent: { kind: "agent", agentId: paired },
         };
       }
-      return { kind: "workbench", editor };
+      return { kind: "editor", editor };
     }
 
     const agent = this.agent(context.agentId);

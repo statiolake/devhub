@@ -2,8 +2,7 @@
  * Every process DevHub has, attributed to the thing a person thinks in.
  *
  * `ps` knows each process's parent and its memory; Electron knows which of
- * them are its own and what each is for; VS Code knows which extension host
- * belongs to which workbench; tmux knows which pane is whose. None of them
+ * them are its own and what each is for; tmux knows which pane is whose. None of them
  * alone can say "this Workspace costs 2 GB" — joining them is this file, and
  * the join is a pure function of one reading of each, so it is tested on a
  * fixture rather than on a machine.
@@ -13,28 +12,24 @@
  * A process is attributed by the nearest pid DevHub *knows* — an **anchor** —
  * and then by the process tree under it:
  *
- * - a workbench's renderer and its extension host(s), each with everything
- *   under it (the language servers an extension started);
  * - every pane of a session DevHub marked: a Workspace's `ws-` session (its
  *   shells, a managed Neovim), an Agent's own session (its CLI, or a GUI
  *   Agent's host and app-server) and an Agent's terminal (`tm-`);
- * - every tmux client, by the session it shows: a workbench's terminal tab is
- *   a client of its Workspace's `ws-` session started by the pty host;
+ * - every tmux client, by the session it shows;
  * - the tmux server itself, with whatever else runs on it;
  * - Electron's own processes — main, GPU, utilities, DevHub's pages — as
  *   DevHub, each **without** what it started: main starts everything, so its
  *   subtree is the whole app.
  *
  * A walk down a subtree stops at another anchor, so the most specific owner
- * wins: a language server is its workbench's even though main is its
- * ancestor. What is left under one of Electron's processes once every anchor
+ * wins: a CLI is its Agent's even though main is its ancestor. What is left under one of Electron's processes once every anchor
  * has been placed — a `git`, an `ssh`, a helper — is **Other**, said with
  * what started it.
  *
  * # Aggregation
  *
  * A row's memory, CPU and process count are its own plus everything under
- * it, so a Workspace's total is its workbench, its terminal and its Agents.
+ * it, so a Workspace's total is its terminal and its Agents.
  * Memory is two figures: the **footprint**, what a process costs wherever
  * its pages are (macOS's physical footprint, Activity Monitor's "Memory":
  * compressed and swapped pages included, shared frameworks not; Linux's
@@ -54,7 +49,6 @@ import {
 	type TaskRowKind,
 	type TaskRowWire,
 	type TaskSnapshotWire,
-	type WorkbenchStateWire,
 } from "../../ipc/taskManager.js";
 import type { ProcessPanes } from "../terminal/tmux.js";
 import { HOST_NAME, STREAM_NAME } from "../agent/conversation/hostScript.js";
@@ -69,24 +63,8 @@ export interface ElectronProcess {
 	readonly pid: number;
 	/** `Browser`, `GPU`, `Utility`, `Tab`, … as `getAppMetrics` says. */
 	readonly type: string;
-	/** A utility's service name (VS Code's, where VS Code started it). */
+	/** A utility's service name. */
 	readonly name?: string;
-}
-
-/** One of the utility processes VS Code started for one window alone. */
-export interface TaskWindowUtility {
-	readonly pid: number;
-	/** `Extension host`, `File watcher`. */
-	readonly label: string;
-}
-
-export interface TaskWorkbench {
-	readonly state: WorkbenchStateWire;
-	/** It may be put to sleep now: local, awake, and not on screen. */
-	readonly sleepable: boolean;
-	readonly renderers: readonly number[];
-	/** Its window's extension host(s) and file watcher. */
-	readonly utilities: readonly TaskWindowUtility[];
 }
 
 export interface TaskAgent {
@@ -102,8 +80,6 @@ export interface TaskWorkspace {
 	readonly id: string;
 	readonly label: string;
 	readonly detail?: string;
-	/** Absent for a Workspace whose workbench has never been asked for. */
-	readonly workbench?: TaskWorkbench;
 	readonly agents: readonly TaskAgent[];
 }
 
@@ -163,18 +139,15 @@ function group(
 	};
 }
 
-/** VS Code's names for the utilities it starts, as a row says them. */
+/** Names for the utilities DevHub starts, as a row says them. */
 const UTILITY_LABELS: Readonly<Record<string, string>> = {
-	"extension-host": "Extension host",
-	"file-watcher": "File watcher",
 	"pty-host": "Terminal host (pty)",
-	"shared-process": "Shared process",
 };
 
 /**
- * A utility process's name as a row says it: VS Code's `file-watcher
- * [1000006]` is `File watcher`, the window id that tells it from another
- * window's being the row's place in the tree rather than its name.
+ * A utility process's name as a row says it: `agent-host` is `Agent host`,
+ * and a trailing ` [<id>]` is the row's place in the tree rather than its
+ * name.
  */
 export function utilityLabel(name: string): string {
 	const bare = name.replace(/ \[\d+\]$/u, "");
@@ -183,29 +156,6 @@ export function utilityLabel(name: string): string {
 	if (!/^[a-z0-9]+(?:[-_][a-z0-9]+)+$/u.test(bare)) return bare;
 	const words = bare.replace(/[-_]/gu, " ");
 	return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-/**
- * The utility processes VS Code started for one window alone — its extension
- * host(s) and its file watcher, each named `<name> [<window id>]` — by
- * window id.
- */
-export function utilitiesByWindow(
-	utilities: readonly { readonly pid: number; readonly name: string }[],
-): Map<number, TaskWindowUtility[]> {
-	const byWindow = new Map<number, TaskWindowUtility[]>();
-	for (const utility of utilities) {
-		const match = /^(extension-host|file-watcher) \[(\d+)\]$/u.exec(
-			utility.name,
-		);
-		if (!match) continue;
-		const window = Number(match[2]);
-		byWindow.set(window, [
-			...(byWindow.get(window) ?? []),
-			{ pid: utility.pid, label: utilityLabel(match[1]!) },
-		]);
-	}
-	return byWindow;
 }
 
 /** What Electron's process is called in the table. */
@@ -249,12 +199,6 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
 		...tmux.clients.map((client) => client.pid),
 		...(tmux.serverPid === undefined ? [] : [tmux.serverPid]),
 	]);
-	for (const workspace of input.workspaces) {
-		for (const pid of workspace.workbench?.renderers ?? []) anchors.add(pid);
-		for (const utility of workspace.workbench?.utilities ?? []) {
-			anchors.add(utility.pid);
-		}
-	}
 	/** Pids no row may offer to kill: DevHub's own core processes. */
 	const core = new Set<number>([
 		...electron.keys(),
@@ -308,22 +252,6 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
 			return node ? [node] : [];
 		});
 
-	// The pty host is the parent of every workbench terminal tab's client.
-	const ptyHosts = new Set(
-		input.electron
-			.filter((one) => one.type === "Utility" && /pty/iu.test(one.name ?? ""))
-			.map((one) => one.pid),
-	);
-	const startedByPtyHost = (pid: number): boolean => {
-		const seen = new Set<number>();
-		for (let at = byPid.get(pid)?.ppid; at !== undefined; ) {
-			if (ptyHosts.has(at)) return true;
-			if (seen.has(at)) return false;
-			seen.add(at);
-			at = byPid.get(at)?.ppid;
-		}
-		return false;
-	};
 	const sessionsOf = (match: (pane: (typeof tmux.panes)[number]) => boolean) =>
 		new Set(tmux.panes.filter(match).map((pane) => pane.sessionName));
 	const clientsOf = (sessions: ReadonlySet<string>) =>
@@ -381,34 +309,8 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
 			pane.context === "workspace" && pane.workspaceId === workspace.id;
 		const sessions = sessionsOf(ownPanes);
 		const clients = clientsOf(sessions);
-		const tabs = clients.filter((client) => startedByPtyHost(client.pid));
 		const children: TaskRowWire[] = [];
-		const { workbench } = workspace;
-		if (workbench) {
-			const parts = [
-				...rowsOf(workbench.renderers, { label: "Renderer" }),
-				...workbench.utilities.flatMap((utility) =>
-					rowsOf([utility.pid], { label: utility.label }),
-				),
-				...tabs.flatMap((client) =>
-					rowsOf([client.pid], {
-						label: "Terminal tab",
-						detail: `tmux client of ${client.session}`,
-					}),
-				),
-			];
-			children.push(
-				group(`workbench:${workspace.id}`, "workbench", "VS Code", parts, {
-					state: workbench.state,
-					workspaceId: workspace.id,
-					actions: ["reveal"],
-				}),
-			);
-		}
-		const terminal = [
-			...paneRows(panePids(ownPanes)),
-			...clientRows(clients.filter((client) => !tabs.includes(client))),
-		];
+		const terminal = [...paneRows(panePids(ownPanes)), ...clientRows(clients)];
 		if (terminal.length > 0) {
 			children.push(
 				group(`terminal:${workspace.id}`, "group", "Terminal", terminal, {
@@ -552,7 +454,6 @@ export function taskSnapshotText(snapshot: TaskSnapshotWire): string {
 		for (const row of [...rows].sort((a, b) => b.memoryBytes - a.memoryBytes)) {
 			const name = [
 				row.label,
-				row.state === undefined ? undefined : `(${row.state})`,
 				row.pid === undefined ? undefined : `[${String(row.pid)}]`,
 				row.kind === "process" ? undefined : row.detail,
 			]

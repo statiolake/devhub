@@ -122,7 +122,7 @@ describe("the Orchestrator row's Workspace", () => {
     });
     model.selectContext({ kind: "workspace", workspaceId: WS_ROOT });
     expect(model.snapshot().layout).toEqual({
-      kind: "workbench",
+      kind: "editor",
       editor: { kind: "workspace-editor", workspaceId: WS_ROOT },
     });
     model.selectContext({ kind: "agent", agentId: ORCH });

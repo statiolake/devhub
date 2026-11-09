@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-	editorElement,
 	orchestratorViewWire,
 	shellTitleFor,
 	titleText,
@@ -321,23 +320,6 @@ describe("the Issue in the shell window's title", () => {
 			"a.ts — widget PR #130 — DevHub",
 			"a.ts — widget — DevHub",
 		]);
-	});
-});
-
-describe("what the workbench reports as an element", () => {
-	it("takes the editor it names", () => {
-		expect(editorElement("● reconciler.ts", "Code - OSS")).toBe(
-			"● reconciler.ts",
-		);
-	});
-
-	it("takes nothing from a workbench that is only naming the product", () => {
-		expect(editorElement("Code - OSS", "Code - OSS")).toBeUndefined();
-	});
-
-	it("takes nothing from a workbench that has not reported yet", () => {
-		expect(editorElement(undefined, "Code - OSS")).toBeUndefined();
-		expect(editorElement("   ", "Code - OSS")).toBeUndefined();
 	});
 });
 

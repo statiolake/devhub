@@ -56,10 +56,10 @@ describe("metricsReport", () => {
 		});
 
 		expect(report.processes.map((one) => one.pid)).toEqual([7, 1]);
-		expect(report.processes[0]?.workbench).toEqual(
+		expect(report.processes[0]?.view).toEqual(
 			view(7, 42, "workspace:one", true),
 		);
-		expect(report.processes[1]?.workbench).toBeUndefined();
+		expect(report.processes[1]?.view).toBeUndefined();
 	});
 
 	it("orders processes by CPU so the heaviest is the first line read", () => {
@@ -107,7 +107,7 @@ describe("metricsReport", () => {
 			roundsLastMinute: noRounds,
 			runtimes: [],
 		});
-		expect(report.processes[0]?.workbench?.surfaceKey).toBe("workspace:shown");
+		expect(report.processes[0]?.view?.surfaceKey).toBe("workspace:shown");
 	});
 
 	it("carries the counters and the moment the reading was taken", () => {

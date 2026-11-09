@@ -12,12 +12,23 @@ import {
 	buildTaskTree,
 	taskSnapshotText,
 	type TaskTreeInput,
-	utilitiesByWindow,
 	utilityLabel,
 } from "./taskTree.js";
 
-const processes = parseProcessTable(
-	readFileSync(new URL("./fixtures/ps-darwin.txt", import.meta.url), "utf8"),
+/**
+ * A VS Code workbench's renderer, extension hosts and what they started
+ * (120–125) are in the fixtures, from when a Workspace had one. Nothing in
+ * DevHub runs them now, so they are left out of every reading here.
+ */
+const WORKBENCH_PIDS = new Set([120, 121, 122, 123, 124, 125]);
+const withoutWorkbench = <T extends { readonly pid: number }>(
+	rows: readonly T[],
+): T[] => rows.filter((row) => !WORKBENCH_PIDS.has(row.pid));
+
+const processes = withoutWorkbench(
+	parseProcessTable(
+		readFileSync(new URL("./fixtures/ps-darwin.txt", import.meta.url), "utf8"),
+	),
 );
 
 const input: TaskTreeInput = {
@@ -29,8 +40,6 @@ const input: TaskTreeInput = {
 		{ pid: 102, type: "Utility", name: "Network Service" },
 		{ pid: 110, type: "Tab" },
 		{ pid: 111, type: "Tab" },
-		{ pid: 120, type: "Tab" },
-		{ pid: 121, type: "Utility", name: "extension-host [7]" },
 		{ pid: 130, type: "Utility", name: "pty-host" },
 	],
 	pages: [
@@ -42,12 +51,6 @@ const input: TaskTreeInput = {
 			id: "w1",
 			label: "widget",
 			detail: "~/src/widget",
-			workbench: {
-				state: "running",
-				sleepable: true,
-				renderers: [120],
-				utilities: [{ pid: 121, label: "Extension host" }],
-			},
 			agents: [
 				{
 					id: "a1",
@@ -126,22 +129,10 @@ function shape(row: TaskRowWire): unknown {
 const KIB = 1024;
 
 describe("attributing processes", () => {
-	it("groups a Workspace's workbench, terminal and Agents under it", () => {
+	it("groups a Workspace's terminal and Agents under it", () => {
 		expect(shape(find(tree.rows, "workspace:w1"))).toEqual({
 			widget: [
-				{
-					"VS Code": [
-						"Renderer[120]",
-						{
-							"Extension host[121]": [
-								{ "rust-analyzer[122]": ["rust-analyzer-proc-macro-srv[123]"] },
-								"tsserver.js[124]",
-							],
-						},
-						"Terminal tab[131]",
-					],
-				},
-				{ Terminal: [{ "zsh[201]": ["nvim[202]"] }] },
+				{ Terminal: [{ "zsh[201]": ["nvim[202]"] }, "tmux client[131]"] },
 				{
 					"Fix the build": [
 						{ "claude[210]": ["mcp[211]"] },
@@ -153,10 +144,8 @@ describe("attributing processes", () => {
 		});
 	});
 
-	it("says what a workbench is doing, and what it offers", () => {
-		const workbench = find(tree.rows, "workbench:w1");
-		expect(workbench.state).toBe("running");
-		expect(workbench.actions).toEqual(["reveal"]);
+	it("says what a Workspace and an Agent offer", () => {
+		expect(find(tree.rows, "workspace:w1").actions).toEqual(["reveal"]);
 		expect(find(tree.rows, "agent:a1").actions).toEqual(["stop", "reveal"]);
 	});
 
@@ -198,10 +187,10 @@ describe("attributing processes", () => {
 	it("offers Kill on what a person started, and never on DevHub's core", () => {
 		const killable = (pid: number) =>
 			find(tree.rows, `pid:${String(pid)}`).actions.includes("kill");
-		for (const pid of [122, 123, 124, 201, 202, 210, 140]) {
+		for (const pid of [201, 202, 210, 140]) {
 			expect(killable(pid), String(pid)).toBe(true);
 		}
-		for (const pid of [100, 101, 110, 120, 121, 130, 131, 150, 200]) {
+		for (const pid of [100, 101, 110, 130, 131, 150, 200]) {
 			expect(killable(pid), String(pid)).toBe(false);
 		}
 	});
@@ -209,29 +198,24 @@ describe("attributing processes", () => {
 
 describe("adding it up", () => {
 	it("sums a subtree's memory, CPU and processes", () => {
-		const host = find(tree.rows, "pid:121");
-		expect(host.memoryBytes).toBe((420000 + 1900000 + 60000 + 380000) * KIB);
-		expect(host.cpuPercent).toBeCloseTo(6 + 48.5 + 0 + 3);
-		expect(host.processCount).toBe(4);
+		const cli = find(tree.rows, "pid:210");
+		expect(cli.memoryBytes).toBe((520000 + 80000) * KIB);
+		expect(cli.cpuPercent).toBeCloseTo(15 + 0.2);
+		expect(cli.processCount).toBe(2);
 	});
 
-	it("makes a Workspace's total its workbench, terminal and Agents", () => {
+	it("makes a Workspace's total its terminal and Agents", () => {
 		const workspace = find(tree.rows, "workspace:w1");
 		const kib =
-			650000 +
-			420000 +
-			1900000 +
-			60000 +
-			380000 +
-			4000 + // workbench
 			7000 +
-			140000 + // terminal
+			140000 +
+			4000 + // terminal
 			520000 +
 			80000 +
 			4000 +
 			6000; // Agent
 		expect(workspace.memoryBytes).toBe(kib * KIB);
-		expect(workspace.processCount).toBe(12);
+		expect(workspace.processCount).toBe(7);
 	});
 
 	it("counts every process DevHub has exactly once", () => {
@@ -277,55 +261,40 @@ describe("the text snapshot", () => {
 		);
 		expect(text).toContain("Footprint     In RAM     CPU Procs  Name\n");
 		expect(text).toContain("  widget ~/src/widget\n");
-		expect(text).toContain("VS Code (running)");
-		expect(text).toMatch(/ {6}rust-analyzer \[122\]\n/u);
-		// Heaviest first: the Workspace with rust-analyzer before DevHub.
-		expect(text.indexOf("widget")).toBeLessThan(text.indexOf("DevHub\n"));
+		expect(text).toMatch(/ {6}claude \[210\]\n/u);
+		// Heaviest first: DevHub's own processes before the Workspace.
+		expect(text.indexOf("DevHub\n")).toBeLessThan(text.indexOf("widget"));
 	});
 });
 
-describe("a GUI Agent, a file watcher, and what is not DevHub's cost", () => {
-	// The two-run fixture: 121 an extension host and 125 its window's file
-	// watcher; 140 a GUI Agent's journal stream (with its tail, watchdog and
+describe("a GUI Agent, and what is not DevHub's cost", () => {
+	// The two-run fixture: 140 a GUI Agent's journal stream (with its tail, watchdog and
 	// sleep) for the host 210 runs in the Agent's pane; 150 a zombie, 151 a
 	// `(vm_stat)` already ending, 152 this reading's own `ps`.
-	const twoRuns = parseProcessTables(
-		readFileSync(
-			new URL("./fixtures/ps-stat-darwin.txt", import.meta.url),
-			"utf8",
-		),
-		readFileSync(
-			new URL("./fixtures/ps-args-darwin.txt", import.meta.url),
-			"utf8",
+	const twoRuns = withoutWorkbench(
+		parseProcessTables(
+			readFileSync(
+				new URL("./fixtures/ps-stat-darwin.txt", import.meta.url),
+				"utf8",
+			),
+			readFileSync(
+				new URL("./fixtures/ps-args-darwin.txt", import.meta.url),
+				"utf8",
+			),
 		),
 	);
-	const utilities = utilitiesByWindow([
-		{ pid: 121, name: "extension-host [3]" },
-		{ pid: 125, name: "file-watcher [3]" },
-		{ pid: 126, name: "file-watcher [4]" },
-		{ pid: 130, name: "pty-host" },
-	]);
 	const gui = buildTaskTree({
 		takenAt: 0,
 		processes: twoRuns,
 		electron: [
 			{ pid: 100, type: "Browser" },
 			{ pid: 101, type: "GPU" },
-			{ pid: 120, type: "Tab" },
-			{ pid: 121, type: "Utility", name: "extension-host [3]" },
-			{ pid: 125, type: "Utility", name: "file-watcher [3]" },
 		],
 		pages: [],
 		workspaces: [
 			{
 				id: "w1",
 				label: "widget",
-				workbench: {
-					state: "running",
-					sleepable: false,
-					renderers: [120],
-					utilities: utilities.get(3) ?? [],
-				},
 				agents: [{ id: "a1", label: "Codex", detail: "codex · GUI" }],
 			},
 		],
@@ -346,30 +315,12 @@ describe("a GUI Agent, a file watcher, and what is not DevHub's cost", () => {
 		ignore: new Set([152]),
 		memory: new Map([
 			[
-				121,
+				212,
 				{ footprintBytes: 900 * 1024 ** 2, residentBytes: 100 * 1024 ** 2 },
 			],
-			[122, { footprintBytes: 1200 * 1024 ** 2, residentBytes: 5 * 1024 ** 2 }],
+			[213, { footprintBytes: 1200 * 1024 ** 2, residentBytes: 5 * 1024 ** 2 }],
 		]),
 		memoryMetric: "footprint",
-	});
-
-	it("finds each window's extension host and file watcher by window id", () => {
-		expect(utilities.get(3)).toEqual([
-			{ pid: 121, label: "Extension host" },
-			{ pid: 125, label: "File watcher" },
-		]);
-		expect(utilities.get(4)).toEqual([{ pid: 126, label: "File watcher" }]);
-	});
-
-	it("puts the file watcher with its workbench", () => {
-		expect(shape(find(gui.rows, "workbench:w1"))).toEqual({
-			"VS Code": [
-				"Renderer[120]",
-				{ "Extension host[121]": ["rust-analyzer[122]", "prettier[124]"] },
-				"File watcher[125]",
-			],
-		});
 	});
 
 	it("gives a GUI Agent the journal stream main follows it with", () => {
@@ -408,26 +359,26 @@ describe("a GUI Agent, a file watcher, and what is not DevHub's cost", () => {
 
 	it("counts the footprint where there is one, else the resident set", () => {
 		expect(gui.memoryMetric).toBe("footprint");
-		expect(find(gui.rows, "pid:122")).toMatchObject({
+		expect(find(gui.rows, "pid:213")).toMatchObject({
 			memoryBytes: 1200 * 1024 ** 2,
 			residentBytes: 5 * 1024 ** 2,
 		});
-		// No reading for 124: its resident set is both.
-		expect(find(gui.rows, "pid:124")).toMatchObject({
-			memoryBytes: 120000 * KIB,
-			residentBytes: 120000 * KIB,
+		// No reading for 214: its resident set is both.
+		expect(find(gui.rows, "pid:214")).toMatchObject({
+			memoryBytes: 50000 * KIB,
+			residentBytes: 50000 * KIB,
 		});
 		// Summed over the subtree, each figure on its own.
-		expect(find(gui.rows, "pid:121")).toMatchObject({
-			memoryBytes: (900 + 1200) * 1024 ** 2 + 120000 * KIB,
-			residentBytes: (100 + 5) * 1024 ** 2 + 120000 * KIB,
+		expect(find(gui.rows, "pid:212")).toMatchObject({
+			memoryBytes: (900 + 1200) * 1024 ** 2 + 50000 * KIB,
+			residentBytes: (100 + 5) * 1024 ** 2 + 50000 * KIB,
 		});
 		expect(tree.memoryMetric).toBe("rss");
 	});
 
-	it("says a VS Code utility's name as words", () => {
-		expect(utilityLabel("file-watcher [1000006]")).toBe("File watcher");
-		expect(utilityLabel("shared-process")).toBe("Shared process");
+	it("says a utility's name as words", () => {
+		expect(utilityLabel("pty-host [7]")).toBe("Terminal host (pty)");
+		expect(utilityLabel("agent-host")).toBe("Agent host");
 		expect(utilityLabel("some-new-thing")).toBe("Some new thing");
 		expect(utilityLabel("Network Service")).toBe("Network Service");
 	});

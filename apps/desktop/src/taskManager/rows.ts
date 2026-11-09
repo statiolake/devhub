@@ -42,7 +42,7 @@ export function sortRows(
 
 /**
  * Whether a row is open: what the person said, else what is worth seeing
- * first — a Workspace open down to its workbench's and Agents' processes,
+ * first — a Workspace open down to its terminal's and Agents' processes,
  * and DevHub's own, tmux and Other folded.
  */
 export function isOpen(
@@ -52,7 +52,6 @@ export function isOpen(
 ): boolean {
   const byDefault =
     row.kind === "workspace" ||
-    row.kind === "workbench" ||
     row.kind === "agent" ||
     (row.kind === "group" && depth === 1);
   return byDefault !== toggled.has(row.id);

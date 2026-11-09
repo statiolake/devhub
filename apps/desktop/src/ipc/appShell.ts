@@ -306,19 +306,9 @@ export type AppErrorCodeWire =
 	 * failure behind the same identity.
 	 */
 	| "file_not_found"
-	| "editor_provider_missing"
-	| "editor_port_unavailable"
 	| "editor_unavailable"
-	/** A workbench died unasked and DevHub is building it again. */
-	| "editor_restarting"
 	/** It kept dying, so DevHub stopped building it again. */
 	| "editor_restart_exhausted"
-	/**
-	 * `Cmd+Q Shift+E` did not stop the Workspace's VS Code: it is starting or
-	 * remote, DevHub needs it, it would lose unsaved editors (hot exit off),
-	 * or its unload was vetoed. The detail says which; it keeps running.
-	 */
-	| "editor_not_stopped"
 	/**
 	 * A theme `[appearance] theme` names is neither built in nor one of the
 	 * file's `[themes.*]` (`main/shell/shellTheme.ts`), or Theme: Preview…
@@ -396,16 +386,6 @@ export type AppErrorCodeWire =
 	 * something that may be days old is the person's decision, not DevHub's.
 	 */
 	| "git_fetch_failed"
-	/**
-	 * The workbench's own `User/settings.json` could not be parsed, so DevHub
-	 * did not touch it — and the settings it writes there are not in it.
-	 *
-	 * Its own code because it is the one failure whose consequence is a
-	 * *missing* feature rather than a failed action: everything still works
-	 * except the things that settings file was carrying, and the reader needs
-	 * to be told which ones and where to go and fix it.
-	 */
-	| "workbench_settings_unreadable"
 	/**
 	 * A workspace was closed while its machine was unreachable, so the sessions
 	 * on that machine are still running.
@@ -510,13 +490,9 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	native_unavailable: "The native app shell is unavailable.",
 	settings_refused: "DevHub could not use its settings file.",
 	file_not_found: "File not found.",
-	editor_provider_missing: "Visual Studio Code was not found.",
-	editor_port_unavailable: "The editor's port is already in use.",
 	editor_unavailable: "The editor could not start.",
-	editor_restarting: "The workbench stopped unexpectedly and is restarting.",
 	editor_restart_exhausted:
 		"The workbench kept stopping and will not be restarted again.",
-	editor_not_stopped: "The editor was not stopped.",
 	color_theme_unavailable:
 		"The colour theme named in DevHub's settings is not available, so DevHub's own theme is worn instead.",
 	agent_not_connected: "The agent surface is not connected.",
@@ -536,8 +512,6 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	github_unavailable: "DevHub could not get this from GitHub.",
 	agent_action_empty: "This agent action has nothing to send.",
 	git_fetch_failed: "The latest changes could not be fetched from the remote.",
-	workbench_settings_unreadable:
-		"The editor's settings file is not valid JSON.",
 	// It names no host, because the detail does: one workspace's close can
 	// leave things behind on exactly one machine, and which one is the fact
 	// worth carrying rather than repeating in two places.
@@ -923,13 +897,13 @@ export type SmartButtonsSpotWire =
 /**
  * The content area, for this selection.
  *
- * A workbench alone for a Workspace (Scratch is one); that workbench with an
- * Agent's pane beside it when an Agent is selected; nothing at all when the
+ * A Workspace's editor alone (Scratch is one); that editor with an Agent's
+ * pane beside it when an Agent is selected; nothing at all when the
  * Workspace cannot be shown, in which case the workspace's own `state` is
  * what says why.
  */
 export type LayoutWire =
-	| { readonly kind: "workbench"; readonly editorKey: string }
+	| { readonly kind: "editor"; readonly editorKey: string }
 	/** An Agent on its own, over the whole content area. */
 	| { readonly kind: "agent"; readonly agentKey: string }
 	| {

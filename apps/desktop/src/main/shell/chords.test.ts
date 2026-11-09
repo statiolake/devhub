@@ -114,7 +114,7 @@ function snapshotOf({
 	return {
 		editorHost: { status: "ready" },
 		layout: {
-			kind: "workbench",
+			kind: "editor",
 			editorKey: `workspace-editor:${SCRATCH_ID}`,
 		},
 		readiness: "ready",

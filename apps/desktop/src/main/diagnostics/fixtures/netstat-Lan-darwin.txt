@@ -1,8 +1,0 @@
-Current listen queue sizes (qlen/incqlen/maxqlen)
-Listen         Local Address         
-0/0/128        127.0.0.1.53117        
-2/0/128        127.0.0.1.49731        
-0/0/511        *.3000                 
-1/0/128        ::1.49731              
-0/0/128        fe80::1%lo0.631        
-0/0/4096       *.*                    

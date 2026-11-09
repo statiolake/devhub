@@ -12,14 +12,10 @@
  * Agent says it is doing — or its name, if somebody gave it one. `shellWindowTitle` in `ipc/windowTitles.ts` is that
  * rule; this file is where the facts it needs are collected.
  *
- * **The Editor's part comes from the workbench itself.** VS Code writes its
- * window title into its page's `document.title`
- * (`browser/parts/titlebar/windowTitle.ts`), which for a `WebContentsView`
- * reaches main as `page-title-updated` and reaches nothing else — a view has no
- * window of its own to rename. DevHub narrows what that string says by
- * contributing `window.title` as `${dirty}${activeEditorShort}` from the Bridge
- * extension, so the workbench reports the element and DevHub says the rest;
- * without that the Workspace's name would appear twice in one title.
+ * **The Editor's part comes from the Neovim on screen.** It is the name of
+ * the buffer the Workspace's shown Neovim has in front
+ * (`NeovimEditors.bufferName`), so the editor reports the element and DevHub
+ * says the rest.
  *
  * **The Agent's part comes from the reconciler.** It is the same word the
  * sidebar row shows, read once in `main/agent/activity.ts` and read from the
@@ -76,10 +72,7 @@ import type {
 export interface ShellTitleFacts {
 	readonly selection: NavigationSelection;
 	readonly workspaces: readonly WorkspaceSnapshot[];
-	/**
-	 * What the workbench on screen calls itself, already reduced to an element.
-	 * `editorElement` is what reduces it.
-	 */
+	/** The buffer the Neovim on screen has in front, if there is one. */
 	readonly editorElement: string | undefined;
 	/** The Orchestrator row's Workspace (`AppSnapshot.orchestratorWorkspaceId`). */
 	readonly orchestratorWorkspaceId?: string | undefined;
@@ -189,36 +182,11 @@ export function titleText(text: string, limit = TITLE_TEXT_LIMIT): string {
 }
 
 /**
- * The workbench's own title, as an element — or nothing, when it has none.
- *
- * With `window.title` contributed as `${dirty}${activeEditorShort}`, a
- * workbench with an editor open reports that editor and a workbench with none
- * reports an empty string. Upstream does not leave the empty string alone: it
- * substitutes the product's own long name, so that a window with nothing open
- * is still called something by the OS. That substitution is the one case here,
- * and the product name is passed in rather than spelled out — it is the same
- * value the workbench read out of the same `product.json`, so the two cannot
- * drift.
- *
- * A workbench naming the product is a workbench saying it has nothing to show,
- * and DevHub already has a name for the window; repeating the application's
- * name inside its own title would say nothing twice.
- */
-export function editorElement(
-	reported: string | undefined,
-	productName: string,
-): string | undefined {
-	const title = reported?.trim();
-	if (title === undefined || title === "") return undefined;
-	return title === productName.trim() ? undefined : title;
-}
-
-/**
  * The title's parts for one moment of the model.
  *
  * The selection decides which of the two elements is the one being looked at.
  * An Agent is selected *as an Agent* whether it takes the whole content area or
- * sits beside the workbench, so the split arrangement is not a third case: the
+ * sits beside the editor, so the split arrangement is not a third case: the
  * thing you selected is the thing you are working in.
  */
 export function shellTitleFor(facts: ShellTitleFacts): string {

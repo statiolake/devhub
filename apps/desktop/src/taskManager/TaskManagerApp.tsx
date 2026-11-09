@@ -1,17 +1,16 @@
 /**
- * The Task Manager: what each Workspace, workbench and Agent costs, now.
+ * The Task Manager: what each Workspace and Agent costs, now.
  *
  * One header and one table. The header is the machine — memory used of
  * total, broken down as Activity Monitor does (app, wired, compressed, cached
  * files, free), the pressure the kernel reports, swap — and DevHub's own
  * total. The table is DevHub's processes in the shape a person thinks in
- * (`diagnostics/taskTree.ts`): Workspaces with their workbench, terminal and
- * Agents, then DevHub itself, tmux, and Other. Each row has two memory
+ * (`diagnostics/taskTree.ts`): Workspaces with their terminal and Agents, then DevHub itself, tmux, and Other. Each row has two memory
  * figures: its footprint (what it costs wherever its pages are) and what of
  * that is in RAM. Every number is right-aligned in tabular figures, and a
  * short bar ahead of the footprint says the row's share of DevHub's total,
  * its in-RAM part solid and the rest (compressed, swapped) faint — so a
- * workbench whose pages went out keeps its length and loses its fill.
+ * row whose pages went out keeps its length and loses its fill.
  *
  * It refreshes about every two seconds while the window is visible and not at
  * all otherwise, one request at a time (`useSnapshots`). The keyboard walks the
@@ -292,11 +291,6 @@ function Row({
           </svg>
         </button>
         <span className="tm-label">{row.label}</span>
-        {row.state === undefined ? null : (
-          <span className="tm-state" data-state={row.state}>
-            {row.state}
-          </span>
-        )}
         {row.pid === undefined ? null : (
           <span className="tm-pid">{row.pid}</span>
         )}

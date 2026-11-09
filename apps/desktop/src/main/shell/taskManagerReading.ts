@@ -20,9 +20,8 @@
  * Every process those commands are while they run is left out
  * (`TaskTreeInput.ignore`): a reading is not DevHub's cost.
  *
- * Only this Mac's processes: a workbench on an ssh host or in a container
- * has its renderer here and everything else there, and only the renderer is
- * shown.
+ * Only this Mac's processes: what a Workspace on an ssh host runs there is
+ * not shown.
  */
 
 import { execFile } from "node:child_process";
@@ -43,7 +42,6 @@ import {
 	buildTaskTree,
 	type ElectronProcess,
 	type TaskWorkspace,
-	utilitiesByWindow,
 } from "../diagnostics/taskTree.js";
 import type { ProcessPanes } from "../terminal/tmux.js";
 import { nativeHelperPath } from "./appRoot.js";
@@ -128,13 +126,8 @@ async function readProcStatuses(
 }
 
 export interface TaskReadingSources {
-	/** The model's Workspaces, in the Sidebar's order, with view ids. */
-	workspaces(): readonly (Omit<TaskWorkspace, "workbench"> & {
-		readonly workbench?: Omit<
-			NonNullable<TaskWorkspace["workbench"]>,
-			"utilities"
-		> & { readonly viewId: number };
-	})[];
+	/** The model's Workspaces, in the Sidebar's order. */
+	workspaces(): readonly TaskWorkspace[];
 	/** DevHub's own pages, by renderer pid. */
 	pages(): readonly { readonly pid: number; readonly name: string }[];
 	/** This Mac's tmux, or nothing to say when it is not up. */
@@ -172,10 +165,6 @@ export async function takeTaskReading(
 			return NO_TMUX;
 		}),
 	]);
-	// A workbench's own utility processes (its extension host, its file
-	// watcher) were VS Code's to name; DevHub has no workbench any more
-	// (docs/without-vscode.md), so there are none to attribute.
-	const windowUtilities = utilitiesByWindow([]);
 	const electronProcesses: ElectronProcess[] = electron.app
 		.getAppMetrics()
 		.map((metric) => ({
@@ -214,19 +203,7 @@ export async function takeTaskReading(
 		ignore: spawned,
 		electron: electronProcesses,
 		pages: sources.pages(),
-		workspaces: sources.workspaces().map(({ workbench, ...workspace }) => ({
-			...workspace,
-			...(workbench === undefined
-				? {}
-				: {
-						workbench: {
-							state: workbench.state,
-							sleepable: workbench.sleepable,
-							renderers: workbench.renderers,
-							utilities: windowUtilities.get(workbench.viewId) ?? [],
-						},
-					}),
-		})),
+		workspaces: sources.workspaces(),
 		tmux,
 	});
 	return { ...tree, system };

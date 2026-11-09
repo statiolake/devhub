@@ -3,8 +3,8 @@
  *
  * The page asks for a snapshot while it is visible, about every two seconds,
  * and draws it; everything it can do to what it shows is one request here,
- * carried out by main through the same path the rest of DevHub uses (Sleep is
- * the workbench lifecycle's freeze, Stop is an Agent's stop). See
+ * carried out by main through the same path the rest of DevHub uses (Stop is
+ * an Agent's stop). See
  * `docs/task-manager.md`.
  */
 
@@ -20,20 +20,8 @@ export const TASK_MANAGER_CHANNELS = {
 	close: "devhub-task-manager:close",
 } as const;
 
-/** Where a Workspace's workbench is in its life, in the words a row shows. */
-export type WorkbenchStateWire =
-	| "running"
-	| "starting"
-	| "frozen"
-	| "discarding"
-	| "discarded"
-	| "not started"
-	| "restarting"
-	| "failed";
-
 export type TaskRowKind =
 	| "workspace"
-	| "workbench"
 	| "agent"
 	| "group"
 	| "process"
@@ -62,8 +50,6 @@ export interface TaskRowWire {
 	readonly residentBytes: number;
 	readonly cpuPercent: number;
 	readonly processCount: number;
-	/** A workbench row's state. */
-	readonly state?: WorkbenchStateWire;
 	readonly actions: readonly TaskActionWire[];
 	readonly workspaceId?: string;
 	readonly agentId?: string;

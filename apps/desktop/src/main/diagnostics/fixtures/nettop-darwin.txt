@@ -1,6 +1,0 @@
-time,,bytes_in,bytes_out,
-15:02:11.204188,launchd.1,0,0,
-15:02:11.204188,DevHub Helper (Plugin).121,182233,90211,
-15:02:11.204188,rust-analyzer.122,0,0,
-15:02:11.204188,DevHub Helper (Renderer).120,1024,2048,
-15:02:11.204188,Safari.300,99999999,1234567,

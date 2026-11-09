@@ -17,18 +17,10 @@
  *     frames of the caller, which is the one fact a log line written later
  *     in `before-quit` can no longer know.
  *   - SIGHUP is answered by DevHub, not Electron, and the answer is to stay
- *     up. DevHub is a GUI application; it has no terminal to hang up. What
- *     does send it SIGHUP is the kernel, by the POSIX orphaned-process-group
- *     rule: when DevHub's process group is left orphaned while one of its
- *     members is stopped — and a frozen workbench's renderer, extension hosts
- *     and language servers are stopped members of exactly that group — every
- *     member is sent SIGHUP and then SIGCONT. Electron took that SIGHUP as a
- *     request to quit. See `processGroupAnchor.ts` for keeping the group from
- *     being orphaned in the first place; this is the floor under it.
- *     Staying up does not save the rest of the group — the renderers, the GPU
- *     and network processes and the extension hosts end on that SIGHUP — but
- *     a main process that says what happened and rebuilds what it can is
- *     better than one that vanishes with status 0 and leaves no trace.
+ *     up. DevHub is a GUI application; it has no terminal to hang up, and
+ *     Electron takes a SIGHUP as a request to quit. A main process that says
+ *     what happened is better than one that vanishes with status 0 and
+ *     leaves no trace.
  *   - SIGINT and SIGTERM still quit — a `kill`, `launchctl`, a Ctrl-C on
  *     `dev.sh` mean it — but they say so first.
  */
@@ -64,19 +56,6 @@ export function callerOf(stack: string | undefined): string {
 }
 
 let installed = false;
-/** When the process last took a SIGHUP, if it ever did. */
-let lastHangUp: number | undefined;
-
-/**
- * When DevHub's main last took a SIGHUP, or undefined. One that came while
- * workbenches could be frozen means the process group was hung up despite
- * the anchor (`processGroupAnchor.ts`) — every renderer of the window went
- * with it — so the freezer asks this before it stops anything again.
- */
-export function hungUpAt(): number | undefined {
-	return lastHangUp;
-}
-
 /**
  * Wrap `app.quit` / `app.exit` and answer the shutdown signals. Once per
  * process: a second call is a no-op, so a module loaded twice does not log
@@ -109,11 +88,8 @@ export function installQuitTrace(
 		[
 			"SIGHUP",
 			() => {
-				lastHangUp = Date.now();
 				log(
-					"[devhub] SIGHUP received — ignored: DevHub has no terminal to hang up. " +
-						"If a workbench is frozen, this is the kernel's orphaned-process-group SIGHUP " +
-						"(see processGroupAnchor.ts), and every frozen workbench was just sent SIGCONT with it.",
+					"[devhub] SIGHUP received — ignored: DevHub has no terminal to hang up.",
 				);
 			},
 		],
@@ -147,5 +123,4 @@ export function installQuitTrace(
 /** For tests: forget that the trace was installed. */
 export function resetQuitTraceForTests(): void {
 	installed = false;
-	lastHangUp = undefined;
 }

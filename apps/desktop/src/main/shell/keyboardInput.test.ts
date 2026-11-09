@@ -52,7 +52,7 @@ const SNAPSHOT = {
 	revision: 1,
 	readiness: "ready",
 	editorHost: { status: "ready" },
-	layout: { kind: "workbench", editorKey: "workspace-editor:s-0" },
+	layout: { kind: "editor", editorKey: "workspace-editor:s-0" },
 	// On Scratch — today's daily folder, a workspace with nothing in it.
 	selection: {
 		context: { kind: "workspace", workspaceId: "s-0" },

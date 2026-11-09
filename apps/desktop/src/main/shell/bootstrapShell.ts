@@ -43,7 +43,6 @@ import {
 import { commandOf } from "./taskManagerReading.js";
 import { refreshMenu } from "./menu.js";
 import { startControlServer } from "../cli/controlServer.js";
-import { processGroupAnchor } from "./processGroupAnchor.js";
 import { controlSocketPath } from "../cli/protocol.js";
 import { activeProfile } from "../../model/profile.js";
 import {
@@ -59,9 +58,6 @@ import { answerFinderOpens, finderOpen } from "./openFromFinder.js";
 const SHUTDOWN_DEADLINE_MS = 3_000;
 
 export async function bootstrapShell(userDataPath: string): Promise<void> {
-	// First, so that it holds before the first background workbench is frozen:
-	// a freeze waits for it (`processGroupAnchor.ts`).
-	processGroupAnchor();
 	// The settings DevHub runs on, loaded before anything is made from them:
 	// the window is made with `appearance.title_bar` and in the colour theme
 	// they name, and everything after asks the same object

@@ -90,7 +90,7 @@ describe("layout resolution", () => {
   it("gives Scratch its own workbench, like any Workspace", () => {
     const model = scratchModel();
     expect(full(model, scratchOf(model))).toEqual({
-      kind: "workbench",
+      kind: "editor",
       editor: {
         kind: "workspace-editor",
         workspaceId: model.scratchWorkspaceId,
@@ -101,7 +101,7 @@ describe("layout resolution", () => {
   it("gives a Workspace its own workbench, alone", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     expect(full(model, { kind: "workspace", workspaceId: WS_A })).toEqual({
-      kind: "workbench",
+      kind: "editor",
       editor: { kind: "workspace-editor", workspaceId: WS_A },
     });
   });
@@ -118,7 +118,7 @@ describe("layout resolution", () => {
     // open shows its workbench. There is no third state to draw.
     model.markWorkspaceCloseFailed(WS_A, "terminal", "close_terminal_unknown");
     expect(full(model, context)).toEqual({
-      kind: "workbench",
+      kind: "editor",
       editor: { kind: "workspace-editor", workspaceId: WS_A },
     });
   });

@@ -82,12 +82,9 @@ const SNAPSHOT: TaskSnapshotWire = {
       workspaceId: "w1",
       actions: ["reveal"],
       children: [
-        row("workbench:w1", "VS Code", 2000, 50, {
-          kind: "workbench",
-          state: "running",
-          workspaceId: "w1",
-          actions: ["reveal"],
-          children: [ANALYZER, row("pid:120", "Renderer", 200, 2)],
+        row("terminal:w1", "Terminal", 2000, 50, {
+          kind: "group",
+          children: [ANALYZER, row("pid:120", "zsh", 200, 2)],
         }),
         row("agent:a1", "Fix the build", 200, 5, {
           kind: "agent",
@@ -158,9 +155,9 @@ describe("the table", () => {
       .map((one) => one.querySelector(".tm-label")?.textContent);
     expect(names).toEqual([
       "widget",
-      "VS Code",
+      "Terminal",
       "rust-analyzer",
-      "Renderer",
+      "zsh",
       "Fix the build",
       "DevHub",
     ]);
@@ -193,10 +190,10 @@ describe("the table", () => {
   });
 
   it("folds a row the person closed, and sorts by CPU when asked", () => {
-    const toggled = new Set(["workbench:w1"]);
+    const toggled = new Set(["terminal:w1"]);
     expect(
       visibleRows(SNAPSHOT.rows, "cpu", toggled).map((one) => one.row.label),
-    ).toEqual(["widget", "VS Code", "Fix the build", "DevHub"]);
+    ).toEqual(["widget", "Terminal", "Fix the build", "DevHub"]);
   });
 
   it("asks again while visible, one request at a time", async () => {

@@ -3,7 +3,7 @@
  *
  * Dense and calm: one row rhythm, numbers right-aligned in tabular figures
  * with their unit, and colour only where it means something — the pressure
- * level, a workbench's state, and the accent on the rows that weigh the most.
+ * level and the accent on the rows that weigh the most.
  * Every colour is a token (`tokens.css`), so the window wears the theme the
  * rest of DevHub wears, dark or light.
  */
@@ -396,40 +396,6 @@ body {
   flex: none;
 }
 
-.tm-state {
-  flex: none;
-  padding: 0 5px;
-  border-radius: var(--radius-pill);
-  background: var(--wash);
-  color: var(--secondary);
-  font-size: 10.5px;
-  line-height: 15px;
-}
-
-.tm-state[data-state="running"] {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--primary);
-}
-
-/* Frozen and discarded are quiet on purpose: costing nothing is the point. */
-.tm-state[data-state="frozen"],
-.tm-state[data-state="discarded"] {
-  background: var(--wash);
-  color: var(--secondary);
-}
-
-.tm-state[data-state="starting"],
-.tm-state[data-state="restarting"],
-.tm-state[data-state="discarding"] {
-  background: color-mix(in srgb, var(--waiting) 16%, transparent);
-  color: var(--primary);
-}
-
-.tm-state[data-state="failed"] {
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
-  color: var(--danger);
-}
-
 /* Quiet until reached: a row's actions show under the pointer or with the
    row selected, at the trailing edge of its name. */
 .tm-actions {
@@ -486,7 +452,7 @@ body {
 
 /* The row's share of DevHub's footprint: a short track ahead of its figure.
    The part in RAM is solid and the rest — compressed or swapped out — faint,
-   so a workbench whose pages went out keeps its length and loses its fill.
+   so a row whose pages went out keeps its length and loses its fill.
    The heaviest rows' are in the accent. */
 .tm-bar {
   display: flex;

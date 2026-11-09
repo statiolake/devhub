@@ -1,12 +1,4 @@
-/**
- * DevHub's items survive a menu bar it did not build.
- *
- * The workbench's own menubar service calls `setApplicationMenu` and replaces
- * the bar wholesale the moment the editor takes the keyboard. That is not a
- * thing DevHub can ask it to stop doing, and it is not a thing every future
- * caller will remember to account for — so the guarantee has to hold for a
- * menu built by somebody who has never heard of DevHub.
- */
+/** DevHub's menu bar: what is on it, and when it is built again. */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -61,7 +53,6 @@ class FakeMenu {
 		applied = menu;
 		installs += 1;
 	};
-	static getApplicationMenu = () => applied;
 }
 
 /** How many bars have been put up, by anybody. */
@@ -82,7 +73,6 @@ vi.mock("../electron.js", () => ({
 
 const { installMenu, refreshMenu } = await import("./menu.js");
 const { EDITING_COMMAND_GROUPS } = await import("./editingCommands.js");
-const { electron } = await import("../electron.js");
 
 let settingsOpened = 0;
 let devToolsOpened = 0;
@@ -120,28 +110,10 @@ beforeEach(() => {
 	installMenu(host());
 });
 
-describe("the permanent application-menu items", () => {
+describe("the application menu's Settings and Developer Tools", () => {
 	it("are on the bar DevHub builds itself", () => {
 		expect(appMenuLabels(applied)).toContain("Settings…");
 		expect(appMenuLabels(applied)).toContain("Developer Tools");
-	});
-
-	it("are added to a bar built by somebody else", () => {
-		// What the workbench's menubar service does: its own template, its own
-		// application menu, nothing of DevHub's in it.
-		electron.Menu.setApplicationMenu(
-			FakeMenu.buildFromTemplate([
-				{ label: "Code", submenu: [{ label: "About Code" }] as never },
-				{ label: "File", submenu: [] as never },
-			] as never) as never,
-		);
-
-		expect(appMenuLabels(applied)).toEqual([
-			"About Code",
-			undefined,
-			"Settings…",
-			"Developer Tools",
-		]);
 	});
 
 	it("reach the commands they name", () => {
@@ -149,28 +121,6 @@ describe("the permanent application-menu items", () => {
 		itemLabelled(applied, "Developer Tools")?.click?.();
 		expect(settingsOpened).toBe(1);
 		expect(devToolsOpened).toBe(1);
-	});
-
-	it("are not added twice to a menu that already carries them", () => {
-		const menu = FakeMenu.buildFromTemplate([
-			{ label: "Code", submenu: [{ label: "About Code" }] as never },
-		] as never);
-		electron.Menu.setApplicationMenu(menu as never);
-		// Electron re-sets the same menu often; a second pass must leave it as
-		// it is rather than growing a duplicate pair every time.
-		electron.Menu.setApplicationMenu(menu as never);
-
-		const settings = appMenuLabels(applied).filter(
-			(label) => label === "Settings…",
-		);
-		expect(settings).toHaveLength(1);
-	});
-
-	it("leaves a menu of nothing alone", () => {
-		// `setApplicationMenu(null)` clears the bar; there is no application
-		// menu to merge into, and inventing one would put a bar back.
-		electron.Menu.setApplicationMenu(null);
-		expect(applied).toBeNull();
 	});
 });
 
@@ -215,34 +165,6 @@ describe("the Edit menu", () => {
 	});
 });
 
-describe("an accelerator on a bar built by somebody else", () => {
-	it("runs its own item: the workbench's Quit on Command-Q quits", () => {
-		const ran: string[] = [];
-		const menu = FakeMenu.buildFromTemplate([
-			{
-				label: "Code",
-				submenu: [
-					{
-						label: "Quit",
-						accelerator: "Cmd+Q",
-						click: () => {
-							ran.push("Quit");
-						},
-					},
-				] as never,
-			},
-		] as never);
-		electron.Menu.setApplicationMenu(menu as never);
-		const quit = applied?.items[0]?.submenu?.items.find(
-			(item) => item.label === "Quit",
-		);
-		(quit?.click as ((event: unknown) => void) | undefined)?.({
-			triggeredByAccelerator: true,
-		});
-		expect(ran).toEqual(["Quit"]);
-	});
-});
-
 describe("refreshing the bar", () => {
 	it("leaves DevHub's own bar up when nothing it says has changed", () => {
 		const before = applied;
@@ -251,15 +173,5 @@ describe("refreshing the bar", () => {
 		refreshMenu();
 		expect(applied).toBe(before);
 		expect(installs).toBe(count);
-	});
-
-	it("puts DevHub's bar back once somebody else's replaced it", () => {
-		const theirs = FakeMenu.buildFromTemplate([
-			{ label: "Code", submenu: [{ label: "About Code" }] as never },
-		] as never);
-		electron.Menu.setApplicationMenu(theirs as never);
-		refreshMenu();
-		expect(applied).not.toBe(theirs);
-		expect(applied?.items.map((item) => item.label)).toContain("Edit");
 	});
 });
