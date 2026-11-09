@@ -131,8 +131,18 @@ What will appear later has its room already, at its final size:
 - **A row's parts are there from the row's first frame.** An answer's
   Copy row is drawn with its first block of text, empty or not.
 - **Images have a size before they are decoded.** A thumbnail is a fixed
-  tile with the picture scaled down inside it; a picture whose size is
-  known is given `width` and `height`.
+  tile with the picture scaled down inside it. Every other picture is drawn
+  by `Picture.tsx`: one drawn from its own bytes has its size read off its
+  header (`imageSize.ts`: PNG, GIF, JPEG, WebP, BMP, SVG) and is given
+  `width` and `height`; one whose size is not known yet — a file an answer
+  embeds while it is read, a picture in a line or a table cell, a Markdown
+  image from the web — is a box of a fixed shape (4:3, the shape most
+  charts a script draws have) from its first frame, with the picture
+  scaled down into it. Its one rule: a picture taller than the box deepens
+  it, once, at its foot, to at most a square; nothing else ever changes it,
+  and a decode changes nothing. Measured with an answer embedding a 4:3
+  PNG and a portrait screenshot in a table: what followed them jumped 488
+  and 706px in one frame before; after, nothing below them moves.
 - **Skippable content is born visible.** `content-visibility: auto` lays a
   new element out at its placeholder size (`contain-intrinsic-size`) for a
   frame; the last chunk and the transcript's last lines are never skipped.
@@ -179,6 +189,14 @@ because a followed transcript moves by every pixel of it.
 - `apps/desktop/src/shell/glide.test.tsx`: a glide starts where the
   element was and ends on its place; what is new rises; Reduce Motion moves
   nothing.
+- `apps/desktop/src/shell/conversation/picture.test.tsx`: a picture's size
+  is read off its header; a picture whose size is known has it on the
+  element, and one whose size is not is a box of the same shape before and
+  after it arrives, deepened only by a taller picture.
+- `apps/desktop/src/main/shell/shellWindow.test.ts` and
+  `windowLayout.test.ts`: a view moved and resized by a change of
+  arrangement waits off the window at its new size until its page has
+  drawn, then lands at that size; a drag is followed at once.
 - `apps/desktop/src/shell/conversation/stability.test.tsx`: the "sending"
   bubble has its echo's structure (so its height), an answer's Copy row is
   there from its first block, the activity line's room is kept, and Copy
@@ -192,8 +210,5 @@ above the end moving after it has landed.
 
 ## Known, not yet fixed
 
-- **Images of unknown size outside thumbnails** (a Markdown image, a file
-  embed, a raster preview) are inserted before they are decoded; they
-  should be decoded first and inserted with their size.
 - **An escalation's composer** grows by its options' row when a question
   with options arrives, lifting its top edge in one frame.

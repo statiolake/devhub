@@ -39,6 +39,7 @@ import {
 import { imageUrl } from "./EntryParts";
 import { FencePreview } from "./Preview";
 import { Lightbox, LightboxPicture, opensLightbox } from "./Lightbox";
+import { Picture } from "./Picture";
 import {
   extensionOf,
   previewKindOfFile,
@@ -101,6 +102,11 @@ function Note({ children }: { readonly children: ReactNode }) {
       {children}
     </p>
   );
+}
+
+/** The header a file being read has: its name, which opens nothing yet. */
+function readingSource(path: string): EmbedSource {
+  return { shown: path, absolute: path, open: () => undefined };
 }
 
 /** Whether `element` is on screen, and the page shown. */
@@ -251,7 +257,25 @@ export const FileEmbed = memo(function FileEmbed({
       </Note>
     );
   } else if (state.kind === "reading") {
-    body = <div className="conversation-embed-reading" aria-busy="true" />;
+    // A picture's figure is drawn while its file is read, its picture's box
+    // already in place (`RasterPreview`), so its bytes arriving fill it
+    // rather than push everything under it down.
+    const [picture] = previewKindsOfPath(path).filter((k) => k.binary === true);
+    body =
+      picture === undefined ? (
+        <div className="conversation-embed-reading" aria-busy="true" />
+      ) : (
+        <EmbedSourceContext.Provider value={readingSource(path)}>
+          <FencePreview
+            key={picture.id}
+            kind={picture}
+            code=""
+            info={alt || path}
+            depth={depth}
+            renderMarkdown={renderMarkdown}
+          />
+        </EmbedSourceContext.Provider>
+      );
   } else if (state.kind === "missing") {
     body = (
       <Note>
@@ -318,8 +342,9 @@ export function isInlinePicture(path: string): boolean {
 /**
  * A local picture inside a line of text or a table cell — a screenshot in a
  * comparison table — drawn in place from its bytes (read as an embed is:
- * `resolvePaths`, `readEmbedFile`), at most the cell's width and a modest
- * height, its aspect kept; a click opens it large. What is not a picture,
+ * `resolvePaths`, `readEmbedFile`), in a box at most the cell's width and a
+ * modest height, there before the file is read, its aspect kept; a click
+ * opens it large. What is not a picture,
  * or not there, is `fallback`: a link to the file, as before.
  */
 export const InlineImage = memo(function InlineImage({
@@ -366,25 +391,21 @@ export const InlineImage = memo(function InlineImage({
   }, [picture, cwd, path, resolvePaths, readEmbedFile]);
   if (url === null) return <>{fallback}</>;
   const label = alt || path;
-  if (url === undefined)
-    return (
-      <span className="conversation-inline-image is-reading" aria-busy="true">
-        {label}
-      </span>
-    );
+  // Its box is there while the file is read, and the picture is drawn in
+  // it: a box of a fixed shape the picture can only deepen (`Picture.tsx`).
   return (
     <>
-      <img
+      <Picture
         className="conversation-inline-image"
         src={url}
         alt={label}
         title={path}
-        draggable={false}
+        boxed
         onClick={(event) => {
-          if (opensLightbox(event)) setEnlarged(true);
+          if (url !== undefined && opensLightbox(event)) setEnlarged(true);
         }}
       />
-      {enlarged ? (
+      {enlarged && url !== undefined ? (
         <Lightbox label={label} onClose={() => setEnlarged(false)}>
           <LightboxPicture src={url} alt={label} />
         </Lightbox>

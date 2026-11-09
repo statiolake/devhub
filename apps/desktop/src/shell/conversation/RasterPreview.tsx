@@ -1,7 +1,9 @@
 /**
  * A picture file an answer embeds — a PNG a script wrote, a photo — drawn as
- * the image it is, from its own bytes (a `data:` URL), at its own size and
- * never wider than the column. The copy puts it on the clipboard as a PNG
+ * the image it is, from its own bytes (a `data:` URL), at its own size or
+ * smaller, in a box of a fixed shape that is there while the file is still
+ * being read (`code` empty) and that the picture's arrival only deepens
+ * (`Picture.tsx`): nothing under it moves when the bytes arrive or decode. The copy puts it on the clipboard as a PNG
  * (as it is, or redrawn as one); a right-click offers the same.
  */
 
@@ -11,6 +13,7 @@ import { useConversationActions } from "./ConversationContext";
 import { CopyButton } from "./CopyButton";
 import type { PreviewProps } from "./Preview";
 import { headerLanguage, PreviewFigure } from "./PreviewFigure";
+import { Picture } from "./Picture";
 
 export const IMAGE_MENU = [{ id: "copy-image", label: "Copy Image" }] as const;
 
@@ -41,7 +44,10 @@ export const RasterPreview = memo(function RasterPreview({
   info,
 }: PreviewProps) {
   const { writeClipboardImage } = useConversationActions();
-  const copy = async () => writeClipboardImage(await pngOf(url));
+  const reading = url === "";
+  const copy = async () => {
+    if (!reading) await writeClipboardImage(await pngOf(url));
+  };
   const [enlarged, setEnlarged] = useState(false);
   const alt = info ?? "Image";
   return (
@@ -51,16 +57,18 @@ export const RasterPreview = memo(function RasterPreview({
       actions={null}
       copy={<CopyButton copy={copy} label="Copy image" />}
       menu={[{ ...IMAGE_MENU[0], run: copy }]}
-      enlarge={() => setEnlarged(true)}
+      enlarge={() => {
+        if (!reading) setEnlarged(true);
+      }}
     >
       <div
         className="conversation-diagram-picture"
         data-enlarge
         onClick={(event) => {
-          if (opensLightbox(event)) setEnlarged(true);
+          if (!reading && opensLightbox(event)) setEnlarged(true);
         }}
       >
-        <img src={url} alt={alt} draggable={false} />
+        <Picture src={reading ? undefined : url} alt={alt} boxed />
       </div>
       {enlarged ? (
         <Lightbox label={alt} onClose={() => setEnlarged(false)}>

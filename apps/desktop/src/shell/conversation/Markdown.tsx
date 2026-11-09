@@ -43,6 +43,7 @@ import { fileNotFoundError } from "../failure";
 import { CodeBlock } from "./CodeBlock";
 import { FencePreview } from "./Preview";
 import { FileEmbed, InlineImage, isLocalSource } from "./FileEmbed";
+import { Picture } from "./Picture";
 import { previewKindOfFence } from "./previewKinds";
 import { useAgentCwd, useConversationActions } from "./ConversationContext";
 import { settledLength } from "./markdownBlocks";
@@ -271,7 +272,11 @@ function componentsFor(settled: boolean, depth: number): Components {
         if (!settled || path === undefined) return link;
         return <InlineImage path={path} alt={alt ?? ""} fallback={link} />;
       }
-      return <img src={src} alt={alt} />;
+      // A picture from the web: its size is not known until it has loaded,
+      // so it is drawn in a box of a fixed shape (`Picture.tsx`).
+      return typeof src === "string" ? (
+        <Picture src={src} alt={alt ?? ""} boxed />
+      ) : null;
     },
     a({ href, children }) {
       // A place inside DevHub (`model/devhubLink.ts`): a chip that goes

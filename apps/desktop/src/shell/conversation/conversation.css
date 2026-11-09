@@ -1137,6 +1137,35 @@
   overflow-x: auto;
 }
 
+/* A picture whose room is taken before it is decoded (`Picture.tsx`): its
+   size known, at that size (its width and height are on the element, so
+   its box is there from the first frame), never wider than the column;
+   its size unknown, a box of a fixed shape (4:3, the shape of most charts a script draws; deepened only, at its
+   foot, by a taller picture) with the picture scaled down into it, never
+   enlarged. */
+.conversation-picture {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.conversation-picture-box {
+  display: block;
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+span.conversation-picture-box > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: scale-down;
+}
+
 /* At its own size, and never wider than the column. */
 .conversation-diagram-picture img {
   display: block;
@@ -4202,28 +4231,24 @@ button.conversation-setting-face:focus-visible {
 /* A local picture inside a line or a table cell (`InlineImage`): at most the
    cell's width and a modest height, its aspect kept; a click opens it large. */
 .conversation-inline-image {
+  --picture-cap: 320px;
   display: inline-block;
+  width: calc(var(--picture-cap) * 1.6);
   max-width: 100%;
-  max-height: 320px;
-  height: auto;
+  max-height: var(--picture-cap);
   vertical-align: middle;
   border-radius: 4px;
   box-shadow: 0 0 0 1px var(--line-soft);
   cursor: zoom-in;
 }
 
-.conversation-inline-image.is-reading {
-  min-width: 48px;
-  min-height: 1.4em;
-  padding: 0 4px;
+.conversation-inline-image[aria-busy="true"] {
   background: var(--wash);
   box-shadow: none;
-  color: var(--tertiary);
   cursor: auto;
-  font-size: 0.9em;
 }
 
 td .conversation-inline-image,
 th .conversation-inline-image {
-  max-height: 240px;
+  --picture-cap: 240px;
 }

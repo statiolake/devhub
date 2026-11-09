@@ -12,6 +12,7 @@ import type {
 } from "../../model/conversation";
 import { useAgentCwd } from "./ConversationContext";
 import { LinkedText } from "./LinkedText";
+import { Picture } from "./Picture";
 import { PathLink } from "./pathLinks";
 
 export function JsonView({ value }: { readonly value: JsonValue }) {
@@ -172,7 +173,12 @@ export function ImageView({ image }: { readonly image: ImageRef }) {
       <summary>
         <img src={url} alt={image.label} />
       </summary>
-      <img className="conversation-image-whole" src={url} alt={image.label} />
+      <Picture
+        className="conversation-image-whole"
+        src={url}
+        alt={image.label}
+        boxed={false}
+      />
     </details>
   );
 }

@@ -168,7 +168,11 @@ describe("a file an answer embeds", () => {
       filesAt({ "/w/out/plot.png": file(new Uint8Array([137, 80, 78, 71])) }),
     );
     const image = await screen.findByRole("img", { name: "the plot" });
-    expect(image).toHaveClass("conversation-inline-image");
+    // In its box, which was there while the file was read.
+    expect(image.parentElement).toHaveClass(
+      "conversation-inline-image",
+      "conversation-picture-box",
+    );
     expect(image.getAttribute("src")).toMatch(/^data:image\/png;base64,/u);
   });
 
