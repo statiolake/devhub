@@ -9,22 +9,37 @@
 
 import type { ReactNode } from "react";
 
-/** What is being asked, and why: one band, the title over its sentence. */
+/**
+ * What is being asked, and why: one band, the title over its sentence. On
+ * a grid of cells (`row`: tmux's chooser) the band is a title band as every
+ * floating surface's is (docs/neovim-editor.md, "Floating surfaces"): one
+ * row tall, the title and its sentence on that one line in the bands' type
+ * (`--float-header-*`), so the band keeps room above and below its text
+ * instead of two lines squeezed into two rows.
+ */
 export function PickerHeader({
   title,
   question,
   step,
   headingId,
   questionId,
+  row,
 }: {
   readonly title: string;
   readonly question: ReactNode;
   readonly step?: number;
   readonly headingId?: string;
   readonly questionId?: string;
+  /** A row's height in pixels: the header is one such row, a band. */
+  readonly row?: number;
 }) {
   return (
-    <header className="picker-header">
+    <header
+      className={
+        row === undefined ? "picker-header" : "picker-header picker-band"
+      }
+      style={row === undefined ? undefined : { height: `${String(row)}px` }}
+    >
       <div className="picker-heading">
         <h2 className="picker-title" id={headingId}>
           {title}

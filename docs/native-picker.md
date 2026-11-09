@@ -78,8 +78,10 @@ the drawing changed: `ChooserSheet.tsx` draws the rows the pty host sends
 with the quick pick's parts (header band, search field showing the filter,
 rows with the disclosure, "current" as the accessory), in the place tmux's
 box gives it. The chosen pane is still the painter's grid; the pty host
-puts it `CHOOSER_HEAD_ROWS` (4) under the box's top so the header and the
-field have whole rows. No key and no command changed.
+puts it `CHOOSER_HEAD_ROWS` (3) under the box's top so the header and the
+field have whole rows: the header a title band one row tall, the title and
+its sentence on one line in the bands' type (`PickerHeader`'s `row`, as every
+floating surface's title band is), the field two. No key and no command changed.
 
 It is mounted in the terminal page, not on the modal layer, because the
 preview is a live grid the terminal's painter draws and the keys are routed

@@ -806,8 +806,8 @@ leaves out any empty item.
 **`choose-tree`, `find-window` and `display-panes` are DevHub's**
 (`main/ptyHost/control/chooser.ts`). The picker is drawn in DevHub's quick
 pick's look (`ChooserSheet.tsx`, the parts `Picker` is drawn from;
-`docs/native-picker.md`): its header band and search field over the top
-four rows (`CHOOSER_HEAD_ROWS`), the filter typed shown in the field, the tree on the left
+`docs/native-picker.md`): its header band (one row, a title band) and
+search field (two) over the top three rows (`CHOOSER_HEAD_ROWS`), the filter typed shown in the field, the tree on the left
 (sessions, windows and panes as `list-sessions`/`list-windows -a`/`list-panes
 -a` give them, each line in tmux's choose-tree format, `-f` applied by tmux
 to the panes, `-s`/`-w` collapsing as tmux does, the client's own session

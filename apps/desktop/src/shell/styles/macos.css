@@ -678,6 +678,40 @@
   color: var(--secondary);
 }
 
+/* On a grid of cells (tmux's chooser): a title band, one row tall, as a
+   floating surface's title is (tokens.css, "header"): the title and its
+   sentence on the one line, in the bands' type, the sentence quieter and
+   the first to give way. */
+.picker-header.picker-band {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  box-sizing: border-box;
+  padding-block: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--float-header-font-size);
+}
+
+.picker-band .picker-heading {
+  flex: none;
+  max-width: 60%;
+}
+
+.picker-band .picker-title {
+  font-size: var(--float-header-font-size);
+  font-weight: var(--float-header-font-weight);
+}
+
+.picker-band .picker-question {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--float-header-font-size);
+  text-overflow: ellipsis;
+  color: var(--tertiary);
+}
+
 .picker-search {
   display: flex;
   align-items: center;

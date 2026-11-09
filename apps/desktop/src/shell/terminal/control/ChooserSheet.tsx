@@ -68,6 +68,7 @@ export function ChooserSheet({
         style={{ height: `${String(head)}px` }}
       >
         <PickerHeader
+          row={cell.height}
           title="Choose a session, window or pane"
           question="Return switches to it · → opens · ← closes · Ctrl-X kills · Escape cancels"
         />
