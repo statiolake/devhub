@@ -36,7 +36,22 @@ const BUNDLED_TMUX = fileURLToPath(
   new URL("../out/tmux/bin/tmux", import.meta.url),
 );
 
+/**
+ * The bundled tmux, or nothing in a checkout that has not built it, where the
+ * tests that need one skip. Except on CI (`CI` set, as `scripts/test-local.sh`
+ * sets it too), where that fails, as a missing bundled Neovim does
+ * (`src/main/editor/testNeovim.ts`): a runner without it skipped every
+ * real-tmux test and was green.
+ */
 export const TMUX = existsSync(BUNDLED_TMUX) ? BUNDLED_TMUX : undefined;
+
+function checkTmuxForCi(): void {
+  if (TMUX === undefined && (process.env.CI ?? "") !== "") {
+    throw new Error(
+      `CI is set and there is no bundled tmux at ${BUNDLED_TMUX} for the real-tmux tests: \`pnpm --filter @devhub/desktop build:tmux\` builds it (\`test\` runs it first).`,
+    );
+  }
+}
 
 /**
  * The directory tmux actually puts the sockets in, under `TMUX_TMPDIR`.
@@ -84,6 +99,7 @@ export function killTmuxServer(socket: string): void {
 
 /** Vitest's global setup: give this run its own socket directory. */
 export function setup(): void {
+  checkTmuxForCi();
   // A socket directory, because tmux puts `tmux-<uid>/<name>` underneath it
   // and the whole path has to fit in a socket address.
   process.env.TMUX_TMPDIR = makeSocketDir("tmux");

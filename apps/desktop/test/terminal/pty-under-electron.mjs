@@ -59,6 +59,13 @@ const SCRATCH_ROOT = fileURLToPath(
 const TMUX = [
   fileURLToPath(new URL("../../out/tmux/bin/tmux", import.meta.url)),
 ].find((path) => existsSync(path));
+// On CI (`CI` set, as scripts/test-local.sh sets it too) a missing one fails,
+// as in test/tmuxSockets.ts, rather than skipping the tmux tests.
+if (TMUX === undefined && (process.env.CI ?? "") !== "") {
+  throw new Error(
+    "CI is set and there is no bundled tmux at out/tmux/bin/tmux for the PTY tests: `pnpm --filter @devhub/desktop build:tmux` builds it",
+  );
+}
 
 function scratchDirectory(label) {
   mkdirSync(SCRATCH_ROOT, { recursive: true });
