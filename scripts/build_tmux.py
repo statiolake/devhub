@@ -335,8 +335,38 @@ def unpack(archive: Path, into: Path) -> Path:
 	"""Unpack one upstream archive and return its single directory."""
 	into.mkdir(parents=True, exist_ok=True)
 	with tarfile.open(archive) as tar:
-		tar.extractall(into, filter="data")
+		safe_extractall(tar, into)
 	return into / archive.name.removesuffix(".tar.gz")
+
+
+def safe_extractall(tar: tarfile.TarFile, into: Path) -> None:
+	"""Extract `tar` into `into`, refusing anything that would land outside it.
+
+	Python's `filter="data"` does this, but only from 3.12 (and some 3.8-3.11
+	patch releases); macOS's own `/usr/bin/python3` (3.9) lacks it, and that
+	is the python a Mac build finds. Where it exists it is used; elsewhere the
+	same checks are made here: no absolute or `..` paths, no device files, and
+	no link pointing outside the tree.
+	"""
+	if hasattr(tarfile, "data_filter"):
+		tar.extractall(into, filter="data")
+		return
+	root = into.resolve()
+
+	def inside(path: Path) -> bool:
+		return path == root or root in path.parents
+
+	for member in tar.getmembers():
+		target = (root / member.name).resolve()
+		if Path(member.name).is_absolute() or not inside(target):
+			raise RuntimeError(f"archive member escapes the tree: {member.name}")
+		if member.isdev() or member.isfifo():
+			raise RuntimeError(f"archive member is a device or fifo: {member.name}")
+		if member.issym() or member.islnk():
+			base = target.parent if member.issym() else root
+			if Path(member.linkname).is_absolute() or not inside((base / member.linkname).resolve()):
+				raise RuntimeError(f"archive link escapes the tree: {member.name} -> {member.linkname}")
+	tar.extractall(into)
 
 
 def run(command: list[str], cwd: Path, env: dict[str, str]) -> None:
