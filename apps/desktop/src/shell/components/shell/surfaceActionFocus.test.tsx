@@ -7,10 +7,9 @@
  * area, and so the one state in which the keyboard has somewhere in the page
  * to be. It had nowhere: `focusMainSurface` finds no Agent pane here and blurs
  * to `body`, from which Tab walks the whole Sidebar before it reaches the
- * button the pane exists to offer. A workbench dialog already focuses its
- * default button (`ViewScopedAlert`); this is the same gesture for the panes
- * that were left out of it — Unavailable, close-failed, and the whole-app
- * error Surface.
+ * button the pane exists to offer. So the panes that ask — Unavailable,
+ * close-failed, and the whole-app error Surface — focus their primary
+ * action.
  */
 
 import "@testing-library/jest-dom/vitest";

@@ -70,12 +70,9 @@
  * something live. So the escape hatch is a pinned row, and the footer has no
  * slot for a caller to put a mouse-only answer in again.
  *
- * The other two things not drawn by this control are not questions at all, and
- * so are not exceptions to a rule about questions: `ChordHelpSheet` is a
- * reference one reads and closes, and `ViewScopedAlert` is a workbench's own
- * dialog — VS Code's question about VS Code's unsaved editors, drawn inside
- * that workbench's rectangle because it is about one editor rather than about
- * DevHub, with the buttons and the default the workbench itself asked for.
+ * The other thing not drawn by this control is not a question at all, and so
+ * is not an exception to a rule about questions: `ChordHelpSheet` is a
+ * reference one reads and closes.
  */
 
 import {

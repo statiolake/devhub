@@ -89,11 +89,8 @@ function placementFor(tooltip: InstanceType<typeof TooltipView>): LayoutChild {
 			surface: { kind: "none" },
 			keyboard: "agents",
 		},
-		editors: [],
-		asking: undefined,
-		attached: [],
 		toasts: undefined,
-		picker: "none",
+		picker: false,
 		tooltip: tooltip.placement(),
 	});
 	const child = children.find((each) => each.identity.kind === "tooltip");

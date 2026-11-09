@@ -60,7 +60,7 @@ const RECT = { x: 0, y: 0, width: 100, height: 100 };
 
 /** What the window's layout does: over the window while anything is open. */
 function layout(modals: InstanceType<typeof PickerView>): void {
-	modals.place(RECT, modals.scope() !== "none", "rgba(0, 0, 0, 0.16)");
+	modals.place(RECT, modals.isAsking(), "rgba(0, 0, 0, 0.16)");
 }
 
 describe("the keyboard while a sheet stands", () => {

@@ -1827,17 +1827,3 @@ export function rewindTargets(transcript: Transcript): ReadonlySet<EntryId> {
 }
 
 const NO_TARGETS: ReadonlySet<EntryId> = new Set();
-
-/**
- * `insertion` after what is already in the composer, on a paragraph of its
- * own; alone when the composer is empty.
- */
-export function appendToDraft(draft: string, insertion: string): string {
-  if (draft.trim() === "") return insertion;
-  const separator = draft.endsWith("\n\n")
-    ? ""
-    : draft.endsWith("\n")
-      ? "\n"
-      : "\n\n";
-  return `${draft}${separator}${insertion}`;
-}

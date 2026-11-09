@@ -159,14 +159,12 @@ import {
 } from "./agentFailure.js";
 import {
 	AppModel,
-	type AgentSnapshot,
 	type NavigationSelection,
 } from "../../model/appModel.js";
 import { activeProfile } from "../../model/profile.js";
 import {
 	customThemesOf,
 	themeSelectionOf,
-	profilePresentation,
 	type Config,
 } from "../../model/config.js";
 import {
@@ -528,7 +526,6 @@ import {
 	InputSourceHelper,
 	inputSourceHelperPath,
 } from "./inputSourceHelper.js";
-import type { Landing } from "./chords.js";
 import { ManagedNeovims, socketDirectoryFor } from "../editor/managedNeovim.js";
 import { NeovimEditors } from "../editor/neovimEditors.js";
 import {
@@ -560,13 +557,6 @@ import {
 	type CommandId,
 	type CommandNeeds,
 } from "../../model/commands.js";
-import {
-	SEND_TO_AGENT_CHANNEL,
-	SendRefused,
-	SendToAgent,
-	type SendTargetAgent,
-} from "./sendToAgent.js";
-import type { ConversationIpc } from "./conversationIpc.js";
 import {
 	openSettingsWindow,
 	publishSettingsSnapshot,
@@ -811,65 +801,6 @@ export class AppController {
 	 * the pages over ports. `DEVHUB_NEOVIM_IN_MAIN=1` runs them in main.
 	 */
 	private neovimHost: NeovimHostClient | undefined;
-	/** The Agents page's conversations, once registered: where words for a composer go. */
-	private conversationIpc: ConversationIpc | undefined;
-	/** "Send to Agent…" from the editors. See `sendToAgent.ts`. */
-	private readonly sendToAgent = new SendToAgent({
-		workspaceOf: (sender) => this.sendTargetWorkspace(sender),
-		profiles: () => {
-			const config = this.config;
-			return config.agentProfiles.map((profile) => ({
-				id: profile.id,
-				displayName: profile.display_name,
-				presentation: profilePresentation(profile, config.agents),
-			}));
-		},
-		choose: (rows) =>
-			shellWindow().picker.choose({ kind: "send-to-agent", rows }),
-		show: async (agentId) => {
-			await this.dispatchAwaiting(
-				intentFromWire({
-					type: "select_context",
-					context: { kind: "agent", agentId },
-					split: true,
-				}),
-			);
-			// The keyboard into the Agent's half, as a chord's move puts it.
-			this.placeKeyboardOnSurface();
-			this.bringToFront();
-		},
-		create: async (workspaceId, profileId) => {
-			const before = this.modelAgentIds();
-			await this.dispatchAwaiting({
-				type: "create_agent",
-				workspaceId,
-				profileId: agentProfileId(profileId),
-				// Beside the editor it was sent from: the split.
-				presentation: "beside",
-			});
-			this.placeKeyboardOnSurface();
-			this.bringToFront();
-			const created = this.coordinator.model
-				.workspace(workspaceId)
-				?.agents.map((agent) => agent.id)
-				.find((id) => !before.has(id));
-			if (created === undefined)
-				throw new SendRefused("DevHub did not start the Agent.");
-			return created;
-		},
-		agent: (agentId) => this.sendTargetAgent(agentId),
-		insertDraft: (agentId, text) => {
-			if (this.conversationIpc === undefined)
-				throw new SendRefused("DevHub's Agents are not running yet.");
-			this.conversationIpc.insert(agentId, text);
-		},
-		paste: async (agentId, text) => {
-			if (this.agentWiring === undefined)
-				throw new SendRefused("DevHub's Agents are not running yet.");
-			await this.agentWiring.pasteToTerminal(agentId, text);
-		},
-		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-	});
 	/** Each GUI Agent's unsent draft, beside `state.json`. See `drafts.ts`. */
 	private readonly drafts: AgentDrafts;
 	/** What each Agent's automatic actions have already sent. See `runAutomaticActions`. */
@@ -1049,12 +980,6 @@ export class AppController {
 		this.coordinator = new AppCoordinator(model, (snapshot) =>
 			drawnWorkspaceOrder(snapshot, this.repositoryOf),
 		);
-		// The window's name is a function of the model and of what the
-		// workbench on screen calls itself. The model half is pushed from
-		// `projectionChanged`; this is the other half arriving on its own.
-		shellWindow().onTitleChanged(() => {
-			this.refreshWindowTitle();
-		});
 		// The window's size is the one input to the rectangles that is not
 		// the model's, and a resize is no projection: said only from one,
 		// they stayed where they were until the model next moved, and the
@@ -1358,7 +1283,7 @@ export class AppController {
 				ask: () => electron.systemPreferences.askForMediaAccess("microphone"),
 			},
 		});
-		this.conversationIpc = registerConversationIpc({
+		registerConversationIpc({
 			ipcMain: electron.ipcMain,
 			// `/resume` gives an Agent with no name of its own the name the
 			// session it goes on with was given.
@@ -1742,9 +1667,6 @@ export class AppController {
 		installMenu({
 			snapshot: () => this.snapshot(),
 			focusedWindow: () => (settingsWindowIsFocused() ? "settings" : "shell"),
-			toggleIntegratedTerminal: () => {
-				this.toggleIntegratedTerminal();
-			},
 			// The menu item is the same command as the chord and the sidebar's
 			// button, so it is the same line. It used to go straight to
 			// `requestCloseWorkspace`, around the worktree rule — so File ▸ Close
@@ -1878,17 +1800,13 @@ export class AppController {
 		};
 		const chordHost: ChordHost = {
 			snapshot: () => this.chordSnapshot(),
-			selectContext: (context, presentation, focus) => {
-				// Going somewhere shows it: a frozen workbench is thawed, one not
-				// started or discarded shows its placeholder until somebody asks
-				// (`workbenchPlan.ts`).
+			selectContext: (context, presentation) => {
 				this.arrive(
 					intentFromWire({
 						type: "select_context",
 						context,
 						...(presentation === "beside" ? { split: true } : {}),
 					}),
-					focus,
 				);
 			},
 			swapSplitFocus: () => {
@@ -1898,7 +1816,7 @@ export class AppController {
 				if (isDestinationSurface(surfaceUrl)) this.noteInteraction();
 			},
 			cyclePaneFocus: () => {
-				this.arrive({ type: "cycle_pane_focus", direction: 1 }, undefined);
+				this.arrive({ type: "cycle_pane_focus", direction: 1 });
 			},
 			toggleTerminal: (agentId) => {
 				void this.toggleAgentTerminal(parseAgentId(agentId)).catch(report);
@@ -1912,10 +1830,10 @@ export class AppController {
 			closeTerminal: (terminalId) => {
 				void this.closePaneTerminal(terminalId).catch(report);
 			},
-			togglePlace: (place, focus) => {
+			togglePlace: (place) => {
 				// A selection change like any other, to a place only the model
 				// remembers — so it arrives exactly the way `selectContext` does.
-				this.arrive({ type: "toggle_place", place }, focus);
+				this.arrive({ type: "toggle_place", place });
 			},
 			openWorkspacePicker: () => {
 				this.send(CHANNELS.menuCommand, "open_workspace_picker");
@@ -2089,7 +2007,7 @@ export class AppController {
 	 */
 	private navigateHistory(direction: NavigationDirection): boolean {
 		if (shellWindow().picker.openModals().length > 0) return false;
-		this.arrive({ type: "navigate_history", direction }, undefined);
+		this.arrive({ type: "navigate_history", direction });
 		return true;
 	}
 
@@ -2191,7 +2109,7 @@ export class AppController {
 	 * `shell/focusHome.ts`, which is the page's half of that rule).
 	 */
 	private swapSplitFocus(): void {
-		this.arrive({ type: "swap_split_focus" }, undefined);
+		this.arrive({ type: "swap_split_focus" });
 	}
 
 	//#region the Agents' terminals
@@ -2452,19 +2370,16 @@ export class AppController {
 	 * The one rule for every chord that goes somewhere. The keyboard ends in
 	 * what the move selected — the Sidebar is left too, because a chord typed
 	 * there is not the Sidebar's own Return, which is the one keyboard
-	 * selection that stays in the list — and `landing` says where inside an
-	 * editor, for the toggles that have an opinion (`Landing`).
+	 * selection that stays in the list.
 	 *
 	 * Placed once more after the move even when the move changed nothing.
 	 * `Cmd+Q 0` on Scratch from the Sidebar selects what is already selected,
-	 * and is still somebody asking to be in Scratch; and the landing is spent
-	 * by this placement and no other, so it cannot linger into a later one
-	 * that nobody asked to land anywhere.
+	 * and is still somebody asking to be in Scratch.
 	 */
-	private arrive(intent: UserIntent, landing: Landing | undefined): void {
+	private arrive(intent: UserIntent): void {
 		this.keyboardInSidebar = false;
 		this.dispatchOwn(intent);
-		this.placeKeyboardOnSurface(landing);
+		this.placeKeyboardOnSurface();
 	}
 
 	/**
@@ -2474,7 +2389,7 @@ export class AppController {
 	 * the App Shell page, so "focus the Agent" could not be a focus call at
 	 * all — it was a message asking that page to go and find the pane in its
 	 * own DOM, which is the whole of what `shell/focusHome.ts` was. The Agents
-	 * are a child of the window like a workbench now, so both halves are the
+	 * are a child of the window like the editor now, so both halves are the
 	 * window's one answer: the arrangement already says which child the keys
 	 * belong to (`keyboardChild`), and this is asking it again.
 	 *
@@ -2483,13 +2398,13 @@ export class AppController {
 	 * ask it here rather than each deciding, because two answers to one question
 	 * is how the split ended up focusing the wrong pane once already.
 	 */
-	private placeKeyboardOnSurface(landing?: Landing): void {
+	private placeKeyboardOnSurface(): void {
 		this.keyboardInSidebar = false;
 		// The arrangement said "the Sidebar" a moment ago and says something
 		// else now, so the window is told the new one before it is asked to
 		// act on it.
 		this.publishLayoutState();
-		shellWindow().focusSurface(landing);
+		shellWindow().focusSurface();
 	}
 
 	/**
@@ -2717,28 +2632,6 @@ export class AppController {
 
 	get terminalRuntime(): TerminalWiring | undefined {
 		return this.terminalsWiring;
-	}
-
-	/**
-	 * Show or hide the terminal in the workbench on screen.
-	 *
-	 * `Cmd+Q T` and View ▸ Toggle Integrated Terminal are the same command and
-	 * this is it. The command itself is the workbench's — DevHub has no panel to
-	 * toggle — so it is *forwarded*, not reimplemented, over `vscode:runAction`,
-	 * which is upstream's own way for main to raise a workbench command (it is
-	 * how the touch bar and the dock menu do it). Forwarding the keystroke
-	 * instead was the alternative and is worse: it would have to arrive as
-	 * whatever key the person has bound the toggle to in *their* keybindings,
-	 * which DevHub does not know and must not guess.
-	 *
-	 * No workbench on screen is a no-op, like every other chord with nothing to
-	 * act on.
-	 */
-	toggleIntegratedTerminal(): void {
-		shellWindow().revealedView()?.webContents.send("vscode:runAction", {
-			id: "workbench.action.terminal.toggleTerminal",
-			from: "menu",
-		});
 	}
 
 	/**
@@ -4259,7 +4152,6 @@ export class AppController {
 						? { kind: "agent", agentId: target.agentId }
 						: { kind: "workspace", workspaceId: target.workspaceId },
 			}),
-			undefined,
 		);
 		this.bringToFront();
 	}
@@ -4609,8 +4501,6 @@ export class AppController {
 					: [],
 		);
 		shell.syncEditorTerminals(neovimPages);
-		const view = { view: "neovim" as const };
-		const hidden = {};
 		const surface: SurfaceArrangement =
 			snapshot.readiness !== "ready"
 				? { kind: "none" }
@@ -4623,10 +4513,8 @@ export class AppController {
 									kind: "split",
 									editorKey,
 									ratio: snapshot.splitRatio,
-									...hidden,
-									...view,
 								}
-							: { kind: "editor", editorKey, ...hidden, ...view };
+							: { kind: "editor", editorKey };
 		// Both panes of a split are drawn; which of them holds the keyboard is
 		// which half is selected. An Agent selected `beside` is the Agent half
 		// in front, and the workspace selected `beside` is the editor half.
@@ -9024,22 +8912,6 @@ export class AppController {
 
 	//#endregion
 
-	//#region workbench views
-
-	/**
-	 * VS Code routed an open into a workbench that already exists.
-	 *
-	 * Which changes nothing about what is on screen: the selection decides
-	 * that, and an open arriving for a folder nobody selected must not take the
-	 * screen from the folder they did. The arrangement is asked again because
-	 * the child list may have moved, and for no other reason.
-	 */
-	assertArrangement(): void {
-		shellWindow().assertArrangement();
-	}
-
-	//#endregion
-
 	//#region config
 
 	/**
@@ -9491,35 +9363,6 @@ export class AppController {
 		});
 	}
 
-	/** The Workspace whose workbench `sender` is, as "Send to Agent…" lists it. */
-	private sendTargetWorkspace(sender: unknown) {
-		const window = shellWindow();
-		const view = window.getViewByContents(sender as Electron.WebContents);
-		const key = view === undefined ? undefined : window.editorKeyOf(view);
-		if (key === undefined) return undefined;
-		const workspace = this.coordinator.model
-			.snapshot()
-			.workspaces.find((candidate) => candidate.key === key);
-		if (workspace === undefined) return undefined;
-		return {
-			id: workspace.id,
-			root: workspace.root,
-			agents: workspace.agents.map(sendTargetAgentOf),
-			lastAgentId: workspace.lastAgentId,
-			canCreateAgent: workspace.canCreateAgent,
-		};
-	}
-
-	private sendTargetAgent(agentId: AgentId): SendTargetAgent | undefined {
-		for (const workspace of this.coordinator.model.snapshot().workspaces) {
-			const agent = workspace.agents.find(
-				(candidate) => candidate.id === agentId,
-			);
-			if (agent !== undefined) return sendTargetAgentOf(agent);
-		}
-		return undefined;
-	}
-
 	private registerIpc(): void {
 		const handle = electron.ipcMain.handle.bind(electron.ipcMain);
 		const receive = electron.ipcMain.on.bind(electron.ipcMain);
@@ -9578,19 +9421,6 @@ export class AppController {
 		);
 		receive(NEOVIM_CHANNELS.guiMessage, (_event, message: NeovimGuiMessage) => {
 			this.neovimEditors?.guiMessage(message);
-		});
-
-		// "Send to Agent…" from an editor: the workbench that sent it is the
-		// Workspace it is about (`sendToAgent.ts`).
-		receive(SEND_TO_AGENT_CHANNEL, (event, payload: unknown) => {
-			this.personStartedAction();
-			this.sendToAgent.send(event.sender, payload).catch((failure: unknown) => {
-				this.publishError(
-					failure instanceof SendRefused
-						? withDetail(errorWireAt("send_to_agent_refused"), failure.message)
-						: errorWire(failure),
-				);
-			});
 		});
 
 		handle(CHANNELS.getSnapshot, () => this.snapshot());
@@ -10601,19 +10431,6 @@ function tellTerminalPane(pane: MarkedPane) {
 		command: pane.command,
 		title: pane.title,
 		dead: pane.dead,
-	};
-}
-
-/** An Agent of the model, as "Send to Agent…" lists and reaches it. */
-function sendTargetAgentOf(agent: AgentSnapshot): SendTargetAgent {
-	return {
-		id: agent.id,
-		displayName: agent.displayName,
-		profileDisplayName: agent.profileDisplayName,
-		profileKind: agent.profileKind,
-		presentation: agent.presentation,
-		status: agent.status,
-		ordinal: agent.ordinal,
 	};
 }
 

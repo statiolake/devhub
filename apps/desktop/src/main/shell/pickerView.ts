@@ -2,8 +2,8 @@
  * Every DevHub modal, one layer above everything else.
  *
  * A `WebContentsView` always paints above the window's own document, so a
- * modal drawn by the App Shell page is invisible behind a workbench while
- * still holding the keyboard. Taking the workbench off screen for the duration
+ * modal drawn by the App Shell page is invisible behind an editor while
+ * still holding the keyboard. Taking the editor off screen for the duration
  * — or painting a snapshot of it under the sheet — reconstructs the stacking
  * by hand, and has to be redone for every new kind of thing the viewport can
  * hold.
@@ -14,7 +14,7 @@
  *
  * The view is built once, at startup, never destroyed, and never taken out
  * of the window. What follows the modals is *where* it is: over the window
- * (or one workbench) while something is asked, and parked all but one
+ * while something is asked, and parked all but one
  * pixel outside the window's corner while nothing is, where it takes no click
  * but is still laid out at the window's size and still painting. It used to be added and
  * removed instead, and a view out of the window is a hidden page that paints
@@ -26,9 +26,8 @@
  * The dim behind a question is the view's own background, not something the
  * page draws — see `scrimColor`.
  *
- * Main owns the set that is open, because two unrelated things open modals —
- * the App Shell page, and a workbench asking its own question through Electron
- * — and each answer has to find its way back to whichever asked.
+ * Main owns the set that is open, because the pages and main itself open
+ * modals, and each answer has to find its way back to whichever asked.
  */
 
 import { randomUUID } from "node:crypto";
@@ -38,14 +37,13 @@ import {
 	type ModalRequest,
 	type OpenModal,
 } from "../../ipc/contract.js";
-import type { PickerScope } from "./windowLayout.js";
 
 export interface PickerViewHost {
 	readonly window: Electron.BrowserWindow;
 	/**
 	 * Put the keyboard back where it belongs, and say so.
 	 *
-	 * The window's one answer to "where do the keys go" — the workbench on
+	 * The window's one answer to "where do the keys go" — the editor on
 	 * screen, or the App Shell page when none is. Asking the window rather
 	 * than remembering who was focused when the modal opened is what makes
 	 * this correct: Electron reports no focused `webContents` for a child view
@@ -54,8 +52,7 @@ export interface PickerViewHost {
 	 *
 	 * It is the whole of `focusSurface` rather than just the contents to
 	 * focus, because moving the keyboard and reporting that it moved are one
-	 * act everywhere else in this window, and a layer that did only the first
-	 * half left every workbench believing a modal still stood in front of it.
+	 * act everywhere else in this window.
 	 */
 	focusSurface(): void;
 	/**
@@ -71,28 +68,25 @@ export interface PickerViewHost {
 	/**
 	 * The set that is open has changed.
 	 *
-	 * The window lays itself out again, because what a modal is *over* is part
-	 * of that layout: a workbench under its own question stays on screen.
+	 * The window lays itself out again, because whether a modal is over it is
+	 * part of that layout.
 	 */
 	modalsChanged(): void;
 }
 
-/** A workbench's question, waiting for the button the person presses. */
+/** A sheet that answers with a choice, waiting for the person's. */
 type Settle = (response: number) => void;
 
 /**
  * What makes two modals the same question.
  *
- * Asking the same thing twice is not two questions: a second question from one
- * editor replaces the first, exactly as VS Code's own serial dialogs do, and a
- * second "close this workspace?" is the same confirmation being re-raised
+ * Asking the same thing twice is not two questions: a second "close this
+ * workspace?" is the same confirmation being re-raised
  * while the first is still up. Without this a double click leaves two sheets
  * stacked on one answer.
  */
 function identity(request: ModalRequest): string {
 	switch (request.kind) {
-		case "workbench-dialog":
-			return `${request.kind}:${request.surfaceKey}`;
 		case "agent-rename":
 			return `${request.kind}:${request.agentId}`;
 		// One sheet per intent, not per agent. Two messages queued for one agent
@@ -117,7 +111,7 @@ export class PickerView {
 
 	constructor(preloadPath: string, pageUrl: string) {
 		// The layer is a hole with modals in it: everything the person can see
-		// through it is a real, live workbench, not a picture of one. The dim
+		// through it is a real, live window, not a picture of one. The dim
 		// is added while a question stands; see `place`.
 		this.layer = new LayerView(preloadPath, pageUrl);
 		this.layer.view.webContents.on("did-finish-load", () => {
@@ -160,10 +154,9 @@ export class PickerView {
 	/**
 	 * Take one modal off screen.
 	 *
-	 * `response` is the button a workbench's question was answered with. A
-	 * modal that asked nothing carries nothing, and a workbench's question that
-	 * is closed without one is answered with its own cancel button — the same
-	 * thing Electron does when a native sheet is dismissed.
+	 * `response` is the choice a sheet that waits for one was answered with. A
+	 * modal that asked nothing carries nothing, and one closed without a
+	 * response is told -1, which is "nothing was chosen".
 	 */
 	closeModal(id: string, response?: number): void {
 		const index = this.open.findIndex((modal) => modal.id === id);
@@ -172,15 +165,7 @@ export class PickerView {
 		const settle = this.pending.get(id);
 		if (settle && modal) {
 			this.pending.delete(id);
-			// A workbench's question closed without an answer is answered with
-			// its own cancel button; any other sheet that waits for a choice
-			// (`choose`) is told -1, which is "nothing was chosen".
-			settle(
-				response ??
-					(modal.request.kind === "workbench-dialog"
-						? modal.request.cancelId
-						: -1),
-			);
+			settle(response ?? -1);
 		}
 		this.host?.modalsChanged();
 	}
@@ -190,44 +175,6 @@ export class PickerView {
 		for (const modal of [...this.open]) {
 			if (matches(modal)) this.closeModal(modal.id);
 		}
-	}
-
-	/**
-	 * The workbench that is waiting for an answer, if one is.
-	 *
-	 * That workbench is put on screen for as long as its question stands, and
-	 * this is what the window asks to know it. Leaving the question to reappear
-	 * "when you come back to that editor" reads well and dead-ends: a workspace
-	 * being closed is exactly the one that asks about unsaved work, and a
-	 * workspace in the middle of closing cannot be selected — so the question
-	 * could never be shown again and the close waited for it for ever
-	 * (reproduced: the workspace sat in `closing` with no way to answer).
-	 *
-	 * Everything outside that workbench's own rectangle stays live, so looking
-	 * at another workspace in the sidebar, or at its agents, still works.
-	 */
-	askingSurfaceKey(): string | undefined {
-		for (const modal of this.open) {
-			if (modal.request.kind === "workbench-dialog") {
-				return modal.request.surfaceKey;
-			}
-		}
-		return undefined;
-	}
-
-	/** Ask a workbench's question and wait for the person to answer it. */
-	async ask(
-		request: Extract<ModalRequest, { kind: "workbench-dialog" }>,
-	): Promise<number> {
-		const id = this.openModal(request);
-		return new Promise<number>((resolve) => {
-			this.pending.set(id, resolve);
-			// Nobody is left to answer once the window is gone; the question is
-			// settled with its own cancel button rather than left hanging.
-			this.host?.window.once("closed", () => {
-				this.closeModal(id);
-			});
-		});
 	}
 
 	/**
@@ -241,11 +188,7 @@ export class PickerView {
 		request: Extract<
 			ModalRequest,
 			{
-				kind:
-					| "command-palette"
-					| "recently-closed"
-					| "send-to-agent"
-					| "theme-preview";
+				kind: "command-palette" | "recently-closed" | "theme-preview";
 			}
 		>,
 	): Promise<number> {
@@ -259,19 +202,9 @@ export class PickerView {
 
 	//#region presentation
 
-	/**
-	 * How much of the window this layer covers, for the owner to place it.
-	 *
-	 * A workbench's question covers that workbench and nothing else, so the
-	 * sidebar and every other workspace stay both visible *and* clickable — the
-	 * view simply does not extend over them. Everything else is the application
-	 * asking, and covers the window.
-	 */
-	scope(): PickerScope {
-		if (this.open.length === 0) return "none";
-		return this.open.some((modal) => modal.request.kind !== "workbench-dialog")
-			? "window"
-			: "workbench";
+	/** Whether anything is being asked, for the owner to place the layer. */
+	isAsking(): boolean {
+		return this.open.length > 0;
 	}
 
 	/**
@@ -309,7 +242,7 @@ export class PickerView {
 		// whenever anything about the arrangement moves — a window resize, a
 		// sidebar drag, the split divider, a second modal opening. Raising this
 		// layer once meant the first such layout after a modal opened put the
-		// workbench back on top of it: the sheet still held the keyboard, but
+		// editor back on top of it: the sheet still held the keyboard, but
 		// the editor was what was drawn and what took the clicks over the
 		// content area, which is a picker that cannot be used and an editor
 		// that looks like it activates itself.
@@ -365,22 +298,13 @@ export class PickerView {
 		return this.open;
 	}
 
-	/** The id of the workbench question waiting for an answer, if one is. */
-	askingId(): string {
-		const modal = this.open.find(
-			(candidate) => candidate.request.kind === "workbench-dialog",
-		);
-		if (!modal) throw new Error("no workbench question is waiting");
-		return modal.id;
-	}
-
 	/**
 	 * Some other contents of this window just took the keyboard.
 	 *
 	 * Main's own requests already go through `placeKeyboardIn`, which serves
 	 * this layer first while a sheet stands. This is the half main does not
 	 * ask for: a renderer focusing itself — a conversation page mounting and
-	 * focusing its textarea, a workbench answering a click behind the scrim,
+	 * focusing its textarea, an editor answering a click behind the scrim,
 	 * an Agent's page loading in the background. A sheet is modal, so while
 	 * one stands the keyboard is taken straight back; the window's own
 	 * `focusSurface` puts it wherever it belongs once the last sheet goes.

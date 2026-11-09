@@ -77,11 +77,6 @@ export const CONVERSATION_CHANNELS = {
 	 * started again, or given up on): every attachment is attached again.
 	 */
 	restarted: "devhub:conversation:restarted",
-	/**
-	 * main → page: `(agentId, text)` — words for the Agent's composer, after
-	 * its draft and not sent ("Send to Agent…", `main/shell/sendToAgent.ts`).
-	 */
-	insert: "devhub:conversation:insert",
 } as const;
 
 /** What one `events` message carries: `[agentId, revision, event]`, oldest first. */
@@ -172,13 +167,6 @@ export interface ConversationAttachment {
 	 * there is none.
 	 */
 	readonly draft: string;
-	/**
-	 * Words to add to the composer after the draft, oldest first, that main
-	 * was given for this Agent while no page had it attached ("Send to
-	 * Agent…" to an Agent that has just been started). Each is handed out
-	 * once; after the attachment they arrive through `onInsert`.
-	 */
-	readonly inserted: readonly string[];
 }
 
 /**
@@ -191,9 +179,6 @@ export type ConversationAttachReply =
 	| (Omit<ConversationAttachment, "transcript" | "revision"> & {
 			readonly port: number;
 	  });
-
-/** Words for the composer, after what is in it: put there, never sent. */
-export type ConversationInsertListener = (text: string) => void;
 
 export type ConversationEventListener = (
 	revision: number,
@@ -209,7 +194,6 @@ export interface ConversationApi {
 	attach(
 		agentId: string,
 		onEvent: ConversationEventListener,
-		onInsert?: ConversationInsertListener,
 		/**
 		 * The engine holding the conversation was replaced: this attachment is
 		 * over, and the page attaches afresh (the new engine replayed the

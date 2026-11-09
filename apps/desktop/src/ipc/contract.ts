@@ -2541,17 +2541,6 @@ export interface RecentlyClosedRowWire {
 	readonly detail: string;
 }
 
-/**
- * One row of "Send to Agent…"'s list (`main/shell/sendToAgent.ts`): one of
- * the Workspace's Agents, or a profile to start a new one from.
- */
-export interface SendToAgentRowWire {
-	readonly label: string;
-	/** Its profile, presentation and status; for a New row, what it starts. */
-	readonly detail: string;
-	readonly kind: "agent" | "new";
-}
-
 export type ModalRequest =
 	| { readonly kind: "workspace-picker" }
 	| { readonly kind: "agent-picker"; readonly workspaceId: string }
@@ -2636,15 +2625,6 @@ export type ModalRequest =
 			/** The row of the theme worn when it opened. */
 			readonly current: number;
 	  }
-	/**
-	 * "Send to Agent…" from an editor: which of its Workspace's Agents, or a
-	 * new one from which profile, gets the selection. Closes with the index
-	 * of the row chosen, as the command palette does.
-	 */
-	| {
-			readonly kind: "send-to-agent";
-			readonly rows: readonly SendToAgentRowWire[];
-	  }
 	| {
 			/**
 			 * The wording DevHub is about to say, before it says it.
@@ -2675,72 +2655,11 @@ export type ModalRequest =
 			 * is about. See `ConfirmationPurposeWire`.
 			 */
 			readonly purpose: ConfirmationPurposeWire;
-	  }
-	| WorkbenchDialogRequest;
+	  };
 
 export interface OpenModal {
 	readonly id: string;
 	readonly request: ModalRequest;
-}
-
-/**
- * What stands in an editor's slot while its workbench is not there.
- *
- * The selection does not move when a workbench dies, sleeps or wakes — the
- * Editor activity stays selected and the workbench comes back in its own
- * slot — so the page has to be able to say *that*, rather than showing an
- * empty pane or claiming a view is on screen that no longer exists.
- *
- * It is the workbench's lifecycle phase as the page needs it
- * (`main/shell/workbenchLifecycle.ts`, `placeholderOf`), re-sent whenever it
- * changes; no `placeholder` means the workbench is itself again.
- */
-export interface EditorPlaceholderEvent {
-	readonly surfaceKey: string;
-	readonly placeholder?: EditorPlaceholderWire;
-}
-
-/**
- * `starting`: being started (at launch, in the background, or because it was
- * shown or asked for). `restarting`: being rebuilt after a failure.
- * `discarded`: closed after being frozen a while, with the frame it left as a
- * data URL ("" when none could be taken); it waits for Enter or a click
- * (`wakeEditor`). `waking`: discarded and starting again, the frame still up.
- * A frozen workbench has none: it is thawed the moment it is shown.
- */
-export type EditorPlaceholderWire =
-	| { readonly kind: "starting" }
-	| { readonly kind: "restarting" }
-	| { readonly kind: "discarded"; readonly frame: string }
-	| { readonly kind: "waking"; readonly frame: string };
-
-/**
- * A question a workbench asked, for the page to draw.
- *
- * VS Code raises these through Electron, which would make them a sheet across
- * DevHub's whole window — a workbench's question presented as if the
- * application were asking it, with everything else frozen behind it. It is one
- * workbench's business, so DevHub draws it over that workbench instead and the
- * rest of the app stays usable while it stands.
- */
-export interface WorkbenchDialogRequest {
-	readonly kind: "workbench-dialog";
-	/**
-	 * The editor surface this question belongs to.
-	 *
-	 * It is drawn inside that workbench's own rectangle and nowhere else: the
-	 * question is about one editor, so it is modal to one editor. Everything
-	 * outside — the sidebar, the other workspaces, the terminal — stays live,
-	 * because main sizes the overlay view to that workbench's rectangle and the
-	 * rest of the window is not covered at all.
-	 */
-	readonly surfaceKey: string;
-	readonly message: string;
-	readonly detail?: string;
-	readonly buttons: readonly string[];
-	readonly defaultId: number;
-	readonly cancelId: number;
-	readonly tone: "none" | "info" | "warning" | "error" | "question";
 }
 
 /**

@@ -49,7 +49,7 @@ import {
   type UserEntry,
 } from "../../model/conversation";
 import { isImeComposing } from "../accessibility/ime";
-import { Composer, inputRefusal, type ComposerInsertion } from "./Composer";
+import { Composer, inputRefusal } from "./Composer";
 import { SkillWordsProvider } from "./skillTokens";
 import {
   AgentCwdProvider,
@@ -141,7 +141,6 @@ export function ConversationSurface({
   hidden,
   label,
   savedDraft,
-  inserted,
   issueRepository,
 }: {
   readonly transcript: Transcript;
@@ -158,8 +157,6 @@ export function ConversationSurface({
    * comes back into the composer once.
    */
   readonly savedDraft: string | undefined;
-  /** Words main put in the composer after the draft ("Send to Agent…"), each once. */
-  readonly inserted?: readonly ComposerInsertion[];
   readonly appearance: AppAppearance | undefined;
   /** Parked in the pool: mounted, not shown. */
   readonly hidden: boolean;
@@ -580,7 +577,6 @@ export function ConversationSurface({
                                 openSetting={openSetting}
                                 restored={restored}
                                 savedDraft={savedDraft}
-                                inserted={inserted}
                                 edits={edits}
                                 draftFlush={draftFlush}
                                 onSend={jumpToLatest}

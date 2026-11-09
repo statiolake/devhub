@@ -44,9 +44,8 @@ function Frame({
    * This is the one state in which DevHub's own DOM *is* the content area, so
    * it is also the only one where the keyboard has anywhere in the page to be —
    * and where it went instead was `body`, from which Tab walks the whole
-   * Sidebar before it reaches the button the pane exists to offer. A workbench
-   * dialog already does exactly this (`ViewScopedAlert`), and this is the same
-   * gesture in the same words: what a pane is asking for is under Return.
+   * Sidebar before it reaches the button the pane exists to offer. What a pane
+   * is asking for is under Return.
    *
    * Only the primary one, and only when there is one. A pane with nothing to
    * offer, or nothing it would recommend, has nothing to put a caret on.

@@ -783,7 +783,6 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "conversation_stopped":
     case "sessions_unreadable":
     case "usage_unreadable":
-    case "send_to_agent_refused":
       return "agent";
     case "terminal_launcher_unavailable":
     case "terminal_needs_agent":
@@ -828,7 +827,6 @@ export function errorWireAt(
     code === "terminal_needs_agent_view" ||
     // Pressing the chord again is the retry, and it goes further back.
     code === "closed_not_reopened" ||
-    code === "send_to_agent_refused" ||
     // Pressing the chord again is the retry, once what kept it is gone.
     code === "editor_not_stopped" ||
     // Trying again opens the same missing file.

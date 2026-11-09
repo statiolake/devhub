@@ -47,7 +47,6 @@ import { PickerProvider } from "./PickerContext";
 import { devhub } from "./client";
 import type { OpenModal } from "../../ipc/contract";
 import { WorkspacePicker } from "../components/shell/WorkspacePicker";
-import { ViewScopedAlert } from "../components/shell/ViewScopedAlert";
 import { AgentPickerSheet } from "./AgentPickerSheet";
 import { IssueAssignmentSheet } from "./IssueAssignmentSheet";
 import { AgentRenameSheet } from "./AgentRenameSheet";
@@ -60,7 +59,6 @@ import { ChordHelpSheet } from "./ChordHelpSheet";
 import { CommandPaletteSheet } from "./CommandPaletteSheet";
 import { RecentlyClosedSheet } from "./RecentlyClosedSheet";
 import { ThemePreviewSheet } from "./ThemePreviewSheet";
-import { SendToAgentSheet } from "./SendToAgentSheet";
 
 /** Take one modal off screen, with the answer if it asked for one. */
 function close(id: string, response?: number): void {
@@ -208,30 +206,12 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
           }}
         />
       );
-    case "send-to-agent":
-      return (
-        <SendToAgentSheet
-          rows={request.rows}
-          onDismiss={(chosen) => {
-            close(id, chosen);
-          }}
-        />
-      );
     case "close-confirmation":
       return (
         <CloseConfirmationSheet
           request={request}
           onDismiss={() => {
             close(id);
-          }}
-        />
-      );
-    case "workbench-dialog":
-      return (
-        <ViewScopedAlert
-          request={request}
-          onAnswer={(response) => {
-            close(id, response);
           }}
         />
       );

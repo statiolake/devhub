@@ -15,14 +15,11 @@ import {
 	surfaceRect,
 	tooltipRect,
 	trafficLightPosition,
-	insideRect,
 	windowLayout,
 	workbenchRect,
-	type AttachedPlacement,
 	type LayoutInput,
 	type TooltipPlacement,
 	type LayoutState,
-	onScreenEditor,
 	onScreenNeovim,
 } from "./windowLayout.js";
 
@@ -43,25 +40,10 @@ function input(overrides: Partial<LayoutInput> = {}): LayoutInput {
 	return {
 		windowSize: WINDOW,
 		state: state(),
-		editors: ["/a", "/b"],
-		asking: undefined,
+		neovims: ["/a", "/b"],
 		toasts: undefined,
-		picker: "none",
+		picker: false,
 		tooltip: undefined,
-		attached: [],
-		...overrides,
-	};
-}
-
-/** A view VS Code attached to `/a`, asking for a box in that workbench. */
-function attached(
-	overrides: Partial<AttachedPlacement> = {},
-): AttachedPlacement {
-	return {
-		id: 1,
-		editorKey: "/a",
-		rect: { x: 10, y: 20, width: 300, height: 200 },
-		visible: true,
 		...overrides,
 	};
 }
@@ -69,7 +51,7 @@ function attached(
 const kinds = (children: ReturnType<typeof windowLayout>) =>
 	children.map((child) => child.identity.kind);
 
-describe("the rectangle the workbench is laid into", () => {
+describe("the rectangle the editor is laid into", () => {
 	it("is the content area minus the sidebar and the bar", () => {
 		expect(workbenchRect(WINDOW, state())).toEqual({
 			x: 248,
@@ -132,15 +114,15 @@ describe("the rectangle the workbench is laid into", () => {
 });
 
 describe("the child list", () => {
-	it("stacks the page, the workbenches, the notices and the questions", () => {
+	it("stacks the page, the editor areas, the notices and the questions", () => {
 		const children = windowLayout(
-			input({ toasts: { width: 320, height: 90 }, picker: "window" }),
+			input({ toasts: { width: 320, height: 90 }, picker: true }),
 		);
 		expect(kinds(children)).toEqual([
 			"shell",
 			"sidebar",
-			"editor",
-			"editor",
+			"neovim",
+			"neovim",
 			"agents",
 			"conversations",
 			"toasts",
@@ -149,30 +131,30 @@ describe("the child list", () => {
 		]);
 	});
 
-	it("holds exactly one visible workbench when a Workspace is selected", () => {
+	it("holds exactly one visible editor when a Workspace is selected", () => {
 		const children = windowLayout(input());
 		const visible = children.filter(
-			(child) => child.identity.kind === "editor" && child.visible,
+			(child) => child.identity.kind === "neovim" && child.visible,
 		);
 		expect(visible).toHaveLength(1);
-		expect(visible[0]?.identity).toEqual({ kind: "editor", editorKey: "/a" });
+		expect(visible[0]?.identity).toEqual({ kind: "neovim", editorKey: "/a" });
 	});
 
-	it("puts the visible workbench last among the workbenches", () => {
+	it("puts the visible editor last among the editor areas", () => {
 		const children = windowLayout(
 			input({ state: state({ surface: { kind: "editor", editorKey: "/b" } }) }),
 		);
 		const editors = children.filter(
-			(child) => child.identity.kind === "editor",
+			(child) => child.identity.kind === "neovim",
 		);
 		expect(editors.at(-1)?.visible).toBe(true);
 		expect(editors.at(-1)?.identity).toEqual({
-			kind: "editor",
+			kind: "neovim",
 			editorKey: "/b",
 		});
 	});
 
-	it("shows no workbench when an Agent fills the area, or nothing can be", () => {
+	it("shows no editor when an Agent fills the area, or nothing can be", () => {
 		for (const surface of [
 			{ kind: "agent" } as const,
 			{ kind: "none" } as const,
@@ -180,21 +162,21 @@ describe("the child list", () => {
 			const children = windowLayout(input({ state: state({ surface }) }));
 			expect(
 				children.filter(
-					(child) => child.identity.kind === "editor" && child.visible,
+					(child) => child.identity.kind === "neovim" && child.visible,
 				),
 			).toHaveLength(0);
 			// The views stay in the list, and stay sized: this is the Agent
-			// covering the workbench, not the workbench going away.
+			// covering the editor, not the editor going away.
 			expect(
-				children.filter((child) => child.identity.kind === "editor"),
+				children.filter((child) => child.identity.kind === "neovim"),
 			).toHaveLength(2);
 		}
 	});
 
-	it("sizes every workbench, shown or not", () => {
+	it("sizes every editor, shown or not", () => {
 		const children = windowLayout(input());
 		const editors = children.filter(
-			(child) => child.identity.kind === "editor",
+			(child) => child.identity.kind === "neovim",
 		);
 		expect(
 			new Set(editors.map((child) => JSON.stringify(child.rect))).size,
@@ -218,8 +200,8 @@ describe("the child list", () => {
 			expect(kinds(children)).toEqual([
 				"shell",
 				"sidebar",
-				"editor",
-				"editor",
+				"neovim",
+				"neovim",
 				"agents",
 				"conversations",
 				"toasts",
@@ -235,43 +217,19 @@ describe("the child list", () => {
 		}
 	});
 
-	it("clips a workbench's question to that workbench", () => {
-		const picker = (arrangement: LayoutInput) =>
-			windowLayout(arrangement).find(
-				(child) => child.identity.kind === "picker",
-			);
-		expect(picker(input({ picker: "workbench" }))?.rect).toEqual(
-			workbenchRect(WINDOW, state()),
-		);
-		expect(picker(input({ picker: "window" }))?.rect).toEqual({
-			x: 0,
-			y: 0,
-			...WINDOW,
-		});
-	});
-
-	it("keeps the z-order picker > toasts > attached > editors > shell in every arrangement", () => {
+	it("keeps the z-order picker > toasts > editors > shell in every arrangement", () => {
 		const arrangements: readonly LayoutInput[] = [
 			input(),
-			input({ attached: [attached()] }),
-			input({
-				attached: [attached(), attached({ id: 2, editorKey: "/b" })],
-				picker: "window",
-				toasts: { width: 300, height: 80 },
-			}),
-			input({ picker: "window", toasts: { width: 300, height: 80 } }),
-			input({ asking: "/b", picker: "workbench" }),
+			input({ picker: true, toasts: { width: 300, height: 80 } }),
 			input({ state: state({ surface: { kind: "agent" } }) }),
-			input({ editors: [] }),
+			input({ neovims: [] }),
 		];
 		for (const arrangement of arrangements) {
 			const order = kinds(windowLayout(arrangement));
 			const rank = {
 				shell: 0,
 				sidebar: 1,
-				editor: 2,
-				attached: 3,
-				neovim: 3,
+				neovim: 2,
 				agents: 4,
 				conversations: 4,
 				terminal: 5,
@@ -287,37 +245,14 @@ describe("the child list", () => {
 			}
 		}
 	});
-
-	it("shows the workbench that is asking, whatever the selection says", () => {
-		const children = windowLayout(
-			input({ asking: "/b", state: state({ surface: { kind: "agent" } }) }),
-		);
-		const visible = children.filter(
-			(child) => child.identity.kind === "editor" && child.visible,
-		);
-		expect(visible[0]?.identity).toEqual({ kind: "editor", editorKey: "/b" });
-	});
 });
 
 describe("where the keyboard goes", () => {
-	it("goes to the workbench on screen", () => {
-		expect(keyboardChild(input())).toEqual({ kind: "editor", editorKey: "/a" });
+	it("goes to the editor on screen", () => {
+		expect(keyboardChild(input())).toEqual({ kind: "neovim", editorKey: "/a" });
 	});
 
-	it("goes to the page, not to a workbench being rebuilt, and keeps its split", () => {
-		const split = state({
-			surface: { kind: "split", editorKey: "/a", ratio: 0.5, hidden: true },
-		});
-		expect(keyboardChild(input({ state: split }))).toEqual({ kind: "shell" });
-		expect(agentsRect(WINDOW, split)).toEqual(
-			agentsRect(WINDOW, {
-				...split,
-				surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
-			}),
-		);
-	});
-
-	it("goes to the Agent beside a workbench, not to the workbench", () => {
+	it("goes to the Agent beside an editor, not to the editor", () => {
 		expect(
 			keyboardChild(
 				input({
@@ -352,17 +287,9 @@ describe("where the keyboard goes", () => {
 	});
 
 	it("goes to a standing question before anything else", () => {
-		expect(keyboardChild(input({ picker: "window" }))).toEqual({
+		expect(keyboardChild(input({ picker: true }))).toEqual({
 			kind: "picker",
 		});
-	});
-
-	it("goes to a workbench that is asking, even over an Agent", () => {
-		expect(
-			keyboardChild(
-				input({ asking: "/b", state: state({ surface: { kind: "agent" } }) }),
-			),
-		).toEqual({ kind: "editor", editorKey: "/b" });
 	});
 });
 
@@ -405,7 +332,7 @@ describe("a GUI Agent's conversation, in a view of its own", () => {
 		expect(keyboardChild(terminal)).toEqual({ kind: "agents" });
 		const editor = input({ state: state({ conversation: "whole" }) });
 		expect(child(windowLayout(editor), "conversations").visible).toBe(false);
-		expect(keyboardChild(editor)).toEqual({ kind: "editor", editorKey: "/a" });
+		expect(keyboardChild(editor)).toEqual({ kind: "neovim", editorKey: "/a" });
 	});
 
 	it("stands right of the Orchestrator's board, which the Agents view still draws", () => {
@@ -481,9 +408,9 @@ describe("the Sidebar and the Agents as children of their own", () => {
 	it("is always in the window, in every arrangement", () => {
 		for (const arrangement of [
 			input(),
-			input({ editors: [] }),
+			input({ neovims: [] }),
 			input({ state: state({ surface: { kind: "none" } }) }),
-			input({ picker: "window", toasts: { width: 10, height: 10 } }),
+			input({ picker: true, toasts: { width: 10, height: 10 } }),
 		]) {
 			expect(kinds(windowLayout(arrangement))).toContain("sidebar");
 		}
@@ -511,14 +438,14 @@ describe("the Sidebar and the Agents as children of their own", () => {
 		expect(workbench.width + 6 + agents.width).toBe(1192);
 	});
 
-	it("draws exactly one of the Agents and a workbench for a selection", () => {
+	it("draws exactly one of the Agents and an editor for a selection", () => {
 		const onScreen = (arrangement: LayoutInput) =>
 			windowLayout(arrangement)
 				.filter((child) => child.visible)
 				.map((child) => child.identity.kind)
-				.filter((kind) => kind === "editor" || kind === "agents");
+				.filter((kind) => kind === "neovim" || kind === "agents");
 
-		expect(onScreen(input())).toEqual(["editor"]);
+		expect(onScreen(input())).toEqual(["neovim"]);
 		expect(
 			onScreen(input({ state: state({ surface: { kind: "agent" } }) })),
 		).toEqual(["agents"]);
@@ -531,7 +458,7 @@ describe("the Sidebar and the Agents as children of their own", () => {
 					}),
 				}),
 			),
-		).toEqual(["editor", "agents"]);
+		).toEqual(["neovim", "agents"]);
 		expect(
 			onScreen(input({ state: state({ surface: { kind: "none" } }) })),
 		).toEqual([]);
@@ -587,7 +514,7 @@ describe("where a tooltip goes", () => {
 	 * row, which in a list of stacked rows is over the *next* row: the answer
 	 * to what you just pointed at covering the thing you are pointing at next,
 	 * to be dodged before it can be clicked. There is one side now, and it is
-	 * the side with a workbench on it.
+	 * the side with an editor on it.
 	 */
 	it("puts an expanded row's tooltip beside it too, never under it", () => {
 		const anchor = { x: 0, y: 100, width: 248, height: 26 };
@@ -697,15 +624,15 @@ describe("where a tooltip goes", () => {
 		const children = windowLayout(
 			input({
 				tooltip: placement(),
-				picker: "window",
+				picker: true,
 				toasts: { width: 320, height: 90 },
 			}),
 		);
 		expect(kinds(children)).toEqual([
 			"shell",
 			"sidebar",
-			"editor",
-			"editor",
+			"neovim",
+			"neovim",
 			"agents",
 			"conversations",
 			"toasts",
@@ -722,162 +649,6 @@ describe("where a tooltip goes", () => {
 	});
 });
 
-/**
- * Where a view a workbench opened inside itself goes.
- *
- * It is a sibling of the workbench, not a child of it — a nested
- * `WebContentsView` is not painted at all on macOS with this Electron — so
- * everything that used to be free from nesting is decided here instead: the
- * rectangle the renderer measured in the workbench's own document, translated
- * and clipped; visibility that follows the workbench and not only VS Code's
- * wish; and a place in the child list above the workbench and below everything
- * the shell draws over it.
- */
-describe("a view a workbench attached to itself", () => {
-	it("is placed in the window by translating the workbench's origin", () => {
-		const child = windowLayout(input({ attached: [attached()] })).find(
-			(candidate) => candidate.identity.kind === "attached",
-		);
-		const workbench = workbenchRect(WINDOW, state());
-		expect(child?.rect).toEqual({
-			x: workbench.x + 10,
-			y: workbench.y + 20,
-			width: 300,
-			height: 200,
-		});
-	});
-
-	it("moves with the workbench when the sidebar narrows", () => {
-		const collapsed = state({ sidebar: { width: 248, collapsed: true } });
-		const child = windowLayout(
-			input({ state: collapsed, attached: [attached()] }),
-		).find((candidate) => candidate.identity.kind === "attached");
-		expect(child?.rect.x).toBe(workbenchRect(WINDOW, collapsed).x + 10);
-	});
-
-	it("is clipped to its workbench, never over the sidebar or an agent", () => {
-		const workbench = workbenchRect(WINDOW, state());
-		// A box that starts before the workbench and runs past its far corner
-		// is held to the workbench on all four sides.
-		expect(
-			insideRect(workbench, {
-				x: -50,
-				y: -50,
-				width: workbench.width + 500,
-				height: workbench.height + 500,
-			}),
-		).toEqual(workbench);
-		// And one entirely outside it is empty rather than negative.
-		expect(
-			insideRect(workbench, {
-				x: workbench.width + 10,
-				y: 0,
-				width: 100,
-				height: 100,
-			}),
-		).toEqual({
-			x: workbench.x + workbench.width,
-			y: workbench.y,
-			width: 0,
-			height: 100,
-		});
-	});
-
-	it("is drawn only when its workbench is the one on screen", () => {
-		const drawn = (arrangement: LayoutInput) =>
-			windowLayout(arrangement)
-				.filter((child) => child.identity.kind === "attached")
-				.map((child) => child.visible);
-		expect(drawn(input({ attached: [attached()] }))).toEqual([true]);
-		// VS Code does not want it drawn.
-		expect(drawn(input({ attached: [attached({ visible: false })] }))).toEqual([
-			false,
-		]);
-		// Another Workspace is selected: the wish stands, the answer does not.
-		expect(
-			drawn(
-				input({
-					attached: [attached()],
-					state: state({ surface: { kind: "editor", editorKey: "/b" } }),
-				}),
-			),
-		).toEqual([false]);
-		// An Agent covers the content area, so no workbench is on screen.
-		expect(
-			drawn(
-				input({
-					attached: [attached()],
-					state: state({ surface: { kind: "agent" } }),
-				}),
-			),
-		).toEqual([false]);
-	});
-
-	it("is sized whether or not it is drawn, like the workbenches", () => {
-		const hidden = windowLayout(
-			input({
-				attached: [attached()],
-				state: state({ surface: { kind: "editor", editorKey: "/b" } }),
-			}),
-		).find((child) => child.identity.kind === "attached");
-		const shown = windowLayout(input({ attached: [attached()] })).find(
-			(child) => child.identity.kind === "attached",
-		);
-		expect(hidden?.rect).toEqual(shown?.rect);
-	});
-
-	it("sits above every workbench and below the notices and the questions", () => {
-		const order = kinds(
-			windowLayout(
-				input({
-					attached: [attached()],
-					toasts: { width: 300, height: 80 },
-					picker: "window",
-					tooltip: {
-						anchor: { x: 8, y: 100, width: 36, height: 24 },
-						size: { width: 300, height: 40 },
-					},
-				}),
-			),
-		);
-		expect(order).toEqual([
-			"shell",
-			"sidebar",
-			"editor",
-			"editor",
-			"attached",
-			"agents",
-			"conversations",
-			"toasts",
-			"picker",
-			"tooltip",
-		]);
-	});
-
-	it("tells its views apart, so the owner can place each one", () => {
-		const children = windowLayout(
-			input({
-				attached: [
-					attached(),
-					attached({ id: 2, rect: { x: 0, y: 0, width: 10, height: 10 } }),
-				],
-			}),
-		).filter((child) => child.identity.kind === "attached");
-		expect(children.map((child) => child.identity)).toEqual([
-			{ kind: "attached", editorKey: "/a", id: 1 },
-			{ kind: "attached", editorKey: "/a", id: 2 },
-		]);
-	});
-});
-
-/**
- * The bar and the lights in it are one measurement, not two.
- *
- * The bar is a plain macOS title bar's height, and the lights are placed from
- * it rather than tuned beside it — so what is asserted is the relation: their
- * middle is the bar's middle, and they are as far from the leading edge as
- * from the top, which is where a plain titled window keeps them.
- */
 describe("the title bar and the traffic lights", () => {
 	const variables = new Map(chromeVariables());
 	const bar = Number.parseFloat(variables.get("--titlebar-height") ?? "");
@@ -985,7 +756,7 @@ describe("the Agent's terminal, with its Agent", () => {
 		});
 	});
 
-	it("is never drawn with the workbench alone", () => {
+	it("is never drawn with the editor alone", () => {
 		const editorOnly = state({ terminal: right });
 		expect(terminalSeam(WINDOW, editorOnly)).toBeUndefined();
 		expect(terminalExtent(WINDOW, editorOnly)).toBeUndefined();
@@ -1007,7 +778,7 @@ describe("the Agent's terminal, with its Agent", () => {
 		).toEqual({ kind: "terminal", terminalId: T1 });
 		// Not drawn — its view does not exist yet — so the editor keeps it.
 		expect(keyboardChild(input({ state: withTerminal }))).toEqual({
-			kind: "editor",
+			kind: "neovim",
 			editorKey: "/a",
 		});
 		// Nothing in the content area at all: the terminal is not drawn.
@@ -1029,30 +800,17 @@ describe("the Agent's terminal, with its Agent", () => {
 });
 
 describe("the editor area's Neovim page", () => {
-	// A Neovim page per Workspace whose Neovim was shown, in the
-	// place its workbench goes (`docs/neovim-editor.md`); the arrangement says
-	// which of the two the editor area shows.
-	const showing = (
-		overrides: Partial<LayoutState> = {},
-		inputs: Partial<LayoutInput> = {},
-	) =>
-		input({
-			editors: ["/a"],
-			neovims: ["/a", "/b"],
-			state: state({
-				surface: { kind: "editor", editorKey: "/a", view: "neovim" },
-				...overrides,
-			}),
-			...inputs,
-		});
+	// A Neovim page per Workspace whose Neovim was shown, in the editor's
+	// rectangle (`docs/neovim-editor.md`).
+	const showing = (overrides: Partial<LayoutState> = {}) =>
+		input({ state: state(overrides) });
 	const splitTerminal = {
 		kind: "split" as const,
 		editorKey: "/a",
 		ratio: 0.5,
-		view: "neovim" as const,
 	};
 
-	it("lays the selected Workspace's terminal where its workbench is, and not the workbench", () => {
+	it("lays the selected Workspace's terminal in the editor's rectangle", () => {
 		const children = windowLayout(showing());
 		const terminals = children.filter(
 			(child) => child.identity.kind === "neovim",
@@ -1065,30 +823,10 @@ describe("the editor area's Neovim page", () => {
 		for (const child of terminals) {
 			expect(child.rect).toEqual(workbenchRect(WINDOW, state()));
 		}
-		// Its workbench exists, and stays built and hidden behind it.
-		expect(
-			children.filter(
-				(child) => child.identity.kind === "editor" && child.visible,
-			),
-		).toEqual([]);
-		expect(onScreenEditor(showing())).toBeUndefined();
-	});
-
-	it("shows the workbench instead once the editor area shows the editor", () => {
-		const editor = showing({ surface: { kind: "editor", editorKey: "/a" } });
-		expect(onScreenEditor(editor)).toBe("/a");
-		expect(onScreenNeovim(editor)).toBeUndefined();
-		expect(keyboardChild(editor)).toEqual({ kind: "editor", editorKey: "/a" });
 		expect(keyboardChild(showing())).toEqual({
 			kind: "neovim",
 			editorKey: "/a",
 		});
-	});
-
-	it("gives way to a question its own workbench is asking", () => {
-		const asking = showing({}, { asking: "/a" });
-		expect(onScreenNeovim(asking)).toBeUndefined();
-		expect(onScreenEditor(asking)).toBe("/a");
 	});
 
 	it("is the left half of a split, with the Agent beside it", () => {
@@ -1121,15 +859,12 @@ describe("the editor area's Neovim page", () => {
 	it("draws nothing for a Workspace whose terminal has no view yet", () => {
 		const children = windowLayout(
 			showing({
-				surface: { kind: "editor", editorKey: "/c", view: "neovim" },
+				surface: { kind: "editor", editorKey: "/c" },
 			}),
 		);
 		expect(
 			children.some(
-				(child) =>
-					(child.identity.kind === "neovim" ||
-						child.identity.kind === "editor") &&
-					child.visible,
+				(child) => child.identity.kind === "neovim" && child.visible,
 			),
 		).toBe(false);
 	});
@@ -1212,18 +947,11 @@ describe("the floating Sidebar", () => {
 					terminal: { terminalId: "t", share: 0.3 },
 				}),
 				terminals: ["t"],
-				attached: [attached()],
 			}),
 		);
 		const order = kinds(children);
 		const sidebar = order.indexOf("sidebar");
-		for (const content of [
-			"editor",
-			"attached",
-			"agents",
-			"conversations",
-			"terminal",
-		]) {
+		for (const content of ["neovim", "agents", "conversations", "terminal"]) {
 			expect(order.lastIndexOf(content as never)).toBeLessThan(sidebar);
 		}
 		for (const layer of ["toasts", "picker", "tooltip"]) {

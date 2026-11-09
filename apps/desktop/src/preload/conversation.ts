@@ -21,7 +21,6 @@ import {
 	type ConversationCommandWire,
 	type ConversationEventBatch,
 	type ConversationEventListener,
-	type ConversationInsertListener,
 } from "../ipc/conversation.js";
 import type { RewindOutcome, Transcript } from "../model/conversation.js";
 import type {
@@ -30,15 +29,7 @@ import type {
 } from "../main/agentEngine/protocol.js";
 
 const listeners = new Map<string, ConversationEventListener>();
-const inserts = new Map<string, ConversationInsertListener>();
 const restarts = new Map<string, () => void>();
-
-ipcRenderer.on(
-	CONVERSATION_CHANNELS.insert,
-	(_event, agentId: string, text: string) => {
-		inserts.get(agentId)?.(text);
-	},
-);
 
 const deliver = (batch: ConversationEventBatch) => {
 	for (const [agentId, revision, event] of batch) {
@@ -136,12 +127,11 @@ function command(
 }
 
 export const conversationApi: ConversationApi = {
-	attach: async (agentId, onEvent, onInsert, onRestarted) => {
+	attach: async (agentId, onEvent, onRestarted) => {
 		// Listening before asking: an event sent between reading the snapshot
 		// and answering arrives before the answer, and the page drops it by
 		// its revision rather than never seeing it.
 		listeners.set(agentId, onEvent);
-		if (onInsert !== undefined) inserts.set(agentId, onInsert);
 		if (onRestarted !== undefined) restarts.set(agentId, onRestarted);
 		try {
 			const reply = (await ipcRenderer.invoke(
@@ -154,14 +144,12 @@ export const conversationApi: ConversationApi = {
 			return { ...snapshot, ...rest } satisfies ConversationAttachment;
 		} catch (failure: unknown) {
 			listeners.delete(agentId);
-			inserts.delete(agentId);
 			restarts.delete(agentId);
 			throw failure;
 		}
 	},
 	detach: async (agentId) => {
 		listeners.delete(agentId);
-		inserts.delete(agentId);
 		restarts.delete(agentId);
 		if (engine !== undefined)
 			toEngine(engine.port, { type: "detach", agentId });

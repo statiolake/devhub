@@ -204,7 +204,7 @@ function named(commandId: string): string {
 			return "openChordHelp";
 		default:
 			// previous_agent, next_agent, next_workspace: all selections.
-			return "selectContext [object Object] undefined undefined";
+			return "selectContext [object Object] undefined";
 	}
 }
 
@@ -286,22 +286,19 @@ describe("a chord, as Electron delivers it", () => {
 	});
 
 	/**
-	 * `Cmd+Q Shift+J` is a toggle, so it lands the way `Cmd+Q Cmd+J` does.
-	 *
-	 * Where it arrives is the model's to say — only the model remembers the
-	 * way back — so what travels to the host is the landing, and the host
-	 * spends it on whatever editor the jump arrived at.
+	 * Where `Cmd+Q Shift+J` arrives is the model's to say — only the model
+	 * remembers the way back — so what travels to the host is the place.
 	 */
-	it("hands the jump to Scratch to the host with the landing a toggle has", () => {
+	it("hands the jump to Scratch to the host", () => {
 		const { calls, chordHost } = host();
 		type(chordHost, [PREFIX, input("KeyJ", "J", { shift: true })]);
-		expect(calls).toEqual(["togglePlace scratch editor"]);
+		expect(calls).toEqual(["togglePlace scratch"]);
 	});
 
 	it("hands Shift+O to the Orchestrator toggle, and leaves the bare o to the panes", () => {
 		const { calls, chordHost } = host();
 		type(chordHost, [PREFIX, input("KeyO", "O", { shift: true })]);
-		expect(calls).toEqual(["togglePlace orchestrator editor"]);
+		expect(calls).toEqual(["togglePlace orchestrator"]);
 	});
 
 	it("keeps the chord through the Shift that arrives before the key", () => {
@@ -315,9 +312,7 @@ describe("a chord, as Electron delivers it", () => {
 		]);
 		expect(taken).toEqual([true, false, true]);
 		// `Shift+P` from Scratch steps back to the last workspace.
-		expect(calls).toEqual([
-			"selectContext [object Object] undefined undefined",
-		]);
+		expect(calls).toEqual(["selectContext [object Object] undefined"]);
 	});
 
 	/**

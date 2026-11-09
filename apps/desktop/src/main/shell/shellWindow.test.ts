@@ -1,10 +1,6 @@
 /**
- * The one invariant the view manager exists to keep.
- *
- * At most one workbench view is on screen, and if there is one it is the
- * topmost child — because sibling views paint in the order they were added, so
- * a view that is visible but underneath another is invisible for no reason the
- * code makes visible anywhere.
+ * The one window and its children: where the keyboard goes, the modal layer
+ * above everything, and when DevHub may come to the front.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -27,21 +23,6 @@ class FakeView {
 	}
 	getBounds(): Electron.Rectangle | undefined {
 		return this.bounds;
-	}
-	/**
-	 * `WebContentsView extends View`, so a workbench's view is a container
-	 * too — which is where VS Code's integrated Browser is attached. See
-	 * `WorkbenchView.contentView`.
-	 */
-	readonly children: object[] = [];
-	addChildView(child: object): void {
-		const at = this.children.indexOf(child);
-		if (at !== -1) this.children.splice(at, 1);
-		this.children.push(child);
-	}
-	removeChildView(child: object): void {
-		const at = this.children.indexOf(child);
-		if (at !== -1) this.children.splice(at, 1);
 	}
 	destroyed = false;
 	private readonly listeners = new Map<string, (() => void)[]>();
@@ -68,17 +49,7 @@ class FakeView {
 			for (const listener of this.listeners.get(event) ?? []) listener();
 		},
 		setWindowOpenHandler: () => undefined,
-		/**
-		 * What main asked this workbench to do, in order.
-		 *
-		 * `vscode:runAction` is upstream's own door for main to raise a
-		 * workbench command, and whether one was raised — and how many times —
-		 * is exactly the question the terminal-on-arrival tests ask.
-		 */
-		sent: [] as { channel: string; payload: unknown }[],
-		send: (channel: string, payload: unknown) => {
-			this.webContents.sent.push({ channel, payload });
-		},
+		send: () => undefined,
 		focus: () => {
 			focused = this.webContents.id;
 		},
@@ -166,9 +137,9 @@ class FakeWindow {
 		return this.destroyed;
 	}
 	/**
-	 * Whether DevHub is the app in front. It is half of what decides whether a
-	 * workbench has the keyboard — see `ShellWindow.isSurfaceFocused` — and it
-	 * is true here because these tests are all about a window being worked in.
+	 * Whether DevHub is the app in front. The keyboard is only ever placed
+	 * within a window that is, and it is true here because these tests are
+	 * all about a window being worked in.
 	 */
 	inFront = true;
 	isFocused(): boolean {
@@ -220,33 +191,11 @@ const raised: string[] = [];
 /** Every URL handed to the system browser, in order. */
 const openedExternally: string[] = [];
 
-/**
- * What reached `electron.app`, as `event:windowId`.
- *
- * The delivery the workspace trust prompt and the git extension are built on;
- * see `WorkbenchView.announceFocusToTheApplication`. Recorded here because the
- * question these tests ask is *when* the shell says it, not what it says.
- */
-const announced: string[] = [];
-
 vi.mock("../electron.js", () => ({
 	electron: {
 		BrowserWindow: FakeWindow,
 		WebContentsView: FakeView,
-		// Attaching and detaching a view move the listener ceiling on `app`
-		// (see `appListenerCeiling.ts`). The number is that module's business
-		// and is tested there; what this mock owes is an `app` to set it on,
-		// without which every test that attaches a view throws before it
-		// starts.
 		app: {
-			setMaxListeners: () => undefined,
-			// A workbench's focus is announced here as well as on its own
-			// window, because `app` is where VS Code reads it from. See
-			// `WorkbenchView.announceFocusToTheApplication`; what it says is
-			// asserted in that module's test.
-			emit: (event: string, _details: unknown, window: { id: number }) => {
-				announced.push(`${event}:${window.id}`);
-			},
 			focus: () => {
 				raised.push("app.focus");
 			},
@@ -271,41 +220,12 @@ const { ShellWindow, shellWindowOptions } = await import("./shellWindow.js");
 const { WINDOW_TITLES } = await import("../../ipc/windowTitles.js");
 type ShellPalette = import("../../ipc/palette.js").ShellPalette;
 const { scrimColor } = await import("../../ipc/palette.js");
-const { WorkbenchView, asBrowserWindow } = await import("./workbenchView.js");
 const { sidebarRect, trafficLightPosition } = await import("./windowLayout.js");
 
 /** The size the fake window reports; see `getContentSize` above. */
 const WINDOW_WIDTH = 1440;
 const WINDOW_HEIGHT = 900;
 type ShellWindow = InstanceType<typeof ShellWindow>;
-type WorkbenchView = InstanceType<typeof WorkbenchView>;
-
-/**
- * The rectangle the layout owner computes for this window.
- *
- * 1440x900, no title bar of DevHub's own, a sidebar at its default width and
- * its hairline. Nothing measures it: see `windowLayout.ts`.
- */
-const AREA = { x: 248, y: 0, width: 1192, height: 900 };
-
-/** The folder each workbench in these tests is showing. */
-const keys = new WeakMap<WorkbenchView, string>();
-let keyCounter = 0;
-
-/** Give a view a folder, which is what makes it a child the layout can name. */
-function bind(shell: ShellWindow, view: WorkbenchView): string {
-	keyCounter += 1;
-	const key = `/folder/${String(keyCounter)}`;
-	keys.set(view, key);
-	shell.bindEditorKey(view.id, key);
-	return key;
-}
-
-function keyOf(view: WorkbenchView): string {
-	const key = keys.get(view);
-	if (!key) throw new Error("that workbench was never bound to a folder");
-	return key;
-}
 
 const BASE = {
 	titleBar: "hidden",
@@ -313,17 +233,17 @@ const BASE = {
 	sidebar: { width: 248, collapsed: false },
 } as const;
 
-/** The selection resolves to this workbench, with the whole area. */
-function show(shell: ShellWindow, view: WorkbenchView): void {
-	shell.setLayoutState({
-		...BASE,
-		surface: { kind: "editor", editorKey: keyOf(view) },
-		keyboard: "editor",
-	});
+function newShell(): ShellWindow {
+	return new ShellWindow(
+		"preload.js",
+		"devhub-app://shell/index.html",
+		undefined,
+		"hidden",
+	);
 }
 
-/** The page has put something of its own over the area — an Agent, a wait. */
-function showPage(shell: ShellWindow): void {
+/** An Agent over the content area, holding the keys. */
+function showAgent(shell: ShellWindow): void {
 	shell.setLayoutState({
 		...BASE,
 		surface: { kind: "agent" },
@@ -331,41 +251,24 @@ function showPage(shell: ShellWindow): void {
 	});
 }
 
-/** An Agent beside this workbench: both drawn, the Agent holding the keys. */
-function showSplit(shell: ShellWindow, view: WorkbenchView): void {
+/** The keyboard on the Sidebar, the Agent still on screen. */
+function showSidebar(shell: ShellWindow): void {
 	shell.setLayoutState({
 		...BASE,
-		surface: { kind: "split", editorKey: keyOf(view), ratio: 0.5 },
-		keyboard: "agents",
+		surface: { kind: "agent" },
+		keyboard: "sidebar",
 	});
 }
 
-describe("the shell window's workbench views", () => {
+const idOf = (contents: unknown): number | undefined =>
+	(contents as { id: number } | undefined)?.id;
+
+describe("the shell window's children", () => {
 	let shell: ShellWindow;
-	let a: WorkbenchView;
-	let b: WorkbenchView;
-	let c: WorkbenchView;
 
 	beforeEach(() => {
-		shell = new ShellWindow(
-			"preload.js",
-			"devhub-app://shell/index.html",
-			undefined,
-			"hidden",
-		);
-		a = new WorkbenchView(shell, {});
-		b = new WorkbenchView(shell, {});
-		c = new WorkbenchView(shell, {});
-		for (const view of [a, b, c]) {
-			shell.attach(view);
-			bind(shell, view);
-		}
+		shell = newShell();
 	});
-
-	function invariantHolds(expected: WorkbenchView | undefined): void {
-		expect(shell.visibleViews()).toEqual(expected ? [expected] : []);
-		if (expected) expect(shell.topmostView()).toBe(expected);
-	}
 
 	/**
 	 * The Sidebar's own rectangle is main's number, not the page's.
@@ -390,9 +293,7 @@ describe("the shell window's workbench views", () => {
 			...shell.layoutState(),
 			sidebar: { width: 248, collapsed: true },
 		});
-		// Collapsed with no title bar, the rail is the traffic lights' span —
-		// and it is exactly the case the old in-page tooltip refused to draw
-		// in, because 76px is not a column a sentence fits in.
+		// Collapsed with no title bar, the rail is the traffic lights' span.
 		expect(shell.sidebarArea().width).toBe(76);
 		expect(shell.sidebarArea().x).toBe(0);
 	});
@@ -418,442 +319,28 @@ describe("the shell window's workbench views", () => {
 		expect(shell.tooltip.isPresent()).toBe(false);
 	});
 
-	it("shows nothing until the selection says what to show", () => {
-		// Creating a workbench must not put it on screen: three of them open at
-		// launch, and whichever finished last would otherwise take the screen.
-		invariantHolds(undefined);
+	it("gives the keyboard to the child the arrangement names", () => {
+		focused = undefined;
+		showAgent(shell);
+		expect(focused).toBe(idOf(shell.agents.contents()));
+		showSidebar(shell);
+		expect(focused).toBe(idOf(shell.sidebar.contents()));
 	});
 
-	it("shows exactly the revealed view, on top, however often it changes", () => {
-		for (const view of [a, b, c, a, c, b, b, a]) {
-			show(shell, view);
-			invariantHolds(view);
-		}
-	});
-
-	it("sizes a view before it is shown, never after", () => {
-		const boundsOf = (view: WorkbenchView): Electron.Rectangle | undefined =>
-			(view.view as unknown as FakeView).bounds;
-
-		show(shell, b);
-		expect(boundsOf(b)).toEqual(AREA);
-		invariantHolds(b);
-	});
-
-	it("moves every workbench when the sidebar does, with nothing measured", () => {
-		const boundsOf = (view: WorkbenchView): Electron.Rectangle | undefined =>
-			(view.view as unknown as FakeView).bounds;
-
-		show(shell, b);
-		shell.setLayoutState({
-			...shell.layoutState(),
-			sidebar: { width: 400, collapsed: false },
-		});
-		expect(boundsOf(b)).toEqual({ x: 400, y: 0, width: 1040, height: 900 });
-		// The one behind it too: a view shown at the size it had when it was
-		// hidden reflows visibly when it catches up.
-		expect(boundsOf(a)).toEqual({ x: 400, y: 0, width: 1040, height: 900 });
-		invariantHolds(b);
-	});
-
-	it("shows nothing while the page's own surface is the one on screen", () => {
-		show(shell, a);
-		showPage(shell);
-		invariantHolds(undefined);
-
-		show(shell, a);
-		invariantHolds(a);
-	});
-
-	it("lets its views go after the window itself has gone", () => {
-		// Quitting: Electron destroys the window, and every view's contents end
-		// with it. Each one still leaves the table — but there is no window
-		// left to take it out of, and asking one that has been destroyed for
-		// its `contentView` is "Object has been destroyed", uncaught, in main.
-		(shell.window as unknown as { destroyed: boolean }).destroyed = true;
+	it("lets the window go without throwing", () => {
+		(shell.window as unknown as FakeWindow).destroyed = true;
 		expect(() => {
-			for (const view of [a, b, c]) view.webContents.close();
-		}).not.toThrow();
-		expect(shell.getViews()).toEqual([]);
-	});
-
-	it("cannot reveal a view whose contents are gone", () => {
-		show(shell, a);
-		// Killed from underneath, the way a crashed renderer goes: no call to
-		// `destroy()`, so nothing tells the table on the way out except the
-		// contents themselves ending. The table must not still contain it a
-		// moment later — Electron answers a destroyed child with "can't add a
-		// destroyed child view to a parent view", which is a true statement
-		// about a table that should never have held it.
-		a.webContents.close();
-		expect(shell.visibleViews()).toEqual([]);
-
-		shell.assertArrangement();
-		expect(shell.visibleViews()).toEqual([]);
-		expect(shell.topmostView()).not.toBe(a);
-		expect(shell.revealedView()).toBeUndefined();
-
-		// And the surviving views are still perfectly usable.
-		show(shell, b);
-		invariantHolds(b);
-	});
-
-	/**
-	 * Focus follows the surface.
-	 *
-	 * Hiding a `WebContentsView` does not take the keyboard away from it, so
-	 * the window kept delivering keys to a workbench nobody could see: typing
-	 * went into an invisible editor, and the chord layer — which listens on
-	 * whichever contents the keys arrive at — had nothing to listen to. That is
-	 * the "the chord works once and then stops" report.
-	 */
-	describe("and where the keyboard goes", () => {
-		/**
-		 * The Agents' view — where the keyboard goes when an Agent is on
-		 * screen. It used to be the window's own page, because the Agent's
-		 * pane was drawn in that document; it is a child of its own now, and
-		 * "the page has it" has stopped being a thing anybody can say.
-		 */
-		const page = () =>
-			(shell.agents.contents() as unknown as { id: number } | undefined)?.id;
-		const contentsOf = (view: WorkbenchView): number =>
-			(view.webContents as unknown as { id: number }).id;
-
-		beforeEach(() => {
-			focused = undefined;
-		});
-
-		it("gives the keyboard to the workbench that is on screen", () => {
-			show(shell, a);
-			expect(focused).toBe(contentsOf(a));
-			show(shell, b);
-			expect(focused).toBe(contentsOf(b));
-		});
-
-		it("takes it off a hidden workbench and gives it to the page", () => {
-			// The page is where a terminal and an Agent surface live, so this is
-			// what makes typing go straight into the xterm with no click.
-			show(shell, a);
-			showPage(shell);
-			expect(focused).toBe(page());
-		});
-
-		it("survives being asked over and over, from either end", () => {
-			// Editor → Terminal → Editor → Terminal, which is the chord the
-			// report says cannot be used twice in a row.
-			show(shell, a);
-			for (let round = 0; round < 3; round += 1) {
-				showPage(shell);
-				expect(focused).toBe(page());
-				show(shell, a);
-				expect(focused).toBe(contentsOf(a));
-			}
-		});
-
-		it("leaves a workbench alone while the page's surface is on screen", () => {
-			// A projection change re-reveals the selected Editor even while the
-			// Terminal is showing. That must not pull the keyboard out of it.
-			showPage(shell);
-			focused = undefined;
-			// A projection change that leaves the arrangement where it was must
-			// not move the keyboard — and now it structurally cannot, because
-			// what is on screen is one answer rather than two axes that can be
-			// set apart from each other.
-			shell.assertArrangement();
-			expect(focused).toBeUndefined();
-		});
-
-		/**
-		 * An Agent opened beside its editor keeps the keyboard.
-		 *
-		 * ⌘-clicking an Agent puts it next to the workbench rather than over it,
-		 * so both are on screen — and the one the person chose is the Agent,
-		 * because that is the only way a split is ever entered. Main used to
-		 * read "is a workbench visible" for this and answered yes, so the editor
-		 * took the keys: on the reveal, and again on every window focus, which
-		 * is what made it look like the editor was stealing focus at random.
-		 */
-		it("leaves the keyboard with the page when an Agent is beside a workbench", () => {
-			show(shell, a);
-			expect(focused).toBe(contentsOf(a));
-
-			showSplit(shell, a);
-			expect(focused).toBe(page());
-
-			// The workbench is still drawn — that is what a split is.
-			invariantHolds(a);
-
-			// And asking again does not hand it over either. This is the path the
-			// report was about: the app was already arranged correctly, and every
-			// window focus asks this same question again.
-			focused = undefined;
+			shell.layout();
 			shell.focusSurface();
-			expect(focused).toBe(page());
-
-			// A projection change that changes nothing must not pull the
-			// keyboard out of the Agent beside it either.
-			focused = undefined;
-			shell.assertArrangement();
-			expect(focused).toBeUndefined();
-		});
-
-		/**
-		 * A workbench that arrives after it was chosen still gets the keys.
-		 *
-		 * Opening a folder selects it at once, and its workbench is built
-		 * after that — a moment later for a folder here, much later for one
-		 * on another machine. The keyboard went to the window's own page in
-		 * between, because there was nothing else to put it in, and nothing
-		 * put it anywhere when the workbench came: the arrangement had not
-		 * changed, only which workbenches exist. Where the keys go is a
-		 * function of both, so a change in either places them.
-		 */
-		it("gives the keyboard to a chosen workbench when it arrives", () => {
-			shell.setLayoutState({
-				...BASE,
-				surface: { kind: "editor", editorKey: "/folder/late" },
-				keyboard: "editor",
-			});
-			expect(focused).toBe(
-				(shell.window.webContents as unknown as { id: number }).id,
-			);
-			const late = new WorkbenchView(shell, {});
-			shell.attach(late);
-			shell.bindEditorKey(late.id, "/folder/late");
-			expect(focused).toBe(contentsOf(late));
-		});
-
-		it("leaves the keyboard alone when a workbench nobody chose arrives", () => {
-			show(shell, a);
-			focused = undefined;
-			const other = new WorkbenchView(shell, {});
-			shell.attach(other);
-			shell.bindEditorKey(other.id, "/folder/elsewhere");
-			expect(focused).toBeUndefined();
-		});
-
-		it("gives it back to the workbench when the split is closed", () => {
-			show(shell, a);
-			showSplit(shell, a);
-			expect(focused).toBe(page());
-			show(shell, a);
-			expect(focused).toBe(contentsOf(a));
-		});
-
-		/**
-		 * Mid-chord the keyboard is DevHub's: a stroke only reaches the chord
-		 * layer in a web contents, and a workbench being replaced (waking,
-		 * restarting, crashed) is not one that can take it. So while the
-		 * prefix is armed DevHub moves the keyboard to nothing but the
-		 * window's own page, and makes the move it stood for when the chord
-		 * ends.
-		 */
-		describe("while a chord is armed", () => {
-			const shellPage = () =>
-				(shell.window.webContents as unknown as { id: number }).id;
-
-			it("keeps the keyboard on the window's page while the workbench is replaced", () => {
-				show(shell, a);
-				expect(focused).toBe(contentsOf(a));
-				shell.chordArmedChanged(true);
-				// a's renderer goes; its replacement arrives mid-chord.
-				shell.detach(a);
-				expect(focused).toBe(shellPage());
-				const replacement = new WorkbenchView(shell, {});
-				shell.attach(replacement);
-				shell.bindEditorKey(replacement.id, keyOf(a));
-				expect(focused).toBe(shellPage());
-				// The chord ends: the replacement gets the keyboard.
-				shell.chordArmedChanged(false);
-				expect(focused).toBe(contentsOf(replacement));
-			});
-
-			it("leaves the keyboard where the prefix was typed when nothing moves it", () => {
-				show(shell, a);
-				shell.chordArmedChanged(true);
-				show(shell, a);
-				expect(focused).toBe(contentsOf(a));
-				shell.chordArmedChanged(false);
-				expect(focused).toBe(contentsOf(a));
-			});
-		});
-
-		const theWindow = () => shell.window as unknown as FakeWindow;
-		/** The modal layer's own contents, once a sheet has put it on screen. */
-		const layer = () =>
-			(shell.picker.contents() as unknown as { id: number } | undefined)?.id;
-
-		it("does not take the keyboard out of an open modal", () => {
-			show(shell, a);
-			shell.picker.openModal({ kind: "workspace-picker" });
-			focused = undefined;
-			showPage(shell);
-			show(shell, b);
-			// A dialog no key reaches is a dialog nobody can answer, so the
-			// keyboard goes nowhere but the layer for as long as one stands.
-			expect(focused).not.toBe(contentsOf(b));
-			expect(focused).not.toBe(page());
-		});
-
-		it("gives the keyboard to the sheet, not to what is behind it", () => {
-			show(shell, a);
-			shell.picker.openModal({ kind: "workspace-picker" });
-			expect(focused).toBe(layer());
-		});
-
-		/**
-		 * Coming back to DevHub with a sheet standing.
-		 *
-		 * macOS restores the keyboard to whatever held it before the app went
-		 * away — measured on an isolated instance, the App Shell page — and the
-		 * window's own `focus` event is the only thing that runs. It used to
-		 * stand aside for the modal layer, which read as "the modal already has
-		 * it" and was not the same fact: the sheet came back unreachable from
-		 * the keyboard, and clicking into it was the only way on.
-		 */
-		it("puts the keyboard back in the sheet when the window comes forward", () => {
-			show(shell, a);
-			const id = shell.picker.openModal({ kind: "workspace-picker" });
-			theWindow().inFront = false;
-			theWindow().emit("blur");
-			focused = undefined;
-
-			theWindow().inFront = true;
-			theWindow().emit("focus");
-			expect(focused).toBe(layer());
-
-			// And when the sheet goes, the surface has it again.
-			shell.picker.closeModal(id);
-			expect(focused).toBe(contentsOf(a));
-		});
-
-		/**
-		 * A toggle landing on an editor lands in its editor group.
-		 *
-		 * `Cmd+Q Cmd+J` going Agent → editor and `Cmd+Q Shift+J` arriving at
-		 * an editor ask for it (see `Landing` in `chords.ts`). The command is
-		 * the workbench's, so it is forwarded rather than reimplemented — and
-		 * it is forwarded by the placement that ends the move, after the
-		 * keyboard is in that workbench, never before: a `focusActiveEditorGroup` sent
-		 * any earlier would focus an editor group in a view the keys are not going
-		 * to. There is nothing kept between the asking and the landing, because
-		 * the move and its placement are one call.
-		 */
-		describe("and the editor a move lands in", () => {
-			const runActions = (view: WorkbenchView): unknown[] =>
-				(
-					view.webContents as unknown as {
-						sent: { channel: string; payload: unknown }[];
-					}
-				).sent
-					.filter((one) => one.channel === "vscode:runAction")
-					.map((one) => one.payload);
-			const EDITOR_GROUP = {
-				id: "workbench.action.focusActiveEditorGroup",
-				from: "menu",
-			};
-
-			it("is focused in the workbench the keyboard has landed in", () => {
-				show(shell, a);
-				shell.focusSurface("editor");
-				expect(focused).toBe(contentsOf(a));
-				expect(runActions(a)).toEqual([EDITOR_GROUP]);
-				expect(runActions(b)).toEqual([]);
-			});
-
-			it("is not asked for by an ordinary placement", () => {
-				show(shell, a);
-				showPage(shell);
-				show(shell, a);
-				shell.focusSurface();
-				expect(runActions(a)).toEqual([]);
-			});
-
-			it("is asked for once, by the move that asked, and not by later placements", () => {
-				show(shell, a);
-				shell.focusSurface("editor");
-				showPage(shell);
-				show(shell, a);
-				theWindow().emit("focus");
-				expect(runActions(a)).toEqual([EDITOR_GROUP]);
-			});
-
-			it("means nothing when the move landed on an Agent", () => {
-				// `Cmd+Q Shift+J` back to an Agent: an Agent is a terminal already.
-				show(shell, a);
-				showPage(shell);
-				shell.focusSurface("editor");
-				expect(focused).toBe(page());
-				expect(runActions(a)).toEqual([]);
-			});
-
-			it("is dropped when the workbench the move named is not there", () => {
-				// Starting, restarting, or gone: there is no view to focus a
-				// terminal in, and the selection still happens.
-				shell.setLayoutState({
-					...BASE,
-					surface: { kind: "editor", editorKey: "/folder/not-open" },
-					keyboard: "editor",
-				});
-				shell.focusSurface("editor");
-				for (const view of [a, b, c]) expect(runActions(view)).toEqual([]);
-			});
-
-			it("is dropped while the window is not in front", () => {
-				// `placeKeyboardIn` declines outright there, so the keys never
-				// arrived and there is nothing to have landed in.
-				theWindow().inFront = false;
-				show(shell, a);
-				shell.focusSurface("editor");
-				expect(runActions(a)).toEqual([]);
-			});
-
-			it("is dropped while a question stands over the workbench", () => {
-				show(shell, a);
-				shell.picker.openModal({ kind: "workspace-picker" });
-				shell.focusSurface("editor");
-				expect(runActions(a)).toEqual([]);
-			});
-		});
-	});
-
-	it("shows nothing when the revealed view goes away", () => {
-		show(shell, c);
-		shell.detach(c);
-		invariantHolds(undefined);
+		}).not.toThrow();
 	});
 });
 
-/**
- * The modal layer.
- *
- * Stacking is the point: a modal has to be above every workbench, and the only
- * thing in this window that is above a native view is another native view. So
- * the assertions here are about the window's child list and its bounds, not
- * about the calls that happen to produce them.
- */
 describe("the shell window's modal layer", () => {
 	let shell: ShellWindow;
-	let editor: WorkbenchView;
-	let other: WorkbenchView;
+	const layer = () => idOf(shell.picker.contents());
 
-	const DIALOG = {
-		kind: "workbench-dialog",
-		surfaceKey: "workspace-editor:one",
-		message: "Do you want to save the changes you made?",
-		buttons: ["Save", "Don't Save", "Cancel"],
-		defaultId: 0,
-		cancelId: 2,
-		tone: "warning",
-	} as const;
-
-	/**
-	 * The modal layer, as a child of the window.
-	 *
-	 * Found by its contents rather than by elimination: every chrome child is
-	 * in this list now, and "the one that is not a workbench" stopped naming
-	 * one thing the moment the Sidebar and the Agents became views.
-	 */
+	/** The modal layer, as a child of the window, found by its contents. */
 	function overlayChild(): FakeView | undefined {
 		const children = shell.window.contentView.children as unknown as FakeView[];
 		const contents = shell.picker.contents();
@@ -880,21 +367,8 @@ describe("the shell window's modal layer", () => {
 
 	beforeEach(() => {
 		focused = undefined;
-		shell = new ShellWindow(
-			"preload.js",
-			"devhub-app://shell/index.html",
-			undefined,
-			"hidden",
-		);
-		editor = new WorkbenchView(shell, {});
-		other = new WorkbenchView(shell, {});
-		for (const view of [editor, other]) {
-			shell.attach(view);
-			bind(shell, view);
-		}
-		shell.setSurfaceKeyResolver((view) =>
-			view === editor ? "workspace-editor:one" : "workspace-editor:two",
-		);
+		shell = newShell();
+		showAgent(shell);
 	});
 
 	/** One pixel inside the window's bottom-right corner, at its size. */
@@ -906,7 +380,6 @@ describe("the shell window's modal layer", () => {
 		// waited for a first layout and every later one opened on a frame of
 		// the previous sheet. All but one pixel is outside, and takes no
 		// click, and it is clear there.
-		show(shell, editor);
 		expect(overlayChild()?.getBounds()).toEqual(PARKED);
 		expect(overlayChild()?.background).toBe("#00000000");
 		expect(shell.picker.isPresent()).toBe(false);
@@ -916,19 +389,19 @@ describe("the shell window's modal layer", () => {
 		// The page lays out a frame or two after its view is resized, and what
 		// it has not painted yet is the view's background. A dim drawn by the
 		// page left an undimmed strip along the edges as the window grew.
-		show(shell, editor);
 		shell.picker.openModal({ kind: "workspace-picker" });
 		expect(overlayChild()?.background).toBe(scrimColor("light", false));
 	});
 
-	it("is the topmost child for as long as a modal is open", () => {
-		show(shell, editor);
+	it("covers the window for as long as a modal is open, on top", () => {
 		const id = shell.picker.openModal({ kind: "workspace-picker" });
-
-		expect(overlayChild()).toBeDefined();
+		expect(overlayChild()?.getBounds()).toEqual({
+			x: 0,
+			y: 0,
+			width: WINDOW_WIDTH,
+			height: WINDOW_HEIGHT,
+		});
 		expect(topmostOverWindow()).toBe(overlayChild());
-		// And the workbench is still on screen underneath, not stood down.
-		expect(shell.visibleViews()).toEqual([editor]);
 
 		shell.picker.closeModal(id);
 		expect(overlayChild()?.getBounds()).toEqual(PARKED);
@@ -936,15 +409,10 @@ describe("the shell window's modal layer", () => {
 	});
 
 	it("stays the topmost child through every later layout", () => {
-		// The regression. `layout` raises the workbench on screen by re-adding
-		// it, and it runs whenever anything about the arrangement moves — the
-		// page re-measuring its content hole on a window resize or a sidebar
-		// drag, another modal opening, the surface changing. The overlay used
-		// to be raised only on the way in, so the first of those after a modal
-		// opened put the editor back on top of the sheet: the picker still had
-		// the keyboard, but the workbench was what was drawn and what took the
-		// clicks, which reads exactly as an editor that activates itself.
-		show(shell, editor);
+		// `layout` re-adds every child in order whenever anything about the
+		// arrangement moves; the layer used to be raised only on the way in,
+		// so the first of those after a modal opened put the content back on
+		// top of the sheet.
 		shell.picker.openModal({ kind: "workspace-picker" });
 
 		shell.setLayoutState({
@@ -956,162 +424,60 @@ describe("the shell window's modal layer", () => {
 		shell.picker.openModal({ kind: "issue-assignment" });
 		expect(topmostOverWindow()).toBe(overlayChild());
 
-		show(shell, other);
-		expect(topmostOverWindow()).toBe(overlayChild());
-
-		showPage(shell);
+		showSidebar(shell);
 		expect(topmostOverWindow()).toBe(overlayChild());
 	});
 
-	it("stays above a view the workbench opened beside itself", () => {
-		// VS Code's integrated Browser is a `WebContentsView` of its own, and it
-		// is a *sibling* of the workbench in this window — a view nested inside
-		// another `WebContentsView` is never painted on macOS with this
-		// Electron. So the owner places it, and everything the owner puts over
-		// the content area is still over it: the notices, the questions, the
-		// tooltip.
-		show(shell, editor);
-		const browser = new FakeView();
-		asBrowserWindow(editor).contentView.addChildView(
-			browser as unknown as Electron.View,
-		);
-		browser.setBounds({ x: 10, y: 20, width: 300, height: 200 });
-		browser.setVisible(true);
-
-		const children = shell.window.contentView.children as unknown as FakeView[];
-		// In the window, directly above the workbench it belongs to — and never
-		// inside that workbench's own subtree.
-		expect(children).toContain(browser);
-		expect(editor.view.children).toEqual([]);
-		const editorChild = editor.view as unknown as FakeView;
-		expect(children.indexOf(browser)).toBe(children.indexOf(editorChild) + 1);
-		// Placed by the owner: the workbench's rectangle plus VS Code's own.
-		expect(browser.bounds).toEqual({
-			x: AREA.x + 10,
-			y: AREA.y + 20,
-			width: 300,
-			height: 200,
-		});
-		expect(browser.visible).toBe(true);
-
+	it("gives the keyboard to the sheet, and keeps it there while one stands", () => {
 		shell.picker.openModal({ kind: "workspace-picker" });
-		expect(topmostOverWindow()).toBe(overlayChild());
-
-		// And a later layout moves it with the workbench, with no page asked.
-		shell.setLayoutState({
-			...shell.layoutState(),
-			sidebar: { width: 400, collapsed: false },
-		});
-		expect(browser.bounds?.x).toBe(400 + 10);
-		expect(topmostOverWindow()).toBe(overlayChild());
+		expect(focused).toBe(layer());
+		// A dialog no key reaches is a dialog nobody can answer.
+		showSidebar(shell);
+		expect(focused).toBe(layer());
 	});
 
-	it("takes a view the workbench opened away with the workbench", () => {
-		// Another Workspace selected: the wish stands, and what is drawn does
-		// not. Nothing about this goes through VS Code — it is the same
-		// `layout()` pass that hides the workbench.
-		show(shell, editor);
-		const browser = new FakeView();
-		asBrowserWindow(editor).contentView.addChildView(
-			browser as unknown as Electron.View,
-		);
-		browser.setVisible(true);
-		expect(browser.visible).toBe(true);
-
-		show(shell, other);
-		expect(browser.visible).toBe(false);
-
-		show(shell, editor);
-		expect(browser.visible).toBe(true);
-	});
-
-	it("loses the view the workbench opened when that workbench goes", () => {
-		// Upstream's own teardown: `BrowserView.dispose` removes its view from
-		// the same container it added it to, guarded by `isDestroyed()`. The
-		// guard is why `contentView` throws rather than handing back a
-		// container for a view that has ended. What is DevHub's is that a
-		// sibling of a workbench that has left the window leaves it too —
-		// nothing else would ever take it out.
-		show(shell, editor);
-		const browser = new FakeView();
-		const window = asBrowserWindow(editor);
-		window.contentView.addChildView(browser as unknown as Electron.View);
-
-		window.contentView.removeChildView(browser as unknown as Electron.View);
-		expect(window.contentView.children).toEqual([]);
-		expect(shell.window.contentView.children).not.toContain(browser);
-
-		const again = new FakeView();
-		window.contentView.addChildView(again as unknown as Electron.View);
-		expect(shell.window.contentView.children).toContain(again);
-
-		editor.webContents.close();
-		expect(window.isDestroyed()).toBe(true);
-		expect(shell.window.contentView.children).not.toContain(again);
-		expect(() => window.contentView).toThrow(/destroyed/);
-	});
-
-	it("covers the window for a DevHub modal and one workbench for its own", () => {
-		show(shell, editor);
-		const picker = shell.picker.openModal({ kind: "workspace-picker" });
-		expect(overlayChild()?.getBounds()).toEqual({
-			x: 0,
-			y: 0,
-			width: 1440,
-			height: 900,
-		});
-
-		shell.picker.closeModal(picker);
-		void shell.picker.ask(DIALOG);
-		// The sidebar is outside this rectangle, which is what keeps it usable.
-		expect(overlayChild()?.getBounds()).toEqual(AREA);
-	});
-
-	it("keeps the workbench being asked about on screen, whatever is selected", () => {
-		show(shell, other);
-		void shell.picker.ask(DIALOG);
-		expect(shell.visibleViews()).toEqual([editor]);
-
-		// Even when the page has its own surface in the viewport: a question
-		// with no workbench under it cannot be answered.
-		showPage(shell);
-		expect(shell.visibleViews()).toEqual([editor]);
-	});
-
-	it("answers a question with the button pressed, and cancel when dismissed", async () => {
-		const answered = shell.picker.ask(DIALOG);
-		shell.picker.closeModal(shell.picker.askingId(), 1);
-		expect(await answered).toBe(1);
-
-		const dismissed = shell.picker.ask(DIALOG);
-		shell.picker.closeModal(shell.picker.askingId());
-		expect(await dismissed).toBe(DIALOG.cancelId);
-	});
-
-	it("replaces a question rather than stacking a second one on it", () => {
-		shell.picker.openModal({ kind: "workspace-picker" });
-		shell.picker.openModal({ kind: "workspace-picker" });
-		expect(shell.picker.openModals()).toHaveLength(1);
-
-		// A different workbench's question is a different question.
-		void shell.picker.ask(DIALOG);
-		void shell.picker.ask({ ...DIALOG, surfaceKey: "workspace-editor:two" });
-		expect(shell.picker.openModals()).toHaveLength(3);
-	});
-
-	it("gives the keyboard back to the surface on screen when the last one goes", () => {
-		show(shell, editor);
+	/**
+	 * Coming back to DevHub with a sheet standing.
+	 *
+	 * macOS restores the keyboard to whatever held it before the app went
+	 * away — measured on an isolated instance, the App Shell page — and the
+	 * window's own `focus` event is the only thing that runs. It used to
+	 * stand aside for the modal layer, which read as "the modal already has
+	 * it" and was not the same fact: the sheet came back unreachable from
+	 * the keyboard, and clicking into it was the only way on.
+	 */
+	it("puts the keyboard back in the sheet when the window comes forward", () => {
+		const window = shell.window as unknown as FakeWindow;
 		const id = shell.picker.openModal({ kind: "workspace-picker" });
-		shell.picker.closeModal(id);
-		expect(focused).toBe(editor.webContents.id);
+		window.inFront = false;
+		window.emit("blur");
+		focused = undefined;
 
-		// And to the Agents' view when an Agent is what is showing.
-		showPage(shell);
-		const next = shell.picker.openModal({ kind: "workspace-picker" });
-		shell.picker.closeModal(next);
-		expect(focused).toBe(
-			(shell.agents.contents() as unknown as { id: number } | undefined)?.id,
-		);
+		window.inFront = true;
+		window.emit("focus");
+		expect(focused).toBe(layer());
+
+		// And when the sheet goes, the surface has it again.
+		shell.picker.closeModal(id);
+		expect(focused).toBe(idOf(shell.agents.contents()));
+	});
+
+	it("answers a choice with what was chosen, and -1 when dismissed", async () => {
+		const chosen = shell.picker.choose({
+			kind: "recently-closed",
+			rows: [],
+		} as never);
+		const [first] = shell.picker.openModals();
+		shell.picker.closeModal(first!.id, 2);
+		expect(await chosen).toBe(2);
+
+		const dismissed = shell.picker.choose({
+			kind: "recently-closed",
+			rows: [],
+		} as never);
+		const [second] = shell.picker.openModals();
+		shell.picker.closeModal(second!.id);
+		expect(await dismissed).toBe(-1);
 	});
 });
 
@@ -1205,76 +571,15 @@ describe("links out of the App Shell page", () => {
 	});
 });
 
-/**
- * What the shell tells its workbenches about who has the keyboard.
- *
- * `WorkbenchView` holds the value and emits the transitions; this is the other
- * half — that the shell asks it to look again from every place that can change
- * the answer. The bug was never in the arithmetic. It was that nothing ever
- * did the asking, so `hostService.hasFocus` answered from whatever the view's
- * `webContents` happened to believe, which across an app switch was a stale
- * `true` that no event ever corrected — and a workspace trust prompt, which
- * waits for its window to have focus, waited.
- */
 describe("the shell window's focus reporting", () => {
-	let shell: ShellWindow;
-	let window: FakeWindow;
-	let a: WorkbenchView;
-	let b: WorkbenchView;
-
-	beforeEach(() => {
-		shell = new ShellWindow(
-			"preload.js",
-			"devhub-app://shell/index.html",
-			undefined,
-			"hidden",
-		);
-		window = shell.window as unknown as FakeWindow;
-		a = new WorkbenchView(shell, {});
-		b = new WorkbenchView(shell, {});
-		for (const view of [a, b]) {
-			shell.attach(view);
-			bind(shell, view);
-		}
-	});
-
-	it("gives focus to the workbench it reveals, and to no other", () => {
-		show(shell, a);
-		expect(a.isFocused()).toBe(true);
-		expect(b.isFocused()).toBe(false);
-
-		show(shell, b);
-		expect(a.isFocused()).toBe(false);
-		expect(b.isFocused()).toBe(true);
-	});
-
-	it("tells a workbench when DevHub goes away, and when it comes back", () => {
-		const events: string[] = [];
-		a.on("focus", () => events.push("focus"));
-		a.on("blur", () => events.push("blur"));
-
-		show(shell, a);
-		expect(events).toEqual(["focus"]);
-
-		// The app switch. Nothing about the view's own contents changes here,
-		// which is exactly why this had to be reported by the window.
-		window.inFront = false;
-		window.emit("blur");
-		expect(a.isFocused()).toBe(false);
-		expect(events).toEqual(["focus", "blur"]);
-
-		window.inFront = true;
-		window.emit("focus");
-		expect(a.isFocused()).toBe(true);
-		expect(events).toEqual(["focus", "blur", "focus"]);
-	});
-
-	it("tells the model too, starting with the answer as it stands", () => {
+	it("tells the model, starting with the answer as it stands", () => {
 		// The model cannot see this for itself — a view keeps its DOM focus
 		// while the window behind it is deactivated — and it needs it to know
 		// whether anybody is looking at the Agent on screen. Registering
 		// publishes the current answer, so the model does not start on an
 		// assumption.
+		const shell = newShell();
+		const window = shell.window as unknown as FakeWindow;
 		const reported: boolean[] = [];
 		window.inFront = true;
 		shell.onWindowFocusChanged((focused) => reported.push(focused));
@@ -1286,112 +591,6 @@ describe("the shell window's focus reporting", () => {
 		window.emit("focus");
 		expect(reported).toEqual([true, false, true]);
 	});
-
-	it("takes focus off every workbench while the page's own surface is on screen", () => {
-		show(shell, a);
-		expect(a.isFocused()).toBe(true);
-
-		// A terminal or an Agent lives in the page, not in a workbench.
-		showPage(shell);
-		expect(a.isFocused()).toBe(false);
-		expect(b.isFocused()).toBe(false);
-
-		show(shell, a);
-		expect(a.isFocused()).toBe(true);
-	});
-
-	it("leaves a detached workbench believing nothing", () => {
-		show(shell, a);
-		expect(a.isFocused()).toBe(true);
-
-		shell.detach(a);
-		// It is off the table, so nothing will ever ask it again. If it kept the
-		// `true` it had, it would keep it for the rest of its life.
-		expect(a.isFocused()).toBe(false);
-	});
-
-	it("moves the keyboard before it reports where the keyboard is", () => {
-		// What a workbench does with the report is go and read
-		// `document.hasFocus()` in its own renderer, so a report sent before
-		// `focus()` had moved anything would be answered with the state the
-		// window was about to leave — and upstream latches, so the correction
-		// never comes.
-		const order: string[] = [];
-		a.on("focus", () =>
-			order.push(
-				focused === a.webContents.id ? "focused then told" : "told first",
-			),
-		);
-
-		show(shell, a);
-		expect(order).toEqual(["focused then told"]);
-	});
-
-	it("says it again when the keyboard actually arrives in the renderer", () => {
-		// The measured failure. `focus()` and the renderer's document taking
-		// focus are not the same moment — 245ms apart, measured — and what a
-		// workbench does with the announcement is go and read
-		// `document.hasFocus()`. So the announcement made in the same tick as
-		// `focus()` is answered "no", and without this one nothing corrects it:
-		// a workbench is announced once, when its view is created, which is a
-		// second and a half before its renderer reaches `Restored` and the
-		// trust prompt starts listening.
-		announced.length = 0;
-		show(shell, a);
-		expect(announced).toEqual([`browser-window-focus:${a.id}`]);
-
-		a.webContents.emit("focus");
-		expect(announced).toEqual([
-			`browser-window-focus:${a.id}`,
-			`browser-window-focus:${a.id}`,
-		]);
-	});
-
-	it("says nothing again for a workbench the keyboard did not go to", () => {
-		announced.length = 0;
-		show(shell, a);
-		announced.length = 0;
-
-		// `b` is behind `a`. Its contents reporting DOM focus does not make it
-		// the surface, and the one answer to that is `isSurfaceFocused`.
-		b.webContents.emit("focus");
-		expect(announced).toEqual([]);
-	});
-
-	it("says nothing again while a modal stands in front", () => {
-		show(shell, a);
-		shell.picker.openModal({ kind: "workspace-picker" });
-		announced.length = 0;
-
-		a.webContents.emit("focus");
-		expect(announced).toEqual([]);
-	});
-
-	it("puts the keyboard back through the one path when the last modal goes", () => {
-		show(shell, a);
-		shell.picker.openModal({ kind: "workspace-picker" });
-		expect(a.isFocused()).toBe(false);
-		announced.length = 0;
-
-		// Withdrawing used to focus the contents directly, which moved the
-		// keyboard without anybody being told it had moved.
-		shell.picker.closeWhere(() => true);
-		expect(focused).toBe(a.webContents.id);
-		expect(a.isFocused()).toBe(true);
-		expect(announced).toEqual([`browser-window-focus:${a.id}`]);
-	});
-
-	it("still reports a workbench losing the keyboard to a modal it must not take back", () => {
-		// The case that made the report unconditional in the first place: the
-		// keyboard deliberately stays where the modal put it, and every
-		// workbench still has to be told it no longer has it.
-		show(shell, a);
-		expect(a.isFocused()).toBe(true);
-
-		shell.picker.openModal({ kind: "workspace-picker" });
-		expect(a.isFocused()).toBe(false);
-		expect(b.isFocused()).toBe(false);
-	});
 });
 
 /**
@@ -1400,74 +599,32 @@ describe("the shell window's focus reporting", () => {
  * The two were one act — `reveal` placed the keyboard, and
  * `webContents.focus()` makes a window key on macOS — so everything that
  * revealed anything raised the window. A reveal follows every projection
- * change, so an Agent ticking, a HEAD moving or a workbench finishing its open
- * put DevHub in front of whatever the person was looking at; measured on an
- * idle instance, the window went to the background and DevHub called `focus()`
- * on the workbench five milliseconds later. The same one act is what put the
- * App Shell back over the Settings window, and what let a workbench activate
- * the application by asking for the keyboard on a hover.
+ * change, so an Agent ticking or a HEAD moving put DevHub in front of whatever
+ * the person was looking at; measured on an idle instance, the window went to
+ * the background and DevHub called `focus()` five milliseconds later. The
+ * same one act is what put the App Shell back over the Settings window.
  */
 describe("when the shell window may come to the front", () => {
 	let shell: ShellWindow;
 	let window: FakeWindow;
-	let a: WorkbenchView;
-	let b: WorkbenchView;
 
 	beforeEach(() => {
 		raised.length = 0;
 		focused = undefined;
-		shell = new ShellWindow(
-			"preload.js",
-			"devhub-app://shell/index.html",
-			undefined,
-			"hidden",
-		);
+		shell = newShell();
 		window = shell.window as unknown as FakeWindow;
-		a = new WorkbenchView(shell, {});
-		b = new WorkbenchView(shell, {});
-		for (const view of [a, b]) {
-			shell.attach(view);
-			bind(shell, view);
-		}
-	});
-
-	it("moves the keyboard for VS Code's focusWindow, and raises nothing", () => {
-		// `hostService.focus()` on a hover or a drag, arriving as
-		// `CodeWindow.focus()` through the proxy. It is a request to type into
-		// the workbench, and never a request to see DevHub.
-		show(shell, a);
-		focused = undefined;
-		raised.length = 0;
-
-		a.focus();
-		expect(focused).toBe(a.webContents.id);
-		expect(raised).toEqual([]);
-	});
-
-	it("does nothing at all for a workbench nobody is looking at", () => {
-		show(shell, a);
-		focused = undefined;
-
-		// `b` is behind `a`. An extension in it calling `window.focus()` must
-		// not change what is on screen.
-		b.focus();
-		expect(focused).toBeUndefined();
-		expect(raised).toEqual([]);
 	});
 
 	it("declines to move the keyboard while another window is in front", () => {
 		// The Settings window, an undocked Web Inspector, another application:
 		// all of them are this one fact, and the shell no longer reaches across
 		// to any of them. `focus()` here would have made this window key.
-		show(shell, a);
+		showAgent(shell);
 		window.inFront = false;
 		focused = undefined;
 
-		show(shell, b);
-		a.focus();
-		b.focus();
-		showPage(shell);
-		show(shell, a);
+		showSidebar(shell);
+		showAgent(shell);
 		expect(focused).toBeUndefined();
 		expect(raised).toEqual([]);
 	});
@@ -1475,18 +632,18 @@ describe("when the shell window may come to the front", () => {
 	it("declines while a docked Web Inspector holds the keyboard", () => {
 		// The one case the window's own focus cannot tell apart: the inspector
 		// is a view onto these same contents, in this same window.
-		show(shell, a);
+		showAgent(shell);
 		window.webContents.devToolsFocused = true;
 		focused = undefined;
 
-		show(shell, b);
+		showSidebar(shell);
 		expect(focused).toBeUndefined();
 	});
 
 	it("places the keyboard when the window comes back, without raising", () => {
 		// What makes declining safe rather than lossy: the answer is asked
 		// again the moment the window is key, from the window's own event.
-		show(shell, a);
+		showAgent(shell);
 		window.inFront = false;
 		window.emit("blur");
 		focused = undefined;
@@ -1494,14 +651,12 @@ describe("when the shell window may come to the front", () => {
 
 		window.inFront = true;
 		window.emit("focus");
-		expect(focused).toBe(a.webContents.id);
+		expect(focused).toBe(idOf(shell.agents.contents()));
 		expect(raised).toEqual([]);
 	});
 
 	it("raises when a command line asks for DevHub", () => {
 		window.inFront = false;
-		// Building the window placed the keyboard once, as the first answer to
-		// where it goes; what is asked here is whether the raise places it.
 		focused = undefined;
 		shell.raise();
 		expect(raised).toEqual(["show", "focus", "app.focus"]);
@@ -1523,10 +678,8 @@ describe("when the shell window may come to the front", () => {
 	});
 
 	it("opens a modal without raising, and not at all from behind", () => {
-		show(shell, a);
-		focused = undefined;
+		showAgent(shell);
 		shell.picker.openModal({ kind: "workspace-picker" });
-		expect(focused).not.toBe(a.webContents.id);
 		expect(raised).toEqual([]);
 
 		shell.picker.closeWhere(() => true);
@@ -1534,19 +687,6 @@ describe("when the shell window may come to the front", () => {
 		focused = undefined;
 		shell.picker.openModal({ kind: "workspace-picker" });
 		expect(focused).toBeUndefined();
-	});
-
-	it("re-announces a workbench's focus without moving or raising anything", () => {
-		// The repeat added for the workspace trust prompt says the answer
-		// again; it must not be a second way of taking the front.
-		show(shell, a);
-		focused = undefined;
-		raised.length = 0;
-		announced.length = 0;
-
-		a.webContents.emit("focus");
-		expect(announced).toEqual([`browser-window-focus:${a.id}`]);
-		expect(raised).toEqual([]);
 	});
 });
 

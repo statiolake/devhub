@@ -41,8 +41,6 @@ export interface MenuHost {
 	 * while the main window is.
 	 */
 	focusedWindow(): "shell" | "settings" | "none";
-	/** Show or hide the integrated terminal in the workbench on screen. */
-	toggleIntegratedTerminal(): void;
 	closeWorkspace(workspaceId: string): void;
 	openWorkspacePicker(): void;
 	openSettings(): void;
@@ -177,19 +175,7 @@ function template(menuHost: MenuHost): Electron.MenuItemConstructorOptions[] {
 		},
 		{
 			label: "View",
-			submenu: [
-				{
-					// Not a checkbox: whether the panel is up is the workbench's
-					// own state, and a checkmark drawn from a fact DevHub does
-					// not hold would be right only by luck.
-					label: "Toggle Integrated Terminal",
-					click: () => {
-						menuHost.toggleIntegratedTerminal();
-					},
-				},
-				{ type: "separator" as const },
-				{ role: "togglefullscreen", registerAccelerator: false },
-			],
+			submenu: [{ role: "togglefullscreen", registerAccelerator: false }],
 		},
 		{
 			label: "Window",

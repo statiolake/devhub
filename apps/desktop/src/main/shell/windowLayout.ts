@@ -2,7 +2,7 @@
  * Where everything in the one window is, decided in one place.
  *
  * The window is a tree of `WebContentsView` children over one rectangle: the
- * App Shell page, one workbench per Workspace, the notices, the questions.
+ * App Shell page, one editor area per Workspace, the notices, the questions.
  * Every one of them needs a rectangle, a visibility and a place in the child
  * list, and those three answers have to agree with each other — a view shown
  * under another one is invisible for no visible reason, and a view sized after
@@ -12,7 +12,7 @@
  * the projection, the window's size and the two appearance settings that move
  * the chrome, and it returns the child list. Nothing measures anything: the
  * numbers below are the window's own, and the page is *given* the rectangle it
- * leaves for the workbench rather than asked for it. That is the whole of what
+ * leaves for the editor rather than asked for it. That is the whole of what
  * this module exists to end — the page used to measure a hole it does not draw
  * and report it back, so main's idea of the layout was a page's idea of the
  * layout, one frame late, and a resize was a round trip.
@@ -22,7 +22,7 @@
  * They are the counterparts of the tokens in `shell/styles/tokens.css`, and
  * they are named after them. Both spellings exist because a stylesheet cannot
  * be read from main and main cannot lay out a flexbox; what stops them
- * drifting is that the page draws the workbench hole at the width *this*
+ * drifting is that the page draws the editor's hole at the width *this*
  * module computed, so a disagreement about the sidebar is a disagreement about
  * a number neither side is free to invent.
  *
@@ -91,7 +91,7 @@ const HAIRLINE = 1;
  * child view covers. It used to be one pixel with a three-pixel hit area hung
  * off each side — an element reaching over its neighbours, which it could do
  * while both neighbours were boxes in the same document. Over a native view it
- * cannot: outside this strip the pointer belongs to the workbench or to the
+ * cannot: outside this strip the pointer belongs to the editor or to the
  * Agent, so a grab area wider than the strip is a grab area that is silently
  * not there. The strip is the honest width instead.
  */
@@ -136,32 +136,28 @@ export interface LayoutRect {
 /**
  * What the content area holds, as main reads it off the model.
  *
- * Deliberately not "is a workbench visible": `agent` and `none` are both "no
- * workbench on screen" and they are different states of the page, and `split`
- * is a workbench that is on screen *beside* something else. The page used to
+ * Deliberately not "is an editor visible": `agent` and `none` are both "no
+ * editor on screen" and they are different states of the page, and `split`
+ * is an editor that is on screen *beside* something else. The page used to
  * answer this with one word over IPC (`ContentSurfaceWire`); it is the same
  * question, asked of the model where the answer already lives.
+ *
+ * The editor area is the Workspace's terminal page, with the Neovims in it
+ * drawn over their panes (`docs/neovim-editor.md`).
  */
 export type SurfaceArrangement =
-	/** One workbench, the whole content area. */
+	/** One Workspace's editor area, the whole content area. */
 	| {
 			readonly kind: "editor";
 			readonly editorKey: string;
-			readonly hidden?: true;
-			/** The editor area is the Workspace's terminal (`general.editor = "neovim"`), not a workbench. */
-			readonly view?: "neovim";
 	  }
-	/** A workbench and an Agent's pane, split at `ratio` of the area. */
+	/** An editor area and an Agent's pane, split at `ratio` of the area. */
 	| {
 			readonly kind: "split";
 			readonly editorKey: string;
 			readonly ratio: number;
-			/** Being rebuilt: its rectangle is the page's until it has loaded. */
-			readonly hidden?: true;
-			/** The editor area is the Workspace's terminal (`general.editor = "neovim"`), not a workbench. */
-			readonly view?: "neovim";
 	  }
-	/** An Agent over the whole area: the workbenches stay built, none shown. */
+	/** An Agent over the whole area: the editor areas stay built, none shown. */
 	| { readonly kind: "agent" }
 	/** Nothing to show — starting, or a folder that is gone. */
 	| { readonly kind: "none" };
@@ -176,7 +172,7 @@ export type SurfaceArrangement =
  * every time.
  *
  * It used to be two words, `editor` and `page`, because everything that was
- * not a workbench was one document. `page` named the Sidebar and the Agent's
+ * not the editor was one document. `page` named the Sidebar and the Agent's
  * pane at once, and the page then sorted out which of them it meant — which is
  * the whole of what `focusHome.ts` was. Both are children of the window now,
  * so the answer names one of them.
@@ -209,7 +205,7 @@ export interface LayoutState {
 	 * The Agent terminal drawn with the Agent `surface` shows, and the share
 	 * it takes: of the content width right of a full Agent, or of the split's
 	 * right half's height under its Agent. Absent is no terminal; the
-	 * workbench alone shows no Agent and so never one. See
+	 * editor alone shows no Agent and so never one. See
 	 * `model/agentTerminal.ts`.
 	 */
 	readonly terminal?: { readonly terminalId: string; readonly share: number };
@@ -227,23 +223,15 @@ export interface LayoutState {
 	readonly conversation?: "whole" | "beside-board";
 }
 
-/** Whether the questions layer covers the window or one workbench. */
-export type PickerScope = "none" | "window" | "workbench";
-
 export interface LayoutInput {
 	readonly windowSize: LayoutSize;
 	readonly state: LayoutState;
-	/** Every workbench that exists, by folder key, in the order it was made. */
-	readonly editors: readonly string[];
-	/** The workbench that has stopped to ask something, if one has. */
-	readonly asking: string | undefined;
 	/** How big the notices are, as the page measured its own stack. */
 	readonly toasts: LayoutSize | undefined;
-	readonly picker: PickerScope;
+	/** Whether a question is standing: it covers the window. */
+	readonly picker: boolean;
 	/** The tooltip that is up, if one is. See `TooltipPlacement`. */
 	readonly tooltip: TooltipPlacement | undefined;
-	/** Every view VS Code has attached to a workbench. See below. */
-	readonly attached: readonly AttachedPlacement[];
 	/**
 	 * Every Agent terminal that has a view, by id, whichever Agent it is.
 	 * Optional so that every caller from before terminal panes still reads;
@@ -252,41 +240,12 @@ export interface LayoutInput {
 	readonly terminals?: readonly string[];
 	/**
 	 * The Neovim editor: every Workspace's terminal page (its editor area)
-	 * that has a view, by its Workspace's editor key. Drawn exactly where the workbench
-	 * is — the whole content area, or a split's left half — when the
-	 * arrangement says the editor area shows the terminal (`view`), and never
-	 * with the same Workspace's workbench. See `docs/neovim-editor.md`.
-	 * Optional so that every caller from before it still reads; absent is none.
+	 * that has a view, by its Workspace's editor key, drawn in the editor's
+	 * rectangle — the whole content area, or a split's left half. See
+	 * `docs/neovim-editor.md`. Optional so that every caller from before it
+	 * still reads; absent is none.
 	 */
 	readonly neovims?: readonly string[];
-}
-
-/**
- * A view VS Code opened inside a workbench, as the owner is told about it.
- *
- * The integrated Browser is one: `vs/platform/browserView` makes a
- * `WebContentsView` of its own, hands it a rectangle its *renderer* measured,
- * and expects it to be drawn over that workbench's page. It is a sibling of
- * the workbench in the window, not a child of it — a `WebContentsView` nested
- * in another `WebContentsView` is not composited at all on macOS with this
- * Electron, which is the whole reason this kind of child exists — so the two
- * numbers below are the whole of what the owner needs to place it as one.
- *
- * `rect` is in the **workbench's own document**, which is the only frame VS
- * Code can measure in, and it is translated and clipped here against that
- * workbench's rectangle. `visible` is VS Code's *wish*: whether it is drawn is
- * that wish and whether the workbench it belongs to is on screen, and a wish
- * about a workspace nobody has selected is not an answer.
- */
-export interface AttachedPlacement {
-	/** Which view this is, stable for as long as it is attached. */
-	readonly id: number;
-	/** The workbench it belongs to. */
-	readonly editorKey: string;
-	/** Where it goes, in that workbench's own coordinates. */
-	readonly rect: LayoutRect;
-	/** Whether VS Code wants it drawn. */
-	readonly visible: boolean;
 }
 
 /**
@@ -316,13 +275,6 @@ export type ChildIdentity =
 	| { readonly kind: "agents" }
 	/** The GUI Agents' conversations, laid where the Agents view is. */
 	| { readonly kind: "conversations" }
-	| { readonly kind: "editor"; readonly editorKey: string }
-	/** A view VS Code attached to a workbench — see `AttachedPlacement`. */
-	| {
-			readonly kind: "attached";
-			readonly editorKey: string;
-			readonly id: number;
-	  }
 	/** An Agent's terminal, with its Agent — see `model/agentTerminal.ts`. */
 	| { readonly kind: "terminal"; readonly terminalId: string }
 	/**
@@ -379,7 +331,7 @@ export function chromeVariables(): ReadonlyArray<readonly [string, string]> {
  * Collapsed it is a rail, and how wide a rail may be is a fact about the
  * *window*: with no title bar of DevHub's own the Sidebar carries the traffic
  * lights, and a rail narrower than their span would put the close button on a
- * workbench. With a bar above it the lights are up there and the rail is only
+ * editor. With a bar above it the lights are up there and the rail is only
  * its glyph column with the leading inset on each side.
  */
 export function sidebarColumnWidth(state: LayoutState): number {
@@ -436,14 +388,14 @@ export function surfaceRect(
  *
  * The rail's floor is still about the lights (see `sidebarColumnWidth`): they
  * are drawn over this column whether or not the band belongs to it, and a rail
- * narrower than their span would put the close button on a workbench.
+ * narrower than their span would put the close button on an editor.
  *
  * **The overlay is the one time this is not the column.** While the page
  * floats the expanded Sidebar over the content (`state.sidebar.overlay`), the
  * view is widened to the card it draws — the expanded width from the same
  * left edge, and the room its shadow takes — and nothing else moves: the content area is
  * still laid out from `sidebarColumnWidth`, which an overlay does not change,
- * so the workbench and the Agent keep their rectangles to the pixel. The view
+ * so the editor and the Agent keep their rectangles to the pixel. The view
  * is sized to the card and not to the window because every pixel of a view
  * takes the pointer, transparent or not; the card is all that should.
  */
@@ -547,11 +499,11 @@ function within(
  * where the Agent is. A full Agent gives it its share of the content area
  * (`surfaceRect`) on the right; a split's Agent — the right half — gives it
  * its share of that half's height at the bottom, the editor keeping the whole
- * left half. Either way the seam is as wide as the workbench/Agent split's
+ * left half. Either way the seam is as wide as the editor/Agent split's
  * own, for the same reason: a seam is the strip no view covers, which is the
  * only place the window's own page can draw a divider the pointer can grab.
- * The workbench alone has no Agent and so no terminal. With nothing in the
- * content area — starting, a workbench being rebuilt, a folder that is gone —
+ * The editor alone has no Agent and so no terminal. With nothing in the
+ * content area — starting, an editor being rebuilt, a folder that is gone —
  * the page's own state fills the whole of it, and the terminal waits hidden
  * rather than framing an empty room.
  */
@@ -590,7 +542,7 @@ export function terminalStacked(state: LayoutState): boolean {
 
 /**
  * The selection's own pane: the content area, less the terminal right of a
- * full Agent. Everything the selection draws — the workbench, the Agent, the
+ * full Agent. Everything the selection draws — the editor, the Agent, the
  * two side by side — is laid inside this; a split's terminal is inside the
  * Agent's half instead (`agentsRect`).
  */
@@ -618,13 +570,13 @@ export function terminalSeam(
  *
  * The whole content area when an Agent covers it (less its terminal on the
  * right), and the trailing share of it when one is open beside its editor —
- * the workbench's rectangle, the seam, and then this, less its terminal at
+ * the editor's rectangle, the seam, and then this, less its terminal at
  * the bottom. The seam itself belongs to neither: it is a real element on
  * the window's own page, in the one strip no child covers, which is what keeps
  * the pixels the pointer meets and the pixels the eye sees the same pixels.
  *
  * Computed whether or not an Agent is on screen, for the same reason a
- * workbench is: a view shown at the size it had when it was last hidden lays
+ * editor is: a view shown at the size it had when it was last hidden lays
  * itself out against that size first, and an xterm reflows visibly when it
  * catches up.
  */
@@ -668,8 +620,8 @@ function splitAgentHalf(
 	state: LayoutState,
 ): LayoutRect {
 	const surface = contentRect(windowSize, state);
-	const workbench = workbenchRect(windowSize, state);
-	const x = workbench.x + workbench.width + SPLIT_DIVIDER;
+	const editor = workbenchRect(windowSize, state);
+	const x = editor.x + editor.width + SPLIT_DIVIDER;
 	return {
 		...surface,
 		x,
@@ -678,10 +630,10 @@ function splitAgentHalf(
 }
 
 /**
- * The rectangle the workbench is laid into — the hole the page leaves.
+ * The rectangle the editor area is laid into — the hole the page leaves.
  *
  * The whole content area, or the leading share of it when an Agent is beside
- * it. It is computed here whether or not a workbench is on screen, because the
+ * it. It is computed here whether or not an editor is on screen, because the
  * page draws its own states in the same rectangle and both have to be the
  * same rectangle.
  */
@@ -695,46 +647,6 @@ export function workbenchRect(
 	return {
 		...surface,
 		width: Math.max(0, Math.round(available * state.surface.ratio)),
-	};
-}
-
-/**
- * A rectangle given in `container`'s own coordinates, placed in the window's.
- *
- * Translated by the container's origin and then held inside it, so a view
- * attached to a workbench can never draw over the Sidebar, over an Agent's
- * pane beside it, or off the window — which is what being *inside* a
- * workbench used to mean before nesting turned out not to paint at all. An
- * empty rectangle is the honest answer for something entirely outside its
- * container, and a view is never given a negative size.
- */
-export function insideRect(
-	container: LayoutRect,
-	local: LayoutRect,
-): LayoutRect {
-	const x = clamp(
-		container.x + Math.round(local.x),
-		container.x,
-		container.x + container.width,
-	);
-	const y = clamp(
-		container.y + Math.round(local.y),
-		container.y,
-		container.y + container.height,
-	);
-	const right = Math.min(
-		container.x + container.width,
-		container.x + Math.round(local.x) + Math.round(local.width),
-	);
-	const bottom = Math.min(
-		container.y + container.height,
-		container.y + Math.round(local.y) + Math.round(local.height),
-	);
-	return {
-		x,
-		y,
-		width: Math.max(0, right - x),
-		height: Math.max(0, bottom - y),
 	};
 }
 
@@ -793,7 +705,7 @@ export function tooltipRoom(windowSize: LayoutSize): LayoutSize {
  * **Beside the row, and never under it.** The rows are stacked, so a box under
  * one is a box over the next: the thing a person's pointer is already moving
  * towards is covered by the answer to what they just pointed at, and they have
- * to dodge it to click. Out to the side there is a workbench, which is the one
+ * to dodge it to click. Out to the side there is an editor, which is the one
  * direction in this window with room to spare. It used to be a question the
  * row answered — beside a glyph on the rail, under a line of text in the
  * expanded column — and the expanded column's answer was the one that covered
@@ -861,57 +773,20 @@ export function tooltipRect(
 	};
 }
 
-/**
- * Which workbench is on screen, if any.
- *
- * A workbench waiting for an answer outranks the selection: the question is
- * about *that* workbench, and answering "do you want to save?" against a blank
- * pane — or against another workspace — is not an arrangement anybody can act
- * on. It outranks the arrangement too, so a question asked by a workbench the
- * person has navigated away from is still shown against the thing it is about.
- */
-export function onScreenEditor(input: LayoutInput): string | undefined {
-	if (input.asking !== undefined && input.editors.includes(input.asking)) {
-		return input.asking;
-	}
-	const surface = input.state.surface;
-	if (surface.kind !== "editor" && surface.kind !== "split") return undefined;
-	return surface.hidden !== true &&
-		surface.view !== "neovim" &&
-		input.editors.includes(surface.editorKey)
-		? surface.editorKey
-		: undefined;
-}
-
-/**
- * Which Workspace's terminal is in the editor area, if any: the
- * arrangement says the editor area is the Neovim editor's (`view`). A question the
- * Workspace's own workbench is asking outranks it, as it outranks the
- * arrangement for `onScreenEditor`: the workbench is drawn so that what it
- * asks is seen against what it is about.
- */
+/** Which Workspace's terminal is in the editor area, if any. */
 export function onScreenNeovim(input: LayoutInput): string | undefined {
 	const surface = input.state.surface;
 	if (surface.kind !== "editor" && surface.kind !== "split") return undefined;
-	if (surface.view !== "neovim") return undefined;
-	if (
-		input.asking === surface.editorKey &&
-		input.editors.includes(input.asking)
-	)
-		return undefined;
-	return surface.hidden !== true &&
-		(input.neovims ?? []).includes(surface.editorKey)
+	return (input.neovims ?? []).includes(surface.editorKey)
 		? surface.editorKey
 		: undefined;
 }
 
 /**
  * What is in the editor area as a child the keyboard can go to: the
- * workbench on screen, or the terminal page the Neovim editor's area shows.
+ * terminal page the Neovim editor's area shows.
  */
 function editorChild(input: LayoutInput): ChildIdentity | undefined {
-	const editorKey = onScreenEditor(input);
-	if (editorKey !== undefined) return { kind: "editor", editorKey };
 	const terminalKey = onScreenNeovim(input);
 	return terminalKey === undefined
 		? undefined
@@ -923,14 +798,11 @@ function editorChild(input: LayoutInput): ChildIdentity | undefined {
  *
  * A standing question owns the keyboard for as long as it stands; it is on top
  * of everything and taking focus out of it would leave a dialog on screen that
- * no key reaches. Otherwise it is the workbench on screen, unless the page has
+ * no key reaches. Otherwise it is the editor on screen, unless the page has
  * put something of its own over the same rectangle.
  */
 export function keyboardChild(input: LayoutInput): ChildIdentity {
-	if (input.picker !== "none") return { kind: "picker" };
-	if (input.asking !== undefined && input.editors.includes(input.asking)) {
-		return { kind: "editor", editorKey: input.asking };
-	}
+	if (input.picker) return { kind: "picker" };
 	if (input.state.keyboard === "sidebar") return { kind: "sidebar" };
 	const keyboard = input.state.keyboard;
 	if (typeof keyboard === "object") {
@@ -1036,9 +908,8 @@ function layer(
  * The window's children, in the order they are stacked.
  *
  * The order *is* the z-order, lowest first: the window's own page, the
- * Sidebar, then every workbench with the one on screen last among them, then
- * whatever those workbenches have attached to themselves, then the Agents,
- * then the notices, then the questions, then the tooltip. A
+ * Sidebar, then every editor area with the one on screen last among them,
+ * then the Agents, then the notices, then the questions, then the tooltip. A
  * notice about the application is above the thing it is about, a question is
  * above the notice, and the tooltip is above all of them because it is the
  * only child that neither takes a click nor hides anything. Nothing in this
@@ -1048,7 +919,7 @@ function layer(
  * see `parkedRect`.
  *
  * `sidebar` and `agents` are always in it, because both exist for the life of
- * the window: they are columns beside the workbench, so their being present
+ * the window: they are columns beside the editor, so their being present
  * costs nothing and their ordering against each other never comes up. The one
  * exception is compact mode's floating Sidebar (`state.sidebar.overlay`),
  * which is over the content by definition — so for as long as it floats the
@@ -1063,7 +934,6 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 		height: windowSize.height,
 	};
 	const editorRect = workbenchRect(windowSize, state);
-	const onScreen = onScreenEditor(input);
 
 	const sidebar: LayoutChild = {
 		identity: { kind: "sidebar" },
@@ -1081,51 +951,10 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 		// placed with the content instead (below).
 		...(overlay ? [] : [sidebar]),
 	];
-	// Every workbench is sized, whether or not it is drawn: a view that is
-	// shown at the size it had when it was last hidden lays itself out against
-	// that size first, and VS Code reflows visibly when it catches up.
-	for (const editorKey of input.editors) {
-		if (editorKey === onScreen) continue;
-		children.push({
-			identity: { kind: "editor", editorKey },
-			rect: editorRect,
-			visible: false,
-		});
-	}
-	if (onScreen !== undefined) {
-		children.push({
-			identity: { kind: "editor", editorKey: onScreen },
-			rect: editorRect,
-			visible: true,
-		});
-	}
-	// Then everything VS Code has attached to a workbench, in the same two
-	// passes and for the same reason: sized whether or not it is drawn, and the
-	// ones belonging to the workbench on screen last. They sit above every
-	// workbench and below everything the shell puts over the content area — a
-	// notice, a question and a tooltip are about DevHub and are above anything
-	// a workbench opened inside itself.
-	for (const child of input.attached) {
-		if (child.editorKey === onScreen) continue;
-		children.push({
-			identity: { kind: "attached", editorKey: child.editorKey, id: child.id },
-			rect: insideRect(editorRect, child.rect),
-			visible: false,
-		});
-	}
-	for (const child of input.attached) {
-		if (child.editorKey !== onScreen) continue;
-		children.push({
-			identity: { kind: "attached", editorKey: child.editorKey, id: child.id },
-			rect: insideRect(editorRect, child.rect),
-			// The workbench is on screen, so the wish is the whole answer.
-			visible: child.visible,
-		});
-	}
-	// The Neovim editor's terminal pages, in the workbenches' place and for
-	// their reasons: every one sized whether or not it is drawn, the one on
-	// screen last. When one is drawn no workbench is (the arrangement shows
-	// one or the other), so nothing above is ever under it on screen.
+	// The Neovim editor's terminal pages: every one sized whether or not it
+	// is drawn, the one on screen last. A view that is shown at the size it
+	// had when it was last hidden lays itself out against that size first,
+	// and reflows visibly when it catches up.
 	const onScreenNeovimKey = onScreenNeovim(input);
 	for (const editorKey of input.neovims ?? []) {
 		if (editorKey === onScreenNeovimKey) continue;
@@ -1143,8 +972,8 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 		});
 	}
 	// One view for every Agent there is, showing the selected one. It is drawn
-	// exactly when a workbench is not — or beside one, which is what a split
-	// is — so "one of {the Agents, a workbench} is on the content area" is a
+	// exactly when an editor is not — or beside one, which is what a split
+	// is — so "one of {the Agents, an editor} is on the content area" is a
 	// property of this list rather than a rule somebody has to keep.
 	//
 	// Two views: the Agents view draws the terminal Agents and the
@@ -1165,7 +994,7 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	// Every Agent terminal that has a view: the one on screen at the right,
 	// and every other one hidden at the content area's size, so that coming
 	// back to its Agent is a move rather than a reflow. It is a tile beside
-	// the workbench and the Agent, never over them, so where it sits among
+	// the editor and the Agent, never over them, so where it sits among
 	// those two in the stack is never seen; above both and below every layer
 	// is the one place that is right whatever they are.
 	const placement = terminalPlacement(windowSize, state);
@@ -1178,8 +1007,8 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 			visible: shown,
 		});
 	}
-	// The floating Sidebar is over the content — every workbench, whatever
-	// they attached, the Agents and the terminals — because that is what
+	// The floating Sidebar is over the content — every editor area, the
+	// Agents and the terminals — because that is what
 	// floating means, and under every layer, because a notice, a question and
 	// a tooltip are above everything that is the window's own.
 	if (overlay) children.push(sidebar);
@@ -1192,19 +1021,9 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 				: undefined,
 		),
 	);
-	// A workbench's question covers that workbench and nothing else, so the
-	// Sidebar and every other workspace stay visible *and* clickable.
-	// Everything else is the application asking.
+	// A question is the application asking, and covers the window.
 	children.push(
-		layer(
-			{ kind: "picker" },
-			windowSize,
-			input.picker === "none"
-				? undefined
-				: input.picker === "workbench"
-					? editorRect
-					: shellRect,
-		),
+		layer({ kind: "picker" }, windowSize, input.picker ? shellRect : undefined),
 	);
 	// Above everything, the questions included. Not because a tooltip may
 	// stand over a modal — it may not, and in practice cannot: a question
@@ -1230,33 +1049,4 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 		),
 	);
 	return children;
-}
-
-export function sameRect(left: LayoutRect, right: LayoutRect): boolean {
-	return (
-		left.x === right.x &&
-		left.y === right.y &&
-		left.width === right.width &&
-		left.height === right.height
-	);
-}
-
-export function sameIdentity(
-	left: ChildIdentity,
-	right: ChildIdentity,
-): boolean {
-	if (left.kind !== right.kind) return false;
-	if (left.kind === "editor" && right.kind === "editor") {
-		return left.editorKey === right.editorKey;
-	}
-	if (left.kind === "attached" && right.kind === "attached") {
-		return left.id === right.id;
-	}
-	if (left.kind === "terminal" && right.kind === "terminal") {
-		return left.terminalId === right.terminalId;
-	}
-	if (left.kind === "neovim" && right.kind === "neovim") {
-		return left.editorKey === right.editorKey;
-	}
-	return true;
 }

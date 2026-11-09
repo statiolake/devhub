@@ -130,23 +130,8 @@ export interface PagePorts {
 	onReplaced(listener: () => void): void;
 }
 
-/** What the rest of main reaches of the Agents page's conversations. */
-export interface ConversationIpc {
-	/**
-	 * Words for a GUI Agent's composer, after its draft, focused and not sent
-	 * ("Send to Agent…"). Told to the page at once when it has the Agent
-	 * attached; otherwise held and handed out with the attachment, which is
-	 * how an Agent that has only just been started gets them.
-	 */
-	insert(agentId: AgentId, text: string): void;
-}
-
-export function registerConversationIpc(
-	options: ConversationIpcOptions,
-): ConversationIpc {
+export function registerConversationIpc(options: ConversationIpcOptions): void {
 	const attached = new Set<AgentId>();
-	/** Words for composers no page has attached yet, oldest first. */
-	const held = new Map<AgentId, string[]>();
 
 	/**
 	 * The page no longer has the Agent's held messages open: none of them is
@@ -247,13 +232,11 @@ export function registerConversationIpc(
 			// Subscribed before the snapshot is taken, so no event can fall between
 			// them; the page drops what the snapshot already holds by its revision.
 			attached.add(agentId);
-			const inserted = held.get(agentId) ?? [];
-			held.delete(agentId);
 			const draft = options.drafts.get(agentId);
 			if (conversation.pagePort && options.pagePorts !== undefined) {
-				return { port: options.pagePorts.portFor(page), draft, inserted };
+				return { port: options.pagePorts.portFor(page), draft };
 			}
-			return { ...(await conversation.snapshot()), draft, inserted };
+			return { ...(await conversation.snapshot()), draft };
 		},
 	);
 
@@ -410,17 +393,6 @@ export function registerConversationIpc(
 				return conversation.command(request);
 		}
 	});
-
-	return {
-		insert(agentId, text) {
-			const page = options.conversationsPage();
-			if (attached.has(agentId) && page !== undefined && !page.isDestroyed()) {
-				page.send(CONVERSATION_CHANNELS.insert, agentId, text);
-				return;
-			}
-			held.set(agentId, [...(held.get(agentId) ?? []), text]);
-		},
-	};
 }
 
 /** What the page asked for, checked; a person's words are the person's. */

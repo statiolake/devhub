@@ -41,7 +41,6 @@ body,
  * scrims stay — they lay the sheets out and take the clicks around them — and
  * are clear, or the dim would be laid twice.
  */
-#root .mac-scrim,
-#root .view-scoped-alert-scrim {
+#root .mac-scrim {
   background: transparent;
 }

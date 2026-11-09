@@ -2,7 +2,7 @@
  * The one real window DevHub has, and the one owner of what is in it.
  *
  * It shows the App Shell page — sidebar, titlebar, agents — and hosts every
- * other part of DevHub as a `WebContentsView` child: one workbench per
+ * other part of DevHub as a `WebContentsView` child: one editor area per
  * Workspace, the notices, the questions. All of them are equal children. Where
  * each one goes is not decided here: it is `windowLayout()`'s answer, a pure
  * function of the projection, the window's size and the two appearance
@@ -10,18 +10,16 @@
  * Electron and what keeps the one piece of state it needs (`LayoutState`).
  *
  * The page reports nothing about geometry. It used to measure the hole it
- * leaves for a workbench and send the rectangle back, which made main's idea
+ * leaves for the editor and send the rectangle back, which made main's idea
  * of the layout a page's idea of the layout, one frame late, and made a window
  * resize a round trip through a renderer. The page is now *given* the hole.
  */
 
 import { join } from "node:path";
 import { electron } from "../electron.js";
-import { allowListenersFor } from "./appListenerCeiling.js";
 import { sendLinksToTheBrowser } from "./externalLinks.js";
 import {
 	keyboardChild,
-	onScreenEditor,
 	terminalExtent,
 	terminalSeam,
 	terminalStacked,
@@ -33,8 +31,6 @@ import {
 	workbenchRect,
 	type ChildIdentity,
 	type LayoutInput,
-	type AttachedPlacement,
-	type LayoutRect,
 	type LayoutState,
 } from "./windowLayout.js";
 import type { TitleBarMode } from "../../model/config.js";
@@ -51,8 +47,6 @@ import { ToastsView } from "./toastsView.js";
 import { TooltipView } from "./tooltipView.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
 import { scrimColor, type ShellPalette } from "../../ipc/palette.js";
-import type { WorkbenchView } from "./workbenchView.js";
-import type { Landing } from "./chords.js";
 import {
 	forwardedKey,
 	type KeyInput,
@@ -118,11 +112,10 @@ export function shellWindowOptions(
 		trafficLightPosition: trafficLightPosition(),
 		// The window's material and its background are the same decision as
 		// the page's `data-window-material`, made in the same breath: a shell
-		// that follows the Workbench's colour theme cannot also show a system
-		// material through its chrome, because the material follows the
-		// *system* appearance and the theme does not. With a palette the
-		// window is opaque and painted; without one it is the macOS sidebar
-		// material, as it was before any workbench ever ran.
+		// that follows a colour theme cannot also show a system material
+		// through its chrome, because the material follows the *system*
+		// appearance and the theme does not. With a palette the window is
+		// opaque and painted; without one it is the macOS sidebar material.
 		vibrancy: palette ? undefined : "sidebar",
 		backgroundColor: palette ? palette.canvas : "#00000000",
 		show: false,
@@ -135,52 +128,11 @@ export function shellWindowOptions(
 	};
 }
 
-/**
- * A view VS Code attached to one of its workbenches, as this window holds it.
- *
- * It is a **sibling** of the workbench in the window's child list, placed by
- * the owner like every other child. It cannot be a child of the workbench's
- * own view: a `WebContentsView` nested inside another `WebContentsView` is not
- * composited at all on macOS with this Electron — its renderer runs and
- * reports itself visible, and nothing is ever painted — and `capturePage()`
- * does not include child views either, so nothing automated can see it. The
- * same view at the same rectangle under `window.contentView` draws and
- * animates. See `docs/window-and-pages.md`.
- *
- * Being a sibling is what makes the two fields below necessary. VS Code
- * measures in the workbench's own document and writes bounds straight onto the
- * view it created, so those calls are intercepted where the workbench hands
- * out its container (`WorkbenchView.contentView`) and kept here as a *wish*:
- * where it would like to be, in the workbench's coordinates, and whether it
- * would like to be drawn. `windowLayout()` turns the pair into a rectangle in
- * the window and a visibility, and `place`/`draw` — the view's own methods,
- * captured before they were wrapped — are how that answer is applied.
- */
-export interface AttachedChild {
-	/** The view itself, as it goes into the window's child list. */
-	readonly view: Electron.View;
-	/** Where VS Code last asked for it, in its workbench's own document. */
-	local: LayoutRect;
-	/** Whether VS Code wants it drawn. */
-	wish: boolean;
-	/** The view's own `setBounds`, before the container wrapped it. */
-	readonly place: (rect: Electron.Rectangle) => void;
-	/** The view's own `setVisible`. */
-	readonly draw: (visible: boolean) => void;
-}
-
 /** Which of the content area's views took the keyboard by itself. */
 export type ContentFocus =
 	| { readonly kind: "editor" }
 	| { readonly kind: "agents" }
 	| { readonly kind: "terminal"; readonly terminalId: string };
-
-/** One attached view, and which workbench opened it. */
-interface AttachedEntry {
-	readonly id: number;
-	readonly owner: WorkbenchView;
-	readonly child: AttachedChild;
-}
 
 export class ShellWindow {
 	readonly window: Electron.BrowserWindow;
@@ -195,28 +147,6 @@ export class ShellWindow {
 	 */
 	readonly titleBar: TitleBarMode;
 
-	private readonly views: WorkbenchView[] = [];
-	/**
-	 * Which folder each workbench is showing — the one table there is.
-	 *
-	 * It used to be two: this list of views, and a map of folder to view id in
-	 * the controller. Two registries of the same set is two things that can
-	 * disagree about it, and the layout is a function of both — so the binding
-	 * lives beside the views, next to everything else that is a fact about the
-	 * window's children.
-	 *
-	 * Bound after the view exists rather than at `attach`: a workbench is
-	 * created by VS Code's own open path, through the shim, and only the caller
-	 * that asked for the open knows what it asked for.
-	 */
-	private readonly editorKeyByViewId = new Map<number, string>();
-	/**
-	 * Everything the workbenches have attached to themselves, in the order it
-	 * arrived. See `AttachedChild`.
-	 */
-	private readonly attached: AttachedEntry[] = [];
-	/** Names the attached views apart for the owner; never reused. */
-	private attachedCounter = 0;
 	/** Whether a chord's prefix is armed; see `chordArmedChanged`. */
 	private chordArmed = false;
 	/** A keyboard move held on this window's own page until the chord ends. */
@@ -237,11 +167,9 @@ export class ShellWindow {
 		sidebar: { width: 248, collapsed: false },
 		surface: { kind: "none" },
 		// Nothing is on screen yet, so this is the answer that resolves to the
-		// window's own page: there is no workbench for it to name.
+		// window's own page: there is no editor for it to name.
 		keyboard: "editor",
 	};
-	/** The workbench on screen as of the last pass, to notice it changing. */
-	private onScreen: string | undefined;
 
 	/**
 	 * The layer every DevHub modal is drawn on.
@@ -251,11 +179,11 @@ export class ShellWindow {
 	 * the whole of what makes a modal a modal here.
 	 */
 	/**
-	 * The chrome children this window has beside its workbenches.
+	 * The chrome children this window has beside its editor areas.
 	 *
 	 * All four are built here, at startup, and never destroyed. Ordering is
 	 * what `layout()` establishes and it is fixed: the Sidebar, every
-	 * workbench, the Agents, then `toasts`, then `picker` — a question about
+	 * editor area, the Agents, then `toasts`, then `picker` — a question about
 	 * something is above a notice about something, and both are above the
 	 * thing.
 	 *
@@ -275,16 +203,6 @@ export class ShellWindow {
 	readonly toasts: ToastsView;
 	readonly picker: PickerView;
 	readonly tooltip: TooltipView;
-	/** How the surface key of the workbench on screen is looked up. */
-	private surfaceKeyOfView: (view: WorkbenchView) => string | undefined = () =>
-		undefined;
-	/**
-	 * Told when anything this class knows that the window's name depends on has
-	 * moved: which workbench is on screen, and what a workbench calls itself.
-	 * The rest of the name comes from the model, so the name itself is composed
-	 * by whoever has both (`shellTitle.ts`).
-	 */
-	private titleChanged: () => void = () => undefined;
 	/**
 	 * Told when the window came forward or went away.
 	 *
@@ -296,7 +214,7 @@ export class ShellWindow {
 	private windowFocusChanged: (focused: boolean) => void = () => undefined;
 	/**
 	 * Told when one of the content area's views took the keyboard by itself —
-	 * a click into a terminal pane, into the workbench, into the Agent — so the
+	 * a click into a terminal pane, into the editor, into the Agent — so the
 	 * model can know which pane `Cmd+Q X` and `Cmd+Q O` start from. See
 	 * `AppController.paneFocused`.
 	 */
@@ -477,10 +395,6 @@ export class ShellWindow {
 				// a sentence about something they cannot act on.
 				this.tooltip.hide();
 				this.layout();
-				// A modal owns the keyboard while it stands, so every workbench
-				// loses focus when one opens and the one on screen gets it back
-				// when the last one goes.
-				this.publishFocus();
 			},
 		});
 
@@ -514,8 +428,8 @@ export class ShellWindow {
 		// Coming back to DevHub puts the keyboard where it belongs.
 		//
 		// macOS restores focus to whatever held it when the app was last in
-		// front, which is not the same question as "what is on screen now" — a
-		// workbench that was revealed while the app was in the background would
+		// front, which is not the same question as "what is on screen now" — an
+		// editor that was revealed while the app was in the background would
 		// be looked at while the keys went somewhere else. `focusSurface` is
 		// already the one answer to that question, so it is asked again here
 		// rather than a second rule being written for this case.
@@ -524,22 +438,14 @@ export class ShellWindow {
 			this.windowFocusChanged(true);
 		});
 
-		// Going away is as much a fact about a workbench's focus as coming back,
-		// and it is the half nothing was reporting. A `WebContentsView` keeps
-		// its DOM focus when the window behind it is deactivated, so the
-		// workbench went on believing it had the keyboard for as long as DevHub
-		// was in the background — which is what made a workbench act on a focus
-		// it did not have, and made coming back emit nothing, because as far as
-		// the workbench was concerned nothing had changed. `focusSurface` is not
-		// the right answer here: the keyboard should stay exactly where it is
-		// while the app is away, and only the *reporting* of it changes.
+		// Going away is reported, not acted on: the keyboard stays exactly
+		// where it is while the app is away.
 		this.window.on("blur", () => {
-			this.publishFocus();
 			this.windowFocusChanged(false);
 		});
 
 		// macOS convention: closing the window does not end the app, and here it
-		// must not even end the window. Every workbench, terminal and agent lives
+		// must not even end the window. Every editor, terminal and agent lives
 		// inside this one window; destroying it to rebuild it on the next dock
 		// click would throw all of that away and start it again. So the window
 		// hides, keeping its views, and comes back exactly as it was.
@@ -592,7 +498,7 @@ export class ShellWindow {
 	}
 
 	/**
-	 * Wear a palette the Workbench reported after the window was created.
+	 * Wear a palette that arrived after the window was created.
 	 *
 	 * Only the window itself: the pages are told over IPC and set the same
 	 * variables the page was served with. This is the frame around them — the
@@ -606,100 +512,6 @@ export class ShellWindow {
 		// The questions' dim follows the palette's half; see `scrim`.
 		this.layout();
 	}
-
-	//#region the views
-
-	/**
-	 * Take ownership of a new workbench view — without putting it on screen.
-	 *
-	 * A view used to reveal itself here, which made *creation* decide what is
-	 * shown. Once workbenches are started at launch that is plainly wrong: three
-	 * of them finish opening in whatever order they finish in, and the last one
-	 * wins the screen no matter which workspace the person selected. Worse, it
-	 * wins it before it has painted, which is the white content area.
-	 *
-	 * What is on screen is a function of the selection and nothing else, so it
-	 * is `reveal` — called by whoever knows the selection — that decides.
-	 */
-	attach(view: WorkbenchView): void {
-		this.views.push(view);
-		// A workbench arrives with helper processes of its own, and each of
-		// those puts a listener on `electron.app`. See `appListenerCeiling`.
-		allowListenersFor(this.views.length);
-		this.window.contentView.addChildView(view.view);
-		view.view.setBounds(this.workbenchRect());
-		view.view.setVisible(false);
-		// A view whose contents are gone is not a view. It leaves this table the
-		// instant that happens, before anything can be asked to lay it out or
-		// raise it — Electron answers that with "can't add a destroyed child
-		// view to a parent view", which is a true statement about a table that
-		// should never have still contained it. The view says so itself, from
-		// the one teardown every ending of it runs (`WorkbenchView.end`), so
-		// that leaving this table and dropping its subscriptions are the same
-		// moment rather than two listeners racing to be first.
-		//
-		// A workbench renames itself whenever its active editor changes; that
-		// is the Editor's half of the window's name arriving.
-		view.webContents.on("page-title-updated", () => {
-			this.titleChanged();
-		});
-		// The keyboard actually arriving, as opposed to main having asked for
-		// it. These two facts are not the same moment and the gap is where the
-		// workspace trust prompt was lost; `WorkbenchView.focusConfirmed` is
-		// where the whole of the reasoning is written down. The answer itself
-		// is still the one `isSurfaceFocused` computes — this only says when
-		// it is worth saying again.
-		view.webContents.on("focus", () => {
-			this.picker.reclaimFrom(view.webContents);
-			this.publishFocus();
-			view.focusConfirmed();
-			this.contentFocused({ kind: "editor" });
-		});
-		view.webContents.on("blur", () => {
-			this.publishFocus();
-		});
-	}
-
-	detach(view: WorkbenchView): void {
-		const index = this.views.indexOf(view);
-		if (index === -1) {
-			return;
-		}
-		this.views.splice(index, 1);
-		// Whatever this workbench opened inside itself goes with it, and goes
-		// first: they are siblings in the window's child list, so nothing takes
-		// them out of it when the workbench leaves except this.
-		this.detachChildrenOf(view);
-		// The binding is deliberately *not* dropped here. "There is no view for
-		// this folder any more" and "DevHub let this folder's workbench go" are
-		// two different facts, and the supervisor tells a crash from a close by
-		// asking whether the binding still names the view that died. It is
-		// unbound by whoever decided to let it go, which is the whole of what
-		// deciding to let it go means.
-		allowListenersFor(this.views.length);
-		// Every view goes when the window goes, and by then there is no window
-		// left to take them out of: Electron answers a child-view call on a
-		// destroyed window with "Object has been destroyed", which is how
-		// quitting DevHub ended in an uncaught exception in main. The
-		// bookkeeping above is still true and still has to happen; what is
-		// below is about a window on screen, and there is none.
-		if (this.window.isDestroyed()) {
-			return;
-		}
-		this.window.contentView.removeChildView(view.view);
-		this.layout();
-		// The view that left is told too, and told first: it is off the table
-		// now, so nothing else would ever ask it again, and a workbench that
-		// was detached while it held the keyboard would keep believing it does.
-		view.focusStateChanged();
-		this.publishFocus();
-	}
-
-	getViews(): readonly WorkbenchView[] {
-		return this.views;
-	}
-
-	//#endregion
 
 	//#region the terminal panes
 
@@ -961,8 +773,8 @@ export class ShellWindow {
 	 * Register the one reader of "the Sidebar's page started over": a reload,
 	 * or its renderer gone. Whatever that page was holding — the floating
 	 * Sidebar's widened view, above all — went with it, and a view left wide
-	 * over the workbench by a page that no longer knows it is would take the
-	 * workbench's clicks for nothing.
+	 * over the editor by a page that no longer knows it is would take the
+	 * editor's clicks for nothing.
 	 */
 	onSidebarRestarted(restarted: () => void): void {
 		const contents = this.sidebar.contents();
@@ -973,192 +785,13 @@ export class ShellWindow {
 
 	//#endregion
 
-	//#region the views a workbench attaches to itself
-
-	/**
-	 * Take a view a workbench opened into the window, as a sibling of it.
-	 *
-	 * Called from `WorkbenchView.contentView`'s container, which is what VS
-	 * Code believes is the window's own content view. Adding the same view
-	 * twice is not an error and not a duplicate: upstream's `BrowserView`
-	 * re-adds its view whenever it thinks it has moved window, and the child
-	 * list order is this class's answer rather than the caller's, re-stated on
-	 * every `layout()`.
-	 */
-	attachChild(owner: WorkbenchView, child: AttachedChild): void {
-		if (this.attached.some((entry) => entry.child.view === child.view)) return;
-		this.attachedCounter += 1;
-		this.attached.push({ id: this.attachedCounter, owner, child });
-		if (this.window.isDestroyed()) return;
-		this.window.contentView.addChildView(child.view);
-		// Never drawn where it happens to have been left: it is placed by the
-		// owner, on the next pass, and until then it is not on screen.
-		child.draw(false);
-		this.layout();
-	}
-
-	/** Let one go again — the browser editor closing, or moving away. */
-	detachChild(view: Electron.View): void {
-		const index = this.attached.findIndex((entry) => entry.child.view === view);
-		if (index === -1) return;
-		this.attached.splice(index, 1);
-		if (this.window.isDestroyed()) return;
-		this.window.contentView.removeChildView(view);
-		this.layout();
-	}
-
-	/** What a workbench has attached, for the container it hands VS Code. */
-	attachedChildren(owner: WorkbenchView): readonly Electron.View[] {
-		return this.attached
-			.filter((entry) => entry.owner === owner)
-			.map((entry) => entry.child.view);
-	}
-
-	/**
-	 * A workbench ending takes everything it opened with it.
-	 *
-	 * The views themselves are VS Code's to destroy — `BrowserView.dispose`
-	 * closes their contents when the window they belong to closes. What is
-	 * this class's is that they stop being children of the window the instant
-	 * the workbench does, so that nothing is laid out against a workbench that
-	 * is no longer in the list.
-	 */
-	private detachChildrenOf(owner: WorkbenchView): void {
-		for (const entry of [...this.attached]) {
-			if (entry.owner !== owner) continue;
-			this.attached.splice(this.attached.indexOf(entry), 1);
-			if (this.window.isDestroyed()) continue;
-			this.window.contentView.removeChildView(entry.child.view);
-		}
-	}
-
-	/** The view the owner named, if it is still attached. */
-	private attachedEntry(id: number): AttachedEntry | undefined {
-		return this.attached.find((entry) => entry.id === id);
-	}
-
-	/** The owner's view of what is attached, for `layoutInput`. */
-	private attachedPlacements(): readonly AttachedPlacement[] {
-		const placements: AttachedPlacement[] = [];
-		for (const entry of this.attached) {
-			if (entry.owner.isDestroyed()) continue;
-			const editorKey = this.editorKeyOf(entry.owner);
-			// A workbench that has not been told what folder it is showing is
-			// not in the layout's list of editors, so nothing it opened can be
-			// placed against it yet. It is swept hidden by `layout()`.
-			if (editorKey === undefined) continue;
-			placements.push({
-				id: entry.id,
-				editorKey,
-				rect: entry.child.local,
-				visible: entry.child.wish,
-			});
-		}
-		return placements;
-	}
-
-	//#endregion
-
-	//#region the views
-
-	/**
-	 * Say which folder a workbench is showing.
-	 *
-	 * The one table, written by the one caller that knows: a view is made by VS
-	 * Code's own open path and arrives here through the shim with nothing said
-	 * about what was asked for.
-	 */
-	bindEditorKey(viewId: number, editorKey: string): void {
-		this.editorKeyByViewId.set(viewId, editorKey);
-		this.layout();
-	}
-
-	/** Forget a binding without ending the view — a view that died, replaced. */
-	unbindEditorKey(editorKey: string): void {
-		for (const [viewId, key] of [...this.editorKeyByViewId]) {
-			if (key === editorKey) this.editorKeyByViewId.delete(viewId);
-		}
-	}
-
-	editorKeyOf(view: WorkbenchView): string | undefined {
-		return this.editorKeyByViewId.get(view.id);
-	}
-
-	/**
-	 * The id bound to a folder, whether or not that view is still alive.
-	 *
-	 * Separate from `viewForEditorKey` because they answer different
-	 * questions: this one is "what did DevHub open for this folder", which a
-	 * supervisor watching a view die has to be able to ask about the view that
-	 * just died.
-	 */
-	editorViewId(editorKey: string): number | undefined {
-		for (const [viewId, key] of this.editorKeyByViewId) {
-			if (key === editorKey) return viewId;
-		}
-		return undefined;
-	}
-
-	/** Every folder bound to a view, alive or not, with that view's id. */
-	editorBindings(): readonly (readonly [string, number])[] {
-		return [...this.editorKeyByViewId].map(([viewId, key]) => [key, viewId]);
-	}
-
-	/** The workbench showing a folder, if one is built and still alive. */
-	viewForEditorKey(editorKey: string): WorkbenchView | undefined {
-		for (const [viewId, key] of this.editorKeyByViewId) {
-			if (key !== editorKey) continue;
-			const view = this.getViewById(viewId);
-			if (view && !view.isDestroyed()) return view;
-		}
-		return undefined;
-	}
-
-	/** Every folder that has a workbench, in the order they were built. */
-	editorKeys(): readonly string[] {
-		return this.views
-			.filter((view) => !view.isDestroyed())
-			.map((view) => this.editorKeyByViewId.get(view.id))
-			.filter((key): key is string => key !== undefined);
-	}
-
-	getViewById(id: number): WorkbenchView | undefined {
-		return this.views.find((view) => view.id === id);
-	}
-
-	/**
-	 * The view those contents belong to, asked for by the contents themselves.
-	 *
-	 * A view's id is not its contents' id — see `WorkbenchView.id` — so this is
-	 * the only way to go from one to the other, and the two questions stay two
-	 * methods rather than one method with a number that means either.
-	 */
-	getViewByContents(contents: Electron.WebContents): WorkbenchView | undefined {
-		return this.views.find((view) => view.webContents === contents);
-	}
-
-	/**
-	 * Ask the arrangement again — VS Code's `show`, `moveTop` and `focus`.
-	 *
-	 * It used to *put that workbench on screen*, which made whichever of them
-	 * VS Code happened to touch the one being looked at. What is on screen is a
-	 * function of the selection and nothing else, so this is a request to run
-	 * the same decision again rather than a request to win it: a deselected
-	 * workspace's extension calling `window.focus()` must not change what the
-	 * person is looking at, and a workbench that has just finished loading must
-	 * not take the screen from the one that was asked for.
-	 */
-	assertArrangement(): void {
-		this.layout();
-	}
-
 	/**
 	 * Where the keyboard goes: to whatever is on screen.
 	 *
 	 * This window holds several web contents over one rectangle — the App Shell
-	 * page, one `WebContentsView` per workbench — and hiding a view does not
+	 * page, one `WebContentsView` per editor area — and hiding a view does not
 	 * take the keyboard away from it. So a switch away from the Editor used to
-	 * leave focus inside a workbench nobody could see: typing went into an
+	 * leave focus inside an editor nobody could see: typing went into an
 	 * invisible editor, the terminal underneath never received a key, and the
 	 * chord layer's `before-input-event` was listening on contents the window
 	 * was no longer delivering to. That is why a chord could not be used twice
@@ -1177,50 +810,9 @@ export class ShellWindow {
 	 * should come to the front is a different question with one answer,
 	 * `raise`, and only the paths that carry a person's intent ask it.
 	 */
-	focusSurface(landing?: Landing): void {
+	focusSurface(): void {
 		if (this.window.isDestroyed()) return;
 		this.placeTheKeyboard();
-		// Reported after the keyboard has been placed, never before, and
-		// reported in every case — including the ones `placeTheKeyboard`
-		// declines, because a modal standing up is precisely when every
-		// workbench stops having focus.
-		//
-		// The order is not cosmetic. A workbench hears about this as an
-		// `electron.app` focus event (see `WorkbenchView`), and what upstream
-		// does with that event is go and read `document.hasFocus()` in the
-		// renderer — so an announcement sent before `focus()` had moved
-		// anything would be answered with the state it was about to leave.
-		this.publishFocus();
-		if (landing === "editor") this.landInEditor();
-	}
-
-	/**
-	 * The editor group of the workbench the keyboard has just been placed in, for a
-	 * move that lands there (`Landing` in `chords.ts`).
-	 *
-	 * Asked by the placement that ends the move and by nothing later, so there
-	 * is nothing to keep between the asking and the landing: the move changed
-	 * the model, the model published the arrangement, and the keyboard was
-	 * placed, all before this line. When the keys did not arrive in a
-	 * workbench — the move landed on an Agent, the workbench is starting or
-	 * gone, a question is standing, DevHub is not in front — there is no editor
-	 * group to focus, and the landing is simply not had; the move still
-	 * happened.
-	 */
-	private landInEditor(): void {
-		const view = this.views.find(
-			(candidate) =>
-				!candidate.isDestroyed() && this.isSurfaceFocused(candidate),
-		);
-		if (!view) return;
-		// The workbench's own command, forwarded over upstream's own door for
-		// main (`vscode:runAction`) — the same door the other forwarded commands use. It
-		// puts the keyboard in the active editor group, not just the view, which
-		// is what a person asking for the editor wants.
-		view.webContents.send("vscode:runAction", {
-			id: "workbench.action.focusActiveEditorGroup",
-			from: "menu",
-		});
 	}
 
 	/** The half of `focusSurface` that actually moves the keyboard. */
@@ -1260,18 +852,9 @@ export class ShellWindow {
 	 * - `setLayoutState`, which follows every projection change — an Agent
 	 *   ticking, a HEAD moving, a workspace finishing its open. Measured on an
 	 *   idle instance: the window went to the background and DevHub called
-	 *   `focus()` on the workbench 5ms later.
+	 *   `focus()` on the editor 5ms later.
 	 * - the window's own `focus` event, coming back from another app.
 	 * - `PickerView.place`, when the last sheet goes.
-	 * - `WorkbenchView.focus`, which is VS Code's `hostService.focus()` →
-	 *   `nativeHostMainService.focusWindow` → `CodeWindow.focus()` arriving
-	 *   through the proxy. VS Code calls it on hover and on drag
-	 *   (`workbench/browser/dnd.ts`), on `window.focus()` from an extension,
-	 *   on `workbench.action.focusWindow`, and from
-	 *   `enableWindowFocusOnElementFocus` whenever anything inside a workbench
-	 *   focuses an element while the workbench does not have the keyboard.
-	 * - `WorkbenchView.moveTop` and `show`, which are `windowsMainService`'s
-	 *   open and focus paths, and which reach `reveal` above.
 	 *
 	 * Not one of those is a person asking DevHub to come forward. So none of
 	 * them may: the keyboard is placed *within the window that already has
@@ -1311,13 +894,11 @@ export class ShellWindow {
 	 * After the prefix the next stroke is DevHub's, and DevHub only sees a
 	 * stroke that arrives in a web contents (`before-input-event`). So while
 	 * the prefix is armed the keyboard stays where it is — where the prefix
-	 * was just seen — or, if DevHub has to move it (the workbench that had it
-	 * is being replaced: restarting, waking, crashed; a workbench chosen
-	 * before it existed arriving), it goes to this window's own page, which
-	 * is always there and never swapped. A workbench whose page is still
-	 * loading cannot take a key, and one handed to it went to the menu bar
-	 * instead — the workbench's, where `Cmd+N` is New Text File. The move it
-	 * stood for is made when the chord ends, after its command has run.
+	 * was just seen — or, if DevHub has to move it (the view that had it is
+	 * being replaced, or one chosen before it existed is arriving), it goes to
+	 * this window's own page, which is always there and never swapped. A page
+	 * still loading cannot take a key. The move it stood for is made when the
+	 * chord ends, after its command has run.
 	 */
 	chordArmedChanged(armed: boolean): void {
 		this.chordArmed = armed;
@@ -1371,36 +952,19 @@ export class ShellWindow {
 		this.raise();
 	}
 
-	/**
-	 * VS Code asking for the keyboard on behalf of one workbench.
-	 *
-	 * `CodeWindow.focus()` for a workbench arrives here through the proxy. It
-	 * is a request to type into that workbench, never a request to activate
-	 * DevHub, and it is only honoured for the workbench that is on screen: a
-	 * deselected workspace's extension calling `window.focus()` must not
-	 * change what the person is looking at.
-	 */
-	focusWorkbench(view: WorkbenchView): void {
-		if (this.focusTarget() !== view.webContents) return;
-		this.focusSurface();
-	}
-
 	/** The modal layer's keyboard, placed through the same gate. */
 	focusModal(contents: Electron.WebContents): void {
 		this.placeKeyboardIn(contents);
 	}
 
 	/**
-	 * The contents the keyboard belongs to: the workbench the person is working
-	 * in, or the App Shell page — which is where a terminal and an Agent surface
-	 * live, so "the workbench is not what was selected" and "the page has it" are
-	 * the same fact.
+	 * The contents the keyboard belongs to.
 	 *
-	 * This is *not* "the workbench that is drawn", which is what it used to ask.
+	 * This is *not* "the editor that is drawn", which is what it used to ask.
 	 * In a split both are drawn — that is what a split is — and the one the
 	 * person selected is the Agent, because a split is only ever entered by
 	 * asking for an Agent beside its editor. Reading visibility gave the
-	 * keyboard to the workbench on every reveal and on every window focus, so
+	 * keyboard to the editor on every reveal and on every window focus, so
 	 * coming back to DevHub with an Agent open beside its editor put the keys in
 	 * the editor. `LayoutState.keyboard` is the other half of the arrangement
 	 * for exactly that reason, and `keyboardChild` is where the two are read
@@ -1460,80 +1024,16 @@ export class ShellWindow {
 				return this.toasts.contents() ?? this.window.webContents;
 			case "picker":
 				return this.picker.contents() ?? this.window.webContents;
-			case "editor":
-				return (
-					this.viewForEditorKey(identity.editorKey)?.webContents ??
-					this.window.webContents
-				);
 			case "tooltip":
-			case "attached":
-				// There is nothing in a tooltip to type into, and a view a
-				// workbench opened inside itself takes the keyboard from VS
-				// Code rather than from DevHub — the browser is focused by the
-				// editor that owns it. `keyboardChild` names neither. Reaching
-				// here means the one answer to "where do the keys go" has
-				// started giving an answer that is not a place DevHub can put
-				// them, which is a broken invariant rather than a case to
-				// handle.
+				// There is nothing in a tooltip to type into, and
+				// `keyboardChild` never names it. Reaching here means the one
+				// answer to "where do the keys go" has started giving an answer
+				// that is not a place DevHub can put them, which is a broken
+				// invariant rather than a case to handle.
 				throw new Error(
 					`the keyboard cannot be put in the ${identity.kind} view`,
 				);
 		}
-	}
-
-	/**
-	 * Whether a workbench is the one being typed into — the whole question, and
-	 * the only place it is answered.
-	 *
-	 * A workbench is a `WebContentsView`, not a window, so `webContents`'
-	 * own idea of focus is about DOM focus inside itself and knows nothing
-	 * about the two facts that actually decide it: whether DevHub is the app in
-	 * front, and which of this window's several contents `focusSurface` put the
-	 * keyboard in. Asked on its own it says "focused" for a workbench sitting
-	 * behind an Agent's terminal, and for one in a window the person switched
-	 * away from an hour ago.
-	 *
-	 * So it is composed from the same state the focus itself is a function of.
-	 * `focusTarget` is already the single answer to "where do the keys go", and
-	 * this is the same answer read back — which is what makes "the workbench
-	 * believes it has focus" and "the workbench has focus" the same sentence
-	 * rather than two that drift.
-	 *
-	 * A modal takes it from everybody: it owns the keyboard for as long as it
-	 * stands, which is exactly what `focusSurface` refuses to override.
-	 */
-	isSurfaceFocused(view: WorkbenchView): boolean {
-		if (this.window.isDestroyed() || view.isDestroyed()) return false;
-		if (!this.window.isFocused()) return false;
-		if (this.picker.isPresent()) return false;
-		return this.focusTarget() === view.webContents;
-	}
-
-	/**
-	 * Tell every workbench to look again at whether it has the keyboard.
-	 *
-	 * Called from everywhere that can change the answer, rather than from the
-	 * places that happen to be convenient: the window coming forward or going
-	 * away, the surface moving, a modal opening or closing, a view leaving. A
-	 * workbench cannot see any of those for itself — that is the whole reason
-	 * `hostService.hasFocus` was wrong — so nothing may quietly skip this.
-	 */
-	private publishFocus(): void {
-		for (const view of [...this.views]) {
-			view.focusStateChanged();
-		}
-	}
-
-	/** The view on screen, if there is one and it still exists. */
-	revealedView(): WorkbenchView | undefined {
-		const editorKey = onScreenEditor(this.layoutInput());
-		return editorKey === undefined
-			? undefined
-			: this.viewForEditorKey(editorKey);
-	}
-
-	isRevealed(view: WorkbenchView): boolean {
-		return this.revealedView() === view;
 	}
 
 	//#endregion
@@ -1546,8 +1046,8 @@ export class ShellWindow {
 	 * The whole state at once, and the only way it moves. Two channels used to
 	 * carry halves of it up from the page — a measured rectangle and a word for
 	 * what was in the content area — and the second of those was answering two
-	 * questions with one word: whether to draw a workbench, and whether that
-	 * workbench is what is being typed into. In a split those have different
+	 * questions with one word: whether to draw the editor, and whether that
+	 * editor is what is being typed into. In a split those have different
 	 * answers, and they are two fields here.
 	 */
 	setLayoutState(state: LayoutState): void {
@@ -1557,7 +1057,7 @@ export class ShellWindow {
 		if (JSON.stringify(state) === before) return;
 		this.layout();
 		// Revealing a surface is a request to type into it, and only main can
-		// take the keyboard off the workbench view that had it.
+		// take the keyboard off the view that had it.
 		this.focusSurface();
 	}
 
@@ -1577,50 +1077,6 @@ export class ShellWindow {
 		changed(!this.window.isDestroyed() && this.window.isFocused());
 	}
 
-	/** Register the one reader of "the window may need a new name". */
-	onTitleChanged(changed: () => void): void {
-		this.titleChanged = changed;
-	}
-
-	/** What the workbench on screen calls itself, if there is one. */
-	revealedTitle(): string | undefined {
-		return this.revealedView()?.webContents.getTitle();
-	}
-
-	/**
-	 * How to name the workbench a view is showing.
-	 *
-	 * The model owns surface keys and this class owns views; the overlay needs
-	 * to ask "is the workbench this question belongs to the one on screen?",
-	 * and this is the one place the two are joined.
-	 */
-	setSurfaceKeyResolver(
-		resolve: (view: WorkbenchView) => string | undefined,
-	): void {
-		this.surfaceKeyOfView = resolve;
-		this.layout();
-	}
-
-	/**
-	 * The rectangle a workbench is laid into, for a caller outside this class.
-	 *
-	 * VS Code asks a window for its bounds, and this is the honest answer for a
-	 * workbench: the hole the App Shell page leaves for it. It is computed, not
-	 * measured — see `windowLayout.ts`.
-	 */
-	workbenchRect(): LayoutRect {
-		return workbenchRect(this.windowSize(), this.state);
-	}
-
-	/**
-	 * The workbench's rectangle, and how wide the content area around it is.
-	 *
-	 * What the window's own page is told, and the whole of what it knows about
-	 * where anything is. The second number is there so the page never has to
-	 * ask its own document how wide the window is: a view's `innerWidth` is
-	 * stale for a frame after main moves it, and the split ratio is a ratio of
-	 * this width.
-	 */
 	/**
 	 * The Sidebar's own rectangle, for the Sidebar.
 	 *
@@ -1632,7 +1088,7 @@ export class ShellWindow {
 	 * one thing: saying where one of its rows is *in the window*, so that a
 	 * tooltip can be placed against the window rather than against the column.
 	 *
-	 * Told rather than asked, like the workbench area and for the same reason.
+	 * Told rather than asked, like the editor area and for the same reason.
 	 */
 	sidebarArea(): SidebarAreaWire {
 		return sidebarRect(this.windowSize(), this.state);
@@ -1679,13 +1135,22 @@ export class ShellWindow {
 		return this.sidebarArea();
 	}
 
+	/**
+	 * The editor area's rectangle, and how wide the content area around it is.
+	 *
+	 * What the window's own page is told, and the whole of what it knows about
+	 * where anything is. The second number is there so the page never has to
+	 * ask its own document how wide the window is: a view's `innerWidth` is
+	 * stale for a frame after main moves it, and the split ratio is a ratio of
+	 * this width.
+	 */
 	workbenchArea(): WorkbenchAreaWire {
 		const size = this.windowSize();
 		const seam = terminalSeam(size, this.state);
 		const extent = terminalExtent(size, this.state);
 		const terminal = this.state.terminal;
 		return {
-			...this.workbenchRect(),
+			...workbenchRect(size, this.state),
 			contentWidth: surfaceRect(size, this.state).width,
 			...(seam === undefined || extent === undefined || terminal === undefined
 				? {}
@@ -1699,10 +1164,6 @@ export class ShellWindow {
 						},
 					}),
 		};
-	}
-
-	boundsOf(_view: WorkbenchView): Electron.Rectangle {
-		return this.workbenchRect();
 	}
 
 	/**
@@ -1730,45 +1191,12 @@ export class ShellWindow {
 		return {
 			windowSize: this.windowSize(),
 			state: this.state,
-			editors: this.editorKeys(),
-			asking: this.askingEditorKey(),
 			toasts: this.toasts.contentSize(),
-			picker: this.picker.scope(),
+			picker: this.picker.isAsking(),
 			tooltip: this.tooltip.placement(),
-			attached: this.attachedPlacements(),
 			terminals: [...this.terminalViews.keys()],
 			neovims: [...this.editorTerminals.keys()],
 		};
-	}
-
-	/**
-	 * Which workbench is on screen, for a reader outside this class.
-	 *
-	 * The view itself cannot answer it: `WorkbenchView.isVisible` is about the
-	 * *window* being shown and deliberately stays true for a workbench nobody
-	 * has selected (see its comment — VS Code opens DevTools by itself if a
-	 * loaded window says it is neither visible nor minimized). Which one is
-	 * on screen is the layout's answer, so this is where it is read.
-	 */
-	onScreenViewId(): number | undefined {
-		return this.revealedView()?.id;
-	}
-
-	/**
-	 * The folder whose workbench has stopped to ask the person something.
-	 *
-	 * The question names a surface key, which is the model's name for the
-	 * workbench; the layout speaks in folders, which is the window's. This is
-	 * the one place the two are joined.
-	 */
-	private askingEditorKey(): string | undefined {
-		const asking = this.picker.askingSurfaceKey();
-		if (asking === undefined) return undefined;
-		const view = this.views.find(
-			(candidate) =>
-				!candidate.isDestroyed() && this.surfaceKeyOfView(candidate) === asking,
-		);
-		return view === undefined ? undefined : this.editorKeyOf(view);
 	}
 
 	/**
@@ -1797,7 +1225,7 @@ export class ShellWindow {
 		// previous size for a frame.
 		for (const child of children) {
 			if (child.identity.kind === "agents" && !child.visible) {
-				// Sized while hidden, for the reason a workbench is: a view
+				// Sized while hidden, for the reason an editor is: a view
 				// shown at the size it had when it was last hidden lays itself
 				// out against that size first, and an xterm reflows visibly
 				// when it catches up.
@@ -1806,13 +1234,6 @@ export class ShellWindow {
 			}
 			if (child.identity.kind === "conversations" && !child.visible) {
 				this.conversations.place(this.window, child.rect, false);
-				continue;
-			}
-			if (child.identity.kind === "attached") {
-				const entry = this.attachedEntry(child.identity.id);
-				if (!entry) continue;
-				entry.child.place(child.rect);
-				if (!child.visible) entry.child.draw(false);
 				continue;
 			}
 			if (child.identity.kind === "terminal" && !child.visible) {
@@ -1832,36 +1253,6 @@ export class ShellWindow {
 				}
 				continue;
 			}
-			if (child.identity.kind !== "editor") continue;
-			const view = this.viewForEditorKey(child.identity.editorKey);
-			if (!view) continue;
-			view.view.setBounds(child.rect);
-			if (!child.visible) view.view.setVisible(false);
-		}
-		// Anything attached that the owner said nothing about is not on screen:
-		// a view opened by a workbench that has not been bound to a folder yet,
-		// which is the one case the list cannot name. Absence from the list is
-		// how the owner says "not drawn", here as everywhere else.
-		const placed = new Set(
-			children
-				.map((child) =>
-					child.identity.kind === "attached" ? child.identity.id : undefined,
-				)
-				.filter((id): id is number => id !== undefined),
-		);
-		for (const entry of this.attached) {
-			if (!placed.has(entry.id)) entry.child.draw(false);
-		}
-		// A workbench that exists but has not been told what folder it is
-		// showing yet is still a child of this window, and still has to be
-		// sized: it would otherwise sit at its creation bounds until the open
-		// that made it came back, which is a whole workbench start's worth of
-		// wrong size. It is never the one on screen.
-		const rect = this.workbenchRect();
-		for (const view of this.views) {
-			if (view.isDestroyed() || this.editorKeyOf(view) !== undefined) continue;
-			view.view.setBounds(rect);
-			view.view.setVisible(false);
 		}
 		// The children, in the list's own order, lowest first. That
 		// order *is* the z-order and this is the one way Electron offers to
@@ -1914,22 +1305,6 @@ export class ShellWindow {
 				case "tooltip":
 					this.tooltip.place(child.rect, child.visible);
 					break;
-				case "editor": {
-					if (!child.visible) break;
-					const view = this.viewForEditorKey(child.identity.editorKey);
-					if (!view) break;
-					this.window.contentView.addChildView(view.view);
-					view.view.setVisible(true);
-					break;
-				}
-				case "attached": {
-					if (!child.visible) break;
-					const entry = this.attachedEntry(child.identity.id);
-					if (!entry) break;
-					this.window.contentView.addChildView(entry.child.view);
-					entry.child.draw(true);
-					break;
-				}
 			}
 		}
 
@@ -1951,18 +1326,8 @@ export class ShellWindow {
 			}
 		}
 
-		// A different workbench on screen is a different file in the window's
-		// name. Said here, once, because this is the one place that decides it
-		// — it used to be said by `reveal`, which was one of several ways it
-		// could change.
-		const onScreen = onScreenEditor(this.layoutInput());
-		if (onScreen !== this.onScreen) {
-			this.onScreen = onScreen;
-			this.titleChanged();
-		}
-
 		// Where the keys go is a function of the same input, and it moves with
-		// it — not only with the arrangement. A workbench that was chosen
+		// it — not only with the arrangement. An editor that was chosen
 		// before it existed (a folder just opened, one on another machine, one
 		// being rebuilt) changes the answer by arriving, and nothing else
 		// would put the keyboard in it: it went to the window's own page while
@@ -1974,28 +1339,6 @@ export class ShellWindow {
 			this.keyboardAnswer = keyboard;
 			this.focusSurface();
 		}
-	}
-
-	/**
-	 * The invariant this class exists to keep: at most one workbench view is
-	 * on screen, and if there is one it is the topmost child.
-	 *
-	 * Exposed so a test can assert it rather than assert the calls that
-	 * happen to establish it today.
-	 */
-	visibleViews(): readonly WorkbenchView[] {
-		return this.views.filter(
-			(view) => !view.isDestroyed() && view.view.getVisible(),
-		);
-	}
-
-	topmostView(): WorkbenchView | undefined {
-		const children = this.window.contentView.children;
-		for (let index = children.length - 1; index >= 0; index -= 1) {
-			const match = this.views.find((view) => view.view === children[index]);
-			if (match) return match;
-		}
-		return undefined;
 	}
 
 	//#endregion
@@ -2019,11 +1362,9 @@ export function beginQuit(): void {
 /**
  * Whether DevHub is on its way out.
  *
- * Asked by anything that reacts to something *ending*. Every workbench, every
+ * Asked by anything that reacts to something *ending*. Every page, every
  * terminal and every host ends when DevHub quits, and none of those endings is
- * news: there is no page left to tell and nothing left to restart. Without it,
- * a workbench dying on the way out was reported as a crash and scheduled for
- * a restart into a shell that no longer existed.
+ * news: there is no page left to tell and nothing left to restart.
  */
 export function isQuitting(): boolean {
 	return quitting;
@@ -2047,7 +1388,7 @@ export function openShellPage(): void {
 	shellWindow().openPage();
 }
 
-/** The shell must exist before any workbench does; not having one is a bug. */
+/** The shell must exist before anything asks for it; not having one is a bug. */
 export function shellWindow(): ShellWindow {
 	if (!current) {
 		throw new Error("the App Shell window has not been created yet");

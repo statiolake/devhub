@@ -53,7 +53,7 @@ import { historyDirectionFor } from "./historyKeys.js";
 import type { NavigationDirection } from "../../model/navigationHistory.js";
 import type { CommandId } from "../../model/commands.js";
 import type { TogglePlace } from "../../model/intents.js";
-import { resolveChord, type ChordEffect, type Landing } from "./chords.js";
+import { resolveChord, type ChordEffect } from "./chords.js";
 import {
 	defaultChordLayout,
 	KeyRouter,
@@ -83,15 +83,13 @@ export interface ChordHost {
 	 * Both moves below are a person going somewhere from the keyboard, so both
 	 * end with the keyboard in what they selected — out of the Sidebar too, if
 	 * that is where the chord was typed, because a chord is not the Sidebar's
-	 * own Return. `focus` is where it lands inside an editor (see `Landing`);
-	 * absent, the editor keeps whatever it was last typed into.
+	 * own Return.
 	 *
 	 * Only an Agent has two presentations; absent means the plain, full one.
 	 */
 	selectContext(
 		context: NavigationContext,
 		presentation?: SurfacePresentationWire,
-		focus?: Landing,
 	): void;
 	/**
 	 * Somebody did something in this web contents — a key the chords and the
@@ -121,10 +119,9 @@ export interface ChordHost {
 	toggleSidebar(): void;
 	/**
 	 * Jump out to Scratch or the Orchestrator, or back to where the jump out
-	 * started — a move like `selectContext`, landing the same way, to a place
-	 * only the model knows.
+	 * started — a move like `selectContext`, to a place only the model knows.
 	 */
-	togglePlace(place: TogglePlace, focus: Landing): void;
+	togglePlace(place: TogglePlace): void;
 	openWorkspacePicker(): void;
 	/** Every workspace and Agent, as a list to choose from. */
 	openTabPicker(): void;
@@ -243,7 +240,7 @@ function strokeOf(input: Electron.Input): KeyStroke {
 function perform(host: ChordHost, effect: ChordEffect): void {
 	switch (effect.kind) {
 		case "select-context":
-			host.selectContext(effect.context, effect.presentation, effect.focus);
+			host.selectContext(effect.context, effect.presentation);
 			return;
 		case "swap-split-focus":
 			host.swapSplitFocus();
@@ -270,7 +267,7 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			host.toggleSidebar();
 			return;
 		case "toggle-place":
-			host.togglePlace(effect.place, effect.focus);
+			host.togglePlace(effect.place);
 			return;
 		case "open-workspace-picker":
 			host.openWorkspacePicker();

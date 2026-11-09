@@ -74,11 +74,8 @@ function placementFor(toasts: InstanceType<typeof ToastsView>): LayoutChild {
 			surface: { kind: "none" },
 			keyboard: "agents",
 		},
-		editors: [],
-		asking: undefined,
-		attached: [],
 		toasts: toasts.contentSize(),
-		picker: "none",
+		picker: false,
 		tooltip: undefined,
 	});
 	const child = children.find((each) => each.identity.kind === "toasts");

@@ -30,7 +30,6 @@ import {
   type Transcript,
 } from "../../model/conversation";
 import { ConversationSurface } from "../conversation/ConversationSurface";
-import type { ComposerInsertion } from "../conversation/Composer";
 import { issueRepositoryOf } from "../conversation/issueLinks";
 import { McpPanel, type McpPanelActions } from "../conversation/McpPanel";
 import {
@@ -64,11 +63,7 @@ export function ConversationPane({
     (entry) => entry.workspaceId === workspaceId,
   );
   const issueRepository = useMemo(() => issueRepositoryOf(row), [row]);
-  const { transcript, draft, inserted } = useConversation(
-    agentId,
-    reportFailure,
-    hidden,
-  );
+  const { transcript, draft } = useConversation(agentId, reportFailure, hidden);
   // Not declared as `ConversationActions`: that interface grows with the
   // surface (the composer, the header), and what this pane binds is every
   // call the bridge can make for one Agent — the surface takes what it uses.
@@ -168,20 +163,10 @@ export function ConversationPane({
         hidden={hidden}
         label={label}
         savedDraft={draft}
-        inserted={inserted}
         issueRepository={issueRepository}
       />
     ),
-    [
-      transcript,
-      actions,
-      appearance,
-      hidden,
-      label,
-      draft,
-      inserted,
-      issueRepository,
-    ],
+    [transcript, actions, appearance, hidden, label, draft, issueRepository],
   );
   return (
     <>
@@ -268,8 +253,7 @@ export function useLiveFailure(
  * The Agent's transcript as main holds it, kept current.
  *
  * With it, the unsent draft main kept for this Agent, `undefined` until the
- * attachment answers, and the words main put in its composer since
- * ("Send to Agent…"), numbered so each goes in once.
+ * attachment answers.
  *
  * Until the attachment answers it is the empty transcript, which is
  * `connecting` — exactly what the Agent is to this page until then. Events
@@ -298,11 +282,9 @@ function useConversation(
 ): {
   readonly transcript: Transcript;
   readonly draft: string | undefined;
-  readonly inserted: readonly ComposerInsertion[];
 } {
   const [transcript, setTranscript] = useState<Transcript>(EMPTY_TRANSCRIPT);
   const [draft, setDraft] = useState<string | undefined>(undefined);
-  const [inserted, setInserted] = useState<readonly ComposerInsertion[]>([]);
   /** Bumped when the engine holding the conversation is replaced: attached afresh. */
   const [attachments, setAttachments] = useState(0);
   const hiddenRef = useRef(hidden);
@@ -313,14 +295,6 @@ function useConversation(
   }, [hidden]);
   useEffect(() => {
     const bridge = devhub();
-    let insertions = 0;
-    const insert = (texts: readonly string[]) => {
-      if (texts.length === 0) return;
-      setInserted((current) => [
-        ...current,
-        ...texts.map((text) => ({ id: ++insertions, text })),
-      ]);
-    };
     /**
      * The fold of the attachment and every event since: changed in place
      * between frames, its snapshot what React is handed (`TranscriptFold`).
@@ -344,7 +318,6 @@ function useConversation(
     };
     publishRef.current = draw;
     const early: [number, ConversationEvent][] = [];
-    const earlyInserts: string[] = [];
     const fold = (revision: number, event: ConversationEvent) => {
       if (broken) return;
       if (current === undefined) {
@@ -371,18 +344,9 @@ function useConversation(
     };
     let attached = true;
     bridge.conversation
-      .attach(
-        agentId,
-        fold,
-        (text) => {
-          // After the ones main held for the attachment, which were earlier.
-          if (current === undefined) earlyInserts.push(text);
-          else if (attached) insert([text]);
-        },
-        () => {
-          if (attached) setAttachments((count) => count + 1);
-        },
-      )
+      .attach(agentId, fold, () => {
+        if (attached) setAttachments((count) => count + 1);
+      })
       .then((attachment) => {
         if (!attached) return;
         current = {
@@ -392,7 +356,6 @@ function useConversation(
         drawn = attachment.transcript;
         setTranscript(attachment.transcript);
         setDraft(attachment.draft);
-        insert([...attachment.inserted, ...earlyInserts.splice(0)]);
         for (const [revision, event] of early.splice(0)) fold(revision, event);
       })
       .catch((error: unknown) => {
@@ -408,5 +371,5 @@ function useConversation(
       bridge.conversation.detach(agentId).catch(() => undefined);
     };
   }, [agentId, reportFailure, attachments]);
-  return { transcript, draft, inserted };
+  return { transcript, draft };
 }

@@ -460,44 +460,6 @@
 }
 
 /* An alert that asks for a value as well as a decision. */
-/*
- * An alert that belongs to one workbench.
- *
- * Inside the viewport, not over the window: it is clipped to the editor area
- * by being positioned within it, so the sidebar and the rest of the app stay
- * both visible and usable while it stands.
- */
-.view-scoped-alert {
-  position: absolute;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  inset: 0;
-  overflow: hidden;
-}
-
-/*
- * A workbench's last frame, standing in for the workbench.
- *
- * It fills the rectangle the view had, so the still image lands exactly where
- * the live one was and the swap is invisible. It is inert by construction —
- * an image cannot be typed into — which is what makes "dimmed and not
- * accepting input" true rather than merely looking true.
- */
-.view-scoped-alert-scrim {
-  position: absolute;
-  inset: 0;
-  background: light-dark(rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.36));
-}
-
-.view-scoped-alert .mac-alert {
-  position: relative;
-  /* Centred in the editor area, not measured from the top of the window. */
-  margin-top: 0;
-  max-width: calc(100% - var(--space-6) * 2);
-}
-
 /* ----------------------------------------------------------- empty states */
 
 /*

@@ -19,10 +19,6 @@
  * over" listeners (`onSidebarRestarted`, the picker's republish, the
  * conversation detach) run as they do for any load.
  *
- * Workbenches are not here. A workbench renderer gone already ends the view
- * (`WorkbenchView`), and the editor lifecycle rebuilds it in its slot
- * (`AppController.superviseEditorView`).
- *
  * The decisions are `pageRecoveryAction` and `gpuGoneAction`, pure and tested;
  * what is left below them is listening and timers.
  */

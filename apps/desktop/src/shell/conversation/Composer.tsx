@@ -54,7 +54,6 @@
  * anything typed. See `dictation.ts`.
  */
 
-import { appendToDraft } from "../../model/conversation";
 import {
   useCallback,
   useEffect,
@@ -366,19 +365,6 @@ function CompletionList({
   );
 }
 
-const NO_INSERTIONS: readonly ComposerInsertion[] = [];
-
-/**
- * Words put in the composer from outside, after what is there ("Send to
- * Agent…", `main/shell/sendToAgent.ts`). Numbered, so each goes in once.
- */
-export interface ComposerInsertion {
-  readonly id: number;
-  readonly text: string;
-}
-
-export { appendToDraft };
-
 export function Composer({
   transcript,
   inputRef,
@@ -386,7 +372,6 @@ export function Composer({
   openSetting,
   restored,
   savedDraft,
-  inserted = NO_INSERTIONS,
   openTask,
   edits,
   draftFlush,
@@ -403,8 +388,6 @@ export function Composer({
   readonly restored: UserEntry | undefined;
   /** The draft main kept for this Agent, once it has said (`ConversationSurface`). */
   readonly savedDraft: string | undefined;
-  /** Words to add after the draft, each once, with the caret after them. */
-  readonly inserted?: readonly ComposerInsertion[];
   /** Open the call a background task was started by (`ComposerFooter`). */
   readonly openTask: (call: EntryId) => void;
   /**
@@ -508,34 +491,6 @@ export function Composer({
     bringBack(savedDraft, []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [savedDraft]);
-  // Words put here from outside go after the draft, each once, with the
-  // keyboard here and the caret at their end: they are for the person to
-  // finish and send, never sent.
-  const insertedUpTo = useRef(0);
-  const lastInsertion = inserted.at(-1)?.id ?? 0;
-  useLayoutEffect(() => {
-    const fresh = inserted.filter((each) => each.id > insertedUpTo.current);
-    if (fresh.length === 0) return;
-    insertedUpTo.current = lastInsertion;
-    // After whatever else is arriving in the same moment — the kept draft
-    // comes back in the same attachment — so it is folded onto the text as
-    // it will be, not as it was drawn.
-    setText((current) =>
-      fresh.reduce((draft, each) => appendToDraft(draft, each.text), current),
-    );
-    setRecalled(undefined);
-    const input = inputRef.current;
-    if (input) {
-      input.focus();
-      requestAnimationFrame(() => {
-        const end = input.value.length;
-        input.setSelectionRange(end, end);
-        input.scrollTop = input.scrollHeight;
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastInsertion]);
-
   const submit = () => {
     const line = text;
     // A command DevHub answers itself, typed out whole, is that command

@@ -118,23 +118,6 @@ export function matchChord(
 }
 
 /**
- * Where the keyboard lands inside an editor a move arrives at.
- *
- * Every move a chord makes takes the keyboard to what it selected — that is
- * the host's rule, not something an effect can opt out of. Inside a workbench,
- * though, the keyboard is the workbench's own business, and an ordinary move
- * leaves it wherever that editor was last typed into, which is what coming
- * back to an editor is supposed to feel like.
- *
- * The toggles are the exception, all of them, for one reason: `Cmd+Q
- * Cmd+J`, `Cmd+Q Shift+J` and `Cmd+Q Shift+O` are how somebody goes *to the
- * other place they work*, and at an editor that place is the editor itself. So a toggle that lands on
- * an editor lands in the editor group, with the keyboard in it. Landing on an
- * Agent, it means nothing — an Agent is a terminal already.
- */
-export type Landing = "editor";
-
-/**
  * What running a chord comes to, once it has been resolved against the model.
  *
  * Every one of these is something DevHub can already be asked for by pointing
@@ -148,8 +131,6 @@ export type ChordEffect =
 			readonly context: NavigationContext;
 			/** Only an Agent has two; absent means the plain, full one. */
 			readonly presentation?: SurfacePresentationWire;
-			/** Where the keyboard lands in an editor. See `Landing`. */
-			readonly focus?: Landing;
 	  }
 	/** Side by side already: move the keyboard rather than the selection. */
 	| { readonly kind: "swap-split-focus" }
@@ -190,14 +171,9 @@ export type ChordEffect =
 	 * The one move that carries no target beyond the place: which selection
 	 * to come back to is a thing only the model remembers, because it is
 	 * written down by this command and by nothing else, and a snapshot of what
-	 * is on screen cannot say where somebody was before it. It is a toggle all
-	 * the same, so it lands the way the other toggle does.
+	 * is on screen cannot say where somebody was before it.
 	 */
-	| {
-			readonly kind: "toggle-place";
-			readonly place: TogglePlace;
-			readonly focus: Landing;
-	  }
+	| { readonly kind: "toggle-place"; readonly place: TogglePlace }
 	| { readonly kind: "open-workspace-picker" }
 	| { readonly kind: "open-tab-picker" }
 	| { readonly kind: "open-agent-picker"; readonly workspaceId: string }
@@ -593,12 +569,12 @@ export function resolveChord(
 			// Both directions, unconditionally: the model holds the memory this
 			// turns on, so there is nothing here to decide and nothing to gate
 			// on. On Scratch with nothing remembered it is a no-op there.
-			return { kind: "toggle-place", place: "scratch", focus: "editor" };
+			return { kind: "toggle-place", place: "scratch" };
 
 		case "toggle_orchestrator":
 			// The same toggle to the Orchestrator screen, which is there with or
 			// without an orchestrator assigned (without one it offers Start).
-			return { kind: "toggle-place", place: "orchestrator", focus: "editor" };
+			return { kind: "toggle-place", place: "orchestrator" };
 
 		case "toggle_split": {
 			// Both halves of one pair, side by side — the twin of
@@ -643,13 +619,9 @@ export function resolveChord(
 				return { kind: "swap-split-focus" };
 			}
 			if (agent) {
-				// A toggle landing on an editor: see `Landing`. Every other way
-				// of choosing this workbench — the sidebar, the pickers, `Cmd+Q
-				// N/P`, a digit — leaves the keyboard where that editor had it.
 				return {
 					kind: "select-context",
 					context: { kind: "workspace", workspaceId: workspace.id },
-					focus: "editor",
 				};
 			}
 			// Back to the Agent you were last in, or the first one if you have

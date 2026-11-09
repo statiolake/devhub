@@ -91,7 +91,6 @@ function host() {
 	return {
 		snapshot: () => undefined,
 		focusedWindow: () => "shell" as const,
-		toggleIntegratedTerminal: () => undefined,
 		closeWorkspace: () => undefined,
 		openWorkspacePicker: () => undefined,
 		openSettings: () => {

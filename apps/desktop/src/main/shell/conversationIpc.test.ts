@@ -73,37 +73,13 @@ function harness(defer?: (send: () => void) => void) {
 		setCliDefault: unused,
 		fail: (error) => error as Error,
 	};
-	const ipc = registerConversationIpc(options);
+	registerConversationIpc(options);
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: page }, ...args);
 	const invokeFrom = (sender: unknown, channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender }, ...args);
-	return { ipc, page, agentsPage, invoke, invokeFrom, conversations };
+	return { page, agentsPage, invoke, invokeFrom, conversations };
 }
-
-describe("words for a GUI Agent's composer", () => {
-	it("are held while no page has the Agent attached, and handed out once with the attachment", async () => {
-		const { ipc, page, invoke } = harness();
-		ipc.insert(AGENT, "first");
-		ipc.insert(AGENT, "second");
-		expect(page.sent).toEqual([]);
-		const attachment = await invoke(CONVERSATION_CHANNELS.attach, AGENT);
-		expect(attachment).toMatchObject({
-			draft: "half a thought",
-			inserted: ["first", "second"],
-		});
-		await invoke(CONVERSATION_CHANNELS.detach, AGENT);
-		const again = await invoke(CONVERSATION_CHANNELS.attach, AGENT);
-		expect(again).toMatchObject({ inserted: [] });
-	});
-
-	it("go straight to the page that has the Agent attached", async () => {
-		const { ipc, page, invoke } = harness();
-		await invoke(CONVERSATION_CHANNELS.attach, AGENT);
-		ipc.insert(AGENT, "now");
-		expect(page.sent).toEqual([[CONVERSATION_CHANNELS.insert, AGENT, "now"]]);
-	});
-});
 
 describe("a conversation's events", () => {
 	const event = (text: string) =>

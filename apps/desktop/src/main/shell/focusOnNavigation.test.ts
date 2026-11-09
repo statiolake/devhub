@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 const here = import.meta.dirname;
 
 describe("every WebContentsView DevHub makes", () => {
-	for (const file of ["chromeView.ts", "layerView.ts", "workbenchView.ts"]) {
+	for (const file of ["chromeView.ts", "layerView.ts"]) {
 		it(`${file} turns off focusOnNavigation`, () => {
 			const source = readFileSync(join(here, file), "utf8");
 			expect(source).toMatch(/focusOnNavigation:\s*false/u);
