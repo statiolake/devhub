@@ -70,7 +70,6 @@ import {
 	type AppOutcomeWire,
 	type AppSnapshotWire,
 	type CloseDiagnosticWire,
-	type EditorAttachmentWire,
 	type NoticeRetiredWire,
 	type ReplayWire,
 	sidebarWorkspaces,
@@ -112,7 +111,6 @@ import {
 	displayPath,
 	locationKey,
 	agentId as parseAgentId,
-	containerTargetFromHostId,
 	workspaceId as parseWorkspaceId,
 	workspaceLocation,
 	sessionId,
@@ -1440,20 +1438,12 @@ export class AppController {
 		return key === undefined ? undefined : this.neovimEditors?.bufferName(key);
 	}
 
-	/**
-	 * Where a Workspace's Neovim runs: its own machine. A dev container is
-	 * not one yet (`docs/neovim-editor.md`, "Limitations").
-	 */
+	/** Where a Workspace's Neovim runs: its own machine. */
 	private neovimTarget(workspaceId: string): WorkspaceTerminalTarget {
 		const workspace = this.coordinator.model.workspace(
 			parseWorkspaceId(workspaceId),
 		);
 		if (!workspace) throw new Error("That Workspace is not open.");
-		if (workspace.editor.kind !== "host") {
-			throw new Error(
-				`The Neovim editor does not run in a dev container yet. Reopen ${workspace.root} on its own machine, or set [general] editor = "vscode".`,
-			);
-		}
 		return {
 			machine: runtimeIdFor(workspace.location),
 			workspaceId: workspace.id,
@@ -3252,18 +3242,9 @@ export class AppController {
 	/** Where a Workspace is, as a closed entry remembers it. */
 	private closedPlaceOf(workspace: Workspace): ClosedPlaceRecord {
 		const location = workspace.location;
-		const editor =
-			workspace.editor.kind === "devContainer"
-				? { dev_container: workspace.editor.configPath as string }
-				: {};
 		return location.kind === "local"
-			? { kind: "local", path: location.path, ...editor }
-			: {
-					kind: "ssh",
-					host: location.host,
-					path: location.path,
-					...editor,
-				};
+			? { kind: "local", path: location.path }
+			: { kind: "ssh", host: location.host, path: location.path };
 	}
 
 	/**
@@ -3478,16 +3459,15 @@ export class AppController {
 	}
 
 	/**
-	 * Open the place again, the way it was open: its folder on its machine,
-	 * its editor in the dev container it was attached to. A folder that is no
-	 * longer there is refused; a machine that does not answer is a failure
+	 * Open the place again, the way it was open: its folder on its machine. A
+	 * folder that is no longer there is refused; a machine that does not answer is a failure
 	 * that may pass.
 	 */
 	private async openClosedPlace(
 		place: ClosedPlaceRecord,
 		progress: { opened: boolean },
 		worktree?: ClosedWorktreeRecord,
-	): Promise<{ readonly workspaceId: WorkspaceId; readonly notes: string[] }> {
+	): Promise<WorkspaceId> {
 		let requested: WorkspacePlaceWire =
 			place.kind === "local"
 				? { kind: "local", path: place.path }
@@ -3522,15 +3502,7 @@ export class AppController {
 		// to be asked for like any asleep one.
 		await this.openFolder(opening, undefined, "automatic", "for-agent");
 		const workspaceId = this.openedWorkspaceId(opening);
-		// A dev container it was attached to is not reattached: that was VS
-		// Code's (docs/without-vscode.md).
-		const notes =
-			place.dev_container === undefined
-				? []
-				: [
-						"It was open in a dev container; DevHub opens it on its own machine now.",
-					];
-		return { workspaceId, notes };
+		return workspaceId;
 	}
 
 	/**
@@ -3592,11 +3564,12 @@ export class AppController {
 			this.setRecentlyClosed(stack);
 			return [];
 		}
-		const { workspaceId, notes } = await this.openClosedPlace(
+		const workspaceId = await this.openClosedPlace(
 			entry.place,
 			progress,
 			entry.worktree,
 		);
+		const notes: string[] = [];
 		let first: AgentId | undefined;
 		for (const agent of entry.agents) {
 			try {
@@ -3634,13 +3607,13 @@ export class AppController {
 		const resumable = resumableSession(entry.agent);
 		if (resumable.kind === "none") throw new ReopenRefused(resumable.why);
 		const open = this.openWorkspaceAt(entry.place);
-		const { workspaceId, notes } =
+		const workspaceId =
 			open === undefined
 				? await this.openClosedPlace(entry.place, progress)
-				: { workspaceId: open.id, notes: [] };
+				: open.id;
 		progress.opened = true;
 		await this.resumeClosedAgent(workspaceId, entry.place, entry.agent);
-		return notes;
+		return [];
 	}
 
 	/**
@@ -6697,14 +6670,6 @@ export class AppController {
 	 */
 	async openFromCli(request: ControlOpenRequest): Promise<string> {
 		const { path, position, waitMarkerPath } = request;
-		// The `devhub` command inside a dev container: the file is in that
-		// container, and there is no editor there to open it in — the Neovim
-		// editor runs on a Workspace's own machine (docs/neovim-editor.md).
-		if (containerTargetFromHostId(request.machine ?? "") !== undefined) {
-			throw new Error(
-				`${path} is inside a dev container, and DevHub's editor does not run in one; open it from the Workspace's own machine.`,
-			);
-		}
 		// A path is a path on one computer, and which one is a fact the
 		// request carries rather than a default this reaches for: an absent
 		// `machine` is every caller that runs on this Mac, and a `devhub` on a
@@ -8615,7 +8580,6 @@ export class AppController {
 					number === undefined || issueRepository === undefined
 						? undefined
 						: `https://github.com/${issueRepository.owner}/${issueRepository.repository}/issues/${String(number)}`,
-				container: containerLabel(workspace.editor),
 				// The row tooltip's facts, from the same projection it draws.
 				review: tellReview(
 					repository,
@@ -10298,12 +10262,6 @@ export function appController(): AppController {
 
 export function appControllerIfCreated(): AppController | undefined {
 	return current;
-}
-
-/** Which dev container a Workspace's editor is in, as `--tell workspaces` names it. */
-function containerLabel(editor: EditorAttachmentWire): string | undefined {
-	if (editor.kind === "host") return undefined;
-	return ("label" in editor ? editor.label : undefined) ?? "default";
 }
 
 /** One tmux pane of an Agent terminal, as `devhub --tell terminal` says it. */

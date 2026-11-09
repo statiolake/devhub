@@ -11,11 +11,7 @@
 
 import type { CountersReading } from "./counters.js";
 import type { TitleBarMode } from "../../model/config.js";
-import type {
-	RuntimeId,
-	RuntimeReading,
-	ShellMachineId,
-} from "../runtime/runtime.js";
+import type { RuntimeId, RuntimeReading } from "../runtime/runtime.js";
 import type { NoticesReading } from "./notices.js";
 import type { WorkspaceRepositoryRound } from "./rounds.js";
 
@@ -248,7 +244,7 @@ export interface MetricsInput {
 	readonly repositoryRounds: readonly WorkspaceRepositoryRound[];
 	readonly notices: NoticesReading;
 	/** Reconcile rounds in the last minute, by machine. See `rounds.ts`. */
-	readonly roundsLastMinute: (id: ShellMachineId) => number;
+	readonly roundsLastMinute: (id: RuntimeId) => number;
 }
 
 /**

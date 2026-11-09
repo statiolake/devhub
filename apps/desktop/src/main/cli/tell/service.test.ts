@@ -77,7 +77,6 @@ function workspace(overrides: Partial<TellWorkspace> = {}): TellWorkspace {
 		worktreeOf: undefined,
 		repositoryUrl: undefined,
 		issue: undefined,
-		container: undefined,
 		agents: [agent()],
 		review: tellReview(undefined, undefined, undefined),
 		...overrides,

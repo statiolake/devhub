@@ -383,12 +383,6 @@ export type AppErrorCodeWire =
 	| "file_unreadable"
 	/** GitHub did not give DevHub what it asked for (`GitHubUnavailable`). */
 	| "github_unavailable"
-	/**
-	 * A Workspace's dev container could not be used: `devcontainer up` failed
-	 * or answered in a shape DevHub does not read, or two containers carry
-	 * the definition's labels.
-	 */
-	| "dev_container_unusable"
 	/** An agent action's wording is empty, so there is nothing to send. */
 	| "agent_action_empty"
 	/** A request DevHub accepted never reached an answer. */
@@ -412,12 +406,6 @@ export type AppErrorCodeWire =
 	 * to be told which ones and where to go and fix it.
 	 */
 	| "workbench_settings_unreadable"
-	/**
-	 * The `devhub` command inside a dev container (and the control-socket relay
-	 * it talks through) could not be installed, so `devhub` run in there does
-	 * not reach DevHub.
-	 */
-	| "dev_container_command_unavailable"
 	/**
 	 * A workspace was closed while its machine was unreachable, so the sessions
 	 * on that machine are still running.
@@ -457,12 +445,6 @@ export type AppErrorCodeWire =
 	 * them.
 	 */
 	| "state_migrated"
-	/**
-	 * A dev container DevHub started could not be stopped when the editor
-	 * left it, as its definition's `shutdownAction` says it should be. The
-	 * editor moved anyway; the container is still running.
-	 */
-	| "dev_container_not_stopped"
 	/**
 	 * A chord could not put an ASCII-capable input source in place, so with an
 	 * input method on, a chord's second key goes to the input method instead
@@ -552,13 +534,10 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	operation_cancelled: "The request was cancelled.",
 	file_unreadable: "DevHub could not read a file or folder it needs.",
 	github_unavailable: "DevHub could not get this from GitHub.",
-	dev_container_unusable: "DevHub could not use this dev container.",
 	agent_action_empty: "This agent action has nothing to send.",
 	git_fetch_failed: "The latest changes could not be fetched from the remote.",
 	workbench_settings_unreadable:
 		"The editor's settings file is not valid JSON.",
-	dev_container_command_unavailable:
-		"The devhub command does not work inside this dev container.",
 	// It names no host, because the detail does: one workspace's close can
 	// leave things behind on exactly one machine, and which one is the fact
 	// worth carrying rather than repeating in two places.
@@ -574,8 +553,6 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	terminal_socket_path_too_long: "The terminal socket path is too long.",
 	terminal_socket_unusable: "DevHub cannot use the terminal socket.",
 	state_migrated: "DevHub updated its saved Workspaces for this version.",
-	dev_container_not_stopped:
-		"A dev container DevHub started is still running: it could not be stopped.",
 	input_source_unavailable:
 		"Chords cannot switch the keyboard out of an input method: DevHub could not change the input source.",
 	usage_unreadable:
@@ -1178,28 +1155,12 @@ export type WorkspaceLocationWire =
 	| { readonly kind: "local" }
 	| { readonly kind: "ssh"; readonly host: string };
 
-/**
- * Where a Workspace's editor is attached, as the page is told it: for the
- * quiet mark a row wears when its editor is in a dev container.
- *
- * `label` names the definition when the folder has more than one layout to
- * choose from (`.devcontainer/<label>/devcontainer.json`), and is absent for
- * the folder's default one. The container id is deliberately not here: it
- * changes on every rebuild, and a row that re-rendered because of that would
- * be flickering at something the person did not do.
- */
-export type EditorAttachmentWire =
-	| { readonly kind: "host" }
-	| { readonly kind: "devContainer"; readonly label?: string };
-
 export interface WorkspaceWire {
 	readonly agents: readonly AgentWire[];
 	readonly canCreateAgent: boolean;
 	readonly id: string;
 	readonly label: string;
 	readonly location: WorkspaceLocationWire;
-	/** Where its editor is attached. */
-	readonly editor: EditorAttachmentWire;
 	/** The folder's path, whichever machine it is on. */
 	readonly root: string;
 	/**

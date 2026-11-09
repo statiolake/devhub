@@ -44,7 +44,6 @@ function workspace(close: WorkspaceCloseWire) {
     id: "w-1",
     label: "widget",
     location: { kind: "local" },
-    editor: { kind: "host" },
     root: "/projects/widget",
     displayRoot: "/projects/widget",
     key: "/projects/widget",

@@ -68,7 +68,6 @@ const SNAPSHOT = {
       id: WORKSPACE_ID,
       label: "folderA",
       location: { kind: "local" },
-      editor: { kind: "host" },
       root: "/tmp/folderA",
       displayRoot: "/tmp/folderA",
       key: "/tmp/folderA",

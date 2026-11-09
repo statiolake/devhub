@@ -80,7 +80,6 @@ function workspace(
     id: "w-1",
     label: "widget",
     location: { kind: "local" },
-    editor: { kind: "devContainer" },
     root: "/projects/widget",
     displayRoot: "/projects/widget",
     key: "/projects/widget",
@@ -255,8 +254,6 @@ describe("what a right-click on an Agent offers", () => {
 
 describe("what a right-click on a Workspace offers", () => {
   const actions = (over: Record<string, unknown> = {}) => ({
-    reopenInContainer: vi.fn(),
-    reopenLocally: vi.fn(),
     close: vi.fn(),
     deletesWorktree: false,
     fixed: false,
@@ -264,7 +261,7 @@ describe("what a right-click on a Workspace offers", () => {
   });
 
   it("offers only the close on an ordinary Workspace, and says Worktree where closing deletes the folder", () => {
-    const local = workspace({ editor: { kind: "local" } } as never);
+    const local = workspace();
     expect(labels(workspaceMenuItems(local, actions()))).toEqual([
       "Close Workspace…",
     ]);
@@ -273,8 +270,8 @@ describe("what a right-click on a Workspace offers", () => {
     ).toEqual(["Close Worktree…"]);
   });
 
-  it("offers Scratch no close: nothing outside a dev container", () => {
-    const local = workspace({ editor: { kind: "local" } } as never);
+  it("offers Scratch no close", () => {
+    const local = workspace();
     expect(workspaceMenuItems(local, actions({ fixed: true }))).toEqual([]);
   });
 });

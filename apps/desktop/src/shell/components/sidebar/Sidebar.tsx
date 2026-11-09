@@ -15,7 +15,6 @@ import {
   type AgentSnapshot,
   type AppIntent,
   type AppSnapshot,
-  type EditorAttachmentWire,
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
 import { clampSidebarWidth, sidebarWorkspaces } from "../../../ipc/appShell";
@@ -52,7 +51,6 @@ import {
   agentNote,
   agentRowFacts,
   agentTooltipFacts,
-  editorAttachmentFact,
   issueLabel,
   checksBadge,
   hasUnresolvedConversations,
@@ -268,14 +266,13 @@ function WorkspaceRow({
         // is pointing at is the row whichever part of it they are over, and
         // the box goes beside the row and not beside the button. Nothing inside
         // the row has a tooltip of its own — not the Issue or pull request
-        // mark, not the unavailable or dev-container mark, not +, × or the
+        // mark, not the unavailable mark, not +, × or the
         // spinner — so the pointer on any of them is the pointer on the row,
         // and what they would have said is a line here. Scratch has always
         // stated it here.
         data-tooltip-lines={JSON.stringify(tooltipLines(facts))}
         onContextMenu={
-          (workspace.editor.kind === "devContainer" || !identity.fixed) &&
-          !closing
+          !identity.fixed && !closing
             ? (event) => {
                 event.preventDefault();
                 onWorkspaceMenu(
@@ -390,9 +387,7 @@ function WorkspaceRow({
               />
             </span>
           )}
-          {collapsed ? null : (
-            <WorkspaceMarks repository={repository} editor={workspace.editor} />
-          )}
+          {collapsed ? null : <WorkspaceMarks repository={repository} />}
           {/* The links trail the label rather than leading it, which is the one
             place this differs from the sketch: they are buttons, a button
             cannot go inside the row's own button, and putting them before it
@@ -850,13 +845,10 @@ function WorkspaceGlyph({
  */
 function WorkspaceMarks({
   repository,
-  editor,
 }: {
   readonly repository: WorkspaceRepositoryWire | undefined;
-  readonly editor: EditorAttachmentWire;
 }) {
   const { openExternalUrl } = useSidebar();
-  const editorFact = editorAttachmentFact(editor);
   const pullRequest = repository?.pullRequest;
   const ciBadge = pullRequest ? checksBadge(pullRequest) : undefined;
   return (
@@ -887,20 +879,6 @@ function WorkspaceMarks({
           <Glyph name="statusError" />
         </span>
       ) : null}
-      {/* Where the editor is, when it is in a dev container. Quiet — the ink
-          every mark here has at rest, and nothing to press — because it is
-          context and not news: the person put it there, and everything else
-          about the row (its Agents, its terminal, its branch) is where the
-          folder is either way. */}
-      {editorFact === undefined ? null : (
-        <span
-          className="row-link-button row-mark-editor"
-          role="img"
-          aria-label={editorFact.spoken}
-        >
-          <Glyph name="container" />
-        </span>
-      )}
       {/* Last, so the pull request is always the group's last mark and so in
           one column down the Sidebar whatever else a row has to show. */}
       {pullRequest ? (

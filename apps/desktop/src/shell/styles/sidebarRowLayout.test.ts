@@ -31,12 +31,12 @@ describe("Workspace row layout", () => {
     expect(css).toMatch(/\.row-glyph\s*\{[^}]*flex:\s*0 0 var/);
   });
 
-  it("drops the Issue mark and editor mark whole in a narrow row", () => {
+  it("drops the Issue mark whole in a narrow row", () => {
     expect(css).toMatch(
       /\.workspace-row\s*\{[^}]*container-type:\s*inline-size/,
     );
     expect(css).toMatch(
-      /@container workspace-row \(max-width: \d+px\)\s*\{[^}]*\.row-issue-title,\s*\.row-mark-editor\s*\{[^}]*display:\s*none/,
+      /@container workspace-row \(max-width: \d+px\)\s*\{[^}]*\.row-issue-title\s*\{[^}]*display:\s*none/,
     );
   });
 });

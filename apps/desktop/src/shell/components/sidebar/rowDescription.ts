@@ -1,6 +1,5 @@
 import type {
   AgentSnapshot,
-  EditorAttachmentWire,
   WorkspaceLocationWire,
   WorkspaceSnapshot,
 } from "../../../ipc/appShell";
@@ -163,34 +162,6 @@ export function rowIdentity(
   return workspace.id === scratchWorkspaceId
     ? { glyph: "terminal", fixed: true }
     : { glyph: workspaceGlyphName(workspace.location), fixed: false };
-}
-
-/**
- * The quiet line that says a row's editor is in a dev container, or nothing
- * when it is on the Workspace's own machine.
- *
- * It is the *editor's* fact and says so: the Workspace's terminals and Agents
- * are where its folder is, and a line that read "in a dev container" would
- * tell the person their Agents were in there. The definition's name follows
- * only when the folder has several to choose from.
- */
-export function editorAttachmentFact(
-  editor: EditorAttachmentWire,
-): { readonly text: string; readonly spoken: string } | undefined {
-  switch (editor.kind) {
-    case "host":
-      return undefined;
-    case "devContainer":
-      return editor.label === undefined
-        ? {
-            text: "editor in dev container",
-            spoken: "editor in its dev container",
-          }
-        : {
-            text: `editor in dev container: ${editor.label}`,
-            spoken: `editor in the ${editor.label} dev container`,
-          };
-  }
 }
 
 /** The Issue, as the row draws it: which one, and what it is called. */
@@ -462,7 +433,6 @@ export function workspaceRowFacts(
     workspace.close.kind === "failed" ? workspace.close : undefined;
   const issue = repository?.issue;
   const pullRequest = repository?.pullRequest;
-  const editorFact = editorAttachmentFact(workspace.editor);
   // The checkout this folder is a worktree of, when it is one and that is
   // somewhere else.
   const mainCheckout =
@@ -478,17 +448,11 @@ export function workspaceRowFacts(
     workspace.location.kind === "ssh"
       ? `SSH: ${workspace.location.host}`
       : undefined,
-    workspace.editor.kind === "devContainer"
-      ? workspace.editor.label === undefined
-        ? "dev container"
-        : `dev container: ${workspace.editor.label}`
-      : undefined,
   ].filter((part): part is string => part !== undefined);
   const spokenWhereabouts = [
     workspace.location.kind === "ssh"
       ? `on ${workspace.location.host}`
       : undefined,
-    editorFact?.spoken,
   ].filter((part): part is string => part !== undefined);
   return said([
     // What it is. The name, and it is the only fact in the list that is set as

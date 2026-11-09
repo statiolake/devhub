@@ -17,16 +17,13 @@ import {
   DomainErrorCode,
   surfaceKeyName,
   abbreviateHome,
-  devContainerConfigLabel,
   agentPresentation as parseAgentPresentation,
   presentationsFor,
   type AgentFailureCode,
   type AgentProfile,
   type AgentControlState,
-  type EditorAttachment,
   type WorkspaceClose,
   type WorkspaceLocation,
-  type WorkspaceRoot,
   type CloseInspectionProjection,
   type ResourceInspection,
   type UnsavedEditorsInspection,
@@ -93,7 +90,6 @@ import {
   type ReplayWire,
   type LayoutWire,
   type WorkspaceLocationWire,
-  type EditorAttachmentWire,
   type WorkspaceStateWire,
   type WorkspaceWire,
   type TerminalPaletteWire,
@@ -314,23 +310,6 @@ function workspaceLocationWire(
   }
 }
 
-/** Where the editor is attached, variant for variant. */
-function editorAttachmentWire(
-  root: WorkspaceRoot,
-  editor: EditorAttachment,
-): EditorAttachmentWire {
-  switch (editor.kind) {
-    case "host":
-      return { kind: "host" };
-    case "devContainer": {
-      const label = devContainerConfigLabel(root, editor.configPath);
-      return label === undefined
-        ? { kind: "devContainer" }
-        : { kind: "devContainer", label };
-    }
-  }
-}
-
 function workspaceStateWire(
   state: WorkspaceSnapshot["state"],
 ): WorkspaceStateWire {
@@ -510,7 +489,6 @@ export function snapshotWire(
     id: workspace.id,
     label: workspace.label,
     location: workspaceLocationWire(workspace.location),
-    editor: editorAttachmentWire(workspace.root, workspace.editor),
     root: workspace.root,
     displayRoot: abbreviateHome(workspace.root, homeOf(workspace.location)),
     key: workspace.key,

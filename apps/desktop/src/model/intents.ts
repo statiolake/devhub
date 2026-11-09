@@ -24,7 +24,6 @@ import type {
   CloseInspectionProjection,
   DiagnosticCode,
   DisplayPath,
-  EditorAttachment,
   NavigationContext,
   SurfacePresentation,
   RuntimeHealth,
@@ -286,29 +285,6 @@ export type UserIntent =
    * folder's Workspace, used only when no open Workspace is that folder
    * already. See `AppModel.adoptScratchDay`.
    */
-  /**
-   * Attach a Workspace's editor somewhere else: to one of its dev containers,
-   * or back to its own machine.
-   *
-   * Raised by main, never by the page, and only once the thing it names is
-   * ready — the container is up, the old workbench has closed. The model only
-   * records which; the Workspace does not move, and nothing it owns is touched.
-   */
-  | {
-      readonly type: "attach_editor";
-      readonly workspaceId: WorkspaceId;
-      readonly editor: EditorAttachment;
-    }
-  /**
-   * DevHub started the container this Workspace's editor is attached to.
-   * Raised by main whenever one of its bring-ups started it, whoever asked.
-   * See `Workspace.startedContainer`.
-   */
-  | {
-      readonly type: "editor_container_started";
-      readonly workspaceId: WorkspaceId;
-      readonly containerId: string;
-    }
   | {
       readonly type: "adopt_scratch_day";
       readonly workspaceId: WorkspaceId;

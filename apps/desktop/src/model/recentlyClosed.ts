@@ -80,14 +80,10 @@ import type { WorktreeDisposition } from "./intents.js";
 /** How many closed things are remembered. The oldest is forgotten first. */
 export const RECENTLY_CLOSED_LIMIT = 20;
 
-/** Where a closed Workspace was, and how its editor was attached. */
-export type ClosedPlaceRecord = (
+/** Where a closed Workspace was. */
+export type ClosedPlaceRecord =
   | { kind: "local"; path: string }
-  | { kind: "ssh"; host: string; path: string }
-) & {
-  /** The `devcontainer.json` its editor was attached to; absent for its own machine. */
-  dev_container?: string;
-};
+  | { kind: "ssh"; host: string; path: string };
 
 /** A closed Agent, as reopening it needs it. */
 export interface ClosedAgentRecord {
@@ -312,18 +308,15 @@ function isMember<T extends string>(
 
 function decodePlace(value: unknown): ClosedPlaceRecord | undefined {
   if (!isObject(value) || !isAbsolute(value["path"])) return undefined;
-  const container = value["dev_container"];
-  if (container !== undefined && !isAbsolute(container)) return undefined;
-  const editor = container === undefined ? {} : { dev_container: container };
   if (value["kind"] === "local") {
-    return { kind: "local", path: value["path"], ...editor };
+    return { kind: "local", path: value["path"] };
   }
   if (
     value["kind"] === "ssh" &&
     typeof value["host"] === "string" &&
     value["host"].length > 0
   ) {
-    return { kind: "ssh", host: value["host"], path: value["path"], ...editor };
+    return { kind: "ssh", host: value["host"], path: value["path"] };
   }
   return undefined;
 }

@@ -63,7 +63,6 @@ const SNAPSHOT = {
       id: "w-1",
       label: "widget",
       location: { kind: "local" },
-      editor: { kind: "host" },
       root: "/projects/widget",
       displayRoot: "/projects/widget",
       key: "/projects/widget",
@@ -1486,13 +1485,7 @@ describe("the hovers the Sidebar does not raise", () => {
       icon: "pullRequestDraft",
       text: "#210 Tidy the picker, at last",
     });
-    // Where it is, beside the name; no line of its own.
-    expect(rowTip()[0]).toEqual({
-      text: "widget",
-      style: "name",
-      qualifier: "· dev container: Node",
-    });
-    expect(facts.some((line) => line.icon === "container")).toBe(false);
+    expect(rowTip()[0]).toEqual({ text: "widget", style: "name" });
     expect(JSON.stringify(facts)).not.toContain("Close worktree");
     // The repository, then the one path line: the folder written with `~`,
     // and the checkout it is a worktree of on the same line, with `~` too.
@@ -1528,8 +1521,8 @@ describe("the hovers the Sidebar does not raise", () => {
   });
 });
 
-/** A row with everything a row can carry: an Issue, a pull request, a dev
-    container, a worktree it would remove, its terminals and an Agent whose
+/** A row with everything a row can carry: an Issue, a pull request, a
+    worktree it would remove, its terminals and an Agent whose
     stop failed. */
 function renderEverything() {
   const value = {
@@ -1565,7 +1558,6 @@ function renderEverything() {
             ...workspace,
             root: "/Users/me/src/widget-tooltips",
             displayRoot: "~/src/widget-tooltips",
-            editor: { kind: "devContainer", label: "Node" },
             terminals: { status: "working" },
             agents: [
               {

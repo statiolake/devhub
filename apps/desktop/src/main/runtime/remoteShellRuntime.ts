@@ -83,13 +83,13 @@ import {
 	type FileKind,
 	type PtyRequest,
 	type RuntimeCadence,
-	type ShellMachineId,
 	type RuntimeReading,
 	type StreamEnd,
 	type StreamRequest,
 	type TerminalLauncher,
 	type TerminalLauncherSpec,
 	type NeovimProgram,
+	type RuntimeId,
 	type TmuxProgram,
 	type UserTmuxConfig,
 	type Watcher,
@@ -383,7 +383,7 @@ export class LoginEnvironmentUnreadable extends NamedFailure {
  * are one line each. What it gets is the other twenty-odd, written once.
  */
 export abstract class RemoteShellRuntime {
-	abstract readonly id: ShellMachineId;
+	abstract readonly id: RuntimeId;
 	abstract readonly where: string;
 	abstract readonly cadence: RuntimeCadence;
 	abstract reading(): RuntimeReading;

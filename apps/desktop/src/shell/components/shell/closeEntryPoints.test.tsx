@@ -92,7 +92,6 @@ function snapshotWith(row: Row): AppSnapshot {
         id: WORKSPACE_ID,
         label: "widget",
         location: { kind: "local" },
-        editor: { kind: "host" },
         root: "/projects/widget",
         displayRoot: "/projects/widget",
         key: "/projects/widget",

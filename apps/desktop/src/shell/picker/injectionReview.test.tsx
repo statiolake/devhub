@@ -64,7 +64,6 @@ function snapshotWith(agent: "running" | "stopped" | "gone"): AppSnapshot {
         id: WORKSPACE_ID,
         label: "folderA",
         location: { kind: "local" },
-        editor: { kind: "host" },
         root: "/tmp/folderA",
         displayRoot: "/tmp/folderA",
         key: "/tmp/folderA",

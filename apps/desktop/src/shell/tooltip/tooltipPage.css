@@ -189,8 +189,7 @@ body {
 .tooltip-line-mark[data-mark="branch"],
 .tooltip-line-mark[data-mark="worktree"],
 .tooltip-line-mark[data-mark="folder"],
-.tooltip-line-mark[data-mark="remote"],
-.tooltip-line-mark[data-mark="container"] {
+.tooltip-line-mark[data-mark="remote"] {
   color: var(--accent);
 }
 

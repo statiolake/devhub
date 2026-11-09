@@ -30,20 +30,10 @@ import type { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch, PtyPlan } from "../terminal/pty.js";
 import type { StreamSink } from "../terminal/streamRun.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
-import type { ContainerHostId, RuntimeId } from "../../model/domain.js";
+import type { RuntimeId } from "../../model/domain.js";
 import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
 
 export type { RuntimeId } from "../../model/domain.js";
-
-/**
- * Anything DevHub shells into: a machine a Workspace is on, or a dev container
- * a Workspace's editor is attached to.
- *
- * Wider than `RuntimeId` on purpose, and used only where both really are the
- * same thing — a `devhub --metrics` reading, the machine a generated launcher
- * says it is asking from. A `Runtime` is always a `RuntimeId`.
- */
-export type ShellMachineId = RuntimeId | ContainerHostId;
 
 /**
  * What an answer bigger than its cap means.
@@ -256,7 +246,7 @@ export interface RuntimeCadence {
  * runtime too, and reads as it should — one machine, connected, no latency.
  */
 export interface RuntimeReading {
-	readonly id: ShellMachineId;
+	readonly id: RuntimeId;
 	readonly connected: boolean;
 	/** The ssh ControlMaster's pid, when there is one. */
 	readonly masterPid: number | undefined;

@@ -31,7 +31,7 @@ import {
   rename,
   stat,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import {
   Agent,
   AgentProfile,
@@ -51,11 +51,9 @@ import {
   validDisplayName,
   Workspace,
   AVAILABLE,
-  EDITOR_ON_HOST,
   sshHost,
   workspaceLocation,
   type AgentControlState,
-  type EditorAttachment,
   type DiagnosticCode,
   type AgentPresentation,
   type AgentProfileKind,
@@ -207,21 +205,17 @@ import { decodeSessionNames, type SessionNameRecord } from "./sessionNames.js";
  * script on screen as though it were the Agent; with the bump it says the
  * file is from a newer DevHub and leaves it alone.
  *
- * Version 12 takes the dev container out of `location` and puts it on the
- * editor. A Workspace is its folder — on this Mac or on a host — and whether
- * its editor is attached to a dev container is `editor`, absent for the
- * Workspace's own machine. A version-11 `container` record becomes the local
- * record of its host folder with `editor` naming its definition
- * (`migrateToVersion12`); a definition the file never recorded is read by
- * `prepare` before that, from the container's own label or the folder. Its
- * Agents ran inside the container, which DevHub no longer runs Agents in, so
- * they are removed and the load says so. A container record whose folder is
- * also open as a local record is the same Workspace twice now: the local one
- * stays, and everything that named the other is pointed at it.
+ * Version 12 takes the dev container out of `location`. A Workspace is its
+ * folder — on this Mac or on a host. A version-11 `container` record becomes
+ * the local record of its host folder (`migrateToVersion12`). Its Agents ran
+ * inside the container, which DevHub no longer runs Agents in, so they are
+ * removed and the load says so. A container record whose folder is also open
+ * as a local record is the same Workspace twice now: the local one stays, and
+ * everything that named the other is pointed at it.
  *
- * The bump is for the other direction: a version-11 DevHub would read `editor`
- * as nothing and open the container Workspace's editor on this Mac without a
- * word.
+ * A version-12 file may still name a dev container its editor was attached to
+ * (`editor`, VS Code's Reopen in Container). That went with VS Code
+ * (docs/without-vscode.md): the key is not read, and the next save drops it.
  *
  * `recently_closed` came without a bump, for the reason `sidebar.collapsed`
  * had none: absent is the empty stack, which is what every file written before
@@ -535,18 +529,6 @@ export type WorkspaceLocationRecord =
   | { kind: "local" }
   | { kind: "ssh"; host: string };
 
-/**
- * Where the Workspace's editor is attached, when it is not the Workspace's own
- * machine. See `EditorAttachment` and version 12.
- */
-export interface EditorRecord {
-  kind: "dev_container";
-  /** The `devcontainer.json`, on the Workspace's machine. */
-  config_path: string;
-  /** See `Workspace.startedContainer`. Absent: DevHub started none. */
-  started_container_id?: string;
-}
-
 export interface WorkspaceStateRecord {
   workspace_id: string;
   selected_path: string;
@@ -556,8 +538,6 @@ export interface WorkspaceStateRecord {
    * machine. That absence *is* the migration: there is nothing to invent.
    */
   location?: WorkspaceLocationRecord;
-  /** Absent: the editor is on the Workspace's own machine. See version 12. */
-  editor?: EditorRecord;
   repository_id?: string;
   /**
    * There is deliberately no `issue_url` here any more.
@@ -1047,13 +1027,6 @@ function validateWorkspaceRecord(
       sshHost(record.location?.kind === "ssh" ? record.location.host : ""),
     );
   }
-  if (record.editor !== undefined) {
-    decodeEditor(`${where}.editor`, record.editor);
-    validateAbsolutePath(
-      `${where}.editor.config_path`,
-      record.editor.config_path,
-    );
-  }
   if (record.repository_id !== undefined) {
     validateUuid(`${where}.repository_id`, record.repository_id);
   }
@@ -1413,19 +1386,17 @@ export function hydrateModel(
 
   const restored = state.workspaces.map((record) => {
     const where = `workspace ${record.workspace_id}`;
-    const workspace = refuseRecord(where, () => {
-      const made = new Workspace(
-        parseWorkspaceId(record.workspace_id),
-        workspaceLocation(locationFromRecord(record)),
-        displayPath(record.selected_path),
-        undefined,
-        AVAILABLE,
-        editorFromRecord(record.editor),
-      );
-      const started = record.editor?.started_container_id;
-      if (started !== undefined) made.noteStartedContainer(started);
-      return made;
-    });
+    const workspace = refuseRecord(
+      where,
+      () =>
+        new Workspace(
+          parseWorkspaceId(record.workspace_id),
+          workspaceLocation(locationFromRecord(record)),
+          displayPath(record.selected_path),
+          undefined,
+          AVAILABLE,
+        ),
+    );
     return { record, where, workspace };
   });
   const scratch =
@@ -1621,7 +1592,6 @@ export function stateFromSnapshot(
       selected_path: workspace.selectedPath,
       canonical_path: workspace.root,
       location: locationRecord(workspace.location),
-      ...editorRecord(workspace.editor, workspace.startedContainer),
       repository_id: workspace.repositoryId,
       last_agent_id: workspace.lastAgentId,
       lifecycle: lifecycleFrom(workspace.state),
@@ -1951,7 +1921,6 @@ const LIFECYCLE_KINDS = [
   "closing_failed",
 ] as const;
 const WORKSPACE_LOCATION_KINDS = ["local", "ssh"] as const;
-const EDITOR_KINDS = ["dev_container"] as const;
 const NAVIGATION_KINDS = ["workspace", "agent"] as const;
 const OWNED_SESSION_KINDS = ["workspace"] as const;
 const CLEANUP_SESSION_STATUSES = [
@@ -1997,54 +1966,6 @@ function locationRecord(location: WorkspaceLocation): WorkspaceLocationRecord {
     case "ssh":
       return { kind: "ssh", host: location.host };
   }
-}
-
-/** The editor, as the file spells it: nothing at all for the Workspace's own machine. */
-function editorRecord(
-  editor: EditorAttachment,
-  startedContainer: string | undefined,
-): { editor?: EditorRecord } {
-  switch (editor.kind) {
-    case "host":
-      return {};
-    case "devContainer":
-      return {
-        editor: {
-          kind: "dev_container",
-          config_path: editor.configPath,
-          ...(startedContainer === undefined
-            ? {}
-            : { started_container_id: startedContainer }),
-        },
-      };
-  }
-}
-
-/**
- * A Workspace's editor is on its own machine. An older file may say it was
- * attached to a dev container — VS Code's Reopen in Container — and that
- * attachment went with VS Code (docs/without-vscode.md): it is read, and
- * dropped, and the next save no longer states it.
- */
-function editorFromRecord(_record: EditorRecord | undefined): EditorAttachment {
-  return EDITOR_ON_HOST;
-}
-
-function decodeEditor(where: string, value: unknown): EditorRecord {
-  const object = decodeObject(where, value);
-  const kind = decodeMember(`${where}.kind`, object["kind"], EDITOR_KINDS);
-  return {
-    kind,
-    config_path: decodeString(`${where}.config_path`, object["config_path"]),
-    ...(object["started_container_id"] === undefined
-      ? {}
-      : {
-          started_container_id: decodeString(
-            `${where}.started_container_id`,
-            object["started_container_id"],
-          ),
-        }),
-  };
 }
 
 function decodeWorkspaceLocation(
@@ -2255,9 +2176,6 @@ function decodeWorkspaceRecord(
       object["location"] === undefined
         ? { kind: "local" }
         : decodeWorkspaceLocation(at("location"), object["location"]),
-    ...(object["editor"] === undefined
-      ? {}
-      : { editor: decodeEditor(at("editor"), object["editor"]) }),
     repository_id: decodeOptional(object["repository_id"], (entry) =>
       decodeString(at("repository_id"), entry),
     ),
@@ -2505,21 +2423,6 @@ type Parsed =
   | { kind: "corrupt"; detail: string }
   | { kind: "newer_version" };
 
-/**
- * Facts an old document never wrote down, looked up before it is migrated.
- *
- * Handed the raw document and its version, and may fill in what a migration
- * needs and only the outside world knows — which `devcontainer.json` a
- * version-11 container Workspace was using, from Docker or the folder. It runs
- * in main, because the model cannot ask a machine anything; the migration
- * itself stays a pure function of the document. It answers the sentences the
- * person has to be told about what it could not look up.
- */
-export type StatePreparation = (
-  document: Record<string, unknown>,
-  version: number,
-) => Promise<readonly string[]>;
-
 /** The words a decode refusal contributes to what the person reads. */
 function detailOf(error: unknown): string {
   if (error instanceof StateError) {
@@ -2592,8 +2495,8 @@ function migrateToVersion11(object: Record<string, unknown>): void {
 }
 
 /**
- * The dev container out of `location` and onto `editor`, before the document
- * is decoded. See version 12 above.
+ * The dev container out of `location`, before the document is decoded. See
+ * version 12 above.
  *
  * On the raw document for the reason `migrateToVersion10` is. It answers the
  * sentences a person has to be told, because two things happen here that
@@ -2671,7 +2574,6 @@ export function migrateToVersion12(object: Record<string, unknown>): string[] {
           `Workspace's own machine now, so ${agents.length === 1 ? "it was" : "they were"} removed.`,
       );
     }
-    const configPath = location["config_path"];
     const existing = plain.get(`\u0000${normalizePathString(folder)}`);
     if (
       existing !== undefined &&
@@ -2683,8 +2585,7 @@ export function migrateToVersion12(object: Record<string, unknown>): string[] {
       survivorOf.set(id, existing["workspace_id"]);
       notes.push(
         `${folder} was open both on this Mac and in its dev container. They ` +
-          `are one Workspace now; its editor opens on this Mac, and Reopen in ` +
-          `Container attaches it again.`,
+          `are one Workspace now.`,
       );
       continue;
     }
@@ -2693,17 +2594,6 @@ export function migrateToVersion12(object: Record<string, unknown>): string[] {
     record["location"] = { kind: "local" };
     record["agents"] = [];
     delete record["last_agent_id"];
-    if (typeof configPath === "string") {
-      record["editor"] = { kind: "dev_container", config_path: configPath };
-    } else {
-      // `prepare` found no definition: no container carries one and the
-      // folder has none. The Workspace is still the folder; there is just no
-      // container for its editor to be in.
-      notes.push(
-        `No dev container definition was found for ${folder}, so its editor ` +
-          `opens on this Mac.`,
-      );
-    }
     plain.set(`\u0000${normalizePathString(folder)}`, record);
     kept.push(record);
   }
@@ -2817,7 +2707,7 @@ function decodeSmartButtons(value: unknown): SmartButtonsState {
   return state;
 }
 
-/** Decode a document with nothing prepared: see `JsonStateStore.prepare`. */
+/** Decode a document. */
 function decodeState(bytes: Buffer): Decoded {
   const parsed = parseState(bytes);
   return parsed.kind === "document" ? decodeParsed(parsed) : parsed;
@@ -2942,32 +2832,7 @@ export class JsonStateStore {
    */
   private lastWritten: Buffer | undefined;
 
-  /**
-   * `prepare`: see `StatePreparation`. Absent in tests and tools that read a
-   * file without a machine to ask, where an old document is migrated with
-   * only what it says.
-   */
-  constructor(
-    readonly path: string,
-    private readonly prepare: StatePreparation | undefined = undefined,
-  ) {}
-
-  /** Parse, prepare, migrate and decode one candidate file. */
-  private async decodeCandidate(bytes: Buffer): Promise<Decoded> {
-    const parsed = parseState(bytes);
-    if (parsed.kind !== "document") return parsed;
-    const prepared =
-      this.prepare === undefined
-        ? []
-        : await this.prepare(parsed.object, parsed.version);
-    const decoded = decodeParsed(parsed);
-    return decoded.kind === "state"
-      ? {
-          ...decoded,
-          migrationNotes: [...prepared, ...decoded.migrationNotes],
-        }
-      : decoded;
-  }
+  constructor(readonly path: string) {}
 
   get backupPath(): string {
     return `${this.path}.bak`;
@@ -3017,7 +2882,7 @@ export class JsonStateStore {
     if (primary.kind === "unsafe") {
       fail("STATE_UNSAFE_PATH");
     }
-    const decoded = await this.decodeCandidate(primary.bytes);
+    const decoded = decodeState(primary.bytes);
     if (decoded.kind === "newer_version") {
       fail("STATE_NEWER_VERSION");
     }
@@ -3067,7 +2932,7 @@ export class JsonStateStore {
         },
       };
     }
-    const decoded = await this.decodeCandidate(backup.bytes);
+    const decoded = decodeState(backup.bytes);
     if (decoded.kind === "newer_version") {
       fail("STATE_NEWER_VERSION");
     }
@@ -3195,11 +3060,6 @@ async function quarantine(path: string): Promise<boolean> {
     }
   }
   return false;
-}
-
-/** DevHub's state file, beside the user's other DevHub data. */
-export function stateStoreForUserData(userDataDir: string): JsonStateStore {
-  return new JsonStateStore(join(userDataDir, "state.json"));
 }
 
 export { Agent };

@@ -853,7 +853,7 @@ describe("store", () => {
     return document;
   }
 
-  it("turns a version-11 container Workspace into its folder, its editor on that machine", async () => {
+  it("turns a version-11 container Workspace into its folder", async () => {
     await writeFile(
       path,
       JSON.stringify(
@@ -869,10 +869,7 @@ describe("store", () => {
     const record = load.state.workspaces[1]!;
     expect(record.canonical_path).toBe("/dev/c");
     expect(record.location).toEqual({ kind: "local" });
-    expect(record.editor).toEqual({
-      kind: "dev_container",
-      config_path: "/dev/c/.devcontainer/python/devcontainer.json",
-    });
+    expect(record).not.toHaveProperty("editor");
     // Its Agent ran inside the container; DevHub runs Agents where the folder
     // is now, so it is gone — and the person is told.
     expect(record.agents).toEqual([]);
@@ -886,13 +883,10 @@ describe("store", () => {
       workspace_id: WS_B,
     });
     expect(load.state.session_machines).toEqual(["local"]);
-    // And the model it hydrates has its editor on its own machine: the
-    // container attachment was VS Code's, and went with it.
     const workspace = hydrateModel(load.state, [codex], today())
       .snapshot()
       .workspaces.find((candidate) => candidate.id === WS_B)!;
     expect(workspace.location).toEqual({ kind: "local", path: "/dev/c" });
-    expect(workspace.editor).toEqual({ kind: "host" });
   });
 
   it("makes one Workspace of a folder that was open both itself and in its container", async () => {
@@ -911,7 +905,6 @@ describe("store", () => {
     expect(load.state.workspaces.map((record) => record.workspace_id)).toEqual([
       WS_A,
     ]);
-    expect(load.state.workspaces[0]!.editor).toBeUndefined();
     expect(load.state.navigation.context).toEqual({
       kind: "workspace",
       workspace_id: WS_A,
@@ -919,51 +912,6 @@ describe("store", () => {
     expect(load.state.sidebar.order).toEqual([WS_A]);
     expect(load.metadata.migrationNotes.join(" ")).toMatch(
       /\/dev\/a was open both on this Mac and in its dev container/u,
-    );
-  });
-
-  it("asks main for a definition the version-11 file never wrote down", async () => {
-    await writeFile(
-      path,
-      JSON.stringify(version11WithContainer({ folder: "/dev/c" })),
-      { mode: 0o600 },
-    );
-    const asked: string[] = [];
-    const load = await new JsonStateStore(path, async (document, version) => {
-      expect(version).toBe(11);
-      for (const record of document["workspaces"] as Record<
-        string,
-        unknown
-      >[]) {
-        const location = record["location"] as Record<string, unknown>;
-        if (location["kind"] !== "container") continue;
-        asked.push(location["workspace_folder"] as string);
-        location["config_path"] = "/dev/c/.devcontainer.json";
-      }
-      return ["Docker did not answer."];
-    }).loadState();
-    expect(asked).toEqual(["/dev/c"]);
-    expect(load.state.workspaces[1]!.editor).toEqual({
-      kind: "dev_container",
-      config_path: "/dev/c/.devcontainer.json",
-    });
-    // What the preparation had to say reaches the person too.
-    expect(load.metadata.migrationNotes[0]).toBe("Docker did not answer.");
-  });
-
-  it("opens the editor on this Mac when no definition could be found, and says so", async () => {
-    await writeFile(
-      path,
-      JSON.stringify(version11WithContainer({ folder: "/dev/c" })),
-      { mode: 0o600 },
-    );
-    const load = await new JsonStateStore(path, () =>
-      Promise.resolve([]),
-    ).loadState();
-    expect(load.state.workspaces[1]!.editor).toBeUndefined();
-    expect(load.state.workspaces[1]!.canonical_path).toBe("/dev/c");
-    expect(load.metadata.migrationNotes.join(" ")).toMatch(
-      /No dev container definition was found for \/dev\/c/u,
     );
   });
 
@@ -2009,7 +1957,6 @@ describe("what was closed, across a restart", () => {
           kind: "ssh",
           host: "build.example.com",
           path: "/srv/api",
-          dev_container: "/srv/api/.devcontainer/devcontainer.json",
         },
         agents: [
           {

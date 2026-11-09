@@ -42,7 +42,6 @@ function workspace(n: number) {
     id: `w-${name}`,
     label: name,
     location: { kind: "local" },
-    editor: { kind: "host" },
     root: `/home/example/${name}`,
     displayRoot: `~/${name}`,
     key: `/home/example/${name}`,

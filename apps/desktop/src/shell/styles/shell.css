@@ -619,13 +619,6 @@
   color: var(--danger);
 }
 
-/* Where the editor is attached, when it is a dev container. Context and not
-   news, so it is quieter than the marks around it at rest and does not take a
-   colour under the pointer: there is nothing to press. */
-.row-mark-editor {
-  opacity: 0.7;
-}
-
 /* The row's name. It does not shrink and it does not ellipsise: it is the one
    field a row cannot be read without, and what happens when there is not room
    for it is the same thing that happens to everything else on the run — it
@@ -2282,8 +2275,8 @@ body.is-resizing-rows {
  *
  * Priority, highest first: the folder (never clipped: it is `flex: none` and
  * the name's button is what gives way), the pull request's mark with its
- * badges, the name, then the Issue's icon and the editor's mark. The
- * last two are dropped whole under 190px, rather than left to be cut in half;
+ * badges, the name, then the Issue's icon. The
+ * last is dropped whole under 190px, rather than left to be cut in half;
  * the Issue is still on the row's tooltip and one hover away on the name.
  */
 .workspace-row {
@@ -2292,8 +2285,7 @@ body.is-resizing-rows {
 }
 
 @container workspace-row (max-width: 190px) {
-  .row-issue-title,
-  .row-mark-editor {
+  .row-issue-title {
     display: none;
   }
 

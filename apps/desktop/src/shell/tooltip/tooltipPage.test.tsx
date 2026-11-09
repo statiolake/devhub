@@ -278,7 +278,6 @@ describe("the tooltip page", () => {
       "worktree",
       "folder",
       "remote",
-      "container",
       "issueOpen",
       "issueClosed",
       "pullRequest",

@@ -708,15 +708,6 @@ export class AppCoordinator {
           ),
         );
         return this.transitionOutcome(beforeRevision, id);
-      case "attach_editor":
-        this.model.attachEditor(intent.workspaceId, intent.editor);
-        return this.transitionOutcome(beforeRevision, id);
-      case "editor_container_started":
-        this.model.noteEditorContainerStarted(
-          intent.workspaceId,
-          intent.containerId,
-        );
-        return this.transitionOutcome(beforeRevision, id);
       case "resize_split":
         this.model.setSplitRatio(intent.ratio);
         return this.transitionOutcome(beforeRevision, id);

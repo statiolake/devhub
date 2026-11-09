@@ -90,7 +90,6 @@ const REMOTE = {
   id: "w-1",
   label: "api",
   location: { kind: "ssh", host: "build.example.com" },
-  editor: { kind: "host" },
   root: "/srv/api",
   displayRoot: "/srv/api",
   key: "ssh://build.example.com/srv/api",
@@ -101,22 +100,10 @@ const REMOTE = {
   agents: [],
 };
 
-/** A folder on this Mac whose editor is attached to one of its dev containers. */
-const ATTACHED = {
-  ...REMOTE,
-  location: { kind: "local" },
-  editor: { kind: "devContainer", label: "python" },
-  root: "/projects/api",
-  displayRoot: "/projects/api",
-  key: "/projects/api",
-  selectedPath: "/projects/api",
-};
-
 const LOCAL = {
   ...REMOTE,
   label: "widget",
   location: { kind: "local" },
-  editor: { kind: "host" },
   root: "/projects/widget",
   displayRoot: "/projects/widget",
   key: "/projects/widget",
@@ -244,51 +231,6 @@ describe("a Workspace row whose folder is on another machine", () => {
       copy: "/srv/api",
     });
     expect(JSON.stringify(lines)).not.toContain("ssh:build.example.com");
-  });
-
-  it("is still a folder on this Mac when its editor is in a dev container", () => {
-    // The Workspace is its folder. Its editor being in a container does not
-    // move it — its Agents and terminals are here — so the row's leading mark
-    // is the folder's, and the container is a quiet mark of its own.
-    mount(ATTACHED);
-    expect(
-      document.querySelector(".workspace-row:not(.is-scratch) .row-glyph svg"),
-    ).toHaveAttribute("data-glyph", "folder");
-    const mark = document.querySelector(".row-mark-editor");
-    expect(mark?.querySelector("svg")).toHaveAttribute(
-      "data-glyph",
-      "container",
-    );
-    // Which container is the row's tooltip's to say; the mark has no hover.
-    expect(mark).not.toHaveAttribute("data-tooltip");
-    expect(document.querySelectorAll('[data-glyph="remote"]')).toHaveLength(0);
-  });
-
-  it("says in the facts that the editor, and only the editor, is in the container", () => {
-    mount(ATTACHED);
-    const lines = JSON.parse(
-      document
-        .querySelector("[data-tree-item-id='workspace:w-1']")
-        ?.closest("[data-tooltip-lines]")
-        ?.getAttribute("data-tooltip-lines") ?? "[]",
-    ) as { icon?: string; text: string }[];
-    expect(lines).toContainEqual({
-      text: "/projects/api",
-      style: "muted",
-      copy: "/projects/api",
-    });
-    // Beside the name, subdued; no line of its own.
-    expect(lines[0]).toMatchObject({
-      text: "api",
-      style: "name",
-      qualifier: "· dev container: python",
-    });
-    expect(lines.some((line) => line.icon === "container")).toBe(false);
-  });
-
-  it("wears no editor mark when the editor is on the Workspace's machine", () => {
-    mount(LOCAL);
-    expect(document.querySelector(".row-mark-editor")).toBeNull();
   });
 
   it("changes nothing about a row whose folder is on this machine", () => {

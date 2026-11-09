@@ -14,7 +14,6 @@ export function scratchWorkspace(
     id: SCRATCH_ID,
     label: "Scratch",
     location: { kind: "local" },
-    editor: { kind: "host" },
     root: "/home/example/junk/20260923",
     displayRoot: "~/junk/20260923",
     key: "/home/example/junk/20260923",

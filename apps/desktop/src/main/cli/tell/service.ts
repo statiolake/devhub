@@ -110,8 +110,6 @@ export interface TellWorkspace {
 	readonly worktreeOf: string | undefined;
 	readonly repositoryUrl: string | undefined;
 	readonly issue: string | undefined;
-	/** The dev container the editor is attached to, when it is. */
-	readonly container: string | undefined;
 	readonly agents: readonly TellAgent[];
 	/** Its Issue, pull request, review and CI, as the Sidebar row's tooltip has them. */
 	readonly review: TellReview;
@@ -1923,9 +1921,6 @@ export class TellService {
 					? undefined
 					: `worktree of ${workspace.worktreeOf}`,
 				...reviewFacts(workspace),
-				workspace.container === undefined
-					? undefined
-					: `container ${workspace.container}`,
 				`${String(workspace.agents.length)} agent${workspace.agents.length === 1 ? "" : "s"}`,
 			].filter((fact) => fact !== undefined);
 			return `${workspace.selected ? "*" : " "} ${workspace.id}  ${workspace.scratch ? "Scratch" : workspace.name}  ${workspace.root}  (${facts.join(", ")})`;

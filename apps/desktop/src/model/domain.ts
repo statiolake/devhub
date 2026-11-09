@@ -47,7 +47,6 @@ export enum DomainErrorCode {
   InvalidSplitRatio = "INVALID_SPLIT_RATIO",
   InvalidTerminalZoom = "INVALID_TERMINAL_ZOOM",
   InvalidSmartButtonsOffset = "INVALID_SMART_BUTTONS_OFFSET",
-  InvalidEditorAttachment = "INVALID_EDITOR_ATTACHMENT",
   InvalidMetadata = "INVALID_METADATA",
 }
 
@@ -242,14 +241,6 @@ export function sshHost(raw: string): SshHost {
  * into — is asked of the key instead, and gets the same answer as before for a
  * local folder because a local folder's key *is* its path.
  *
- * Two kinds, and a Dev Container is not a third. A container is where a
- * Workspace's *editor* may be attached (`EditorAttachment`), never where the
- * Workspace is: the folder is on this Mac or on a host, it is bind-mounted
- * into the container, and everything DevHub runs for the Workspace — its
- * terminals, its Agents, its git — runs where the folder is. So "this folder"
- * and "this folder opened in its dev container" are one Workspace by
- * construction: they are one location and therefore one key.
- *
  * There is still no `kind: "unknown"`.
  */
 export type WorkspaceLocation =
@@ -272,10 +263,6 @@ export type WorkspaceLocation =
  * location is, and this is a location with everything but the machine taken
  * off. `main/runtime/runtime.ts` re-exports it, beside the implementations
  * that answer for a machine.
- *
- * A dev container is not one of these. Nothing a Workspace owns runs in one;
- * a container is the far end of an editor, and it is named by
- * `ContainerHostId`.
  */
 export type RuntimeId = "local" | `ssh:${string}`;
 
@@ -361,269 +348,6 @@ export function locationLabel(location: WorkspaceLocation): string {
       return location.path;
     case "ssh":
       return `${location.host}:${location.path}`;
-  }
-}
-
-/**
- * The authority a workbench on the Workspace's own machine is opened on, or
- * nothing for a folder on this machine.
- *
- * `ssh-remote+<host>` is the authority DevHub's resolver registers. Composed
- * here, once, so that the URI the window is opened with and the authority the
- * extension is asked to resolve cannot come to disagree. A window attached to
- * a dev container has a different authority; `editorAuthorityOf` is the one
- * that knows which.
- */
-export function remoteAuthorityOf(
-  location: WorkspaceLocation,
-): string | undefined {
-  switch (location.kind) {
-    case "local":
-      return undefined;
-    case "ssh":
-      return `ssh-remote+${location.host}`;
-  }
-}
-
-/**
- * The path of a `devcontainer.json`, on the machine the Workspace's folder is
- * on.
- *
- * Absolute and normalised like a root, because it is compared: it is the
- * `devcontainer.config_file` label `@devcontainers/cli` stamps on the
- * container it makes, and the label is how DevHub finds that container again.
- */
-export type DevContainerConfigPath = string & {
-  readonly __brand: "DevContainerConfigPath";
-};
-
-export function devContainerConfigPath(path: string): DevContainerConfigPath {
-  return normalizeAbsolutePath(path) as DevContainerConfigPath;
-}
-
-/**
- * What to call a definition beside its folder's name, or nothing when it is
- * the folder's default one.
- *
- * `.devcontainer/<name>/devcontainer.json` is the spec's layout for a folder
- * with several definitions, and `<name>` is what tells them apart; any other
- * file is named by its path inside the folder. The two default names
- * (`.devcontainer/devcontainer.json`, `.devcontainer.json`) need no name: a
- * folder has at most one container a sentence could mean by "its dev
- * container".
- */
-export function devContainerConfigLabel(
-  folder: WorkspaceRoot,
-  configPath: DevContainerConfigPath,
-): string | undefined {
-  const inside = configPath.startsWith(`${folder}/`)
-    ? configPath.slice(folder.length + 1)
-    : undefined;
-  if (inside === undefined) return configPath;
-  if (
-    inside === ".devcontainer/devcontainer.json" ||
-    inside === ".devcontainer.json"
-  ) {
-    return undefined;
-  }
-  const named = /^\.devcontainer\/([^/]+)\/devcontainer\.json$/u.exec(inside);
-  return named?.[1] ?? inside;
-}
-
-/**
- * Where a Workspace's editor is attached: the Workspace's own machine, or a
- * Dev Container made from one of its definitions.
- *
- * It is a fact about the *editor* and nothing else. The Workspace's terminals,
- * its Agents and its git run where its location says whichever this is; only
- * the workbench — its extension host, its language servers, its tasks — runs in
- * the container. That is the reason it is beside the location and not inside
- * it: a location answers "which Workspace, and where do its processes run",
- * and a container answers neither.
- *
- * `configPath` is always said. A folder may define several containers, and an
- * attachment that left the choice to the CLI would be one that the next
- * `devcontainer up` could answer differently.
- */
-export type EditorAttachment =
-  | { readonly kind: "host" }
-  | {
-      readonly kind: "devContainer";
-      readonly configPath: DevContainerConfigPath;
-    };
-
-/** The editor on the Workspace's own machine: every Workspace starts here. */
-export const EDITOR_ON_HOST: EditorAttachment = { kind: "host" };
-
-export function sameEditorAttachment(
-  left: EditorAttachment,
-  right: EditorAttachment,
-): boolean {
-  if (left.kind === "host" || right.kind === "host") {
-    return left.kind === right.kind;
-  }
-  return left.configPath === right.configPath;
-}
-
-/**
- * A dev container, as DevHub addresses one: which folder, on which machine,
- * made from which definition.
- *
- * Not the container id. A container is rebuilt whenever its image changes —
- * that is the point of one — and an address that moved with it would make
- * every rebuild a different container to DevHub. These three are what
- * `@devcontainers/cli` itself finds its container by (`devcontainer.local_folder`
- * and `devcontainer.config_file`, on the machine `docker` runs on).
- */
-export interface ContainerTarget {
-  /** The Workspace's folder: the machine `docker` runs on, and the host path. */
-  readonly location: WorkspaceLocation;
-  readonly configPath: DevContainerConfigPath;
-}
-
-/** The container a Workspace's editor is attached to, if it is. */
-export function containerTargetOf(
-  location: WorkspaceLocation,
-  editor: EditorAttachment,
-): ContainerTarget | undefined {
-  return editor.kind === "devContainer"
-    ? { location, configPath: editor.configPath }
-    : undefined;
-}
-
-/**
- * A container, named on DevHub's control socket.
- *
- * The resolver asks for a container's endpoint by it, and the `devhub` command
- * written into the container says it is asking from there. Its payload is the
- * authority's, so the two spellings of one container are one string.
- */
-export type ContainerHostId = `container:${string}`;
-
-export function containerHostId(target: ContainerTarget): ContainerHostId {
-  return `container:${encodeContainerAuthority(target)}`;
-}
-
-/** The inverse of `containerHostId`, or `undefined` for anything else. */
-export function containerTargetFromHostId(
-  raw: string,
-): ContainerTarget | undefined {
-  if (!raw.startsWith("container:")) return undefined;
-  return decodeContainerAuthority(raw.slice("container:".length));
-}
-
-/**
- * The authority a Workspace's workbench is opened on, or nothing for a
- * workbench on this machine.
- *
- * The one place that reads both halves: the location says which machine the
- * folder is on, the attachment says whether the editor is on that machine or
- * in a container made there.
- */
-export function editorAuthorityOf(
-  location: WorkspaceLocation,
-  editor: EditorAttachment,
-): string | undefined {
-  const target = containerTargetOf(location, editor);
-  return target === undefined
-    ? remoteAuthorityOf(location)
-    : `${DEV_CONTAINER_PREFIX}${encodeContainerAuthority(target)}`;
-}
-
-/**
- * The authority prefix DevHub's own resolver registers for dev containers.
- *
- * Declared three times and they have to agree: here, the extension's
- * `onResolveRemoteAuthority:dev-container`, and its resource label formatter.
- * If they drift the window opens on an authority nobody resolves and sits on
- * "Opening Remote…" forever, which is the failure with no message.
- *
- * `dev-container` is the name Microsoft's closed extension uses, and DevHub
- * uses it too. Not for compatibility — nothing is exchanged with it, and the
- * hex payload below is DevHub's own shape — but because it is the name that
- * appears in a person's window title and in every piece of writing about dev
- * containers there is, and inventing a second word for the same idea would
- * only mean explaining which one this is.
- */
-export const DEV_CONTAINER_PREFIX = "dev-container+";
-
-/**
- * The container target, carried in the authority.
- *
- * Hex of JSON: `hostPath`, `configPath`, and `sshHost` when the folder is on a
- * host. Not the container id: a rebuilt container must not change which window
- * it is. The definition *is* in it, because two definitions of one folder are
- * two different editors of one Workspace, and the resolver has to know which
- * container it is being asked to reach.
- *
- * Hex rather than base64url because a URI authority is case-insensitive in
- * some hands and base64 is not, and a payload that survived being lowercased
- * is a payload that cannot be corrupted by one.
- */
-export function encodeContainerAuthority(target: ContainerTarget): string {
-  const json = JSON.stringify({
-    hostPath: target.location.path,
-    configPath: target.configPath,
-    ...(target.location.kind === "ssh"
-      ? { sshHost: target.location.host }
-      : {}),
-  });
-  let hex = "";
-  for (const byte of new TextEncoder().encode(json)) {
-    hex += byte.toString(16).padStart(2, "0");
-  }
-  return hex;
-}
-
-/**
- * The inverse, or `undefined` for a payload this DevHub did not write.
- *
- * Undefined rather than a throw: the authority arrives from a URI VS Code
- * handed over, which is not a value DevHub validated, and a window on an
- * authority that does not decode is a window DevHub has no Workspace for —
- * the same answer as a window on somebody else's authority. A payload from
- * before the definition was carried (no `configPath`) is one of those.
- */
-export function decodeContainerAuthority(
-  payload: string,
-): ContainerTarget | undefined {
-  if (payload.length === 0 || payload.length % 2 !== 0) return undefined;
-  if (!/^[0-9a-fA-F]+$/.test(payload)) return undefined;
-  const bytes = new Uint8Array(payload.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = Number.parseInt(payload.slice(i * 2, i * 2 + 2), 16);
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    return undefined;
-  }
-  if (typeof parsed !== "object" || parsed === null) return undefined;
-  const {
-    hostPath,
-    configPath,
-    sshHost: host,
-  } = parsed as {
-    hostPath?: unknown;
-    configPath?: unknown;
-    sshHost?: unknown;
-  };
-  if (typeof hostPath !== "string" || typeof configPath !== "string") {
-    return undefined;
-  }
-  if (host !== undefined && typeof host !== "string") return undefined;
-  try {
-    return {
-      location: workspaceLocation(
-        host === undefined
-          ? { kind: "local", path: hostPath }
-          : { kind: "ssh", host, path: hostPath },
-      ),
-      configPath: devContainerConfigPath(configPath),
-    };
-  } catch {
-    return undefined;
   }
 }
 
@@ -1946,7 +1670,6 @@ export class Workspace {
     private selectedPathValue: DisplayPath,
     private repositoryIdValue: RepositoryId | undefined = undefined,
     private stateValue: WorkspaceState = AVAILABLE,
-    private editorValue: EditorAttachment = EDITOR_ON_HOST,
   ) {}
 
   /** See `WorkspaceClose`. In memory only; a launch starts every close idle. */
@@ -1959,10 +1682,8 @@ export class Workspace {
       this.selectedPathValue,
       this.repositoryIdValue,
       this.stateValue,
-      this.editorValue,
     );
     copy.closeValue = this.closeValue;
-    copy.startedContainerValue = this.startedContainerValue;
     copy.terminalPanes = this.terminalPanes.clone();
     for (const agent of this.agentList) {
       copy.agentList.push(agent.clone());
@@ -1996,59 +1717,6 @@ export class Workspace {
   get key(): string {
     return locationKey(this.locationValue);
   }
-
-  /** Where its editor is attached. See `EditorAttachment`. */
-  get editor(): EditorAttachment {
-    return this.editorValue;
-  }
-
-  /**
-   * Attach the editor somewhere else. The Workspace itself does not move:
-   * its location, its key, its Agents and its terminals are all untouched.
-   * What DevHub started for the editor it had is forgotten with it.
-   *
-   * An attach is a person asking for the editor again, so a Workspace DevHub
-   * had given up building a workbench for (`editor_restart_exhausted`) is
-   * available again — attached elsewhere or, after its container was built,
-   * in the same place. That verdict was about the workbench it had, and
-   * leaving it standing kept the Workspace unavailable, so the workbench just
-   * asked for was taken down again at once.
-   */
-  attachEditor(next: EditorAttachment): boolean {
-    const recovered =
-      this.stateValue.kind === "unavailable" &&
-      this.stateValue.reason === "editor_restart_exhausted";
-    if (recovered) this.stateValue = AVAILABLE;
-    if (sameEditorAttachment(this.editorValue, next)) {
-      return recovered;
-    }
-    this.editorValue = next;
-    this.startedContainerValue = undefined;
-    return true;
-  }
-
-  /**
-   * The container DevHub itself started for this editor's dev container, by
-   * id, or nothing when DevHub found it running or the editor is not in one.
-   *
-   * Remembered because it decides what happens when the editor leaves the
-   * container: a container DevHub started is stopped the way its definition
-   * says (`shutdownAction`), and one it only found running is left as it was.
-   */
-  get startedContainer(): string | undefined {
-    return this.startedContainerValue;
-  }
-
-  noteStartedContainer(containerId: string): boolean {
-    if (this.editorValue.kind !== "devContainer") {
-      throw invalid(DomainErrorCode.InvalidEditorAttachment);
-    }
-    if (this.startedContainerValue === containerId) return false;
-    this.startedContainerValue = containerId;
-    return true;
-  }
-
-  private startedContainerValue: string | undefined = undefined;
 
   get selectedPath(): DisplayPath {
     return this.selectedPathValue;

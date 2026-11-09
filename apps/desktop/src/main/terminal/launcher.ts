@@ -6,7 +6,7 @@
 
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
-import type { ShellMachineId } from "../runtime/runtime.js";
+import type { RuntimeId } from "../runtime/runtime.js";
 import { shellQuote } from "../runtime/quote.js";
 
 /**
@@ -41,7 +41,7 @@ export function remoteCliScript(request: {
 	/** The installed `devhub` binary on that machine. */
 	readonly execPath: string;
 	readonly socketPath: string;
-	readonly machine: ShellMachineId;
+	readonly machine: RuntimeId;
 }): string {
 	return [
 		"#!/bin/sh",
