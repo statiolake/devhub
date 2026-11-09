@@ -26,9 +26,9 @@ Build: DevHub.app test build (macOS) ──> Test: app (macOS) ┘
 | Job | Runner | What it runs |
 | --- | --- | --- |
 | `checks` | ubuntu-latest | `pnpm run fmt`, `pnpm run lint`, `pnpm run typecheck`, `pnpm run test:scripts` |
-| `test-desktop` | macos-15 | `@devhub/desktop` tests: vitest, and node-pty under DevHub's own Electron |
+| `test-desktop` | macos-15 | `@devhub/desktop` tests: vitest, and node-pty under DevHub's own Electron; the real-Neovim tests run the bundled Neovim (`build:nvim`) |
 | `build-app` | macos-15 | `scripts/build-app.sh --without-whisper --no-zip`; hands `DevHub.app` on as a tar |
-| `test-app` | macos-15 | the app-level tests against that bundle: today `scripts/smoke_packaged_app.py`, which makes the app answer on its control socket and open a file in its editor (tmux and Neovim from Homebrew) |
+| `test-app` | macos-15 | the app-level tests against that bundle: today `scripts/smoke_packaged_app.py`, which makes the app answer on its control socket and open a file in its editor — the Neovim inside the bundle, run by Homebrew's tmux — and runs that Neovim |
 
 Together the jobs run everything `pnpm run check` runs, plus a test build and
 the tests that start it.
@@ -73,7 +73,10 @@ Decide: bash ──> Build: bash linux-x64, linux-arm64 ──> Publish: bash re
 
 The Node DevHub installs on a host for its `devhub` command is nodejs.org's
 own release, pinned by version and digest in `apps/desktop/product.json`
-(`nodeVersion`, `nodeDownloadSha256`); nothing builds it.
+(`nodeVersion`, `nodeDownloadSha256`); nothing builds it. So is the Neovim
+DevHub runs (`nvimVersion`, `nvimDownloadSha256`): Neovim's own release
+archives, fetched into `out/nvim` by `build:nvim` for the app and the tests,
+and delivered to a Linux host like tmux.
 
 ## Shared setup
 

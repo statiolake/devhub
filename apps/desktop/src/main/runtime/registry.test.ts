@@ -43,6 +43,12 @@ const NO_NODE: ToolDelivery = {
 	directory: toolInstallDirectory(".devhub-server", "node"),
 };
 
+const NO_NVIM: ToolDelivery = {
+	...NO_TMUX,
+	tool: "nvim",
+	directory: toolInstallDirectory(".devhub-server", "nvim"),
+};
+
 /**
  * A socket directory, because the profile puts control sockets under it.
  * Naming the profile's two directories is the point of the seam — a test gets
@@ -58,6 +64,7 @@ beforeAll(async () => {
 		tmux: NO_TMUX,
 		bash: NO_BASH,
 		node: NO_NODE,
+		nvim: NO_NVIM,
 	});
 });
 afterAll(async () => {
@@ -110,6 +117,7 @@ describe("runtimeFor", () => {
 			tmux: NO_TMUX,
 			bash: NO_BASH,
 			node: NO_NODE,
+			nvim: NO_NVIM,
 		});
 	});
 
@@ -121,6 +129,7 @@ describe("runtimeFor", () => {
 				tmux: NO_TMUX,
 				bash: NO_BASH,
 				node: NO_NODE,
+				nvim: NO_NVIM,
 			}),
 		).toThrow(/already been set/u);
 	});

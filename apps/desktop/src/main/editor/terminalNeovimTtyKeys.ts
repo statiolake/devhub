@@ -3,8 +3,7 @@
  * input (`docs/neovim-editor.md`, "The keyboard").
  *
  * The keys typed in the overlay reach its Neovim over RPC, never through the
- * pane: the Neovim the shim runs reads no tty (`--embed`, or `--headless` on
- * 0.9). But tmux still writes into the pane whatever a binding hands it —
+ * pane: the Neovim the shim runs reads no tty (`--embed`). But tmux still writes into the pane whatever a binding hands it —
  * `send-prefix` (the prefix pressed twice), a `send-keys` binding,
  * `paste-buffer`, a `devhub tell` typed into the terminal — and before this
  * the pane's tty took those bytes and nobody read them. So while DevHub's UI

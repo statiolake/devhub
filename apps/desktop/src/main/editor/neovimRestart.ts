@@ -1,5 +1,5 @@
 /**
- * Following Neovim's `:restart` (0.12) from the program that keeps a
+ * Following Neovim's `:restart` from the program that keeps a
  * Neovim's tmux pane: the `nvim` shim (`terminalNeovimShim.ts`) and the
  * `devhub-nvim` window's keeper (`managedNeovim.ts`).
  *
@@ -18,8 +18,7 @@
  * server it started exits, the program waits on each new server in turn —
  * by the pid written when DevHub's UI attaches to it
  * (`neovimUiSessions.ts`) — and ends with the last one's status: `:cq`
- * after a restart still fails a commit. Neovim 0.11 and older have no
- * `:restart` and never write `restart`: nothing changes there.
+ * after a restart still fails a commit.
  */
 
 /** The variable that names the directory, in the server's environment. */
@@ -65,8 +64,7 @@ do
     vim.api.nvim_create_autocmd("VimLeave", {
       group = vim.api.nvim_create_augroup("devhub_gui_restart", { clear = true }),
       callback = function()
-        local ok, reason = pcall(function() return vim.v.exitreason end)
-        if ok and type(reason) == "string" and reason:match("^restart") then
+        if vim.v.exitreason:match("^restart") then
           pcall(vim.fn.writefile, { "restart" }, state .. "/restart")
         else
           pcall(vim.fn.writefile, { tostring(vim.v.exiting or 0) }, state .. "/exit")

@@ -363,6 +363,21 @@ export type TmuxProgram =
 	| { readonly kind: "unavailable"; readonly reason: string };
 
 /**
+ * The Neovim DevHub runs on one machine — the managed `devhub-nvim` window's,
+ * a pane's `nvim` (the shim's) — as an absolute path there.
+ *
+ * Always DevHub's own, never one found on the PATH: on this Mac the one inside
+ * the app (`out/nvim`, `editor/bundledNeovim.ts`), on a host the same release
+ * delivered like tmux (`~/.devhub-server/nvim/<version>`). DevHub is written
+ * against one Neovim, 0.12, and a person's own `nvim` is whatever version
+ * their package manager had. `unavailable` carries the sentence to show: a
+ * build without one, a musl host, a glibc older than the release needs.
+ */
+export type NeovimProgram =
+	| { readonly kind: "resolved"; readonly path: string }
+	| { readonly kind: "unavailable"; readonly reason: string };
+
+/**
  * The user tmux config as it is on one machine *now*, and which one it is.
  *
  * The digest is here rather than derived by the caller because a tmux server
@@ -533,6 +548,13 @@ export interface Runtime {
 	 * this machine needs. Idempotent: one install per machine per DevHub start.
 	 */
 	tmuxProgram(configured: string, searchPath: string): Promise<TmuxProgram>;
+
+	/**
+	 * DevHub's Neovim on this machine, installed on it if that is what this
+	 * machine needs (`NeovimProgram`). Idempotent like `tmuxProgram`; an
+	 * unavailable answer is asked again next time.
+	 */
+	neovimProgram(): Promise<NeovimProgram>;
 
 	/**
 	 * What a Claude Agent started on this machine adds to its environment for

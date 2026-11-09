@@ -51,6 +51,7 @@ import type {
 	RuntimeId,
 	TerminalLauncher,
 	TerminalLauncherSpec,
+	NeovimProgram,
 	TmuxProgram,
 	UserTmuxConfig,
 	Watcher,
@@ -136,6 +137,10 @@ class FakeMachine implements Runtime {
 
 	claudeShell(): Promise<Readonly<Record<string, string>>> {
 		return Promise.resolve({});
+	}
+
+	neovimProgram(): Promise<NeovimProgram> {
+		return Promise.resolve({ kind: "resolved" as const, path: "nvim" });
 	}
 
 	tmuxProgram(): Promise<TmuxProgram> {

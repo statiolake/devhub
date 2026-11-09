@@ -64,7 +64,7 @@ Two kinds of Neovim, drawn the same way:
 
 - **The Workspace's `devhub-nvim` window.** `main/editor/managedNeovim.ts`
   keeps one Neovim per Workspace for the files DevHub opens:
-  `env DEVHUB_NEOVIM_GUI=1 nvim --headless --listen <socket>` with the
+  `env DEVHUB_NEOVIM_GUI=1 <DevHub's nvim> --headless --listen <socket>` with the
   person's own config, cwd the Workspace's folder, in a window named
   `devhub-nvim` of the Workspace's `ws-` session, made the first time a file
   is opened. Each open selects that window and names the socket on its pane
@@ -72,8 +72,9 @@ Two kinds of Neovim, drawn the same way:
   itself draws nothing (the Neovim is headless). tmux keeps it across a
   DevHub restart and an SSH connection dropping, and the next DevHub adopts
   it by its socket, a digest of the Workspace id.
-- **A `nvim` run in a pane**, by DevHub's shim (Neovim in a terminal): the
-  person's own Neovim as that pane's foreground program.
+- **A `nvim` run in a pane**, by DevHub's shim (Neovim in a terminal):
+  DevHub's Neovim, with the person's config, as that pane's foreground
+  program.
 
 Neither is ever used for the other's job: an open never goes to a Neovim the
 person started (a `git commit` waiting on its editor gets no other file),
@@ -96,9 +97,52 @@ Each is drawn by a `neovim.html#tnv:<n>` page over its pane
   a drop never unlinks the socket of a Neovim still running there.
 - **A dev container**: not yet. A Workspace whose editor is attached to a
   container says so ("does not run in a dev container yet").
-- **No `nvim`**: the open is refused with a notice naming the machine that
-  lacks it and what to do (`brew install neovim`, or install it on the
-  host). DevHub does not deliver Neovim to hosts (yet).
+- **A host DevHub's Neovim cannot run on** (musl, a glibc before 2.34, not
+  Linux on x86_64 or arm64): the open is refused with a notice naming the
+  machine and why (Which Neovim, below).
+
+#### Which Neovim
+
+Every Neovim DevHub starts is its own: Neovim's official release, at the
+one version `apps/desktop/product.json` pins (`nvimVersion`, 0.12.x, with a
+sha256 per archive in `nvimDownloadSha256`). DevHub is written against 0.12
+and nothing older: there is no version check, no fallback and no other
+Neovim it would take. Whatever `nvim` the person has on the PATH is never
+run by DevHub, and nothing outside DevHub changes — a terminal that is not
+DevHub's runs the person's own as before.
+
+- **This Mac.** `build:nvim` (`apps/desktop/scripts/fetch-neovim.mjs`, part
+  of `build`) downloads `nvim-macos-arm64.tar.gz`, checks its digest and
+  unpacks it into `out/nvim` (`bin/nvim`, `lib/nvim/parser`,
+  `share/nvim/runtime`); the archive is cached under `~/.cache/devhub/nvim`.
+  The packaged app carries it at `Contents/Resources/app/out/nvim`, where
+  packaging signs `bin/nvim` and the parsers ad hoc, as it signs the speech
+  recogniser (`sign_neovim`, `scripts/package-nightly.py`).
+  `editor/bundledNeovim.ts` names it; `LocalRuntime.neovimProgram` answers
+  it, and a build without one says so.
+- **An SSH host.** The same release for the host's platform
+  (`nvim-linux-x86_64`, `nvim-linux-arm64`), fetched on this Mac and
+  unpacked on the host under `~/.devhub-server/nvim/<version>` from stdin,
+  exactly as tmux and bash are (`RemoteShellRuntime.neovimProgram`,
+  `toolDelivery.ts`); the archive is cached under DevHub's data
+  (`<user data>/nvim`). Neovim's Linux build needs glibc 2.34 or later, so a
+  musl host (Alpine), an older glibc (`getconf GNU_LIBC_VERSION`) and a host
+  that is not Linux on x86_64 or arm64 are refused by name before anything
+  is sent (`neovimHostRefusal`, `runtime/libc.ts`).
+- **Who runs it.** `Runtime.neovimProgram` is the one answer: the
+  `devhub-nvim` window's keeper runs it by its absolute path, and the shim
+  has that path written in. The tests that need a real Neovim run the
+  bundled one too (`editor/testNeovim.ts`), on CI and in
+  `scripts/test-local.sh`.
+- **`$VIMRUNTIME`.** Neovim finds its runtime beside itself
+  (`<nvim>/../share/nvim/runtime`), so the keeper and the shim unset an
+  inherited `VIMRUNTIME` and `VIM` (another Neovim's, say a `:terminal`'s)
+  before they start it: `:echo $VIMRUNTIME` is the bundle's.
+- **Plugins.** `stdpath()` is the person's as ever (`~/.config/nvim`,
+  `~/.local/share/nvim`), so a lazy.nvim setup, its installs, the
+  parsers a plugin downloads and its build steps are what they were. A
+  build step that runs `nvim` gets the shim (the pane's PATH), which runs
+  the same Neovim; `v:progpath` is the bundled one.
 
 ### The attach
 
@@ -108,8 +152,8 @@ Each is drawn by a `neovim.html#tnv:<n>` page over its pane
 (`hl_attr_define`'s info: `ui_name`, `hi_name`); the page keeps them on the
 highlight and knows a diff's filler and the
 end-of-buffer `~` by name, not by colour.
-`ext_messages` stays off, on 0.11 too: it is still marked experimental there,
-and it hands the GUI every prompt Neovim would otherwise draw and wait on —
+`ext_messages` stays off: it is still marked experimental, and it hands the
+GUI every prompt Neovim would otherwise draw and wait on —
 the hit-enter prompt, `confirm()`, the swap-file question, `:s///c` — which
 a GUI that renders them as toasts has to get exactly right or leave the
 person stuck in an invisible prompt. Neovim's own message grid
@@ -170,7 +214,7 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   their ground, only the panel's outer corners rounded; a float alone is a
   panel of one, and one with `winblend` gets none. A float without a border
   gets DevHub's frame (that shadow, a hairline, rounded corners); one whose
-  border is blank cells (`'solid'`, a table of spaces — Neovim 0.10+ says
+  border is blank cells (`'solid'`, a table of spaces — Neovim says
   where a border is with `win_viewport_margins`) is drawn as with none:
   only its text area, where Neovim put it, in that frame, and a click on
   the left-out border falls through (`GridBox.crop`); a blank border
@@ -319,7 +363,7 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   new cell in 70 ms outside Insert mode (none with reduced motion), but
   never across a scroll of its window: then it moves with the text at
   once.
-- A window scrolls in pixels (`smoothScroll.ts`; 0.10+, which says how far
+- A window scrolls in pixels (`smoothScroll.ts`; Neovim says how far
   a window scrolled in `win_viewport`'s `scroll_delta`): the trackpad and
   the wheel move its text pixel for pixel while Neovim's `topline` stays a
   whole line of Neovim's. Each time Neovim scrolls a window, what was on
@@ -365,13 +409,13 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   put it rows off its cell for 70 ms, the trackpad's warping cursor; a
   winbar stays
   put, a click lands on the line under the pointer. Not for floats or the
-  message grid, not on 0.9, and with reduced motion only the wheel's own
+  message grid, and with reduced motion only the wheel's own
   movement.
 - Lines a `dd`, `p` or `o` moves slide into place in 60 ms (the
   person's pick of three mocks, round 6: 0, 60, 100 ms): what was
   deleted closes up, what was put in opens a gap, so the eye sees where
   the lines went. It is told from Neovim's own redraw: a `grid_scroll` in
-  a window whose `win_viewport` says it did not scroll (0.10+), at most a
+  a window whose `win_viewport` says it did not scroll, at most a
   third of the window, one per frame. An image of the region as painted
   moves inside a clip of it (`slideLines`); the canvas under it is already
   final, so no key waits for it, rows repainted meanwhile (the cursor
@@ -578,7 +622,7 @@ img.clear()
   (`progress = true`, `percent`, `done`) shows how far it is and ticks
   when done (gone 2 s later). devhub.nvim's `setup{ notify = true }` makes
   `vim.notify` this (its `title` is the source) and shows `LspProgress`
-  (0.10+) the way fidget does. Not `ext_messages`: Neovim's messages stay
+  the way fidget does. Not `ext_messages`: Neovim's messages stay
   Neovim's. Each choice and its reason (`DecorationViews.tsx`,
   `veil.ts`):
   - _Place._ The lowest line on the row over the lowest window's status
@@ -627,7 +671,7 @@ img.clear()
   under the line, so Neovim lays them out (the cursor steps over them,
   `:vsplit` shows them twice) and DevHub paints the image there. A path is
   read on Neovim's machine and sent as a `data:` URL (an SSH host's file
-  works; 0.10+ for `vim.base64`); an `https:` URL is passed as it is. Where
+  works); an `https:` URL is passed as it is. Where
   it is — the row under the line's last screen row, after the rows of any
   `virt_lines` Neovim stacks there first (another image, a card, a
   plugin's), the text column, from the window's top — is worked out again
@@ -731,10 +775,10 @@ local pop = gui.popup{ anchor = 'cursor', component = ui.md(markdown), max_width
   that group's colours (a ground as a chip; a group with no ground or
   weight bold and underlined). The hook answers
   what Neovim's does, a buffer with the lines and a window — a hidden one
-  (`hide`, 0.10+), which its caller may close (the popup closes with it)
+  (`hide`), which its caller may close (the popup closes with it)
   and which closes with the popup. `K K` focuses the popup instead of
   opening a second. A float's `border` and `title` give way to DevHub's
-  frame; `max_width`/`max_height` are kept. On 0.9, outside DevHub or on
+  frame; `max_width`/`max_height` are kept. Outside DevHub or on
   any error, Neovim's own float; `vim.g.devhub_rich_floats = false` keeps
   Neovim's always.
 
@@ -775,28 +819,26 @@ that do the same.
 
 ## Neovim in a terminal
 
-With `editor = "neovim"`, `nvim [args]` in a DevHub terminal — the
-Workspace's (its editor area) or an Agent's; typed, or run by
-`git commit`, `crontab -e`, `$EDITOR` — is the person's own Neovim drawn by
-DevHub's GUI exactly over that tmux pane, in place of its TUI. The command
+`nvim [args]` in a DevHub terminal — the Workspace's (its editor area) or an
+Agent's; typed, or run by `git commit`, `crontab -e`, `$EDITOR` — is
+DevHub's Neovim (Which Neovim) with the person's config, drawn by DevHub's
+GUI exactly over that tmux pane, in place of its TUI. The command
 blocks like any editor and returns Neovim's exit status (`:cq` fails a
 commit). It works the same in a terminal on an SSH host.
 
 **The shim** (`main/editor/terminalNeovimShim.ts`). DevHub writes a POSIX
 `sh` script named `nvim` on each machine — `<DevHub's data>/devhub/nvim-bin/`
 here, `~/.devhub/terminal/nvim-<tag>/` on a host — and puts its directory in
-front of the PATH of every pane it creates while the editor is Neovim (the
-way a host's `devhub` is). PATH and not `EDITOR`/`VISUAL`: it catches `nvim` typed
+front of the PATH of every pane it creates (the way a host's `devhub` is). PATH and not `EDITOR`/`VISUAL`: it catches `nvim` typed
 at a prompt and run by other programs alike, and a dotfile's
-`EDITOR=nvim` still reaches it. The script finds the next `nvim` on the PATH
-and runs it with the person's arguments, in the pane, as `nvim --embed
---listen <socket> args…`: the pane's environment (`GIT_*`), cwd, exit status
+`EDITOR=nvim` still reaches it. The script has DevHub's Neovim's absolute path
+written in (`Runtime.neovimProgram`; on a host it is delivered before the
+script is written), never looks one up on the PATH, and runs it with the
+person's arguments, in the pane, as `nvim --embed --listen <socket> args…`: the pane's environment (`GIT_*`), cwd, exit status
 and life are a TUI's; only who draws it changes. `--embed` waits for the UI
 before reading the config or a file, so a swap-file question or a config
-error is shown, not answered blind. Neovim 0.9 waits for an `--embed` UI on
-stdin alone and answers nothing on its socket meanwhile, so there it starts
-`--headless` instead, without that wait. It runs the real `nvim` untouched
-outside a DevHub terminal (no `$TMUX_PANE`, a session that is neither a
+error is shown, not answered blind. It runs the same Neovim as a TUI,
+untouched, outside a DevHub terminal (no `$TMUX_PANE`, a session that is neither a
 Workspace's `ws-` nor an Agent terminal's `tm-`), with the editor not
 Neovim, inside a DevHub GUI Neovim (`$DEVHUB_NEOVIM_GUI`), with stdin
 or stdout not a terminal, for non-editing arguments (`--headless`, `-es`,
@@ -905,7 +947,7 @@ and it adds one `precmd` hook that puts the shim's directory back in front of
 the PATH before each prompt if anything moved it. A zsh started from the pane
 is an ordinary one.
 
-**`:restart` (Neovim 0.12).** `:restart` starts a new server with the old
+**`:restart`.** `:restart` starts a new server with the old
 one's arguments — the same `--listen` socket — tells its UIs `restart`
 (`["restart", listen_addr]`), restores the session and exits. DevHub
 follows it wherever a Neovim lives, and nothing on screen leaves:
@@ -938,8 +980,7 @@ follows it wherever a Neovim lives, and nothing on screen leaves:
 - A `devhub-nvim` Neovim that restarted is adopted again by its socket at
   the next open, as after a DevHub restart (its `$TMUX_PANE` is the
   keeper's, inherited).
-- Neovim 0.11 and older have no `:restart` and never write `restart`:
-  nothing changes there. Checked on 0.12.6 with the dotfiles' config: in a
+- Checked on 0.12.6 with the dotfiles' config: in a
   pane (session and splits back, the pane still the shim's), in the
   `devhub-nvim` window (the next `devhub -g` opens in the restarted one),
   and in `git commit`'s editor (`:restart`, then `:wq` commits). Not
@@ -975,7 +1016,9 @@ editor half); `Cmd+Q O` between the halves; resize; switching Workspaces;
 ## Limitations
 
 - Dev containers: refused with a sentence.
-- No delivery of `nvim` to hosts; Neovim 0.9 or later is expected.
+- DevHub's Neovim only: a host it cannot run on (musl, glibc before 2.34,
+  not Linux on x86_64 or arm64) has no Neovim editor, and its panes' `nvim`
+  is the host's own TUI.
 - `ext_messages` off (see The attach and item 6 of the survey); messages
   are Neovim's own, in its message grid, which DevHub draws as a panel
   when they scroll over the windows. 0.12's `ui2` takes the command line
@@ -1255,8 +1298,7 @@ ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
    is still experimental and still hands the UI `return_prompt`,
    `confirm`, `confirm_sub` and the swap-file question while Neovim waits
    for a key: a GUI that draws them as toasts must draw every one, with
-   its choices, or the person types into a prompt they cannot see; and
-   0.9/0.10 (still supported) differ again. 0.12's answer is not a remote
+   its choices, or the person types into a prompt they cannot see. 0.12's answer is not a remote
    UI's at all: `ui2` (`require('vim._core.ui2').enable()`) is a Lua UI
    inside Neovim that takes `ext_messages` and `ext_cmdline` itself and
    draws messages, the pager and dialogs in Neovim windows. Tried under
@@ -1313,7 +1355,6 @@ ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
 15. ~~_The matching bracket_~~ — round 4 boxed `MatchParen`'s cells with a
     hairline, as VS Code's; taken back in round 5: the highlight as it is.
     **Also:** dev containers (Neovim in the container through `docker exec`, its
-    socket reached by a relay like the `devhub` command's), delivering `nvim` to
-    hosts like tmux and bash are, `ext_messages` on 0.10+, ligatures, a
+    socket reached by a relay like the `devhub` command's), `ext_messages`, ligatures, a
     glyph-atlas (WebGL) painter if large redraws need it, and the
     Sidebar following the current buffer.

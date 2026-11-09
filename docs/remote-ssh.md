@@ -228,6 +228,29 @@ patch` on Ubuntu): `scripts/build_bash.py linux-x64`. To install one by hand, as
 for tmux: unpack `devhub-bash-<platform>-<version>.tar.gz` and move its one
 directory to `~/.devhub-server/bash/<version>`.
 
+## The Neovim DevHub draws on a host
+
+The Neovim of a Workspace on a host — its `devhub-nvim` window, and `nvim`
+typed in its panes (`docs/neovim-editor.md`, "Which Neovim") — is DevHub's,
+never the host's: Neovim's own release archive for the host's platform
+(`nvim-linux-x86_64.tar.gz`, `nvim-linux-arm64.tar.gz` from
+github.com/neovim/neovim), at the version `product.json` pins
+(`nvimVersion`) and checked against `nvimDownloadSha256`. Like tmux it is
+fetched on this Mac (cached under `<user data>/nvim`) and unpacked on the
+host from stdin, the first time a session there is made, into
+
+```
+~/.devhub-server/nvim/<version>/bin/nvim
+~/.devhub-server/nvim/<version>/share/nvim/runtime
+```
+
+and run by that path (it finds its runtime beside itself). Neovim's Linux
+build needs glibc 2.34 or later: a musl host, an older glibc and a host that
+is not Linux on x86_64 or arm64 are refused before anything is sent, with
+the host and the reason in the notice; its panes' `nvim` is then the host's
+own. Nothing is published by DevHub for it. To install one by hand: unpack
+the archive and move its one directory to `~/.devhub-server/nvim/<version>`.
+
 ## Pointing one host somewhere else
 
 There is no setting for this, per host or otherwise. Which servers a DevHub

@@ -1,7 +1,7 @@
 /**
  * The programs DevHub puts on a machine, fetched here and never there.
  *
- * Two of them, by one mechanism:
+ * Four of them, by one mechanism:
  *
  * - **tmux.** DevHub runs every terminal and every Agent inside tmux on the
  *   machine the Workspace lives on, and it runs *its own* tmux there — never
@@ -13,10 +13,15 @@
  *   is not accepted — and the host this exists for, a Synology NAS with no
  *   package manager and no sudo, has neither (`scripts/build_bash.py`,
  *   `agentShell.ts`).
+ * - **node**, for the host's `devhub` command: nodejs.org's own Linux build.
+ * - **nvim**, the Neovim DevHub draws (`docs/neovim-editor.md`, "Which
+ *   Neovim"): Neovim's own release archive, the same version this Mac runs
+ *   from inside the app.
  *
  * "Install it" is not an instruction the owner of such a host can follow, so
- * DevHub publishes each as one static tarball per platform on a release of
- * this repository and installs it the same way.
+ * DevHub publishes tmux and bash as one static tarball per platform on a
+ * release of this repository, takes Node and Neovim from their upstream
+ * releases, and installs all four the same way, pinned by sha256.
  *
  * **This Mac fetches; the host receives.** The tarball is downloaded here, over
  * this DevHub's own network, and handed to the host as bytes on the stdin of a
@@ -37,7 +42,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /** What DevHub delivers. The name is the binary's and the tarball's. */
-export type HostTool = "tmux" | "bash" | "node";
+export type HostTool = "tmux" | "bash" | "node" | "nvim";
 
 /** Where one tool comes from, as far as a `Runtime` is concerned. */
 export interface ToolDelivery {
@@ -97,8 +102,10 @@ export interface ReleaseToolDeliveryOptions {
 }
 
 /**
- * The three names a URL template takes, substituted here and nowhere else:
- * `${<tool>Version}` (`${tmuxVersion}`, `${bashVersion}`), `${os}`, `${arch}`.
+ * The names a URL template takes, substituted here and nowhere else:
+ * `${<tool>Version}` (`${tmuxVersion}`, `${bashVersion}`), `${os}`, `${arch}`,
+ * and `${nvimPlatform}`, the platform as Neovim's release spells it
+ * (`neovimReleasePlatform`).
  *
  * `${version}` and `${commit}` mean VS Code's version and commit in VS Code's
  * own `serverDownloadUrlTemplate`, so these templates deliberately do not
@@ -114,7 +121,18 @@ export function toolDownloadUrl(
 	return template
 		.replaceAll(`\${${tool}Version}`, version)
 		.replaceAll("${os}", os)
-		.replaceAll("${arch}", arch);
+		.replaceAll("${arch}", arch)
+		.replaceAll("${nvimPlatform}", neovimReleasePlatform(platform));
+}
+
+/**
+ * A platform as Neovim's release archives name it: `linux-x64` is
+ * `linux-x86_64`, `darwin-arm64` is `macos-arm64` (`nvim-<this>.tar.gz`, whose
+ * one directory is `nvim-<this>`).
+ */
+export function neovimReleasePlatform(platform: string): string {
+	const [os = "", arch = ""] = platform.split("-");
+	return `${os === "darwin" ? "macos" : os}-${arch === "x64" ? "x86_64" : arch}`;
 }
 
 /**
@@ -136,16 +154,17 @@ export function toolInstallDirectory(
 /**
  * The single directory inside a tool's tarball for one platform: DevHub's
  * own builds name it after the tool and the platform; Node's is nodejs.org's
- * own tarball, which names it after the version too.
+ * own tarball, which names it after the version too, and Neovim's names it
+ * after its own spelling of the platform.
  */
 export function toolTopLevelDirectory(
 	tool: HostTool,
 	platform: string,
 	version: string,
 ): string {
-	return tool === "node"
-		? `node-v${version}-${platform}`
-		: `devhub-${tool}-${platform}`;
+	if (tool === "node") return `node-v${version}-${platform}`;
+	if (tool === "nvim") return `nvim-${neovimReleasePlatform(platform)}`;
+	return `devhub-${tool}-${platform}`;
 }
 
 /** The name a platform's tarball has, on the release and in the cache. */

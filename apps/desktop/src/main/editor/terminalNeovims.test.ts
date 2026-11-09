@@ -396,28 +396,38 @@ describe("TerminalNeovims", () => {
 });
 
 describe("DevHub's nvim", () => {
-	it("is a POSIX sh script that runs the real nvim outside a DevHub pane", () => {
+	it("is a POSIX sh script that runs DevHub's Neovim, never the PATH's, outside a DevHub pane", () => {
 		const directory = mkdtempSync(join(tmpdir(), "nvim-shim-"));
 		const shim = join(directory, "shim");
-		const real = join(directory, "real");
-		execFileSync("mkdir", [shim, real]);
+		const path = join(directory, "path");
+		const devhub = join(directory, "devhub", "bin");
+		execFileSync("mkdir", ["-p", shim, path, devhub]);
 		writeFileSync(
 			join(shim, "nvim"),
 			neovimShimScript({
-				directory: shim,
+				nvim: join(devhub, "nvim"),
 				tmux: "/bin/false",
 				sessionPrefixes: ["tm-", "ws-"],
 			}),
 			{ mode: 0o755 },
 		);
-		writeFileSync(join(real, "nvim"), '#!/bin/sh\necho "real $*"\n', {
+		writeFileSync(
+			join(devhub, "nvim"),
+			'#!/bin/sh\necho "devhub $* runtime=${VIMRUNTIME-unset}"\n',
+			{ mode: 0o755 },
+		);
+		writeFileSync(join(path, "nvim"), '#!/bin/sh\necho "path $*"\n', {
 			mode: 0o755,
 		});
 		execFileSync("sh", ["-n", join(shim, "nvim")]);
 		const output = execFileSync(join(shim, "nvim"), ["a b", "c"], {
-			env: { PATH: `${shim}:${real}:/usr/bin:/bin` },
+			env: {
+				PATH: `${shim}:${path}:/usr/bin:/bin`,
+				VIMRUNTIME: "/opt/homebrew/share/nvim/runtime",
+			},
 		}).toString();
-		expect(output).toBe("real a b c\n");
+		// The runtime is found beside it, not the one another Neovim set.
+		expect(output).toBe("devhub a b c runtime=unset\n");
 	});
 
 	it.runIf(existsSync("/bin/zsh") || existsSync("/usr/bin/zsh"))(

@@ -1599,22 +1599,17 @@ export class AppController {
 					await (await tmuxOf(target.machine)).killEditorPane(target, paneId);
 				},
 			},
-			// The person's own `nvim` on the Workspace's machine: on this Mac,
-			// on the login PATH DevHub imported (the lookup `runtimes.*` gets);
-			// on a host, `command -v` under its login environment.
+			// DevHub's Neovim on the Workspace's machine, never the PATH's: the
+			// one inside the app here, the delivered one on a host.
 			nvim: async (target) => {
 				if (target.machine === "local" && socketProblem !== undefined) {
 					throw new Error(socketProblem);
 				}
-				const runtime = runtimeById(target.machine);
-				const resolved = await runtime.resolveProgram(
-					"nvim",
-					this.launchEnvironment.PATH ?? "",
-				);
-				if (resolved.kind === "unavailable") {
-					throw new Error(neovimMissingMessage(target.machine, resolved));
+				const program = await runtimeById(target.machine).neovimProgram();
+				if (program.kind === "unavailable") {
+					throw new Error(neovimMissingMessage(target.machine, program.reason));
 				}
-				return resolved.value;
+				return program.path;
 			},
 			socketDirectory,
 			remoteSockets: async (target) => {
@@ -10479,6 +10474,9 @@ export async function createAppController(
 		bash: hostToolDelivery("bash", userDataPath),
 		// The Node DevHub's own programs run on there (its `devhub` command).
 		node: hostToolDelivery("node", userDataPath),
+		// The Neovim DevHub draws there: the release this Mac runs from inside
+		// the app (`editor/bundledNeovim.ts`), for that host's platform.
+		nvim: hostToolDelivery("nvim", userDataPath),
 	});
 
 	const config = settings.config;

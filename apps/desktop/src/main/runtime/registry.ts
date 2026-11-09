@@ -88,6 +88,12 @@ export interface RuntimeProfile {
 	 * reasons.
 	 */
 	readonly node: ToolDelivery;
+	/**
+	 * Where the Neovim DevHub installs on a host comes from: the one it draws
+	 * there (`RemoteShellRuntime.neovimProgram`). Beside `tmux` and for the
+	 * same reasons.
+	 */
+	readonly nvim: ToolDelivery;
 }
 
 let profile: RuntimeProfile | undefined;
@@ -151,6 +157,7 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 				tmux: profile.tmux,
 				bash: profile.bash,
 				node: profile.node,
+				nvim: profile.nvim,
 			});
 			SSH.set(location.host, runtime);
 			return runtime;

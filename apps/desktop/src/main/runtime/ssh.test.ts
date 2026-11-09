@@ -1367,6 +1367,90 @@ describe("the bash DevHub installs for Claude Code on a host", () => {
 });
 
 /**
+ * The Neovim DevHub draws on a host: Neovim's own Linux archive, by the same
+ * install as tmux. The "host" is this machine, so the install itself is
+ * asked of a Linux one; a Mac is refused by name.
+ */
+describe("the Neovim DevHub installs on a host", () => {
+	let remoteHome: string;
+	let workshop: string;
+
+	beforeEach(async () => {
+		remoteHome = await mkdtemp("/tmp/devhub-nvim-home-");
+		workshop = await mkdtemp("/tmp/devhub-nvim-build-");
+	});
+	afterEach(async () => {
+		await rm(remoteHome, { recursive: true, force: true });
+		await rm(workshop, { recursive: true, force: true });
+	});
+
+	/** An archive laid out as Neovim's: `nvim-<platform>/bin/nvim`. */
+	function nvimDelivery(): ToolDelivery {
+		return {
+			tool: "nvim",
+			version: "0.12.6",
+			directory: ".devhub-server/nvim",
+			tarball: async (platform) => {
+				const top = toolTopLevelDirectory("nvim", platform, "0.12.6");
+				await mkdir(join(workshop, top, "bin"), { recursive: true });
+				await mkdir(join(workshop, top, "share", "nvim", "runtime"), {
+					recursive: true,
+				});
+				await writeFile(
+					join(workshop, top, "bin", "nvim"),
+					'#!/bin/sh\necho "NVIM v0.12.6"\n',
+					{ mode: 0o755 },
+				);
+				const archive = join(workshop, "nvim.tar.gz");
+				const tar = spawnSync("tar", ["czf", archive, "-C", workshop, top]);
+				if (tar.status !== 0) throw new Error("tar failed");
+				return {
+					bytes: new Uint8Array(await readFile(archive)),
+					topLevelDirectory: top,
+					verifiedSha256: undefined,
+				};
+			},
+		};
+	}
+
+	function runtime(): SshRuntime {
+		return new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: { ...FAKE_ENVIRONMENT, HOME: remoteHome },
+			tmux: FAKE_TMUX,
+			nvim: nvimDelivery(),
+		});
+	}
+
+	it.runIf(process.platform === "linux")(
+		"unpacks it under ~/.devhub-server/nvim/<version> and names it absolutely",
+		async () => {
+			expect(await runtime().neovimProgram()).toEqual({
+				kind: "resolved",
+				path: `${remoteHome}/.devhub-server/nvim/0.12.6/bin/nvim`,
+			});
+			const runtimeDirectory = await stat(
+				`${remoteHome}/.devhub-server/nvim/0.12.6/share/nvim/runtime`,
+			);
+			expect(runtimeDirectory.isDirectory()).toBe(true);
+		},
+	);
+
+	it.runIf(process.platform === "darwin")(
+		"refuses a host that is not Linux, by name",
+		async () => {
+			const program = await runtime().neovimProgram();
+			expect(program.kind).toBe("unavailable");
+			expect(program.kind === "unavailable" ? program.reason : "").toMatch(
+				/^build-box\.example\.com is Darwin/u,
+			);
+		},
+	);
+});
+
+/**
  * DevHub's one tmux config, on the machine tmux reads it.
  *
  * The contract suite already says the rule — a path on that machine with the

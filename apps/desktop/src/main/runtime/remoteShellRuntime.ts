@@ -63,7 +63,14 @@ import {
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
 import { openByteStream, type StreamLaunch } from "./byteStream.js";
-import { LIBC_PROBE, parseLibc, type Libc } from "./libc.js";
+import {
+	GLIBC_VERSION_PROBE,
+	LIBC_PROBE,
+	neovimHostRefusal,
+	parseGlibcVersion,
+	parseLibc,
+	type Libc,
+} from "./libc.js";
 import { shellQuote } from "./quote.js";
 import {
 	NO_USER_TMUX_CONFIG,
@@ -83,6 +90,7 @@ import {
 	type StreamRequest,
 	type TerminalLauncher,
 	type TerminalLauncherSpec,
+	type NeovimProgram,
 	type TmuxProgram,
 	type UserTmuxConfig,
 	type Watcher,
@@ -455,6 +463,7 @@ export abstract class RemoteShellRuntime {
 	#launcher: Promise<TerminalLauncher> | undefined;
 	#tmux: Promise<TmuxProgram> | undefined;
 	#bash: Promise<string> | undefined;
+	#nvim: Promise<string> | undefined;
 	/** The bash or zsh this machine was found to have; see `probeAgentShell`. */
 	#agentShell: string | undefined;
 
@@ -811,6 +820,47 @@ export abstract class RemoteShellRuntime {
 			this.#bash = undefined;
 			return { kind: "failed", reason: describeFailure(failure) };
 		}
+	}
+
+	/**
+	 * DevHub's Neovim on this machine: Neovim's own release archive, delivered
+	 * like tmux under `~/.devhub-server/nvim/<version>` and run by its full
+	 * path (it finds its runtime beside itself).
+	 *
+	 * The archive is built against glibc 2.34, so a musl machine, an older
+	 * glibc and a machine with no archive pinned are refused by name before
+	 * anything is sent (`neovimHostRefusal`), as the Node of the `devhub`
+	 * command is on musl. None falls back to a Neovim the host has: DevHub is
+	 * written against 0.12.
+	 */
+	async neovimProgram(): Promise<NeovimProgram> {
+		const delivery = this.delivery("nvim");
+		this.#nvim ??= this.#installNeovim(delivery);
+		try {
+			return { kind: "resolved", path: await this.#nvim };
+		} catch (failure: unknown) {
+			this.#nvim = undefined;
+			return { kind: "unavailable", reason: describeFailure(failure) };
+		}
+	}
+
+	async #installNeovim(delivery: ToolDelivery): Promise<string> {
+		const { platform, architecture } = await this.describeRemote();
+		const linux = platform === "Linux";
+		const refusal = neovimHostRefusal({
+			machine: this.machineName,
+			platform,
+			architecture,
+			libc: linux ? await this.#libc() : "unknown",
+			glibc: linux
+				? parseGlibcVersion(
+						(await this.sh(GLIBC_VERSION_PROBE)).stdout.toString("utf8"),
+					)
+				: undefined,
+			version: delivery.version,
+		});
+		if (refusal !== undefined) throw new Error(refusal);
+		return (await this.#installTool(delivery)).program;
 	}
 
 	/**

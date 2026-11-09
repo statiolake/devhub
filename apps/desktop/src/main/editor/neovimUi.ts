@@ -84,9 +84,9 @@ export interface GuiOpenReport {
 export type GuiKeyboard = "neovim" | "content";
 
 /**
- * What the attach asks for. `ext_messages` stays off: in 0.9 it is
- * experimental and takes the grid's own message area away, so Neovim keeps
- * drawing messages in the grid (its message grid, `msg_set_pos`).
+ * What the attach asks for. `ext_messages` stays off: it takes the grid's
+ * own message area away, so Neovim keeps drawing messages in the grid (its
+ * message grid, `msg_set_pos`).
  * `ext_hlstate` names the groups each highlight is made of, so the page
  * knows a selection, a pill or a diff's filler by name, not by colour.
  */
@@ -589,7 +589,6 @@ function M.image(buf, line, src, opts)
     if not file then error("devhub gui.image: cannot read " .. path) end
     local bytes = file:read("*a")
     file:close()
-    if not vim.base64 then error("devhub gui.image: needs Neovim 0.10 or later") end
     local mime = MIME[(path:match("%.(%w+)$") or ""):lower()] or "image/png"
     data = "data:" .. mime .. ";base64," .. vim.base64.encode(bytes)
   end
@@ -619,7 +618,7 @@ end
 --- window's height from the window. Beyond the window too: the page shows
 --- up to a window above or below Neovim's view while it scrolls in pixels
 --- (Neovim a line or more ahead), and what is there must be placed. Off
---- the window the rows are counted with nvim_win_text_height (0.10+) from
+--- the window the rows are counted with nvim_win_text_height from
 --- topline's first row; a line's fill (diff filler, virt_lines above it
 --- and below the line before) is above it, as Neovim counts it.
 function M._line_rows(win, info, lnum)
@@ -1036,7 +1035,7 @@ export class NeovimUi {
 			this.attached = false;
 		}
 		await this.client.request("nvim_exec_lua", [SETUP_LUA, [channel]]);
-		// What a pane's program needs to follow a `:restart` (0.12).
+		// What a pane's program needs to follow a `:restart`.
 		await this.client.request("nvim_exec_lua", [RESTART_STATE_LUA, []]);
 		// Views, inline cards and decorations (`gui.view`, `gui.inline`,
 		// `gui.decorate`): the same module, grown by its own file.

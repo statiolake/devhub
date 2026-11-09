@@ -4,10 +4,13 @@
  */
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { APP_ROOT } from "../shell/appRoot.js";
 import {
+	neovimReleasePlatform,
 	ReleaseToolDelivery,
 	toolDownloadUrl,
 	toolInstallDirectory,
@@ -86,6 +89,39 @@ describe("where a platform's bash comes from", () => {
 	it("asks each binary for its version the way that binary answers", () => {
 		expect(toolVersionArgument("tmux")).toBe("-V");
 		expect(toolVersionArgument("bash")).toBe("--version");
+	});
+});
+
+describe("where a platform's Neovim comes from", () => {
+	const product = JSON.parse(
+		readFileSync(join(APP_ROOT, "product.json"), "utf8"),
+	) as Record<string, unknown>;
+	const template = product.nvimDownloadUrlTemplate as string;
+
+	// Neovim's own release archive, in Neovim's own spelling of the platform.
+	it("is Neovim's release archive for that platform", () => {
+		expect(toolDownloadUrl(template, "nvim", "linux-x64", "0.12.6")).toBe(
+			"https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-x86_64.tar.gz",
+		);
+		expect(toolDownloadUrl(template, "nvim", "linux-arm64", "0.12.6")).toBe(
+			"https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-arm64.tar.gz",
+		);
+		expect(toolDownloadUrl(template, "nvim", "darwin-arm64", "0.12.6")).toBe(
+			"https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-macos-arm64.tar.gz",
+		);
+		expect(neovimReleasePlatform("linux-x64")).toBe("linux-x86_64");
+		expect(toolTopLevelDirectory("nvim", "linux-x64", "0.12.6")).toBe(
+			"nvim-linux-x86_64",
+		);
+		expect(toolVersionArgument("nvim")).toBe("--version");
+	});
+
+	// Hosts are Linux on both architectures; this Mac is Apple Silicon.
+	it("is pinned for every platform DevHub runs it on, at a 0.12 release", () => {
+		expect(product.nvimVersion).toMatch(/^0\.12\.\d+$/);
+		expect(
+			Object.keys(product.nvimDownloadSha256 as Record<string, string>).sort(),
+		).toEqual(["darwin-arm64", "linux-arm64", "linux-x64"]);
 	});
 });
 

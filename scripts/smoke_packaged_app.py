@@ -14,9 +14,10 @@ the file into it — requires that reply too, and requires the app to still be
 running `--settle` seconds later.
 
 It also reads a bundle before starting it, for the faults a reply cannot rule
-out: a dependency, a native helper or the libghostty wasm missing from
-`Resources/app` takes one feature down and leaves the rest of the app
-answering. See `check_app_layout`.
+out: a dependency, a native helper, the libghostty wasm or the Neovim missing
+from `Resources/app` takes one feature down and leaves the rest of the app
+answering. See `check_app_layout`; `exercise_neovim` runs the bundled Neovim
+and asks it its version and its runtime.
 
 It starts the app under its own profile, `smoke`, and that is not a detail. A
 DevHub launched on the *default* profile is the user's DevHub: it reads
@@ -156,6 +157,11 @@ def check_app_layout(app_dir: Path, platform_name: str) -> list[str]:
 		input_source = app_dir / "out" / "native" / "devhub-input-source"
 		if not os.access(input_source, os.X_OK):
 			faults.append("out/native/devhub-input-source is missing or not executable")
+	nvim = app_dir / "out" / "nvim" / "bin" / "nvim"
+	if not os.access(nvim, os.X_OK):
+		faults.append("out/nvim/bin/nvim is missing or not executable: no editor can start")
+	if not (app_dir / "out" / "nvim" / "share" / "nvim" / "runtime").is_dir():
+		faults.append("out/nvim/share/nvim/runtime is missing: Neovim has no runtime")
 	product_file = app_dir / "product.json"
 	product = json.loads(product_file.read_text()) if product_file.is_file() else {}
 	if not product.get("commit"):
@@ -186,6 +192,40 @@ const { LibGhosttyVt } = await import(root + "/out/main/ptyHost/vt/libghosttyVt.
 const vt = await LibGhosttyVt.load(readFileSync(root + "/out/vt/ghostty-vt.wasm"));
 console.log("node-pty from " + where.slice(root.length + 1) + " ran a PTY; libghostty-vt " + vt.version + " instantiated");
 """
+
+
+# What the bundled Neovim answers when run as DevHub runs it: no config, no
+# inherited runtime. It must be the pinned release, finding its runtime
+# beside itself, inside the app.
+NEOVIM_QUESTION = "lua local v = vim.version(); io.stdout:write(v.major .. '.' .. v.minor .. '.' .. v.patch .. '\\n' .. vim.env.VIMRUNTIME .. '\\n')"
+
+
+def exercise_neovim(app_dir: Path) -> str | None:
+	"""Run `out/nvim/bin/nvim` headless; None, or what was wrong."""
+	nvim = app_dir / "out" / "nvim" / "bin" / "nvim"
+	pinned = json.loads((app_dir / "product.json").read_text()).get("nvimVersion")
+	environment = {key: value for key, value in os.environ.items() if key not in ("VIMRUNTIME", "VIM")}
+	try:
+		result = subprocess.run(
+			[str(nvim), "--headless", "--clean", "-c", NEOVIM_QUESTION, "-c", "qa!"],
+			env=environment,
+			stdin=subprocess.DEVNULL,
+			capture_output=True,
+			text=True,
+			timeout=30,
+		)
+	except (OSError, subprocess.TimeoutExpired) as error:
+		return f"the bundled Neovim did not run: {error}"
+	lines = result.stdout.split()
+	if result.returncode != 0 or len(lines) != 2:
+		return f"the bundled Neovim did not answer (exit {result.returncode}): {(result.stderr or result.stdout).strip()}"
+	version, runtime = lines
+	if version != pinned:
+		return f"the bundled Neovim is {version}, and product.json pins {pinned}"
+	if not Path(runtime).resolve().is_relative_to((app_dir / "out" / "nvim").resolve()):
+		return f"the bundled Neovim's runtime is {runtime}, outside the app"
+	print(f"    the bundled Neovim {version} ran, its runtime {runtime}")
+	return None
 
 
 def exercise_app(electron: Path, app_dir: Path) -> str | None:
@@ -320,7 +360,11 @@ def smoke(app: Path, timeout: float, settle: float = 5.0) -> int:
 		for fault in faults:
 			print(f"    {fault}", file=sys.stderr)
 		return 1
-	print("    Resources/app has its entry, its dependencies, its helpers and its wasm")
+	print("    Resources/app has its entry, its dependencies, its helpers, its wasm and its Neovim")
+	problem = exercise_neovim(app / "Contents" / "Resources" / "app")
+	if problem is not None:
+		print(f"    {problem}", file=sys.stderr)
+		return 1
 	state = Path(tempfile.mkdtemp(prefix="devhub-smoke-"))
 	argv, environment = launch_command(executable, state)
 	return run_and_probe(argv, environment, state, user_data_directory(state), timeout, settle)
@@ -335,7 +379,11 @@ def smoke_layout(repo: Path, app_dir: Path, timeout: float, settle: float, elect
 		for fault in faults:
 			print(f"    {fault}", file=sys.stderr)
 		return 1
-	print("    the layout has its entry, its dependencies and its wasm")
+	print("    the layout has its entry, its dependencies, its wasm and its Neovim")
+	problem = exercise_neovim(app_dir)
+	if problem is not None:
+		print(f"    {problem}", file=sys.stderr)
+		return 1
 	electron = source_electron(repo)
 	problem = exercise_app(electron, app_dir)
 	if problem is not None:

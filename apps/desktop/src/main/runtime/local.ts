@@ -39,6 +39,10 @@ import { openByteStream } from "./byteStream.js";
 import { resolveExecutable } from "../shell/runtimes.js";
 import { launchEnvironment } from "../shell/loginEnvironment.js";
 import {
+	bundledNeovim,
+	bundledNeovimMissing,
+} from "../editor/bundledNeovim.js";
+import {
 	runtimeUnavailableMessage,
 	type SettingsResolvedRuntimeWire,
 } from "../../ipc/settings.js";
@@ -61,6 +65,7 @@ import {
 	type StreamRequest,
 	type TerminalLauncher,
 	type TerminalLauncherSpec,
+	type NeovimProgram,
 	type TmuxProgram,
 	type UserTmuxConfig,
 	type Watcher,
@@ -201,6 +206,16 @@ export class LocalRuntime implements Runtime {
 			};
 		}
 		return { kind: "resolved", path: resolved.value, environment: {} };
+	}
+
+	/** The Neovim inside the app (`editor/bundledNeovim.ts`), never the PATH's. */
+	neovimProgram(): Promise<NeovimProgram> {
+		const path = bundledNeovim();
+		return Promise.resolve(
+			path === undefined
+				? { kind: "unavailable", reason: bundledNeovimMissing() }
+				: { kind: "resolved", path },
+		);
 	}
 
 	/**

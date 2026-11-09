@@ -8,13 +8,12 @@
  * a new window at the session's next index running the program directly, not
  * selected, and the pane id printed.
  *
- * The Neovim half is skipped where there is no Neovim; `DEVHUB_TEST_NVIM`
- * names one that is not on the PATH.
+ * The Neovim half runs DevHub's own Neovim (`testNeovim.ts`).
  */
 
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   editorWindowArgs,
@@ -26,6 +25,7 @@ import {
 } from "../../src/main/editor/managedNeovim";
 import { makeScratchDir, makeSocketDir } from "../../src/model/testScratch";
 import { TMUX, killTmuxServer } from "../tmuxSockets";
+import { TEST_NVIM } from "../../src/main/editor/testNeovim";
 
 let sequence = 0;
 const sockets: string[] = [];
@@ -120,17 +120,7 @@ describe.skipIf(TMUX === undefined)(
   },
 );
 
-function findNvim(): string | undefined {
-  const named = process.env.DEVHUB_TEST_NVIM;
-  if (named !== undefined && named.length > 0) return named;
-  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
-    const candidate = join(directory, "nvim");
-    if (directory.length > 0 && existsSync(candidate)) return candidate;
-  }
-  return undefined;
-}
-
-const NVIM = findNvim();
+const NVIM = TEST_NVIM;
 
 /** `EditorPanes` over a bare tmux server: the runtime's commands, unmarked. */
 function barePanes(

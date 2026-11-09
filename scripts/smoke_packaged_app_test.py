@@ -135,8 +135,11 @@ class AppLayout(unittest.TestCase):
 			"out/main/cli/devhubCliEntry.js",
 			"dist/shell/index.html",
 			"node_modules/node-pty/prebuilds/linux-x64/pty.node",
+			"out/nvim/share/nvim/runtime/filetype.lua",
 		):
 			self.write(relative)
+		self.write("out/nvim/bin/nvim", "#!/bin/sh\n")
+		(self.app / "out/nvim/bin/nvim").chmod(0o755)
 
 	def test_a_whole_layout_passes(self) -> None:
 		self.lay_out()
@@ -148,6 +151,12 @@ class AppLayout(unittest.TestCase):
 		faults = check_app_layout(self.app, "darwin-arm64")
 		self.assertTrue(any("ghostty-vt.wasm" in fault for fault in faults))
 		self.assertTrue(any("darwin-arm64" in fault for fault in faults))
+
+	def test_names_a_missing_neovim(self) -> None:
+		self.lay_out()
+		(self.app / "out/nvim/bin/nvim").unlink()
+		faults = check_app_layout(self.app, "linux-x64")
+		self.assertTrue(any("out/nvim/bin/nvim" in fault for fault in faults))
 
 	def test_names_a_build_that_states_no_commit(self) -> None:
 		self.lay_out()

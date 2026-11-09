@@ -13,7 +13,8 @@
 # Stages, and the CI job each one stands for:
 #   provision   system packages (Linux: Xvfb, Electron's libraries, tmux), the
 #               unprivileged test user (under root), `pnpm install`, npm's
-#               Electron (scripts/electron-path.sh) and the desktop build.
+#               Electron (scripts/electron-path.sh) and the desktop build,
+#               which fetches the Neovim DevHub bundles into out/nvim.
 #               Idempotent: a second run is seconds. Not the app bundle:
 #               packaging (scripts/build-app.sh) is macOS-only.
 #   fmt         pnpm run fmt                                       checks
@@ -21,6 +22,8 @@
 #   typecheck   pnpm run typecheck (the desktop's main included)   checks
 #   vitest      @devhub/desktop vitest                             test-desktop
 #   pty         @devhub/desktop test:pty (node-pty under Electron) test-desktop
+#               Both run their real-Neovim tests on the bundled Neovim
+#               (out/nvim, `build:nvim`), never the machine's own.
 #   scripts     pnpm run test:scripts                              checks
 #   app         the app smoke test (scripts/smoke_packaged_app.py). On macOS
 #               against dist/DevHub.app when one is built; on Linux against
@@ -317,12 +320,13 @@ provision() {
 # --- the stages -------------------------------------------------------------
 stage_vitest() {
 	prepare_test_user || return 1
-	(cd apps/desktop && pnpm run build:terminal) || return 1
+	(cd apps/desktop && pnpm run build:terminal && pnpm run build:nvim) || return 1
 	(cd apps/desktop && as_test_user node_modules/.bin/vitest run)
 }
 
 stage_pty() {
 	prepare_test_user || return 1
+	(cd apps/desktop && pnpm run build:nvim) || return 1
 	(cd apps/desktop && as_test_user test/terminal/run-under-electron.sh)
 }
 

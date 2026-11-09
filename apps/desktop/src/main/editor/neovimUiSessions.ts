@@ -64,7 +64,7 @@ interface Session<P> {
 	/** The grid's size, as attached and as the page last resized it. */
 	cols: number;
 	rows: number;
-	/** Neovim said `restart` (`:restart`, 0.12): its close is not an end. */
+	/** Neovim said `restart` (`:restart`): its close is not an end. */
 	restarting: boolean;
 }
 
@@ -155,7 +155,7 @@ export class NeovimUiSessions<P> {
 	}
 
 	/**
-	 * `:restart` (Neovim 0.12): the server started a new one with the same
+	 * `:restart`: the server started a new one with the same
 	 * arguments — the same `--listen` socket — told its UIs `restart`, and
 	 * exited. The UI attaches to the new one on the same socket (which an
 	 * SSH host's forward reaches as it reached the old), with the same page
@@ -317,7 +317,7 @@ export class NeovimUiSessions<P> {
 	}
 }
 
-/** Neovim's `restart` UI event (`:restart`, 0.12) in a redraw's batches. */
+/** Neovim's `restart` UI event (`:restart`) in a redraw's batches. */
 function isRestart(batch: unknown): boolean {
 	return Array.isArray(batch) && batch[0] === "restart";
 }

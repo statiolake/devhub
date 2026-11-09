@@ -1,6 +1,6 @@
 /**
  * What DevHub says about itself: its names, where it keeps its tools on a
- * host, and the tmux and bash releases it installs there.
+ * host, and the tmux, bash, Node and Neovim releases it installs there.
  *
  * One file, `product.json` beside `out/` — `apps/desktop/product.json` in a
  * checkout, `Contents/Resources/app/product.json` in the packaged app, where
@@ -26,6 +26,14 @@ export interface DevhubProduct {
 	readonly bashVersion?: string;
 	readonly bashDownloadUrlTemplate?: string;
 	readonly bashDownloadSha256?: Readonly<Record<string, string>>;
+	/**
+	 * The Neovim DevHub runs: in the app here (`out/nvim`, fetched at build
+	 * time by `scripts/fetch-neovim.mjs`) and delivered to a host. Neovim's
+	 * own release archives, pinned by `<os>-<arch>`.
+	 */
+	readonly nvimVersion?: string;
+	readonly nvimDownloadUrlTemplate?: string;
+	readonly nvimDownloadSha256?: Readonly<Record<string, string>>;
 	/** Where `docker` and `devcontainer` are, when they are not on `PATH`. */
 	readonly dockerPath?: string;
 	readonly devcontainerPath?: string;

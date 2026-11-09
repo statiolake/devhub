@@ -26,8 +26,9 @@ about and Node's own resolver finds every dependency in every process.
                                     apps/desktop and copied as real files —
                                     node-pty with this platform's prebuild only
 
-`out/vt/ghostty-vt.wasm` (libghostty-vt, the control-mode terminal's engine)
-and `out/native/` (DevHub's helpers) travel inside `out/`.
+`out/vt/ghostty-vt.wasm` (libghostty-vt, the control-mode terminal's engine),
+`out/native/` (DevHub's helpers) and `out/nvim/` (the Neovim DevHub runs,
+Neovim's own release, fetched by `build:nvim`) travel inside `out/`.
 
 Usage:
     scripts/package-nightly.py [--out-dir DIR] [--zip] [--zip-name NAME]
@@ -108,6 +109,7 @@ def check_inputs() -> None:
 		DESKTOP_DIR / "out" / "main" / "main.js",
 		DESKTOP_DIR / "out" / "preload" / "shell.js",
 		DESKTOP_DIR / "out" / "vt" / "ghostty-vt.wasm",
+		DESKTOP_DIR / "out" / "nvim" / "bin" / "nvim",
 		DESKTOP_DIR / "dist" / "shell" / "index.html",
 	):
 		if not required.exists():
@@ -345,6 +347,19 @@ def bundle_whisper(app: Path, whisper_dir: Path) -> None:
 	print(f"    {directory_size(target) / 1e6:.0f} MB")
 
 
+def sign_neovim(app: Path) -> None:
+	"""Sign the Neovim in `out/nvim` the way the speech recogniser is signed.
+
+	Its `bin/nvim` and the tree-sitter parsers it loads (`lib/nvim/parser`)
+	are Mach-O under Resources: sealed by the bundle's signature, not signed
+	as code, so each gets its own."""
+	root = app / "Contents" / "Resources" / "app" / "out" / "nvim"
+	programs = [root / "bin" / "nvim", *sorted((root / "lib").rglob("*.so"))]
+	for program in programs:
+		run(["codesign", "--force", "--sign", "-", str(program)])
+	print(f"    {len(programs)} signed, {directory_size(root) / 1e6:.0f} MB")
+
+
 def node_platform() -> str:
 	machine = os.uname().machine
 	arch = "arm64" if machine in ("arm64", "aarch64") else "x64"
@@ -430,6 +445,9 @@ def main() -> int:
 		print("    none: --without-whisper (this bundle's composer takes no dictation)")
 	else:
 		bundle_whisper(app, Path(args.whisper_dir).resolve())
+
+	step("Neovim")
+	sign_neovim(app)
 
 	step("ad-hoc signature")
 	# Ad hoc is not notarisation: the first launch of a downloaded zip still

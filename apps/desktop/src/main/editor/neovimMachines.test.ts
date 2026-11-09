@@ -50,15 +50,14 @@ describe("a Neovim socket on an SSH host", () => {
 		rmSync(tmp, { recursive: true, force: true });
 	});
 
-	it("names the host and the fix when there is no nvim", () => {
-		const message = neovimMissingMessage("ssh:build-box", {
-			kind: "unavailable",
-			configured: "nvim",
-			lookup: { kind: "path", directories: ["/usr/bin", "/bin"] },
-			where: " on build-box",
-		});
-		expect(message).toContain("Neovim on build-box");
-		expect(message).toContain("/usr/bin, /bin");
-		expect(message).toContain('editor = "vscode"');
+	it("names the host and why when DevHub's Neovim cannot run there", () => {
+		expect(
+			neovimMissingMessage("ssh:build-box", "build-box runs on musl (Alpine)"),
+		).toBe(
+			"DevHub's Neovim cannot run on build-box: build-box runs on musl (Alpine)",
+		);
+		expect(neovimMissingMessage("local", "no out/nvim")).toBe(
+			"DevHub's Neovim cannot run on this Mac: no out/nvim",
+		);
 	});
 });

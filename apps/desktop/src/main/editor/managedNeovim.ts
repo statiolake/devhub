@@ -129,7 +129,7 @@ export interface NeovimSockets {
 
 export interface ManagedNeovimOptions {
 	readonly panes: EditorPanes;
-	/** The `nvim` to start on the target's machine; rejects with the sentence to show. */
+	/** DevHub's `nvim` on the target's machine; rejects with the sentence to show. */
 	readonly nvim: (target: WorkspaceTerminalTarget) => Promise<string>;
 	/** This Mac's socket directory: DevHub's own, `0700`. See `socketDirectoryFor`. */
 	readonly socketDirectory: string;
@@ -239,11 +239,11 @@ end
 const PANE_LUA = "return vim.env.TMUX_PANE";
 
 /**
- * What the keeper pane runs: a headless Neovim on the socket, with the
- * person's own config. `DEVHUB_NEOVIM_GUI=1` is there from the first line of
+ * What the keeper pane runs: DevHub's Neovim (`Runtime.neovimProgram`),
+ * headless on the socket, with the person's own config. `DEVHUB_NEOVIM_GUI=1` is there from the first line of
  * their config, so it can tell DevHub's GUI from a terminal before any UI has
  * attached (`g:devhub_gui` is set on attach, `neovimUi.ts`). A `sh` keeps the
- * pane while it runs and, after a `:restart` (0.12), while the server that
+ * pane while it runs and, after a `:restart`, while the server that
  * took over runs (`neovimRestart.ts`): the pane is the Neovim's until the
  * last of them ends.
  */
@@ -260,7 +260,8 @@ export function neovimArgv(nvim: string, socketPath: string): string[] {
 	];
 }
 
-const KEEPER_SH = `state=$(mktemp -d "\${TMPDIR:-/tmp}/devhub-nvim.XXXXXX") || state=/nonexistent
+const KEEPER_SH = `unset VIMRUNTIME VIM
+state=$(mktemp -d "\${TMPDIR:-/tmp}/devhub-nvim.XXXXXX") || state=/nonexistent
 DEVHUB_NEOVIM_GUI=1 ${NVIM_STATE_VARIABLE}=$state "$@" &
 pid=$!
 wait "$pid"

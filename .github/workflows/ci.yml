@@ -81,6 +81,8 @@ jobs:
       - name: Set up Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
 
+      # `test` fetches the Neovim DevHub bundles (build:nvim) first: the tests
+      # that need a real Neovim run that one.
       - name: Desktop unit tests (vitest, node-pty under Electron)
         run: pnpm --filter @devhub/desktop test
 
@@ -142,9 +144,10 @@ jobs:
       - name: Unpack the bundle
         run: tar -xf dist/DevHub.app.tar -C dist
 
-      # The editor the smoke test opens a file in is Neovim, run by tmux.
-      - name: Install tmux and Neovim
-        run: brew install tmux neovim
+      # The editor the smoke test opens a file in is the Neovim inside the
+      # bundle (out/nvim), run by tmux, which this Mac provides.
+      - name: Install tmux
+        run: brew install tmux
 
       - name: Smoke-test the app
         run: scripts/smoke_packaged_app.py dist/DevHub.app

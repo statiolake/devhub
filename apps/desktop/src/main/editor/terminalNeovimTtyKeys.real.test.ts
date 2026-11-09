@@ -1,29 +1,19 @@
 /**
  * The shim's tty reader against a real Neovim: the bytes tmux writes into a
  * pane, in each encoding tmux may use, arrive as that Neovim's keys and
- * pastes. Skipped where there is no Neovim (`DEVHUB_TEST_NVIM` names one
- * off the PATH).
+ * pastes. DevHub's own Neovim (`testNeovim.ts`).
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { NeovimClient } from "./neovimRpc.js";
 import { TTY_KEYS_LUA } from "./terminalNeovimTtyKeys.js";
 import { makeScratchDir, makeSocketDir } from "../../model/testScratch.js";
+import { TEST_NVIM } from "./testNeovim.js";
 
-function findNvim(): string | undefined {
-	const named = process.env.DEVHUB_TEST_NVIM;
-	if (named !== undefined && named.length > 0) return named;
-	for (const directory of (process.env.PATH ?? "").split(delimiter)) {
-		const candidate = join(directory, "nvim");
-		if (directory.length > 0 && existsSync(candidate)) return candidate;
-	}
-	return undefined;
-}
-
-const NVIM = findNvim();
+const NVIM = TEST_NVIM;
 const children: ChildProcess[] = [];
 const directories: string[] = [];
 

@@ -5,12 +5,12 @@
  * really speaks it, not as a fixture says it does. Also the clipboard
  * provider and the GUI-window Lua module the attach installs.
  *
- * Skipped where there is no Neovim; `DEVHUB_TEST_NVIM` names one.
+ * DevHub's own Neovim (`testNeovim.ts`).
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { NeovimClient } from "./neovimRpc.js";
 import {
@@ -28,18 +28,9 @@ import {
 	type NeovimUiState,
 } from "../../shell/neovim/redraw.js";
 import { floatLabelsOf } from "../../shell/neovim/frame.js";
+import { TEST_NVIM } from "./testNeovim.js";
 
-function findNvim(): string | undefined {
-	const named = process.env.DEVHUB_TEST_NVIM;
-	if (named !== undefined && named.length > 0) return named;
-	for (const directory of (process.env.PATH ?? "").split(delimiter)) {
-		const candidate = join(directory, "nvim");
-		if (directory.length > 0 && existsSync(candidate)) return candidate;
-	}
-	return undefined;
-}
-
-const NVIM = findNvim();
+const NVIM = TEST_NVIM;
 const children: ChildProcess[] = [];
 const directories: string[] = [];
 
@@ -463,11 +454,6 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 
 	it("leaves out a float's blank border and keeps a border of lines", async () => {
 		const h = await attached(60, 20);
-		const has010 = (await h.ui.request("nvim_exec_lua", [
-			"return vim.fn.has('nvim-0.10') == 1",
-			[],
-		])) as boolean;
-		if (!has010) return; // 0.9 sends no win_viewport_margins
 		await h.ui.request("nvim_exec_lua", [
 			"local buf = vim.api.nvim_create_buf(false, true); vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'hello' }); _G.f = vim.api.nvim_open_win(buf, false, { relative = 'editor', row = 2, col = 3, width = 10, height = 2, border = 'rounded' })",
 			[],
@@ -500,11 +486,6 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 
 	it("frames a float's border of lines, its title a label once its config is known", async () => {
 		const h = await attached(60, 20);
-		const has010 = (await h.ui.request("nvim_exec_lua", [
-			"return vim.fn.has('nvim-0.10') == 1",
-			[],
-		])) as boolean;
-		if (!has010) return; // 0.9 sends no win_viewport_margins, nor footers
 		const win = (await h.ui.request("nvim_exec_lua", [
 			"local buf = vim.api.nvim_create_buf(false, true); vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'hello' }); return vim.api.nvim_open_win(buf, false, { relative = 'editor', row = 2, col = 3, width = 20, height = 3, border = 'rounded', title = ' Files ', title_pos = 'center', footer = { { '1', 'Title' }, { '/2', 'Comment' } }, footer_pos = 'right' })",
 			[],

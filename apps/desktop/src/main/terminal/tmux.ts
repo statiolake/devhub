@@ -3936,14 +3936,24 @@ export class TmuxTerminalRuntime {
 
 	/**
 	 * Write DevHub's `nvim` on this machine, if it is wanted and not written
-	 * yet; whether it is there. A machine that refuses the file is logged once
-	 * and its panes get no `nvim` of DevHub's — they run the person's own.
+	 * yet; whether it is there. It runs DevHub's Neovim, so that is asked for
+	 * first (on a host, delivered then). A machine that has none, or refuses
+	 * the file, is logged and its panes get no `nvim` of DevHub's — they run
+	 * whatever `nvim` the person has; it is tried again for the next session.
 	 */
 	async ensureNeovimShim(): Promise<boolean> {
 		const shim = this.neovimShim;
 		if (shim === undefined || !shim.wanted()) return false;
 		this.neovimShimWritten ??= (async () => {
 			try {
+				const nvim = await this.host.neovimProgram();
+				if (nvim.kind === "unavailable") {
+					console.error(
+						`[devhub] DevHub's nvim is not on panes${this.where}: ${nvim.reason}`,
+					);
+					this.neovimShimWritten = undefined;
+					return false;
+				}
 				await this.host.makeDirectory(
 					join(shim.directory, NVIM_SHIM_ZSH_DIRECTORY),
 				);
@@ -3955,7 +3965,7 @@ export class TmuxTerminalRuntime {
 				await this.host.writeTextFile(
 					join(shim.directory, "nvim"),
 					neovimShimScript({
-						directory: shim.directory,
+						nvim: nvim.path,
 						tmux: this.tmuxPath(),
 						sessionPrefixes: [terminalSessionName(""), "ws-"],
 					}),

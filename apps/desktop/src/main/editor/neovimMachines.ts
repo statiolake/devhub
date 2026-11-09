@@ -16,22 +16,14 @@ import { OperationDeadline } from "../terminal/command.js";
 import type { Runtime, RuntimeId } from "../runtime/runtime.js";
 import { PROBE_LIMITS } from "../runtime/remoteShellRuntime.js";
 import type { NeovimFiles, NeovimSockets } from "./managedNeovim.js";
-import {
-	runtimeUnavailableMessage,
-	type SettingsResolvedRuntimeWire,
-} from "../../ipc/settings.js";
 
-/** What a Workspace whose machine has no `nvim` is told, and what to do. */
+/** What a Workspace whose machine cannot have DevHub's Neovim is told. */
 export function neovimMissingMessage(
 	machine: RuntimeId,
-	resolved: Extract<SettingsResolvedRuntimeWire, { kind: "unavailable" }>,
+	reason: string,
 ): string {
 	const host = machine === "local" ? "this Mac" : machine.replace(/^ssh:/, "");
-	const fix =
-		machine === "local"
-			? "Install it (`brew install neovim`)"
-			: `Install Neovim on ${host} (0.9 or later, \`nvim\` on its login PATH)`;
-	return `The Neovim editor needs Neovim on ${host}. ${runtimeUnavailableMessage(resolved)} ${fix}, or set [general] editor = "vscode".`;
+	return `DevHub's Neovim cannot run on ${host}: ${reason}`;
 }
 
 /** The shell script that answers this machine's socket directory. */

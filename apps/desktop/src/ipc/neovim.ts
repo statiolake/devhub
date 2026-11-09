@@ -17,7 +17,7 @@
 
 /**
  * DevHub's own redraw event, not Neovim's: put in the redraw stream where a
- * UI starts over on the server a `:restart` started (0.12), so the page
+ * UI starts over on the server a `:restart` started, so the page
  * forgets the old server's screen in order with the new one's first events
  * (`main/editor/neovimUiSessions.ts`, `shell/neovim/redraw.ts`).
  */

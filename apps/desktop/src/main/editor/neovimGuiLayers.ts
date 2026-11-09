@@ -41,23 +41,14 @@ M.tones = M.tones or {
 }
 
 local function hl_attrs(name)
-  local ok, h
-  if vim.api.nvim_get_hl then
-    ok, h = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
-  else
-    ok, h = pcall(vim.api.nvim_get_hl_by_name, name, true)
-    if ok and type(h) == "table" then
-      h = { fg = h.foreground, bg = h.background, sp = h.special, bold = h.bold, italic = h.italic,
-            underline = h.underline, strikethrough = h.strikethrough, reverse = h.reverse }
-    end
-  end
+  local ok, h = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
   if not ok or type(h) ~= "table" then return nil end
   local out = {}
   for _, k in ipairs({ "fg", "bg", "sp" }) do if type(h[k]) == "number" then out[k] = h[k] end end
   for _, k in ipairs({ "bold", "italic", "underline", "strikethrough", "reverse" }) do
     if h[k] then out[k] = true end
   end
-  -- 0.9 has no Added/Changed/Removed: fall back to the diff colours.
+  -- A group the colorscheme left empty is no group.
   if next(out) == nil then return nil end
   return out
 end

@@ -30,6 +30,7 @@ import {
 	type Runtime,
 	type TerminalLauncher,
 	type TerminalLauncherSpec,
+	type NeovimProgram,
 	type TmuxProgram,
 	type UserTmuxConfig,
 	type Watcher,
@@ -105,6 +106,13 @@ class RecordingRuntime implements Runtime {
 
 	claudeShell(): Promise<Readonly<Record<string, string>>> {
 		return Promise.resolve({});
+	}
+
+	neovimProgram(): Promise<NeovimProgram> {
+		return Promise.resolve({
+			kind: "resolved" as const,
+			path: "/usr/bin/nvim",
+		});
 	}
 
 	tmuxProgram(): Promise<TmuxProgram> {
