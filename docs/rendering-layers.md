@@ -255,3 +255,19 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 6. ~~Device-pixel snapping of labels, hairlines and outlines~~ fixed.
 7. A Neovim overlay on a tmux pane reaching the pane's boundary, its grid
    inset by half a cell (the seam above).
+
+Seen while checking the above, not layering bugs but on the same path:
+
+- After the app is restarted, an editor whose Neovim kept running comes
+  back with its windows' sizes changed (a split's upper window one row
+  tall): the UI attaches at another size first and Neovim spreads the
+  difference. And a Neovim page reloaded (DevTools) stays blank: it does
+  not attach again.
+- Pixel scrolling in a `:vsplit` (italics and CJK at the window's edge,
+  fractional deltas with momentum) was checked frame by frame against a
+  reference made of still frames, with software and with GPU
+  compositing: nothing drawn past a window's rectangle, the boundary
+  column and the status row unchanged in every frame. The artefacts seen
+  on macOS at the separator were the grid-1 painting fixed above (a
+  stale cell drawn as a tick, the halves recoloured by what scrolled);
+  a garbled last row was not reproduced here.
