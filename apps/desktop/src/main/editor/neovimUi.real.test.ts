@@ -267,6 +267,55 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		},
 	);
 
+	it(
+		"gives a Neovim that grew at the attach its rows in the windows, not the command line",
+		{ timeout: 15_000 },
+		async () => {
+			// An `--embed` Neovim before its first UI: 24 rows, the person's
+			// cmdheight 2. The attach is taller: the window takes the rows.
+			const client = await startNvim();
+			await client.request("nvim_exec_lua", ["vim.o.cmdheight = 2", []]);
+			const ui = new NeovimUi(client, {
+				read: () => Promise.resolve(""),
+				write: () => undefined,
+			});
+			const sink: NeovimUiSink = {
+				redraw: () => undefined,
+				guiWindows: () => undefined,
+				guiOpen: () => undefined,
+				guiClose: () => undefined,
+				guiSend: () => undefined,
+			};
+			await ui.attach(sink, 60, 40);
+			const sizes = `return { vim.o.lines, vim.o.cmdheight, vim.api.nvim_win_get_height(0) }`;
+			// lines, cmdheight, the window (a status line under it).
+			expect(await ui.request("nvim_exec_lua", [sizes, []])).toEqual([
+				40, 2, 37,
+			]);
+			// A split, attached again at another size: still the person's
+			// cmdheight, the windows sharing the rest in the same proportion.
+			await ui.request("nvim_exec_lua", ["vim.cmd('split | resize 9')", []]);
+			client.close();
+			const again = await NeovimClient.connect(lastSocket);
+			const ui2 = new NeovimUi(again, {
+				read: () => Promise.resolve(""),
+				write: () => undefined,
+			});
+			await ui2.attach(sink, 60, 60);
+			const split = `return { vim.o.lines, vim.o.cmdheight, unpack(vim.tbl_map(vim.api.nvim_win_get_height, vim.api.nvim_tabpage_list_wins(0))) }`;
+			const [lines, cmdheight, upper, lower] = (await ui2.request(
+				"nvim_exec_lua",
+				[split, []],
+			)) as number[];
+			expect([lines, cmdheight]).toEqual([60, 2]);
+			// Two status lines under the two windows.
+			expect(upper! + lower! + 2 + cmdheight!).toBe(60);
+			expect(upper).toBeGreaterThan(9);
+			expect(upper).toBeLessThan(lower! / 2);
+			again.close();
+		},
+	);
+
 	it("scrolls the grid as the buffer scrolls", async () => {
 		const h = await attached(40, 10);
 		h.ui.call("nvim_exec_lua", [

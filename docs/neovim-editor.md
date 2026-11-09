@@ -185,7 +185,10 @@ attach is preceded by a moment attached without multigrid (at another size),
 which frees them, and a window Neovim does not place again is placed from the
 layout Lua reports. That moment fits every tab's windows into the other size,
 and growing back spreads the rows anew, so each tab's sizes are kept before it
-(`winrestcmd()`) and put back once attached. The page attaches only once its
+(`winrestcmd()`) and put back once attached, scaled to the rows and columns
+there are now and with the person's `cmdheight` put back after: `:resize` at
+the old, smaller size (an `--embed` Neovim's first 80x24) would give the
+difference to the command line, not the windows. The page attaches only once its
 view is on its pane, at the pane's size (main's `devhub:neovim:placed`): a
 view not yet placed, or over the whole terminal, is no pane's size, and a UI
 attached at it reshapes the windows the same way. A page that loads again
