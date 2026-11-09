@@ -809,6 +809,13 @@ What DevHub does not draw yet is not let do that
   and the page says so quietly ("C-q m: display-popup is not available in
   control mode yet"). A table tmux was already in is reset. Keys typed
   before the bindings were first read wait for them.
+- A key bound to nothing in the root table is the pane's, and goes to it
+  as itself (`send-keys` without `-K`, `KeyRoute.pane`): tmux would only
+  hand it on, and through `-K` it is lost when the pane asked for
+  modifyOtherKeys mode 2 (`CSI > 4 ; 2 m`, Neovim's TUI) and `extended-keys`
+  is on — the key keeps tmux's `KEYC_SENT` flag, misses the plain-byte path
+  and the extended form has no modifier to write (3.4 and 3.7c alike). Only
+  modified keys (`C-c`) reached a Neovim TUI in such a pane before.
 - A pane left in a mode other than copy or view mode (a buffer or client
   chooser, customize mode) once the binding that entered
   it has finished — 250 ms after its last mode change, since tmux says so

@@ -949,8 +949,16 @@ Workspace's `ws-` nor an Agent terminal's `tm-`), with the editor not
 Neovim, inside a DevHub GUI Neovim (`$DEVHUB_NEOVIM_GUI`), with stdin
 or stdout not a terminal, for non-editing arguments (`--headless`, `-es`,
 `--remote*`, `--version`, `-`…), and when no UI attached within ten seconds
-(the terminal is not on screen): then the waiting Neovim is ended and the TUI
-runs with the same arguments.
+(the terminal is not on screen, DevHub not running while its tmux server
+still says the overlay is on, the overlay page or the socket forward
+failing): then the waiting Neovim, which has read no config and opened no
+file yet, is killed, one dim line in the pane says DevHub did not draw it
+(it stays in the scrollback; `DEVHUB_NVIM_DEBUG=1` says every other reason
+too), and a fresh TUI runs with the same arguments, cwd and environment —
+plain `nvim`, its status the command's. Not a TUI attached to the waiting
+one (`--remote-ui`): there is no state to keep, and a remote UI's server
+has the FIFO for a stdin, so `:!` and anything else Neovim runs on the tty
+would not have it.
 
 **How DevHub learns of it: tmux, not a socket of its own.** The script names
 its socket in a pane option of DevHub's own tmux server (`@devhub-nvim`) and

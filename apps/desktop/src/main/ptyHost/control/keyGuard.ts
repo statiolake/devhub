@@ -84,6 +84,18 @@ export function parseBindings(lines: readonly string[]): Bindings {
 export interface KeyRoute {
 	/** Keys to send with `send-keys -K`, in order. */
 	readonly send: readonly string[];
+	/**
+	 * The key is bound to nothing in the root table: all tmux would do with it
+	 * is hand it to the active pane, so it is sent to the pane directly
+	 * (`send-keys` without `-K`). The same keys reach the pane either way,
+	 * except that tmux (3.4 to 3.7 at least) drops an unmodified key sent with
+	 * `-K` to a pane that asked for modifyOtherKeys mode 2 (`CSI > 4 ; 2 m`,
+	 * which Neovim's TUI asks for) while `extended-keys` is on: the key keeps
+	 * the `KEYC_SENT` flag, so it is not written as itself, and the extended
+	 * form it falls through to has no modifier to write. Only modified keys
+	 * (`C-c`) would get through.
+	 */
+	readonly pane?: true;
 	/** A binding that would wait on the client, not sent. */
 	readonly refused?: { readonly keys: string; readonly command: string };
 	/**
@@ -199,7 +211,11 @@ export class KeyRouter {
 	): KeyRoute {
 		const key = keys[keys.length - 1];
 		const binding = this.#bindings.get(table)?.get(key);
-		if (binding === undefined) return { send: keys };
+		if (binding === undefined) {
+			return table === "root" && keys.length === 1
+				? { send: keys, pane: true }
+				: { send: keys };
+		}
 		const waiting = waitingCommand(binding.command);
 		if (waiting !== undefined && ownCommand(binding.command)) {
 			return {

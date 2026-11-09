@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,8 @@ import {
   type ControlProcess,
   type ControlToPage,
 } from "../../src/main/ptyHost/control/controlClient";
+import { TEST_NVIM } from "../../src/main/editor/testNeovim";
+import { neovimShimScript } from "../../src/main/editor/terminalNeovimShim";
 
 const WASM = fileURLToPath(
   new URL("../../vendor/libghostty-vt/ghostty-vt.wasm", import.meta.url),
@@ -451,4 +453,196 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     client.stop();
     await until("the end", () => view.ended);
   }, 20000);
+
+  // Neovim's TUI asks for modifyOtherKeys (`CSI > 4 ; 2 m`), and tmux drops an
+  // unmodified key it gets with `send-keys -K` while that is on and
+  // `extended-keys` is (the person's tmux.conf): only C-c and the like got
+  // through, so a Neovim in a pane took no keys (`KeyRoute.pane`).
+  it.skipIf(TEST_NVIM === undefined)(
+    "gives a Neovim TUI its keys with extended-keys on",
+    async () => {
+      const socket = `devhub-tui-${String(process.pid)}`;
+      sockets.push(socket);
+      tmux(
+        socket,
+        "new-session",
+        "-d",
+        "-s",
+        "t",
+        "-x",
+        "80",
+        "-y",
+        "24",
+        "sh",
+      );
+      tmux(socket, "set-option", "-s", "extended-keys", "on");
+      tmux(socket, "set-option", "-s", "extended-keys-format", "csi-u");
+      tmux(socket, "send-keys", "-t", "t", "PS1='$ '; clear", "Enter");
+      const view = page();
+      const client = new ControlClient({
+        process: controlProcess(socket, "t"),
+        vt: lib,
+        cols: 80,
+        rows: 24,
+        post: view.post,
+        ended: () => undefined,
+      });
+      await until("the pane", () => view.layout?.panes[0]?.pane);
+      tmux(
+        socket,
+        "send-keys",
+        "-t",
+        "t",
+        `${TEST_NVIM ?? ""} --clean -n -i NONE`,
+        "Enter",
+      );
+      await until(
+        "the TUI",
+        () =>
+          tmux(
+            socket,
+            "display-message",
+            "-p",
+            "-t",
+            "t",
+            "#{alternate_on}",
+          ) === "1\n",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      client.receive({ kind: "keys", keys: ["i", "h", "i", "Escape", "A"] });
+      client.receive({ kind: "keys", keys: ["!", "Escape"] });
+      await until(
+        "the keys typed",
+        () =>
+          tmux(socket, "capture-pane", "-p", "-t", "t").split("\n")[0] ===
+          "hi!",
+      );
+      client.receive({ kind: "keys", keys: [":", "q", "!", "Enter"] });
+      await until(
+        "the shell again",
+        () =>
+          tmux(
+            socket,
+            "display-message",
+            "-p",
+            "-t",
+            "t",
+            "#{alternate_on}",
+          ) === "0\n",
+      );
+      client.stop();
+      await until("the end", () => view.ended);
+    },
+    20000,
+  );
+
+  // The shim (`terminalNeovimShim.ts`) in a DevHub pane with no DevHub to
+  // draw its Neovim: after the wait it says so and runs the TUI, which takes
+  // the keys typed in the terminal and ends with the editor's status.
+  it.skipIf(TEST_NVIM === undefined)(
+    "falls back to a Neovim TUI that takes the keys when no UI attaches",
+    async () => {
+      const socket = `devhub-shim-${String(process.pid)}`;
+      sockets.push(socket);
+      const directory = mkdtempSync(join(tmpdir(), "devhub-shim-"));
+      const bin = join(directory, "bin");
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, "nvim"),
+        neovimShimScript({
+          nvim: TEST_NVIM ?? "",
+          tmux: TMUX ?? "tmux",
+          sessionPrefixes: ["ws-"],
+          uiWaitTenths: 5,
+        }),
+        { mode: 0o755 },
+      );
+      const file = join(directory, "note.txt");
+      tmux(
+        socket,
+        "new-session",
+        "-d",
+        "-s",
+        "ws-fallback",
+        "-x",
+        "100",
+        "-y",
+        "24",
+        `env PATH=${bin}:/usr/bin:/bin sh`,
+      );
+      tmux(socket, "set-option", "-g", "@devhub-nvim-overlay", "1");
+      tmux(socket, "set-option", "-s", "extended-keys", "on");
+      tmux(
+        socket,
+        "send-keys",
+        "-t",
+        "ws-fallback",
+        "PS1='$ '; clear",
+        "Enter",
+      );
+      const view = page();
+      const client = new ControlClient({
+        process: controlProcess(socket, "ws-fallback"),
+        vt: lib,
+        cols: 100,
+        rows: 24,
+        post: view.post,
+        ended: () => undefined,
+      });
+      const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
+      await until("the prompt", () =>
+        view.screens.get(pane)?.some((row) => row === "$"),
+      );
+      const type = (text: string) =>
+        client.receive({
+          kind: "bytes",
+          bytes: new TextEncoder().encode(text),
+        });
+      // What tmux has in the pane (the page's view is the client's).
+      const screen = () =>
+        tmux(socket, "capture-pane", "-p", "-S", "-100", "-t", "ws-fallback");
+      for (const [keys, status] of [
+        [[":", "w", "q", "Enter"], "0"],
+        [[":", "c", "q", "Enter"], "1"],
+      ] as const) {
+        type(`clear; nvim --clean -n -i NONE ${file}; echo "status=$?"\r`);
+        await until(
+          "the TUI",
+          () =>
+            tmux(
+              socket,
+              "display-message",
+              "-p",
+              "-t",
+              "ws-fallback",
+              "#{alternate_on}",
+            ) === "1\n",
+          8000,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        client.receive({
+          kind: "keys",
+          keys: ["G", "o", ...status.split(""), "Escape", ...keys],
+        });
+        await until(
+          "the status",
+          () => screen().split("\n").includes(`status=${status}`),
+          8000,
+        );
+        // Said once, above the TUI, and left in the scrollback.
+        const said = screen().split("DevHub did not draw it within 0.5 s");
+        expect(said).toHaveLength(2);
+        // No option is left naming a socket.
+        expect(
+          tmux(socket, "show-options", "-p", "-t", "ws-fallback"),
+        ).not.toContain("@devhub-nvim");
+        type("clear\r");
+      }
+      // :wq wrote the line; :cq did not.
+      expect(readFileSync(file, "utf8")).toBe("\n0\n");
+      client.stop();
+      await until("the end", () => view.ended);
+    },
+    30000,
+  );
 });

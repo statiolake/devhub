@@ -47,7 +47,8 @@ describe("the key guard", () => {
 		expect(r.route("C-q", 0)).toEqual({ send: [] });
 		expect(r.holdingPrefix).toBe(true);
 		expect(r.route("z", 0)).toEqual({ send: ["C-q", "z"] });
-		expect(r.route("x", 0)).toEqual({ send: ["x"] });
+		// Bound to nothing: the pane's, sent to it as it is (`KeyRoute.pane`).
+		expect(r.route("x", 0)).toEqual({ send: ["x"], pane: true });
 		// An unbound key after the prefix is tmux's to ignore.
 		r.route("C-q", 0);
 		expect(r.route("Q", 0)).toEqual({ send: ["C-q", "Q"] });
@@ -85,7 +86,7 @@ describe("the key guard", () => {
 		expect(r.route("Up", 0)).toEqual({ send: ["C-q", "Up"] });
 		expect(r.route("Up", 100)).toEqual({ send: ["Up"] });
 		// After repeat-time the key is the root table's.
-		expect(r.route("Up", 1000)).toEqual({ send: ["Up"] });
+		expect(r.route("Up", 1000)).toEqual({ send: ["Up"], pane: true });
 		r.route("C-q", 2000);
 		expect(r.route("g", 2000)).toEqual({ send: ["C-q", "g"] });
 		const route = r.route("p", 2000);

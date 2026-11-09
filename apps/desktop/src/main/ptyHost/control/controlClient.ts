@@ -677,20 +677,25 @@ export class ControlClient {
 			return;
 		}
 		let send: string[] = [];
+		// Keys bound to nothing go to the client's pane as they are, not
+		// through its key tables (`KeyRoute.pane`); a run of them is one
+		// command, as a run of the others is.
+		let toPane = false;
 		const flush = () => {
 			if (send.length > 0)
-				void this.#command([
-					"send-keys",
-					"-K",
-					"-c",
-					this.#clientName,
-					"--",
-					...send,
-				]).then(() => this.#copyMoved());
+				void this.#command(
+					toPane
+						? ["send-keys", "--", ...send]
+						: ["send-keys", "-K", "-c", this.#clientName, "--", ...send],
+				).then(() => this.#copyMoved());
 			send = [];
 		};
 		for (const [index, key] of keys.entries()) {
 			const route = this.#router.route(key, Date.now(), this.#rootTable());
+			if (route.send.length > 0 && (route.pane === true) !== toPane) {
+				flush();
+				toPane = route.pane === true;
+			}
 			send.push(...route.send);
 			if (route.own !== undefined) {
 				flush();
