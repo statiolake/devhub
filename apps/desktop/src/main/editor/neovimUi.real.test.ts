@@ -345,7 +345,7 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 	it("opens a GUI window as an ordinary split, reports it, and hears its page", async () => {
 		const h = await attached();
 		await h.ui.request("nvim_exec_lua", [
-			"_G.got = nil; local gui = require('devhub_gui'); local w = gui.open{ title = 'demo', html = '<b>hi</b>' }; gui.on_message(w, function(m) _G.got = m end); gui.send(w, 'ping')",
+			"_G.got = nil; local gui = require('devhub_gui'); local w = gui.webview{ title = 'demo', html = '<b>hi</b>' }; w:on_message(function(m) _G.got = m end); w:send('ping')",
 			[],
 		]);
 		await h.until(
@@ -384,7 +384,7 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		const h = await attached();
 		const lua = (code: string) => h.ui.request("nvim_exec_lua", [code, []]);
 		await lua(
-			"_G.w = require('devhub_gui').open{ title = 'keys', html = '<button>a</button>' }",
+			"_G.w = require('devhub_gui').webview{ title = 'keys', html = '<button>a</button>' }",
 		);
 		await h.until(() => h.gui.opened.length > 0, "the GUI window");
 		expect(h.gui.opened[0]).toMatchObject({ keyboard: "neovim" });
@@ -484,14 +484,14 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 	it("keeps a url page's keys its own, and refuses to drive one from Neovim", async () => {
 		const h = await attached();
 		await h.ui.request("nvim_exec_lua", [
-			"require('devhub_gui').open{ title = 'web', url = 'https://example.com' }",
+			"require('devhub_gui').webview{ title = 'web', url = 'https://example.com' }",
 			[],
 		]);
 		await h.until(() => h.gui.opened.length > 0, "the GUI window");
 		expect(h.gui.opened[0]).toMatchObject({ keyboard: "content" });
 		await expect(
 			h.ui.request("nvim_exec_lua", [
-				"require('devhub_gui').open{ url = 'https://example.com', keyboard = 'neovim' }",
+				"require('devhub_gui').webview{ url = 'https://example.com', keyboard = 'neovim' }",
 				[],
 			]),
 		).rejects.toThrow(/keyboard = 'content'/);
@@ -742,7 +742,7 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		h.ui.client.close();
 	});
 
-	it("reports a view's items and cursor, a card's reserved rows round trip, and a decorated range", async () => {
+	it("reports a view's items and cursor, and a card's reserved rows round trip", async () => {
 		const h = await attached(60, 20);
 		const waitFor = async (check: () => boolean, what: string) => {
 			const deadline = Date.now() + 3_000;
@@ -889,54 +889,174 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		]);
 		await waitFor(() => card()?.row === -5, "the card further above");
 
-		// A decoration over lines 3–4.
 		await h.ui.request("nvim_exec_lua", [
-			"vim.fn.winrestview({ lnum = 1, topline = 1, topfill = 0 }); _G.deco = require('devhub_gui').decorate{ buf = 0, range = { 3, 4 }, style = 'dim', tag = 'NEW' }",
-			[],
-		]);
-		await waitFor(
-			() => list(last("layers")?.["decos"]).length > 0,
-			"the decoration placed",
-		);
-		expect(last("deco")).toMatchObject({ style: "dim", tag: "NEW" });
-		expect(list(last("layers")?.["decos"])[0]).toMatchObject({
-			row: 6,
-			rows: 2,
-			col: 0,
-		});
-		// Below a closed fold of 250 lines (a diff's, say): still found.
-		await h.ui.request("nvim_exec_lua", [
-			`_G.deco.clear(); _G.card.clear()
-			vim.cmd('enew')
-			local lines = {}
-			for i = 1, 300 do lines[i] = 'line ' .. i end
-			vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
-			vim.wo.foldmethod = 'manual'
-			vim.cmd('1,250fold')
-			_G.deco = require('devhub_gui').decorate{ buf = 0, range = { 252, 253 }, style = 'highlight' }`,
+			"_G.card.clear(); _G.view.close()",
 			[],
 		]);
 		await waitFor(
 			() =>
-				(list(last("layers")?.["decos"])[0] as { row?: number } | undefined)
-					?.row === 2,
-			"the decoration under the fold",
-		);
-		expect(list(last("layers")?.["decos"])[0]).toMatchObject({
-			row: 2,
-			rows: 2,
-		});
-		await h.ui.request("nvim_exec_lua", [
-			"_G.deco.clear(); _G.card.clear(); _G.view.close()",
-			[],
-		]);
-		await waitFor(
-			() =>
-				["deco_clear", "inline_clear", "view_clear"].every((k) =>
+				["inline_clear", "view_clear"].every((k) =>
 					h.gui.events.some((e) => e.kind === k),
 				),
 			"everything cleared",
 		);
 		h.ui.client.close();
 	}, 20_000);
+
+	it("draws a framed view: the query's text and caret, the list's rows and cursor, the preview's rect", async () => {
+		const h = await attached(80, 24);
+		const waitFor = async (check: () => boolean, what: string) => {
+			const deadline = Date.now() + 3_000;
+			while (!check()) {
+				if (Date.now() > deadline)
+					throw new Error(`timed out waiting for ${what}`);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+		};
+		const last = (kind: string) =>
+			h.gui.events.filter((e) => e.kind === kind).at(-1)?.payload as
+				| Record<string, unknown>
+				| undefined;
+		const frames = () =>
+			(last("layers")?.["frames"] ?? []) as Record<string, unknown>[];
+		// A frame; a hidden query and list relative to it (a hidden float's
+		// place is worked out from its config); a preview.
+		await h.ui.request("nvim_exec_lua", [
+			`local gui = require('devhub_gui')
+			local function float(buf, cfg)
+				return vim.api.nvim_open_win(buf, false, vim.tbl_extend('force', { style = 'minimal' }, cfg))
+			end
+			local frame = float(vim.api.nvim_create_buf(false, true), { relative = 'editor', row = 2, col = 4, width = 60, height = 18, zindex = 50 })
+			local qbuf = vim.api.nvim_create_buf(false, true)
+			local query = float(qbuf, { relative = 'win', win = frame, row = 0, col = 0, width = 60, height = 2, hide = true, zindex = 51 })
+			local lbuf = vim.api.nvim_create_buf(false, true)
+			vim.api.nvim_buf_set_lines(lbuf, 0, -1, false, { 'one', 'two', '' })
+			local list = float(lbuf, { relative = 'win', win = frame, row = 2, col = 0, width = 30, height = 16, hide = true, zindex = 51 })
+			local preview = float(vim.api.nvim_create_buf(false, true), { relative = 'editor', row = 5, col = 34, width = 30, height = 14, zindex = 51 })
+			_G.got = {}
+			_G.view = gui.view{ buf = lbuf,
+				items = function(lnum, line)
+					if line == '' then return nil end
+					return { node = { type = 'text', text = line:upper() }, heading = lnum == 1 and { type = 'text', text = 'h' } or nil }
+				end,
+				on_click = function(l, n) table.insert(_G.got, 'click' .. l .. ':' .. n) end,
+				on_rows = function(r) table.insert(_G.got, 'rows' .. r) end,
+				on_scroll = function(r) table.insert(_G.got, 'scroll' .. r) end,
+				keys = { { '<CR>', 'open' } },
+				frame = { win = frame, query = { win = query, placeholder = 'Search' },
+					preview = { win = preview, title = { type = 'text', text = 'src' } },
+					title = { type = 'badge', text = 'Files' } } }
+			vim.api.nvim_set_current_win(query)
+			vim.api.nvim_buf_set_lines(qbuf, 0, -1, false, { 'cönf' })
+			vim.cmd('startinsert!')`,
+			[],
+		]);
+		await waitFor(() => frames().length === 1, "the frame placed");
+		const view = last("view") as {
+			id: number;
+			items: unknown[];
+			keys: unknown;
+			frame: { placeholder: string; title: unknown };
+		};
+		expect(view.items).toMatchObject([
+			{ line: 1, text: "one", node: { text: "ONE" }, heading: { text: "h" } },
+			{ line: 2, text: "two", node: { text: "TWO" } },
+			{ line: 3, text: "" },
+		]);
+		expect(view.frame).toMatchObject({
+			placeholder: "Search",
+			title: { text: "Files" },
+		});
+		expect(view.keys).toEqual([["<CR>", "open"]]);
+		await waitFor(
+			() => (frames()[0]?.["query"] as { insert?: boolean })?.insert === true,
+			"the query in Insert mode",
+		);
+		const placed = frames()[0] as Record<string, Record<string, unknown>>;
+		expect(placed["frame"]).toMatchObject({
+			row: 2,
+			col: 4,
+			width: 60,
+			height: 18,
+		});
+		expect(placed["query"]).toMatchObject({
+			row: 2,
+			col: 4,
+			height: 2,
+			text: "cönf",
+			caret: 5,
+			current: true,
+		});
+		expect(placed["list"]).toMatchObject({
+			row: 4,
+			col: 4,
+			width: 30,
+			height: 16,
+			cursor: 1,
+			current: false,
+		});
+		expect(placed["preview"]).toMatchObject({
+			row: 5,
+			col: 34,
+			width: 30,
+			height: 14,
+		});
+		// The page's calls reach the view's functions; the keys stay in the query.
+		await h.ui.request("nvim_exec_lua", [
+			"local M = require('devhub_gui'); local id = ...; M._frame_click(id, 2, 2); M._view_rows(id, 12); M._view_rows(id, 12); M._view_scroll(id, -3)",
+			[view.id],
+		]);
+		expect(
+			await h.ui.request("nvim_exec_lua", [
+				"return { _G.got, vim.bo[vim.api.nvim_get_current_buf()].buftype == 'nofile' and vim.fn.mode() }",
+				[],
+			]),
+		).toEqual([["click2:2", "rows12", "scroll-3"], "i"]);
+		await h.ui.request("nvim_exec_lua", [
+			"_G.view:frame{ status = { type = 'text', text = '2 / 2' } }",
+			[],
+		]);
+		await waitFor(
+			() =>
+				(last("view")?.["frame"] as { status?: { text?: string } } | undefined)
+					?.status?.text === "2 / 2",
+			"the status",
+		);
+		await h.ui.request("nvim_exec_lua", ["_G.view:close()", []]);
+		await waitFor(() => last("view_clear") !== undefined, "closed");
+		await waitFor(() => frames().length === 0, "unplaced");
+		h.ui.client.close();
+	}, 20_000);
+
+	it("sets Neovim's own virtual text in the UI face and leaves a plugin's as cells", async () => {
+		const h = await attached(60, 12);
+		const decor = () => {
+			const last = h.gui.events.filter((e) => e.kind === "decor").at(-1)
+				?.payload as
+				| { wins?: Record<string, { kind: string; text: string }[]> }
+				| undefined;
+			return Object.values(last?.wins ?? {}).flat();
+		};
+		await h.ui.request("nvim_exec_lua", [
+			`vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'local x = 1', 'local y = 2' })
+			local plugin = vim.api.nvim_create_namespace('a_plugin')
+			vim.api.nvim_buf_set_extmark(0, plugin, 0, 0, { virt_text = { { 'plugin words' } } })
+			vim.api.nvim_buf_set_extmark(0, plugin, 0, 0, { virt_lines = { { { '- deleted line' } } } })
+			local diag = vim.api.nvim_create_namespace('test.diagnostics')
+			vim.diagnostic.config({ virtual_text = true })
+			vim.diagnostic.set(diag, 0, { { lnum = 1, col = 0, message = 'unused y', severity = vim.diagnostic.severity.WARN } })
+			vim.cmd('redraw')`,
+			[],
+		]);
+		const deadline = Date.now() + 3_000;
+		while (!decor().some((d) => d.text.includes("unused y"))) {
+			if (Date.now() > deadline) throw new Error("no diagnostic in decor");
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		const texts = decor().map((d) => d.text);
+		expect(texts.some((t) => t.includes("unused y"))).toBe(true);
+		expect(texts.some((t) => t.includes("plugin words"))).toBe(false);
+		expect(texts.some((t) => t.includes("deleted line"))).toBe(false);
+		h.ui.client.close();
+	});
 });

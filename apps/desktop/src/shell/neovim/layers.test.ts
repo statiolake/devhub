@@ -23,7 +23,7 @@ describe("buffer-backed GUI layers on the page", () => {
     expect(applyLayerEvent(state, "view_clear", { id: 3 }).views.size).toBe(0);
   });
 
-  it("keeps a card only with a node, and a decoration only with a style", () => {
+  it("keeps a card only with a node", () => {
     let state = applyLayerEvent(NO_LAYERS, "inline", {
       id: 1,
       node: { type: "nope" },
@@ -34,19 +34,6 @@ describe("buffer-backed GUI layers on the page", () => {
       node: { type: "text", text: "hi" },
     });
     expect(state.inlines.get(1)?.node).toMatchObject({ type: "text" });
-    state = applyLayerEvent(state, "deco", { id: 2, style: "glow" });
-    expect(state.decos.size).toBe(0);
-    state = applyLayerEvent(state, "deco", {
-      id: 2,
-      style: "dim",
-      tag: "NEW",
-      group: "DiagnosticWarn",
-    });
-    expect(state.decos.get(2)).toMatchObject({
-      style: "dim",
-      tag: "NEW",
-      group: "DiagnosticWarn",
-    });
   });
 
   it("takes where everything is from one layers event", () => {
@@ -66,7 +53,6 @@ describe("buffer-backed GUI layers on the page", () => {
         { id: 2, win: 1000, row: 5, base: 0, col: 4, width: 70, rows: 0 },
       ],
       measure: [{ id: 9, width: 70, full: 2 }],
-      decos: {},
     });
     expect(state.placedViews).toEqual([
       { id: 3, win: 1000, cursor: 4, current: true },
@@ -84,7 +70,6 @@ describe("buffer-backed GUI layers on the page", () => {
       },
     ]);
     expect(state.measureInlines).toEqual([{ id: 9, width: 70, full: 2 }]);
-    expect(state.placedDecos).toEqual([]);
   });
   it("keeps a popup, where its anchor is, and the scrolls its keys ask for", () => {
     let state = applyLayerEvent(NO_LAYERS, "popup", {
@@ -103,7 +88,6 @@ describe("buffer-backed GUI layers on the page", () => {
       views: {},
       inlines: {},
       measure: {},
-      decos: {},
       popups: [
         { id: 4, win: 1000, row: 3, base: 0, col: 7, focused: true },
         { id: 5 },
@@ -125,5 +109,80 @@ describe("buffer-backed GUI layers on the page", () => {
     state = applyLayerEvent(state, "popup_clear", { id: 4 });
     expect(state.popups.size).toBe(0);
     expect(state.popupScrolls.size).toBe(0);
+  });
+
+  it("keeps a framed view's parts, and where its windows stand", () => {
+    let state = applyLayerEvent(NO_LAYERS, "view", {
+      id: 6,
+      items: [
+        { line: 2, text: "b", heading: { type: "text", text: "file" } },
+        { line: 1, text: "a", node: { type: "text", text: "A" } },
+      ],
+      keys: [["<CR>", "open"], ["bad"]],
+      frame: {
+        title: { type: "badge", text: "Files" },
+        placeholder: "Search",
+      },
+      hl: {},
+    });
+    const view = state.views.get(6);
+    expect(view?.items[1]?.heading).toMatchObject({ type: "text" });
+    expect(view?.keys).toEqual([["<CR>", "open"]]);
+    expect(view?.frame?.title).toMatchObject({ type: "badge", text: "Files" });
+    expect(view?.frame?.placeholder).toBe("Search");
+    expect(
+      applyLayerEvent(NO_LAYERS, "view", {
+        id: 5,
+        items: [],
+        hl: {},
+      }).views.get(5)?.frame,
+    ).toBeUndefined();
+    const rect = { row: 2, col: 4, width: 50, height: 20, top: 0 };
+    const query = {
+      ...rect,
+      height: 2,
+      text: "conf",
+      caret: 4,
+      current: true,
+      insert: true,
+    };
+    const preview = {
+      ...rect,
+      row: 5,
+      col: 29,
+      width: 25,
+      height: 15,
+      win: 1003,
+    };
+    state = applyLayerEvent(state, "layers", {
+      frames: [
+        {
+          id: 6,
+          win: 1001,
+          frame: rect,
+          list: { ...rect, row: 4, width: 25, height: 17, cursor: 3 },
+          query,
+          preview,
+        },
+        { id: 8, win: 1002, frame: rect },
+      ],
+    });
+    expect(state.placedFrames).toEqual([
+      {
+        id: 6,
+        win: 1001,
+        frame: rect,
+        list: {
+          ...rect,
+          row: 4,
+          width: 25,
+          height: 17,
+          cursor: 3,
+          current: false,
+        },
+        query,
+        preview,
+      },
+    ]);
   });
 });

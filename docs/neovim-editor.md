@@ -388,15 +388,15 @@ z-order and opaque canvas — and where the code still falls short:
       buffer's own columns — indent guides, tables, concealed markup —
       it only works on cells), `virt_lines_above`, and a fold whose
       `foldtext` is empty (the line itself, content).
-    - Left as cells too: what a plugin says is content.
-      `require('devhub_gui').content_namespace(ns)` (devhub.nvim:
-      `gui.content_namespace`) declares that the virtual text and lines of an
-      extmark namespace are code, not words about it. The deleted lines of
-      an inline diff and a hunk preview are examples. They stay in the
-      grid's face like the buffer's own lines; `false` undoes it. Only the
-      plugin knows which of its virtual lines are code, so it says so. The
-      cells cannot tell, and guessing from highlight groups would be wrong
-      as often as right.
+    - Left as cells too: every plugin's virtual text and lines. Only
+      Neovim's own standard features (namespaces `nvim.*`: diagnostics'
+      virtual text and lines, LSP inlay hints and code lenses), folds and
+      DevHub's own (`devhub*`) are set in the UI face: they are what
+      DevHub restyles on purpose. A plugin's (an inline diff's deleted
+      lines, a blame line, a hunk preview) is its content, shown as it
+      drew it, as a plugin's float is; neither side declares anything to
+      the other, and guessing from highlight groups would be wrong as
+      often as right.
     - Wide characters take their two cells in the match; a CJK word in a
       proportional face is about as wide as its cells.
   - A closed fold's fill, whatever its `fold:` character, is one hairline
@@ -491,7 +491,7 @@ z-order and opaque canvas — and where the code still falls short:
   not in floats, not with reduced motion; 60 ms is over before the next
   key at any typing speed.
 - What sits on a window's text rides it (`riders.ts`): inline images and
-  cards, decorations and popups (the page's DOM) are drawn where their line
+  cards and popups (the page's DOM) are drawn where their line
   is shown, moved by a transform each frame and cut to the window's text
   area. Lua places them in rows from the window's top, beyond the window
   too (up to a window's height, counted with `nvim_win_text_height`: the
@@ -716,19 +716,19 @@ the prompt and the band, `main/editor/neovimMessages.ts` is the Lua).
 - `ui2` stays off: it takes `ext_cmdline` and the messages itself and the
   command line would no longer be DevHub's.
 
-### GUI windows: GUI surfaces live inside Neovim windows
+### Webviews: web content lives inside Neovim windows
 
 The rule: Neovim owns layout, state and input; every GUI element is attached
 to a Neovim object and follows it.
 
 ```lua
 local gui = require('devhub_gui')
-local w = gui.open{ title = 'Outline', html = '<button>…</button>', win = 'vsplit' }
+local w = gui.webview{ title = 'Outline', html = '<button>…</button>', win = 'vsplit' }
 --                 or url = 'https://…'; win = 'vsplit' | 'split' | 'float' | 'tab' | 'current'
 --                 keyboard = 'neovim' (html's default) | 'content' (url's)
-gui.on_message(w, function(msg) … end)   -- the page's devhub.send(msg)
-gui.send(w, { kind = 'outline', … })     -- the page's devhub.onMessage(fn)
-gui.close(w)
+w:on_message(function(msg) … end)       -- the page's devhub.send(msg)
+w:send({ kind = 'outline', … })          -- the page's devhub.onMessage(fn)
+w:close()
 ```
 
 In a float with a border (`win = 'float'`), the content goes inside
@@ -884,7 +884,7 @@ img.clear()
   `:DevhubImageDemo [path]` opens a markdown buffer with one (with no path,
   a small generated PNG).
 
-### Components, views, inline cards and decorations
+### Components, views, inline cards and popups
 
 The rule again, for what a plugin wants to show rather than a page: Neovim
 owns the state, the layout and the keys; DevHub only paints, and what it
@@ -902,11 +902,11 @@ so a view wears the colorscheme and follows `:colorscheme`. Text is in
 DevHub's own (proportional) type, `mono` in the grid's face. There is no HTML
 and no script in it: a node with `on_click` gets an action number, and a
 click sends that number back to Neovim, where the function runs. A node of
-the wrong shape is dropped. `gui.open`'s HTML stays the escape hatch.
+the wrong shape is dropped. `gui.webview`'s HTML stays the escape hatch.
 
 The Lua is `main/editor/neovimGuiLayers.ts` (`LAYERS_LUA`), run into
 `devhub_gui` at every attach after `SETUP_LUA`; devhub.nvim's `gui.ui` builds
-and checks the trees and its `gui.view`/`gui.inline`/`gui.decorate` forward
+and checks the trees and its `gui.view`/`gui.inline`/`gui.popup` forward
 to it. The page's reducer is `shell/neovim/layers.ts`, its views
 `LayerViews.tsx`.
 
@@ -918,9 +918,14 @@ local view = gui.view{ buf = buf, win = 'vsplit',
   on_click = function(lnum) end, keys = { { 'j/k', 'move' }, { '<CR>', 'open' } } }
 local card = gui.inline{ buf = 0, lnum = 87, id = 'thread:1', range = { 84, 87 },
   component = ui.card{ accent = 'warn', ui.md('**Waiting** for the agent') } }
-local deco = gui.decorate{ buf = 0, range = { 23, 31 }, style = 'dim' }   -- 'highlight' | 'tag'
 local pop = gui.popup{ anchor = 'cursor', component = ui.md(markdown), max_width = 80,
   keys = { ['<CR>'] = function(p) end } }                    -- :focus(), :scroll('half'), :close()
+local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },            -- a framed view: a picker
+  items = function(lnum, line) return ui.text(line) end,                             -- or { node, heading }
+  on_click = function(lnum, clicks) end, on_scroll = function(rows) end, on_rows = function(rows) end,
+  frame = { win = float, query = { win = qwin, placeholder = 'Search' },
+    preview = { win = pwin, title = ui.text('src › a.ts') }, title = ui.badge('Files'), status = ui.text('3 / 9') } }
+                                                          -- :frame{ status = … }, :redraw(), :close()
 ```
 
 - **`gui.view`** — a panel that is a buffer: one buffer line per item (the
@@ -935,6 +940,25 @@ local pop = gui.popup{ anchor = 'cursor', component = ui.md(markdown), max_width
   sight when its item leaves (`wheelFocus`). An edit to the buffer
   (`on_lines`) or `view:update()` draws it again; `keys` is a hint line at
   the bottom. A view covers its window's grid, cursor included.
+- **A framed view** (`gui.view{ frame = … }`) — the same view drawn in a
+  frame over a float instead of over its window: a picker's frontend,
+  whoever's picker it is. The plugin lays out Neovim windows and DevHub
+  draws each part where its window stands (`FramedView.tsx`'s
+  `frameParts`): the view's items in the cells of the window showing its
+  buffer (hidden: `hide = true`), whose cursor line is the focus; a
+  header on the **query** window's rows — `title`, the query window's first
+  line as a field with the caret at its cursor while it is in Insert mode,
+  `status`; the **preview**, a window drawn as cells, with its title on the
+  row above it; and `keys` as the hint row, on the frame's last row. Items
+  are a line and a third tall; `{ node, heading }` items put a heading
+  above an item that is not one; a click is `on_click(lnum, clicks)` and
+  leaves the keys where they are, the wheel `on_scroll(rows)`, and
+  `on_rows(rows)` says how many items fit (the plugin's page size). Every
+  key is still a buffer-local map in the query or the list. A hidden float
+  is never drawn, so Lua works its place out from its config. snacks is
+  drawn this way by
+  [snacks-ui.devhub](https://github.com/statiolake/snacks-ui.devhub),
+  outside devhub.nvim (`native-picker.md`).
 - **`gui.inline`** — a card under a line, in the rows an extmark's
   `virt_lines` reserve (the image plumbing, again on every scroll, fold,
   edit and window change). The page measures the card at the width it is
@@ -945,10 +969,6 @@ local pop = gui.popup{ anchor = 'cursor', component = ui.md(markdown), max_width
   just above the top is drawn clipped (`topfill`), one below the bottom
   cut by the window. The cursor on its `range` marks it active (a ring);
   its keys are the plugin's buffer-local maps on those lines.
-- **`gui.decorate`** — a line range (an extmark, so it follows edits)
-  dimmed, highlighted (a tint and a bar in a group's colour) or tagged (a
-  pill at its right), painted over every window showing it, diff windows
-  included.
 - **`gui.popup`** — a hover: a component at a buffer position (the cursor,
   or `{ buf, lnum, col }`; an extmark) with no Neovim window. DevHub lays it
   out its own way — prose reflowed in DevHub's type, code in the grid's face
@@ -1297,8 +1317,9 @@ editor half); `Cmd+Q O` between the halves; resize; switching Workspaces;
 ## Phase 2
 
 **GUI plugin bridge for devhub.nvim.** Done: `require('devhub').gui`
-(devhub.nvim) forwards `open`, `send`, `on_message`, `close`, `notify`,
-`image`, `view`, `inline`, `decorate` and `popup` to the `devhub_gui`
+(devhub.nvim) forwards `webview` (its handle's `send`, `on_message`,
+`close`), `notify`,
+`image`, `view`, `inline` and `popup` to the `devhub_gui`
 DevHub injects — one implementation, owned by the end that speaks the RPC —
 queues calls made before the attach until `User DevhubGui`, and does nothing
 outside DevHub (`notify` falls back to `vim.notify`). Still to come:

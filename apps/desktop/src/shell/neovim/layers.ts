@@ -2,11 +2,13 @@
  * What `devhub_gui`'s buffer-backed GUI layers leave on the page: views
  * (`gui.view`: one component per buffer line, painted over the windows that
  * show the buffer), inline cards (`gui.inline`: a component in the
- * `virt_lines` rows of an extmark), line decorations (`gui.decorate`) and
- * popups (`gui.popup`: a component at a buffer position, a hover).
+ * `virt_lines` rows of an extmark),
+ * popups (`gui.popup`: a component at a buffer position, a hover) and
+ * framed views (`gui.view{ frame }`: a view drawn in a frame over a float,
+ * round a query field and a preview window — a picker's frontend).
  *
  * Neovim owns all of it. Lua sends the content when it changes (`view`,
- * `inline`, `deco`, their `*_clear`) and where everything is after every
+ * `inline`, their `*_clear`) and where everything is after every
  * scroll, cursor move, edit and window change (`layers`); the page paints
  * and sends clicks, wheel moves and a card's measured height back as Lua
  * calls. A payload of the wrong shape is ignored. See `docs/neovim-editor.md`.
@@ -25,6 +27,8 @@ export interface ViewItem {
   readonly line: number;
   /** Its component; none: the line's own text, plainly. */
   readonly node: ComponentNode | undefined;
+  /** Drawn above the item, not an item (a file's name over its matches). */
+  readonly heading?: ComponentNode | undefined;
   readonly text: string;
 }
 
@@ -34,22 +38,13 @@ export interface ViewContent {
   readonly hl: HlTable;
   /** The hint line: keys and what they do. */
   readonly keys: readonly (readonly [string, string])[];
+  /** Drawn in a frame over a float rather than over its windows. */
+  readonly frame?: ViewFrame | undefined;
 }
 
 export interface InlineContent {
   readonly id: number;
   readonly node: ComponentNode;
-  readonly hl: HlTable;
-}
-
-export type DecoStyle = "dim" | "highlight" | "tag";
-
-export interface DecoContent {
-  readonly id: number;
-  readonly style: DecoStyle;
-  readonly tag: string | undefined;
-  /** The group whose colour a highlight or a tag wears. */
-  readonly group: string | undefined;
   readonly hl: HlTable;
 }
 
@@ -87,17 +82,6 @@ export interface InlineMeasure {
   readonly full: number;
 }
 
-/** A decoration's rows in one window, as an inline card's. */
-export interface DecoPlace {
-  readonly id: number;
-  readonly win: number;
-  readonly row: number;
-  readonly base: number;
-  readonly rows: number;
-  readonly col: number;
-  readonly width: number;
-}
-
 export type PopupPlacement = "below" | "above" | "auto";
 
 export interface PopupContent {
@@ -129,30 +113,67 @@ export interface PopupScroll {
   readonly n: number;
 }
 
+/** A framed view's parts round its items (`gui.view{ frame }`). */
+export interface ViewFrame {
+  readonly title: ComponentNode | undefined;
+  readonly status: ComponentNode | undefined;
+  readonly previewTitle: ComponentNode | undefined;
+  readonly placeholder: string | undefined;
+}
+
+export interface FrameRect {
+  readonly row: number;
+  readonly col: number;
+  readonly width: number;
+  readonly height: number;
+  /** Its top border's rows. */
+  readonly top: number;
+}
+
+export interface FramePlace {
+  readonly id: number;
+  /** The view's id. */
+  readonly win: number;
+  readonly frame: FrameRect;
+  readonly list: FrameRect & {
+    /** The selected row: the list window's cursor line. */
+    readonly cursor: number;
+    readonly current: boolean;
+  };
+  readonly query:
+    | (FrameRect & {
+        readonly text: string;
+        /** The cursor's byte column in the text. */
+        readonly caret: number;
+        readonly current: boolean;
+        readonly insert: boolean;
+      })
+    | undefined;
+  readonly preview: (FrameRect & { readonly win: number }) | undefined;
+}
+
 export interface Layers {
   readonly views: ReadonlyMap<number, ViewContent>;
   readonly inlines: ReadonlyMap<number, InlineContent>;
-  readonly decos: ReadonlyMap<number, DecoContent>;
   readonly placedViews: readonly ViewPlace[];
   readonly placedInlines: readonly InlinePlace[];
   readonly measureInlines: readonly InlineMeasure[];
-  readonly placedDecos: readonly DecoPlace[];
   readonly popups: ReadonlyMap<number, PopupContent>;
   readonly placedPopups: readonly PopupPlace[];
   readonly popupScrolls: ReadonlyMap<number, PopupScroll>;
+  readonly placedFrames: readonly FramePlace[];
 }
 
 export const NO_LAYERS: Layers = {
   views: new Map(),
   inlines: new Map(),
-  decos: new Map(),
   placedViews: [],
   placedInlines: [],
   measureInlines: [],
-  placedDecos: [],
   popups: new Map(),
   placedPopups: [],
   popupScrolls: new Map(),
+  placedFrames: [],
 };
 
 /** The events this reducer takes. */
@@ -161,8 +182,6 @@ export const LAYER_EVENTS: ReadonlySet<string> = new Set([
   "view_clear",
   "inline",
   "inline_clear",
-  "deco",
-  "deco_clear",
   "popup",
   "popup_clear",
   "popup_scroll",
@@ -211,16 +230,89 @@ function viewContent(id: number, p: Rec): ViewContent {
       const line = r ? int(r, "line") : undefined;
       if (!r || line === undefined || line < 1) return [];
       const text = typeof r["text"] === "string" ? r["text"] : "";
-      return [{ line, node: parseNode(r["node"]), text }];
+      const heading = parseNode(r["heading"]);
+      return [
+        {
+          line,
+          node: parseNode(r["node"]),
+          text,
+          ...(heading ? { heading } : {}),
+        },
+      ];
     })
     .sort((a, b) => a.line - b.line);
-  const keys = luaList(p["keys"]).flatMap((entry) => {
+  const frame = viewFrame(p["frame"]);
+  return {
+    id,
+    items,
+    hl: parseHlTable(p["hl"]),
+    keys: keyList(p["keys"]),
+    ...(frame ? { frame } : {}),
+  };
+}
+
+function keyList(value: unknown): (readonly [string, string])[] {
+  return luaList(value).flatMap((entry) => {
     const [key, label] = luaList(entry);
     return typeof key === "string" && typeof label === "string"
       ? [[key, label] as const]
       : [];
   });
-  return { id, items, hl: parseHlTable(p["hl"]), keys };
+}
+
+function viewFrame(value: unknown): ViewFrame | undefined {
+  const f = rec(value);
+  if (!f) return undefined;
+  return {
+    title: parseNode(f["title"]),
+    status: parseNode(f["status"]),
+    previewTitle: parseNode(f["preview_title"]),
+    placeholder:
+      typeof f["placeholder"] === "string" ? f["placeholder"] : undefined,
+  };
+}
+
+const RECT_KEYS = ["row", "col", "width", "height", "top"] as const;
+
+function frameRect(value: unknown): FrameRect | undefined {
+  const r = rec(value);
+  const n = r ? ints(r, RECT_KEYS) : undefined;
+  return n && n.width > 0 && n.height > 0 ? n : undefined;
+}
+
+function framePlace(value: unknown): FramePlace[] {
+  const r = rec(value);
+  const n = r ? ints(r, ["id", "win"] as const) : undefined;
+  const frame = r ? frameRect(r["frame"]) : undefined;
+  const listRec = r ? rec(r["list"]) : undefined;
+  const list = listRec ? frameRect(listRec) : undefined;
+  const cursor = listRec ? int(listRec, "cursor") : undefined;
+  if (!r || !n || !frame || !listRec || !list || cursor === undefined)
+    return [];
+  const q = rec(r["query"]);
+  const qRect = q ? frameRect(q) : undefined;
+  const pv = rec(r["preview"]);
+  const pvRect = pv ? frameRect(pv) : undefined;
+  const pvWin = pv ? int(pv, "win") : undefined;
+  return [
+    {
+      ...n,
+      frame,
+      list: { ...list, cursor, current: listRec["current"] === true },
+      query:
+        q && qRect
+          ? {
+              ...qRect,
+              text: typeof q["text"] === "string" ? q["text"] : "",
+              caret: int(q, "caret") ?? 0,
+              current: q["current"] === true,
+              insert: q["insert"] === true,
+            }
+          : undefined,
+      preview:
+        pvRect && pvWin !== undefined ? { ...pvRect, win: pvWin } : undefined,
+    },
+  ];
 }
 
 /** One event from `devhub_gui`, applied. */
@@ -261,24 +353,6 @@ export function applyLayerEvent(
       return id === undefined
         ? state
         : { ...state, inlines: without(state.inlines, id) };
-    case "deco": {
-      const style = p["style"];
-      if (
-        id === undefined ||
-        (style !== "dim" && style !== "highlight" && style !== "tag")
-      )
-        return state;
-      return {
-        ...state,
-        decos: new Map(state.decos).set(id, {
-          id,
-          style,
-          tag: typeof p["tag"] === "string" ? p["tag"] : undefined,
-          group: typeof p["group"] === "string" ? p["group"] : undefined,
-          hl: parseHlTable(p["hl"]),
-        }),
-      };
-    }
     case "popup": {
       const node = parseNode(p["node"]);
       if (id === undefined || !node) return state;
@@ -330,10 +404,6 @@ export function applyLayerEvent(
         }),
       };
     }
-    case "deco_clear":
-      return id === undefined
-        ? state
-        : { ...state, decos: without(state.decos, id) };
     case "layers":
       return {
         ...state,
@@ -355,13 +425,6 @@ export function applyLayerEvent(
           const n = r ? ints(r, ["id", "width", "full"] as const) : undefined;
           return n && n.width > 0 ? [n] : [];
         }),
-        placedDecos: luaList(p["decos"]).flatMap((v) => {
-          const r = rec(v);
-          const n = r
-            ? ints(r, ["id", "win", "row", "rows", "col", "width"] as const)
-            : undefined;
-          return n && n.rows > 0 ? [{ ...n, base: rowsOf(n.win) }] : [];
-        }),
         placedPopups: luaList(p["popups"]).flatMap((v) => {
           const r = rec(v);
           const n = r
@@ -371,6 +434,7 @@ export function applyLayerEvent(
             ? [{ ...n, base: rowsOf(n.win), focused: r["focused"] === true }]
             : [];
         }),
+        placedFrames: luaList(p["frames"]).flatMap(framePlace),
       };
     default:
       return state;

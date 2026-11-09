@@ -1,0 +1,197 @@
+/*
+ * A framed view (`gui.view{ frame }`, FramedView.tsx), drawn natively over the
+ * float it covers. The colours are the floating surfaces' (`--float-*`, set
+ * on the editor from the theme's groups: NormalFloat, FloatBorder,
+ * StatusLine); the type is the UI face at the editor's scale. The preview
+ * window between the parts is Neovim's cells, over the frame.
+ */
+
+.nvim-view-frame {
+  position: absolute;
+  overflow: hidden;
+  background: var(--float-ground, var(--frame-ground));
+  color: var(--float-ink, var(--frame-ink));
+  font: var(--nvim-ui-size, 12px) / 1.45 var(--nvim-ui-font);
+}
+
+.nvim-view-frame-header {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid
+    var(--float-line, color-mix(in srgb, currentcolor 15%, transparent));
+  box-sizing: border-box;
+}
+
+.nvim-view-frame-title,
+.nvim-view-frame-status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.nvim-view-frame-status {
+  color: var(--frame-muted);
+}
+
+.nvim-view-frame-field {
+  flex: 1;
+  min-width: 0;
+  height: calc(100% - 10px);
+  max-height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border-radius: var(--float-radius, 4px);
+  border: 1px solid
+    var(--float-line, color-mix(in srgb, currentcolor 18%, transparent));
+  background: color-mix(
+    in srgb,
+    var(--float-ground, var(--frame-ground)) 70%,
+    light-dark(#fff, #000)
+  );
+  font-family: var(--nvim-grid-font);
+  white-space: pre;
+  overflow: hidden;
+}
+
+.nvim-view-frame-field-active {
+  border-color: color-mix(
+    in srgb,
+    var(--float-ink, var(--frame-ink)) 45%,
+    transparent
+  );
+}
+
+.nvim-view-frame-text {
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.nvim-view-frame-placeholder {
+  color: var(--frame-muted);
+  font-family: var(--nvim-ui-font);
+}
+
+.nvim-view-frame-caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 1.15em;
+  margin: 0 -0.75px;
+  vertical-align: text-bottom;
+  background: currentcolor;
+  animation: nvim-view-frame-blink 1.06s steps(1) infinite;
+}
+
+@keyframes nvim-view-frame-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nvim-view-frame-caret {
+    animation: none;
+  }
+}
+
+.nvim-view-frame-list {
+  position: absolute;
+  overflow: hidden;
+  padding: 4px 0;
+  box-sizing: border-box;
+}
+
+.nvim-view-frame-heading {
+  display: flex;
+  align-items: center;
+  min-height: var(--frame-row);
+  padding: 0 12px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.nvim-view-frame-row {
+  display: flex;
+  align-items: center;
+  min-height: var(--frame-row);
+  margin: 0 6px;
+  padding: 0 6px;
+  border-radius: var(--float-radius, 4px);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.nvim-view-frame-heading + .nvim-view-frame-row {
+  padding-left: 22px;
+}
+
+.nvim-view-frame-row > * {
+  min-width: 0;
+  flex: 1;
+}
+
+.nvim-view-frame-selected {
+  background: var(--frame-selected-idle);
+}
+
+.nvim-view-frame-active .nvim-view-frame-selected {
+  background: var(--frame-selected);
+}
+
+.nvim-view-frame-plain {
+  font-family: var(--nvim-grid-font);
+  white-space: pre;
+}
+
+.nvim-view-frame-rule {
+  position: absolute;
+  width: 1px;
+  background: var(
+    --float-line,
+    color-mix(in srgb, currentcolor 15%, transparent)
+  );
+}
+
+.nvim-view-frame-keys {
+  position: absolute;
+  inset-inline: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px 14px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border-top: 1px solid
+    var(--float-line, color-mix(in srgb, currentcolor 15%, transparent));
+  color: var(--frame-muted);
+  font-size: var(--nvim-label-size, 11px);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.nvim-view-frame-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nvim-view-frame-preview-title {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  box-sizing: border-box;
+  background: var(--float-band, var(--frame-ground));
+  color: var(--float-ink, var(--frame-ink));
+  border-bottom: 1px solid
+    var(--float-line, color-mix(in srgb, currentcolor 15%, transparent));
+  font: var(--nvim-label-size, 11px) / 1.4 var(--nvim-ui-font);
+  white-space: nowrap;
+  overflow: hidden;
+}

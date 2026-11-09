@@ -1,6 +1,6 @@
 /**
  * The page's side of `layers.ts`: views painted over their windows, cards in
- * the rows their extmarks reserve, line decorations, and popups.
+ * the rows their extmarks reserve, and popups.
  *
  * Neovim keeps the state and the keys. A view's focused item is the line
  * Neovim's cursor is on; the view scrolls (in pixels, its own way: items are
@@ -29,8 +29,6 @@ import {
   type HlTable,
 } from "./components";
 import type {
-  DecoContent,
-  DecoPlace,
   InlineContent,
   Layers,
   PopupContent,
@@ -261,6 +259,11 @@ function GuiView({
                 click(item.line, null);
               }}
             >
+              {item.heading ? (
+                <div className="nvim-view-heading">
+                  <ComponentTree node={item.heading} theme={theme} />
+                </div>
+              ) : null}
               {item.node ? (
                 <ComponentTree
                   node={item.node}
@@ -473,106 +476,6 @@ function InlineCard({
       }}
     >
       <ComponentTree node={content.node} theme={theme} />
-    </div>
-  );
-}
-
-/** Line decorations: a dimmed, a highlighted range, or a tag beside it. */
-export function LineDecorations({
-  layers,
-  host,
-}: {
-  readonly layers: Layers;
-  readonly host: LayerHost;
-}) {
-  useRide(host);
-  const { cell } = host;
-  return (
-    <>
-      {layers.placedDecos.map((place, index) => {
-        const content = layers.decos.get(place.id);
-        const box = host.boxes.find((b) => b.win === place.win);
-        if (!content || !box) return null;
-        return createPortal(
-          <Decoration
-            content={content}
-            host={host}
-            place={place}
-            style={{
-              left: (box.col + place.col) * cell.width,
-              top: (box.row + place.row) * cell.height,
-              width: place.width * cell.width,
-              height: place.rows * cell.height,
-            }}
-          />,
-          host.over(box.grid, "riders"),
-          `${String(place.id)}:${String(place.win)}:${String(index)}`,
-        );
-      })}
-    </>
-  );
-}
-
-function Decoration({
-  content,
-  host,
-  place,
-  style,
-}: {
-  readonly content: DecoContent;
-  readonly host: LayerHost;
-  readonly place: DecoPlace;
-  readonly style: CSSProperties;
-}) {
-  const ride = { "data-ride-win": place.win, "data-ride-base": place.base };
-  const normal = content.hl.get("Normal");
-  const bg = normal?.bg ?? host.defaults.background;
-  const color =
-    fgOf(content.hl, content.group) ??
-    fgOf(content.hl, "DiagnosticWarn") ??
-    rgbCss(host.defaults.foreground);
-  const tag =
-    content.tag !== undefined ? (
-      <span
-        className="nvim-deco-tag"
-        style={{
-          color: rgbCss(bg),
-          background: color,
-          lineHeight: `${String(host.cell.height - 6)}px`,
-        }}
-      >
-        {content.tag}
-      </span>
-    ) : null;
-  if (content.style === "dim") {
-    return (
-      <div
-        className="nvim-deco nvim-deco-dim"
-        {...ride}
-        style={{ ...style, background: rgbCss(bg, 0.55) }}
-      >
-        {tag}
-      </div>
-    );
-  }
-  if (content.style === "tag") {
-    return (
-      <div className="nvim-deco" {...ride} style={style}>
-        {tag}
-      </div>
-    );
-  }
-  return (
-    <div
-      className="nvim-deco nvim-deco-highlight"
-      {...ride}
-      style={{
-        ...style,
-        background: `color-mix(in srgb, ${color} 10%, transparent)`,
-        borderLeftColor: color,
-      }}
-    >
-      {tag}
     </div>
   );
 }

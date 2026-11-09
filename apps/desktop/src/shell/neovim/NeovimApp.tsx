@@ -12,7 +12,7 @@
  * the completion menu, the command line, the tab line — are widgets here,
  * in DevHub's own chrome.
  *
- * **GUI windows** follow the same rule. `require('devhub_gui').open{…}`
+ * **GUI windows** follow the same rule. `require('devhub_gui').webview{…}`
  * opens an ordinary Neovim window on a scratch buffer, and this page paints
  * web content exactly over that window's grid: `:vsplit`, `<C-w>` moves,
  * `:close`, `:only` and tab pages move it, because they move the window.
@@ -61,13 +61,8 @@ import {
 import { CompletionMenu } from "../completion/CompletionMenu";
 import { TabStrip } from "./TabStrip";
 import { InlineImages, Toasts } from "./DecorationViews";
-import {
-  GuiViews,
-  InlineCards,
-  LineDecorations,
-  Popups,
-  type LayerHost,
-} from "./LayerViews";
+import { GuiViews, InlineCards, Popups, type LayerHost } from "./LayerViews";
+import { GuiFrames } from "./FramedView";
 import {
   LAYER_EVENTS,
   NO_LAYERS,
@@ -835,9 +830,9 @@ function NeovimSurface({
             />
             {layerHost ? (
               <>
-                <LineDecorations layers={layers} host={layerHost} />
                 <InlineCards layers={layers} host={layerHost} />
                 <GuiViews layers={layers} host={layerHost} />
+                <GuiFrames layers={layers} host={layerHost} />
                 <Popups
                   layers={layers}
                   host={layerHost}

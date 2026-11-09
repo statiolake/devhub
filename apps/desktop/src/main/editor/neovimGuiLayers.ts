@@ -2,8 +2,10 @@
  * The buffer-backed GUI layers of `devhub_gui`, run on the server after
  * `SETUP_LUA` at every attach: `view` (a component per buffer line, painted
  * over the windows showing the buffer), `inline` (a component in the
- * `virt_lines` rows of an extmark, as tall as DevHub measures it) and
- * `decorate` (a dimmed, highlighted or tagged line range).
+ * `virt_lines` rows of an extmark, as tall as DevHub measures it), `popup`
+ * (a hover)
+ * — a view may instead be drawn in a frame over a float, round a query
+ * field and a preview window: a picker's frontend, whoever's picker it is.
  *
  * Neovim keeps the state, the layout and the keys: the buffer's lines are
  * the items (searchable, `5j`, marks), its cursor line is the focus, and an
@@ -18,7 +20,6 @@ local M = package.loaded["devhub_gui"]
 local event = M._event
 M._views = M._views or {}
 M._inlines = M._inlines or {}
-M._decos = M._decos or {}
 M._popups = M._popups or {}
 M._actions = M._actions or {}
 local ns = vim.api.nvim_create_namespace("devhub_gui_layers")
@@ -157,6 +158,11 @@ local function buf_of(buf)
   return buf
 end
 
+local function win_of(member)
+  local win = type(member) == "table" and member.win or member
+  return type(win) == "number" and win ~= 0 and win or nil
+end
+
 local function next_id()
   M._next = M._next + 1
   return M._next
@@ -201,11 +207,27 @@ local function render_view(view)
     elseif type(view.items) == "table" then
       node = view.items[lnum]
     end
+    -- An item is a component, or { node = component, heading = component }:
+    -- a heading is drawn above the item and is not an item.
+    local heading
+    if type(node) == "table" and node.type == nil and (node.node ~= nil or node.heading ~= nil) then
+      node, heading = node.node, node.heading
+    end
     local s = node ~= nil and serialize(node, actions, hls, 0) or nil
-    table.insert(items, { line = lnum, node = s, text = lines[lnum] })
+    local h = heading ~= nil and serialize(heading, actions, hls, 0) or nil
+    table.insert(items, { line = lnum, node = s, heading = h, text = lines[lnum] })
+  end
+  local frame
+  if view.frame then
+    local f = view.frame
+    local function part(node)
+      return node ~= nil and serialize(node, actions, hls, 0) or nil
+    end
+    frame = { title = part(f.title), status = part(f.status), preview_title = part(f.preview_title),
+      placeholder = f.placeholder }
   end
   M._actions["view:" .. view.id] = actions
-  event("view", { id = view.id, items = items, hl = hl_table(hls), keys = keys_list(view.keys) })
+  event("view", { id = view.id, items = items, hl = hl_table(hls), keys = keys_list(view.keys), frame = frame })
 end
 
 local render_pending = {}
@@ -242,15 +264,35 @@ local function open_window(buf, how)
   return win
 end
 
---- gui.view{ buf, win?, items = fn(lnum, line) | { [lnum] = node }, on_click?, keys? }:
---- the buffer's lines drawn as components, one item per line, over every
---- window that shows the buffer. win: a window, or 'vsplit' | 'split' |
---- 'float' | 'current' to open one. Answers a handle: :update(items?),
---- :close().
+--- gui.view{ buf, win?, items = fn(lnum, line) | { [lnum] = node }, on_click?,
+--- on_scroll?, on_rows?, keys? }: the buffer's lines drawn as components, one
+--- item per line, over every window that shows the buffer (an item may be
+--- { node, heading }: a heading above it that is not an item). win: a
+--- window, or 'vsplit' | 'split' | 'float' | 'current' to open one.
+--- on_click(lnum, clicks).
+--- frame = { win, query = { win, placeholder? }, preview = { win, title? },
+--- title?, status? }: the view is drawn in a frame over the float win instead
+--- of over its window (a hidden window showing buf, whose cursor line is the
+--- focus): a header (title, the query window's first line as a field with
+--- its caret in Insert mode, status), the items, the preview window's cells
+--- with its title above, and keys as the hint row. There on_scroll(rows)
+--- gets the wheel and on_rows(rows) how many items fit (the plugin pages).
+--- Answers a handle: :update(items?), :frame{ … }, :redraw(), :close().
 function M.view(opts)
   opts = opts or {}
   local buf = buf_of(opts.buf)
-  local view = { id = next_id(), buf = buf, items = opts.items, on_click = opts.on_click, keys = opts.keys }
+  local view = { id = next_id(), buf = buf, items = opts.items, on_click = opts.on_click, keys = opts.keys,
+    on_scroll = opts.on_scroll, on_rows = opts.on_rows }
+  if type(opts.frame) == "table" then
+    local f = opts.frame
+    local frame_win = win_of(f.win)
+    if not frame_win or not vim.api.nvim_win_is_valid(frame_win) then
+      error("devhub_gui.view: frame.win must be a window")
+    end
+    view.frame = { win = frame_win, query_win = win_of(f.query), placeholder = type(f.query) == "table" and f.query.placeholder or nil,
+      preview_win = win_of(f.preview), preview_title = type(f.preview) == "table" and f.preview.title or nil,
+      title = f.title, status = f.status }
+  end
   M._views[view.id] = view
   local handle = { id = view.id, buf = buf }
   function handle.update(self, items)
@@ -260,6 +302,27 @@ function M.view(opts)
   end
   function handle.close()
     M.view_clear(view.id)
+  end
+  --- The cursor moved without an autocmd (nvim_win_set_cursor on a window
+  --- that is not current): the focus is placed again.
+  function handle.redraw()
+    if M._views[view.id] == view then schedule_place() end
+  end
+  --- A framed view's parts: { title?, status?, preview_title?, placeholder?,
+  --- preview_win? (false: none) }.
+  function handle.frame(self, changes)
+    if type(self) ~= "table" or self.id == nil then changes = self end
+    local f = view.frame
+    if not f or M._views[view.id] ~= view or type(changes) ~= "table" then return end
+    for _, key in ipairs({ "title", "status", "preview_title", "placeholder" }) do
+      if changes[key] ~= nil then f[key] = changes[key] end
+    end
+    if changes.preview_win ~= nil then f.preview_win = win_of(changes.preview_win) end
+    schedule_render(view)
+  end
+  if view.frame then
+    vim.api.nvim_create_autocmd("WinClosed", { group = group, pattern = tostring(view.frame.win), once = true,
+      callback = function() M.view_clear(view.id) end })
   end
   vim.api.nvim_buf_attach(buf, false, {
     on_lines = function()
@@ -390,50 +453,6 @@ function M.inline_focus(id, on)
   if not card then return end
   card.focus = on ~= false
   schedule_place()
-end
-
--- Decorations ----------------------------------------------------------------
-
---- gui.decorate{ buf, range = { first, last }, style = 'dim' | 'highlight' |
---- 'tag', tag = 'text'?, hl = group or tone? }: a line range painted over
---- every window showing it (diff windows too). The range follows edits (an
---- extmark). Answers a handle: :clear().
-function M.decorate(opts)
-  opts = opts or {}
-  local buf = buf_of(opts.buf)
-  local range = opts.range or { opts.lnum or 1, opts.lnum or 1 }
-  local first, last = range[1], range[2] or range[1]
-  local count = vim.api.nvim_buf_line_count(buf)
-  first = math.max(1, math.min(first, count))
-  last = math.max(first, math.min(last, count))
-  local deco = { id = next_id(), buf = buf, style = opts.style or "highlight", tag = opts.tag }
-  if deco.style ~= "dim" and deco.style ~= "highlight" and deco.style ~= "tag" then deco.style = "highlight" end
-  deco.mark = vim.api.nvim_buf_set_extmark(buf, ns, first - 1, 0,
-    { end_row = last - 1, end_col = 0, end_right_gravity = true })
-  local hls = {}
-  local name = opts.hl and (M.tones[opts.hl] or opts.hl) or nil
-  if name then hls[name] = true end
-  deco.group = name
-  M._decos[deco.id] = deco
-  event("deco", { id = deco.id, style = deco.style, tag = deco.tag, group = name, hl = hl_table(hls) })
-  schedule_place()
-  return { id = deco.id, buf = buf, clear = function() M.decorate_clear(deco.id) end }
-end
-
-function M.decorate_clear(id)
-  id = type(id) == "table" and id.id or id
-  local deco = M._decos[id]
-  if not deco then return end
-  M._decos[id] = nil
-  pcall(vim.api.nvim_buf_del_extmark, deco.buf, ns, deco.mark)
-  event("deco_clear", { id = id })
-  schedule_place()
-end
-
-function M.decorate_clear_all(buf)
-  for id, deco in pairs(M._decos) do
-    if buf == nil or deco.buf == buf_of(buf) then M.decorate_clear(id) end
-  end
 end
 
 -- Popups ---------------------------------------------------------------------
@@ -642,6 +661,131 @@ function M.popup_find(pred)
   end
 end
 
+-- Framed views ---------------------------------------------------------------
+
+local function border_sides(config)
+  local border = config.border
+  if type(border) ~= "table" or #border == 0 then return 0, 0, 0, 0 end
+  local function side(i)
+    local c = border[((i - 1) % #border) + 1]
+    if type(c) == "table" then c = c[1] end
+    return (c ~= nil and c ~= "") and 1 or 0
+  end
+  return side(2), side(4), side(6), side(8)
+end
+
+-- A window's outer rect on the screen (its border included), 0-based, as
+-- the page places grids. A hidden float is never drawn, so Neovim does not
+-- keep its screen position: a float's is worked out from its config (its
+-- anchor, and the window it is relative to), as the compositor would.
+local function outer_rect(win, depth)
+  if not win or not vim.api.nvim_win_is_valid(win) then return nil end
+  local config = vim.api.nvim_win_get_config(win)
+  local top, right, bottom, left = border_sides(config)
+  local width = vim.api.nvim_win_get_width(win) + left + right
+  local height = vim.api.nvim_win_get_height(win) + top + bottom
+  local row, col
+  if config.relative == "editor" or (config.relative == "win" and (depth or 0) < 8) then
+    local base_row, base_col = 0, 0
+    if config.relative == "win" then
+      local parent = outer_rect(config.win, (depth or 0) + 1)
+      if parent then
+        local ptop, _, _, pleft = border_sides(vim.api.nvim_win_get_config(config.win))
+        base_row, base_col = parent.row + ptop, parent.col + pleft
+      end
+    end
+    row = base_row + math.floor((config.row or 0) + 0.5)
+    col = base_col + math.floor((config.col or 0) + 0.5)
+    local anchor = config.anchor or "NW"
+    if anchor:sub(1, 1) == "S" then row = row - height end
+    if anchor:sub(2, 2) == "E" then col = col - width end
+  else
+    local ok, pos = pcall(vim.api.nvim_win_get_position, win)
+    if not ok then return nil end
+    row, col = pos[1], pos[2]
+  end
+  return { row = row, col = col, width = width, height = height, top = top,
+    hidden = config.hide == true }
+end
+M._outer_rect = outer_rect
+
+-- Where a framed view's windows stand, for the page.
+local function place_frame(view, current)
+  local f = view.frame
+  if not vim.api.nvim_win_is_valid(f.win) then return nil end
+  if vim.api.nvim_win_get_tabpage(f.win) ~= vim.api.nvim_get_current_tabpage() then return nil end
+  local list_win
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_buf(win) == view.buf and win ~= f.win then list_win = win break end
+  end
+  if not list_win then return nil end
+  local entry = { id = view.id, win = f.win, frame = outer_rect(f.win) }
+  local list = outer_rect(list_win)
+  list.cursor = vim.api.nvim_win_get_cursor(list_win)[1]
+  list.current = current == list_win
+  entry.list = list
+  if f.query_win and vim.api.nvim_win_is_valid(f.query_win) then
+    local q = outer_rect(f.query_win)
+    local qbuf = vim.api.nvim_win_get_buf(f.query_win)
+    q.text = vim.api.nvim_buf_get_lines(qbuf, 0, 1, false)[1] or ""
+    q.caret = vim.api.nvim_win_get_cursor(f.query_win)[2]
+    q.current = current == f.query_win
+    q.insert = q.current and vim.fn.mode():sub(1, 1) == "i"
+    entry.query = q
+  end
+  if f.preview_win and vim.api.nvim_win_is_valid(f.preview_win) then
+    local pv = outer_rect(f.preview_win)
+    if pv and not pv.hidden then
+      pv.win = f.preview_win
+      entry.preview = pv
+    end
+  end
+  return entry
+end
+
+local function call(fn, ...)
+  local ok, err = pcall(fn, ...)
+  if not ok then vim.notify("devhub gui: " .. tostring(err), vim.log.levels.ERROR) end
+end
+
+--- The page: a click on a framed view's row (clicks: 1, or 2 for a double
+--- click). The keys stay where they are (the query): the view's on_click
+--- runs, or the list window's cursor goes to the row.
+function M._frame_click(id, line, clicks)
+  local view = M._views[id]
+  if not view or not view.frame then return end
+  if type(view.on_click) == "function" then
+    call(view.on_click, line, clicks or 1)
+  else
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_buf(win) == view.buf and win ~= view.frame.win then
+        pcall(vim.api.nvim_win_set_cursor, win, { line, 0 })
+      end
+    end
+    schedule_place()
+  end
+end
+
+--- The page: a node with an on_click in a frame's header (a toggle).
+function M._frame_action(id, action)
+  local fn = (M._actions["view:" .. id] or {})[action]
+  if type(fn) == "function" then call(fn) end
+end
+
+--- The page: the wheel over a view that takes it (on_scroll), in items.
+function M._view_scroll(id, rows)
+  local view = M._views[id]
+  if view and type(view.on_scroll) == "function" and type(rows) == "number" then call(view.on_scroll, rows) end
+end
+
+--- The page: how many items a framed view shows at once.
+function M._view_rows(id, rows)
+  local view = M._views[id]
+  if not view or type(rows) ~= "number" or rows < 1 or view.rows == rows then return end
+  view.rows = rows
+  if type(view.on_rows) == "function" then call(view.on_rows, rows) end
+end
+
 -- Placement ------------------------------------------------------------------
 
 local function tab_windows(buf)
@@ -656,11 +800,19 @@ local line_rows = M._line_rows
 
 function M._place_layers()
   M._drawn()
-  local views, inlines, measure, decos, popups = {}, {}, {}, {}, {}
+  local views, inlines, measure, popups = {}, {}, {}, {}
   local current = vim.api.nvim_get_current_win()
+  local frames = {}
   for id, view in pairs(M._views) do
     if not vim.api.nvim_buf_is_valid(view.buf) then
       M.view_clear(id)
+    elseif view.frame then
+      if not vim.api.nvim_win_is_valid(view.frame.win) then
+        M.view_clear(id)
+      else
+        local entry = place_frame(view, current)
+        if entry then table.insert(frames, entry) end
+      end
     else
       for _, win in ipairs(tab_windows(view.buf)) do
         table.insert(views, { id = id, win = win, cursor = vim.api.nvim_win_get_cursor(win)[1],
@@ -698,45 +850,6 @@ function M._place_layers()
       end
     end
   end
-  for id, deco in pairs(M._decos) do
-    local ok, pos = pcall(vim.api.nvim_buf_get_extmark_by_id, deco.buf, ns, deco.mark, { details = true })
-    if not ok or not pos[1] then
-      M.decorate_clear(id)
-    else
-      local first = pos[1] + 1
-      local last = (pos[3] and pos[3].end_row or pos[1]) + 1
-      for _, win in ipairs(tab_windows(deco.buf)) do
-        local info = vim.fn.getwininfo(win)[1]
-        if info then
-          local top, bottom
-          -- Its first and last rows in reach (line_rows: beyond the window
-          -- too, the page cuts); not topline + height: closed folds (a
-          -- diff's) hide any number of lines.
-          local from = math.max(first, info.topline - 4 * info.height)
-          local to = math.min(last, info.botline + 4 * info.height)
-          for lnum = from, to do
-            local a, b = line_rows(win, info, lnum)
-            if a then
-              top, bottom = a, b
-              break
-            end
-          end
-          for lnum = to, from, -1 do
-            if not top then break end
-            local _, b = line_rows(win, info, lnum)
-            if b then
-              bottom = b
-              break
-            end
-          end
-          if top then
-            table.insert(decos, { id = id, win = win, row = top, rows = bottom - top + 1,
-              col = info.textoff, width = info.width - info.textoff })
-          end
-        end
-      end
-    end
-  end
   local tab = vim.api.nvim_get_current_tabpage()
   for id, p in pairs(M._popups) do
     local ok, pos = pcall(vim.api.nvim_buf_get_extmark_by_id, p.buf, ns, p.mark, {})
@@ -752,7 +865,8 @@ function M._place_layers()
       end
     end
   end
-  event("layers", { views = views, inlines = inlines, measure = measure, decos = decos, popups = popups })
+  event("layers", { views = views, inlines = inlines, measure = measure, popups = popups,
+    frames = frames })
 end
 
 --- A click on the page: the cursor goes to the item (or the card's line) in
@@ -788,11 +902,6 @@ function M._layers_replay()
   for _, view in pairs(M._views) do render_view(view) end
   for _, card in pairs(M._inlines) do send_inline(card) end
   for _, p in pairs(M._popups) do send_popup(p) end
-  for _, deco in pairs(M._decos) do
-    local hls = {}
-    if deco.group then hls[deco.group] = true end
-    event("deco", { id = deco.id, style = deco.style, tag = deco.tag, group = deco.group, hl = hl_table(hls) })
-  end
   schedule_place()
 end
 
@@ -803,10 +912,10 @@ function M._replay()
 end
 
 vim.api.nvim_create_autocmd({ "WinScrolled", "WinResized", "WinClosed", "WinNew", "WinEnter", "BufWinEnter",
-  "TabEnter", "VimResized", "TextChanged", "TextChangedI", "CursorMoved", "CursorMovedI" }, {
+  "TabEnter", "VimResized", "TextChanged", "TextChangedI", "CursorMoved", "CursorMovedI", "ModeChanged" }, {
   group = group,
   callback = function()
-    if next(M._views) == nil and next(M._inlines) == nil and next(M._decos) == nil
+    if next(M._views) == nil and next(M._inlines) == nil
       and next(M._popups) == nil then return end
     schedule_place()
   end,

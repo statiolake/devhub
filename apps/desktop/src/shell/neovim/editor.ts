@@ -1256,13 +1256,37 @@ export class NeovimEditor {
         at.col,
       ]);
     };
-    // A GUI window, a view, a card and a popup are DevHub's: their own
-    // clicks and wheel (the first three are in the grids' layer, in their
-    // window's clip).
+    // A GUI window, a view (framed or not), a card and a popup are DevHub's: their
+    // own clicks and wheel (all but the popup are in the grids' layer, in
+    // their window's clip).
     const ownedByGui = (event: Event) =>
       (event.target as HTMLElement).closest(
-        ".nvim-gui-window, .nvim-popup, .nvim-view, .nvim-inline-card",
-      ) !== null;
+        ".nvim-gui-window, .nvim-popup, .nvim-view, .nvim-inline-card, .nvim-view-frame",
+      ) !== null || forwardedToFrame(event);
+    // A framed view (gui.view{ frame }) lies over its float, under the levels
+    // of the floats above it (its preview's): a level takes the event, so it
+    // is handed to the frame's element under the pointer, unless a grid is
+    // drawn there first (the preview's cells are Neovim's).
+    const forwardedToFrame = (event: Event): boolean => {
+      if (!(event instanceof MouseEvent) || event.isTrusted === false)
+        return false;
+      for (const el of document.elementsFromPoint(
+        event.clientX,
+        event.clientY,
+      )) {
+        if (el instanceof HTMLCanvasElement) return false;
+        if (el.closest(".nvim-view-frame")) {
+          const copy =
+            event instanceof WheelEvent
+              ? new WheelEvent(event.type, event)
+              : new MouseEvent(event.type, event);
+          el.dispatchEvent(copy);
+          event.preventDefault();
+          return true;
+        }
+      }
+      return false;
+    };
     layer.addEventListener("mousedown", (event) => {
       if (ownedByGui(event)) return;
       event.preventDefault();

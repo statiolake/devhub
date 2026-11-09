@@ -19,10 +19,13 @@
  * Left out on purpose: `overlay` and `virt_text_win_col` text (it is put on
  * the buffer's own columns — indent guides, tables, concealed markup — and
  * only works on cells), `virt_lines_above`, a fold whose `foldtext` is
- * empty (the line itself, which is content), and anything in a namespace a
- * plugin declared content with `content_namespace(ns)`: virtual text that
- * is code, not words about it (the deleted lines of an inline diff, a hunk
- * preview), stays in the grid's face.
+ * empty (the line itself, which is content), and the virtual text and lines
+ * of every namespace but Neovim's own (`nvim.*`: diagnostics' virtual text
+ * and lines, LSP inlay hints and code lenses) and DevHub's (`devhub*`).
+ * Those are the standard features DevHub draws its way on purpose; a
+ * plugin's virtual text (an inline diff's deleted lines, a blame line) is
+ * its content, drawn as cells in the grid's face as the plugin drew it.
+ * Neither side declares anything to the other.
  */
 export const DECOR_LUA = String.raw`
 local M = package.loaded["devhub_gui"]
@@ -30,21 +33,21 @@ if not M then return end
 local ns = vim.api.nvim_create_namespace("devhub_gui_decor")
 M._decor_dirty = M._decor_dirty or {}
 M._decor_sent = M._decor_sent or {}
-M._content_ns = M._content_ns or {}
 
---- Declare the virtual text and lines of namespace ns (an id or a name) as
---- content — code, drawn on cells in the grid's face like the buffer's own
---- lines — rather than words about the code (pass false to undo).
-function M.content_namespace(ns, on)
-  if type(ns) == "string" then ns = vim.api.nvim_create_namespace(ns) end
-  if type(ns) ~= "number" then return end
-  M._content_ns[ns] = on ~= false or nil
-  M._decor_last = nil
-  for _, win in ipairs(vim.api.nvim_list_wins()) do M._decor_dirty[win] = true end
-  if not M._decor_pending then
-    M._decor_pending = true
-    vim.schedule(M._decor_send)
+-- The namespaces whose virtual text DevHub sets in its own face: Neovim's
+-- standard features ("nvim.*") and DevHub's own ("devhub*"), by id. New
+-- namespaces appear as features start (a client attaching), so the table is
+-- read again when an id is not in it.
+local words_ns, words_seen = {}, -1
+local function words(id)
+  if id == nil then return false end
+  if words_ns[id] == nil and id > words_seen then
+    for name, nsid in pairs(vim.api.nvim_get_namespaces()) do
+      words_ns[nsid] = name:match("^nvim%.") ~= nil or name:match("^devhub") ~= nil
+      if nsid > words_seen then words_seen = nsid end
+    end
   end
+  return words_ns[id] == true
 end
 
 local function chunks_text(chunks)
@@ -115,7 +118,7 @@ local function spans_of(win)
     local row0, col0, d = m[2], m[3], m[4] or {}
     local l = row0 + 1
     local closed = folding and vim.api.nvim_win_call(win, function() return vim.fn.foldclosed(l) end) or -1
-    local content = d.ns_id ~= nil and M._content_ns[d.ns_id]
+    local content = not words(d.ns_id)
     if closed == -1 and content and d.virt_lines and not d.virt_lines_above then
       -- Content lines still take their rows: later lines under this one go after them.
       lines_below[row0] = (lines_below[row0] or 0) + #d.virt_lines

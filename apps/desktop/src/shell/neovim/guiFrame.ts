@@ -1,5 +1,5 @@
 /**
- * A GUI window's page (`gui.open`'s `html`) and the keyboard between it and
+ * A GUI window's page (`gui.webview`'s `html`) and the keyboard between it and
  * Neovim.
  *
  * Neovim is the modal engine. With `keyboard = "neovim"` (an html page's
@@ -22,7 +22,7 @@
  *   `devhubDeclare` (the keys of `devhub.keys`), `devhubKey` (a key that is
  *   Neovim's: `<Esc>` out of a field, `<C-w>`), `devhubStray` (a key the
  *   frame got while no field had it, which is Neovim's too).
- * - DevHub → page: `devhubGui` (Lua's `gui.send`), `devhubControl` (Lua's
+ * - DevHub → page: `devhubGui` (Lua's `webview:send`), `devhubControl` (Lua's
  *   word on the focus: a `GuiControl`), `devhubCurrent` (the window is
  *   Neovim's current one: the ring shows).
  */

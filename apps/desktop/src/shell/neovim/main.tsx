@@ -25,6 +25,7 @@ import "../styles/shell.css";
 import "../styles/macos.css";
 import "./neovim.css";
 import "./layers.css";
+import "./framed.css";
 
 const container = document.getElementById("root");
 if (!container) {

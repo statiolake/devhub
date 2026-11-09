@@ -127,7 +127,7 @@ export type NeovimRequestResult =
 
 /**
  * A GUI window: web content DevHub paints over a Neovim window's grid
- * (`require('devhub_gui').open{…}`). Neovim owns where it is; this only says
+ * (`require('devhub_gui').webview{…}`). Neovim owns where it is; this only says
  * what is in it.
  */
 export interface NeovimGuiWindowWire {

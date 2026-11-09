@@ -8,7 +8,7 @@
  * Nothing here runs code from the config: a click on a node with an `action`
  * is sent back to Neovim, where its Lua function runs. A node of the wrong
  * shape is dropped (its siblings stay), so an odd payload draws less, never
- * something else. HTML stays the escape hatch of `gui.open`. See
+ * something else. HTML stays the escape hatch of `gui.webview`. See
  * `docs/neovim-editor.md`.
  */
 

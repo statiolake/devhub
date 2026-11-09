@@ -25,7 +25,7 @@ import type { NeovimRpc } from "./neovimRpc.js";
 /** What the GUI hears from its Neovim (`neovimUiSessions.ts` sends it on). */
 export interface NeovimUiSink {
 	redraw(batches: readonly unknown[]): void;
-	/** `require('devhub_gui').open{…}`, a window change, or a close. */
+	/** `require('devhub_gui').webview{…}`, a window change, or a close. */
 	guiWindows(
 		windows: readonly GuiWindowReport[],
 		current: number,
@@ -39,7 +39,7 @@ export interface NeovimUiSink {
 	/**
 	 * A one-way GUI event from `devhub_gui`: a toast (`notify`), an image and
 	 * where it is (`image`, `place`, `image_clear`), the GUI layers' events
-	 * (views, cards, decorations, popups).
+	 * (views, cards, popups).
 	 */
 	guiEvent?(kind: string, payload: unknown): void;
 }
@@ -74,7 +74,7 @@ export interface GuiOpenReport {
 	readonly title: string;
 	readonly html?: string;
 	readonly url?: string;
-	/** Whose the keys are while it is current (`gui.open`'s `keyboard`). */
+	/** Whose the keys are while it is current (`gui.webview`'s `keyboard`). */
 	readonly keyboard: GuiKeyboard;
 }
 
@@ -237,22 +237,23 @@ vim.api.nvim_create_autocmd({ "WinEnter", "WinNew", "WinClosed", "BufWinEnter", 
   callback = function() vim.schedule(report) end,
 })
 
---- Open a GUI window: { html = "...", url = "...", title = "...",
---- win = "vsplit" | "split" | "float" | "tab" | "current",
+--- A webview: web content in a Neovim window, { html = "...", url = "...",
+--- title = "...", win = "vsplit" | "split" | "float" | "tab" | "current",
 --- keyboard = "neovim" | "content" }.
 --- keyboard: whose the keys are while the window is current. "neovim" (an
 --- html page's default): Neovim's, as in normal mode, the buffer's lines
 --- being the page's focusable elements and a field taking them in insert
 --- mode. "content" (a url page's, which has no bridge to Neovim): the page's,
---- <C-w> giving them back. Answers its handle, for send() and on_message().
-function M.open(opts)
+--- <C-w> giving them back. Answers its handle: :send(message),
+--- :on_message(fn) (the page's devhub.send), :close().
+function M.webview(opts)
   opts = opts or {}
   local keyboard = opts.keyboard or (opts.url and "content" or "neovim")
   if keyboard ~= "neovim" and keyboard ~= "content" then
-    error("devhub gui.open: keyboard is 'neovim' or 'content'")
+    error("devhub gui.webview: keyboard is 'neovim' or 'content'")
   end
   if keyboard == "neovim" and opts.url then
-    error("devhub gui.open: a url page cannot tell Neovim what it holds; it takes keyboard = 'content'")
+    error("devhub gui.webview: a url page cannot tell Neovim what it holds; it takes keyboard = 'content'")
   end
   M._next = M._next + 1
   local id = M._next
@@ -283,7 +284,18 @@ function M.open(opts)
                                foldcolumn = "0", list = false, cursorline = false, spell = false }) do
     pcall(function() vim.wo[win][option] = value end)
   end
-  local handle = { id = id, buf = buf }
+  local handle = { id = id, buf = buf, win = win }
+  --- Send the page a message (any value msgpack can carry).
+  function handle.send(_, message)
+    vim.rpcnotify(M._chan, "devhub_gui_send", id, message)
+  end
+  --- fn(message) for every message the page posts with devhub.send().
+  function handle.on_message(_, fn)
+    M._handlers[id] = fn
+  end
+  function handle.close()
+    if vim.api.nvim_buf_is_valid(buf) then vim.api.nvim_buf_delete(buf, { force = true }) end
+  end
   M._open[id] = { id = id, title = opts.title or "", html = opts.html, url = opts.url, keyboard = keyboard }
   if keyboard == "neovim" then M._keyboard(id, buf) end
   vim.rpcnotify(M._chan, "devhub_gui_open", M._open[id])
@@ -300,21 +312,6 @@ function M.open(opts)
   })
   vim.schedule(report)
   return handle
-end
-
---- Send a GUI window's page a message (any value msgpack can carry).
-function M.send(handle, message)
-  vim.rpcnotify(M._chan, "devhub_gui_send", handle.id or handle, message)
-end
-
---- Call fn(message) for every message the page posts with devhub.send().
-function M.on_message(handle, fn)
-  M._handlers[handle.id or handle] = fn
-end
-
-function M.close(handle)
-  local buf = handle.buf
-  if buf and vim.api.nvim_buf_is_valid(buf) then vim.api.nvim_buf_delete(buf, { force = true }) end
 end
 
 function M._receive(id, message)
@@ -880,9 +877,9 @@ vim.api.nvim_create_user_command("DevhubGuiDemo", function()
       or line:match("^%s*fn%s+([%w_]+)") or line:match("^#+%s+(.+)")
     if fn and #outline < 200 then table.insert(outline, { line = i, name = fn }) end
   end
-  local handle = M.open({ title = "Outline", win = "vsplit", html = M.demo_html })
+  local handle = M.webview({ title = "Outline", win = "vsplit", html = M.demo_html })
   vim.cmd("vertical resize 40")
-  M.on_message(handle, function(msg)
+  handle:on_message(function(msg)
     if type(msg) ~= "table" then return end
     if msg.kind == "jump" and vim.api.nvim_win_is_valid(source) then
       vim.api.nvim_win_set_cursor(source, { msg.line, 0 })
@@ -890,7 +887,7 @@ vim.api.nvim_create_user_command("DevhubGuiDemo", function()
     elseif msg.kind == "command" then
       vim.cmd(msg.command)
     elseif msg.kind == "ready" then
-      M.send(handle, { kind = "outline", file = vim.fn.fnamemodify(name, ":t"), lines = lines, items = outline })
+      handle:send({ kind = "outline", file = vim.fn.fnamemodify(name, ":t"), lines = lines, items = outline })
     end
   end)
 end, { desc = "Open DevHub's GUI-window demo beside the current window" })
@@ -1133,8 +1130,8 @@ export class NeovimUi {
 		await this.client.request("nvim_exec_lua", [SETUP_LUA, [channel]]);
 		// What a pane's program needs to follow a `:restart`.
 		await this.client.request("nvim_exec_lua", [RESTART_STATE_LUA, []]);
-		// Views, inline cards and decorations (`gui.view`, `gui.inline`,
-		// `gui.decorate`): the same module, grown by its own file.
+		// Views (framed or not), inline cards and popups (`gui.view`,
+		// `gui.inline`, `gui.popup`): the same module, grown by its own file.
 		await this.client.request("nvim_exec_lua", [LAYERS_LUA, []]);
 		// Where virtual text and folds' text are, for a proportional face.
 		await this.client.request("nvim_exec_lua", [DECOR_LUA, []]);

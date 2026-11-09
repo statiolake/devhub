@@ -2,9 +2,11 @@
 
 Status: tier 2 built (the quick pick for `vim.ui.select`/`vim.ui.input`,
 behind devhub.nvim's `quick_pick`, and tmux's choosers in the quick pick's
-look); tier 1 designed, not built — the person reviews it first. The rich
-picker's look is the mock of round 1 (files, grep, buffers, variant-B
-floats, light and dark).
+look); tier 1 built (below, "Tier 1 as built"): DevHub's picker-agnostic
+framed `gui.view`, and snacks drawn as one by the `snacks-ui.devhub`
+plugin, opt-in.
+The rich picker's look is the mock of round 1 (files, grep, buffers,
+variant-B floats, light and dark).
 
 ## Two tiers
 
@@ -103,12 +105,48 @@ asked. tmux's choosers keep tmux's keys, routed to the pty host by the
 terminal, because tmux decides there. Tier 1 is the other way round: the
 editor's picker is Neovim's, so its keys are Neovim's (below).
 
-## Tier 1: the editor's picker (designed, not built)
+## Tier 1 as built
+
+- **DevHub** knows no picker. A `gui.view` (`neovim-editor.md`) given a
+  `frame` is drawn in a frame over a float rather than over its window: its
+  items (a buffer line per row, the cursor line the selection) in the
+  hidden list window's cells, round them a query window (its first line the
+  field, the caret where its cursor is in Insert mode), a preview window
+  (cells) with a title above it, a header and the view's `keys` as the hint
+  row. The plugin lays the windows out; the frame is drawn where they stand.
+- **snacks** is drawn as one by
+  [snacks-ui.devhub](https://github.com/statiolake/snacks-ui.devhub), a
+  plugin outside DevHub and devhub.nvim (DevHub-only plugins are named
+  `.devhub`, as Neovim's are `.nvim`). It hooks `Picker.new` (snacks'
+  `config` hook) and, in DevHub's GUI only, gives each picker a layout of
+  the person's size (`custom_default`'s width, height and preview share)
+  whose input and list windows are hidden and borderless and the preview a
+  row down, and draws its list's buffer as a framed view. Everything else
+  is snacks': the input is its prompt buffer in Insert mode and its
+  `win.input.keys` its buffer-local maps (`<C-q>` →
+  `send_to_rg` included), the list its buffer of `list:format()` rows,
+  matching, actions, history and resume. Rows are read back from the list
+  buffer's extmarks by role (`SnacksPickerFile`, `SnacksPickerDir`,
+  `SnacksPickerMatch`, …): a file's name first in the UI face with its
+  directory after, matches bold, grep's hits under a heading per file,
+  buffers' `%`/`#`/`+` as words.
+- **What changed from the design below.** snacks' own windows are kept
+  (hidden) rather than a headless picker with windows of the frontend's
+  own: with `hide = true` snacks needs no replacement for its events, keys,
+  resize and actions, and the windows are not kept in sync with anything —
+  the frame is drawn where they stand. A hidden float's screen position is
+  not kept by Neovim, so `devhub_gui` works it out from its config.
+- **Opt-in and fallback.** `require('snacks-ui').setup{ enabled = true }`
+  (or `vim.g.snacks_ui_devhub`); outside DevHub's GUI, with a layout that
+  is not one group of floats (sidebar, ivy, a preview in the main window),
+  or on an error, snacks draws itself unchanged.
+
+## Tier 1: the editor's picker (design)
 
 The person's decisions (round 2): no hidden snacks windows to keep in sync;
 snacks' logic driven as a library from a DevHub-owned frontend; panels
 backed by real Neovim buffers that take keys in Normal mode, as `gui.view`
-and `gui.open{ keyboard = 'neovim' }` do; the query a text field (Insert
+and `gui.webview{ keyboard = 'neovim' }` do; the query a text field (Insert
 mode); the person's snacks keys as plain buffer-local maps.
 
 ### Headless snacks

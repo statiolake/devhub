@@ -50,6 +50,12 @@
     0 6px 18px rgb(0 0 0 / 22%);
 }
 
+.nvim-view-heading {
+  margin: 4px 0 2px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
 .nvim-view-plain {
   display: block;
   font-family: var(--nvim-grid-font);
@@ -105,26 +111,6 @@
   box-shadow:
     0 0 0 1.5px var(--nvim-ring),
     0 6px 18px rgb(0 0 0 / 25%);
-}
-
-.nvim-deco {
-  position: absolute;
-  pointer-events: none;
-  box-sizing: border-box;
-}
-
-.nvim-deco-highlight {
-  border-left: 2px solid transparent;
-}
-
-.nvim-deco-tag {
-  position: absolute;
-  top: 3px;
-  right: 12px;
-  padding: 0 8px;
-  border-radius: 999px;
-  font: 600 var(--nvim-label-size, 11px) var(--nvim-ui-font);
-  white-space: nowrap;
 }
 
 /* The components. */
