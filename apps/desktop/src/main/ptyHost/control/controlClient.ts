@@ -44,6 +44,13 @@ import type { LibGhosttyVt, VtPane } from "../vt/libghosttyVt.js";
 import { KeyRouter, parseBindings, waitingCommand } from "./keyGuard.js";
 import { PopupJob, popupInput, type PopupPty } from "./popup.js";
 import {
+	NVIM_SHIM_VARIABLE,
+	USER_ZDOTDIR_VARIABLE,
+} from "../../editor/terminalNeovimShim.js";
+
+/** Beyond the PATH, what a popup's job takes from tmux's environment. */
+const POPUP_INHERITED = [NVIM_SHIM_VARIABLE, "ZDOTDIR", USER_ZDOTDIR_VARIABLE];
+import {
 	STATUS_FORMAT,
 	STATUS_SUBSCRIPTION,
 	TAB_FIELD_COUNT,
@@ -821,17 +828,25 @@ export class ControlClient {
 				args.title ?? "",
 			].join(FIELD),
 		]);
-		// The PATH tmux gives a popup's job: its session's, else the server's.
-		const paths = await Promise.all(
+		// What tmux gives a popup's job of its environment and DevHub's panes
+		// depend on: the PATH, with DevHub's `nvim` and `tmux` in front, and
+		// what keeps them there through the person's `.zshenv`
+		// (`neovimShimZshenv`) — each its session's, else the server's.
+		const scopes = await Promise.all(
 			[[...(target === undefined ? [] : ["-t", target])], ["-g"]].map((scope) =>
-				this.#command(["show-environment", ...scope, "PATH"]),
+				this.#command(["show-environment", ...scope]),
 			),
 		);
-		const path =
-			paths
+		const inherited = (name: string) =>
+			scopes
 				.flatMap((answer) => (answer.ok ? answer.lines : []))
-				.find((line) => line.startsWith("PATH="))
-				?.slice("PATH=".length) ?? "";
+				.find((line) => line.startsWith(`${name}=`))
+				?.slice(name.length + 1);
+		const path = inherited("PATH") ?? "";
+		const shimEnvironment = POPUP_INHERITED.flatMap((name) => {
+			const value = inherited(name);
+			return value === undefined ? [] : [`${name}=${value}`];
+		});
 		const waiting = this.#popupOpening;
 		this.#popupOpening = undefined;
 		const [pane, tmux, directory, shell, title] = facts.lines
@@ -886,7 +901,8 @@ export class ControlClient {
 				shell: shell ?? "",
 				command: args.command ?? "",
 				path,
-				environment: args.environment,
+				// `-e` after the inherited ones, so a binding's own wins.
+				environment: [...shimEnvironment, ...(args.environment ?? [])],
 			}),
 			changed: () => this.#schedule(),
 			closed: () => {

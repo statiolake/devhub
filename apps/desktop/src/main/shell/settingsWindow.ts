@@ -213,7 +213,6 @@ function toWireConfig(config: Config): SettingsConfigWire {
 		runtimes: {
 			shell: config.runtimes.shell,
 			git: config.runtimes.git,
-			tmux: config.runtimes.tmux,
 			tmuxSocketName: config.runtimes.tmux_socket_name,
 			tmuxArgs: [...config.runtimes.tmux_args],
 		},
@@ -373,7 +372,6 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 		runtimes: {
 			shell: wire.runtimes.shell,
 			git: wire.runtimes.git,
-			tmux: wire.runtimes.tmux,
 			tmux_socket_name: wire.runtimes.tmuxSocketName,
 			tmux_args: [...wire.runtimes.tmuxArgs],
 		},

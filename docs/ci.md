@@ -28,7 +28,7 @@ Build: DevHub.app test build (macOS) ──> Test: app (macOS) ┘
 | `checks` | ubuntu-latest | `pnpm run fmt`, `pnpm run lint`, `pnpm run typecheck`, `pnpm run test:scripts` |
 | `test-desktop` | macos-15 | `@devhub/desktop` tests: vitest, and node-pty under DevHub's own Electron; the real-Neovim tests run the bundled Neovim (`build:nvim`) |
 | `build-app` | macos-15 | `scripts/build-app.sh --without-whisper --no-zip`; hands `DevHub.app` on as a tar |
-| `test-app` | macos-15 | the app-level tests against that bundle: today `scripts/smoke_packaged_app.py`, which makes the app answer on its control socket and open a file in its editor — the Neovim inside the bundle, run by Homebrew's tmux — and runs that Neovim |
+| `test-app` | macos-15 | the app-level tests against that bundle: today `scripts/smoke_packaged_app.py`, which makes the app answer on its control socket and open a file in its editor — the Neovim inside the bundle, run by the tmux inside it — runs that Neovim and that tmux, and checks that the app's tmux server is the bundled tmux and that a pane's `tmux` runs it |
 
 Together the jobs run everything `pnpm run check` runs, plus a test build and
 the tests that start it.
@@ -75,6 +75,13 @@ The `devhub` command a host is given is not a release: it is built from
 `cli/` (Go) by the app build and carried inside the app
 (`docs/devhub-cli.md`). Every job that builds the app gets Go from
 `cli/go.mod` through `setup-node-pnpm`; `checks` runs `pnpm run test:cli`.
+
+The tmux inside the app is `scripts/build_tmux.py`'s, by `build:tmux`
+(`apps/desktop/scripts/fetch-tmux.mjs`): on Linux the published static tarball,
+checked against `tmuxDownloadSha256`; on a Mac `build_tmux.py darwin-arm64`,
+compiled once and kept in `~/.cache/devhub/tmux`, which the macOS jobs cache
+(`actions/cache`, keyed on the script and `product.json`). No job installs a
+tmux; the tests run the bundled one.
 
 The Neovim DevHub runs is Neovim's own release, pinned in
 `apps/desktop/product.json` (`nvimVersion`, `nvimDownloadSha256`): fetched

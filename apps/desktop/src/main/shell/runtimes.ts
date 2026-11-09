@@ -13,6 +13,7 @@ import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import type { RuntimeConfig } from "../../model/config.js";
+import { bundledTmuxPath } from "../terminal/bundledTmux.js";
 import type {
 	SettingsResolvedRuntimeConfigWire,
 	SettingsResolvedRuntimeWire,
@@ -39,7 +40,7 @@ async function isExecutableFile(path: string): Promise<boolean> {
  * Look one configured program up, the way a shell would.
  *
  * Exported because an Agent profile's `command` is the same kind of fact as
- * `runtimes.tmux`: a name a person wrote, which has to become a path on this
+ * `runtimes.shell`: a name a person wrote, which has to become a path on this
  * machine before anything can run it. Leaving the profile's command as a bare
  * name and letting tmux resolve it is what made `codex` fail while `tmux`
  * worked — two different search paths for two things DevHub launches the same
@@ -95,7 +96,8 @@ export async function resolveRuntimes(
 	const [shell, git, tmux] = await Promise.all([
 		resolveExecutable(runtimes.shell, searchPath),
 		resolveExecutable(runtimes.git, searchPath),
-		resolveExecutable(runtimes.tmux, searchPath),
+		// Not configured and not looked up: DevHub's own (`bundledTmux.ts`).
+		resolveExecutable(bundledTmuxPath(), ""),
 	]);
 	return { shell, git, tmux };
 }

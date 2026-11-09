@@ -44,10 +44,8 @@ import {
 	bundledNeovim,
 	bundledNeovimMissing,
 } from "../editor/bundledNeovim.js";
-import {
-	runtimeUnavailableMessage,
-	type SettingsResolvedRuntimeWire,
-} from "../../ipc/settings.js";
+import { bundledTmux, bundledTmuxMissing } from "../terminal/bundledTmux.js";
+import { type SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import {
 	NO_USER_TMUX_CONFIG,
 	RuntimeFileError,
@@ -181,33 +179,18 @@ export class LocalRuntime implements Runtime {
 	}
 
 	/**
-	 * This machine's own tmux, which is the person's and not DevHub's.
-	 *
-	 * The asymmetry with a host is deliberate, and it is the whole of the
-	 * difference: on a host DevHub installs a tmux it published and ignores
-	 * whatever is there, because the host is a machine nobody administers for
-	 * this purpose and a version DevHub did not choose produces an Agent whose
-	 * output is subtly wrong. Here, the tmux is one the person installed, keeps
-	 * up to date, has a config for and may well be sitting in right now —
-	 * `runtimes.tmux` is the setting that names it, and replacing it with a
-	 * binary DevHub unpacked into their home directory would be DevHub deciding
-	 * something about their own machine that is theirs to decide.
-	 *
-	 * So there is nothing to install and nothing to add to the environment: the
-	 * terminfo this tmux reads is the one the rest of their terminal reads.
+	 * The tmux inside the app (`terminal/bundledTmux.ts`), never the PATH's —
+	 * as on a host, where DevHub delivers the same version and ignores the
+	 * host's. Nothing to install and nothing to add to the environment: the
+	 * terminfo it reads is this machine's own.
 	 */
-	async tmuxProgram(
-		configured: string,
-		searchPath: string,
-	): Promise<TmuxProgram> {
-		const resolved = await this.resolveProgram(configured, searchPath);
-		if (resolved.kind === "unavailable") {
-			return {
-				kind: "unavailable",
-				reason: runtimeUnavailableMessage(resolved),
-			};
-		}
-		return { kind: "resolved", path: resolved.value, environment: {} };
+	tmuxProgram(): Promise<TmuxProgram> {
+		const path = bundledTmux();
+		return Promise.resolve(
+			path === undefined
+				? { kind: "unavailable", reason: bundledTmuxMissing() }
+				: { kind: "resolved", path, environment: {} },
+		);
 	}
 
 	/** The Neovim inside the app (`editor/bundledNeovim.ts`), never the PATH's. */

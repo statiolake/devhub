@@ -128,7 +128,10 @@ A Claude Code or Codex Agent can instead be a **GUI Agent**: the same tmux
 session runs the CLI in its structured mode, and DevHub draws the
 conversation itself. See [`docs/agent-gui.md`](docs/agent-gui.md).
 
-**Terminal** — tmux. One persistent session per Workspace — Scratch is one.
+**Terminal** — tmux, DevHub's own: tmux 3.7c inside the app (`out/tmux`,
+the same build an SSH host is given), never the `tmux` on your PATH, which
+DevHub's panes also find first ([`docs/terminal-mode.md`](docs/terminal-mode.md),
+"DevHub's tmux"). One persistent session per Workspace — Scratch is one.
 It is what the Workspace shows, so quitting DevHub does not end it. Each tmux server also has an anchor session
 named `scratch`, which the bootstrap creates with the server so it carries
 DevHub's marker from its first instant; it is not Scratch, nothing accounts

@@ -50,6 +50,11 @@ has: the case this exists for is a Synology NAS, where there is no tmux in the
 image, no package manager worth the name and no sudo, and "install tmux" is not
 an instruction the owner of the box can follow.
 
+The machine DevHub runs on is no different: the app carries the same build
+(`out/tmux`, darwin-arm64 in the Mac app), and the PATH's tmux is not used
+there either. A host's panes find the delivered binary first on their PATH,
+ahead of the host's own (`docs/terminal-mode.md`, "DevHub's tmux").
+
 ### What is published, and where
 
 `scripts/build_tmux.py` builds tmux from a pinned release tarball together with

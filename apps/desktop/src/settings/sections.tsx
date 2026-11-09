@@ -1752,7 +1752,6 @@ export function AdvancedSection({
   const fields = [
     ["shell", "Shell"],
     ["git", "Git"],
-    ["tmux", "tmux"],
   ] as const;
 
   return (
@@ -1781,6 +1780,16 @@ export function AdvancedSection({
             />
           </Row>
         ))}
+        {/*
+          Not a setting: DevHub runs its own tmux, inside the app, never one
+          from the PATH (the same one an SSH host is given).
+        */}
+        <Row
+          label="tmux"
+          help="DevHub's own, inside the app; the tmux on your PATH is not used."
+        >
+          <ResolvedValue value={runtime.resolved.tmux} />
+        </Row>
       </Group>
 
       <Group heading="Diagnostics">

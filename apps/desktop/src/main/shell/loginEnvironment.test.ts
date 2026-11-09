@@ -277,47 +277,45 @@ describe("launchEnvironment", () => {
 });
 
 /**
- * The tmux the cases below configure: a name launchd's PATH does not reach.
- * On a Mac that is `tmux` itself (it lives under Homebrew), but a Linux
- * machine has it in /usr/bin, so the cases name a tool no system directory has.
+ * The program the cases below configure: a name launchd's PATH does not
+ * reach, which no system directory has.
  */
 const ABSENT_TOOL = "devhub-absent-tool";
 
 describe("runtime resolution in the imported environment", () => {
 	const runtimes = {
 		shell: "/bin/sh",
-		git: "git",
-		tmux: ABSENT_TOOL,
+		git: ABSENT_TOOL,
 		tmux_socket_name: "devhub",
 		tmux_args: [],
 	};
 
 	it("names the executable and the directories it looked in", async () => {
 		const resolved = await resolveRuntimes(runtimes, LAUNCHD_PATH);
-		expect(resolved.tmux.kind).toBe("unavailable");
-		if (resolved.tmux.kind !== "unavailable") return;
-		expect(runtimeUnavailableMessage(resolved.tmux)).toBe(
+		expect(resolved.git.kind).toBe("unavailable");
+		if (resolved.git.kind !== "unavailable") return;
+		expect(runtimeUnavailableMessage(resolved.git)).toBe(
 			`DevHub could not find '${ABSENT_TOOL}' on PATH (looked in: /usr/bin, /bin, /usr/sbin, /sbin).`,
 		);
 	});
 
 	it("names the path a configured path pointed at", async () => {
 		const resolved = await resolveRuntimes(
-			{ ...runtimes, tmux: "/opt/nothing/bin/tmux" },
+			{ ...runtimes, git: "/opt/nothing/bin/git" },
 			LAUNCHD_PATH,
 		);
-		expect(resolved.tmux.kind).toBe("unavailable");
-		if (resolved.tmux.kind !== "unavailable") return;
-		expect(runtimeUnavailableMessage(resolved.tmux)).toBe(
-			"DevHub could not find /opt/nothing/bin/tmux.",
+		expect(resolved.git.kind).toBe("unavailable");
+		if (resolved.git.kind !== "unavailable") return;
+		expect(runtimeUnavailableMessage(resolved.git)).toBe(
+			"DevHub could not find /opt/nothing/bin/git.",
 		);
 	});
 
 	it("says so when there is no PATH to search at all", async () => {
 		const resolved = await resolveRuntimes(runtimes, "");
-		expect(resolved.tmux.kind).toBe("unavailable");
-		if (resolved.tmux.kind !== "unavailable") return;
-		expect(runtimeUnavailableMessage(resolved.tmux)).toBe(
+		expect(resolved.git.kind).toBe("unavailable");
+		if (resolved.git.kind !== "unavailable") return;
+		expect(runtimeUnavailableMessage(resolved.git)).toBe(
 			`DevHub could not find '${ABSENT_TOOL}' on PATH (PATH is empty).`,
 		);
 	});
@@ -328,22 +326,21 @@ describe("runtime resolution in the imported environment", () => {
 		writeFileSync(tool, "#!/bin/sh\nexit 0\n");
 		chmodSync(tool, 0o755);
 
-		expect((await resolveRuntimes(runtimes, LAUNCHD_PATH)).tmux.kind).toBe(
+		expect((await resolveRuntimes(runtimes, LAUNCHD_PATH)).git.kind).toBe(
 			"unavailable",
 		);
 		const imported = await resolveRuntimes(
 			runtimes,
 			`${directory}:${LAUNCHD_PATH}`,
 		);
-		expect(imported.tmux).toEqual({ kind: "absolute_path", value: tool });
+		expect(imported.git).toEqual({ kind: "absolute_path", value: tool });
 	});
 });
 
 describe("why an executable could not be found", () => {
 	const runtimes = {
 		shell: "/bin/sh",
-		git: "git",
-		tmux: ABSENT_TOOL,
+		git: ABSENT_TOOL,
 		tmux_socket_name: "devhub",
 		tmux_args: [],
 	};
@@ -357,14 +354,14 @@ describe("why an executable could not be found", () => {
 	 */
 	it("names the failed import as the reason the PATH was short", async () => {
 		const resolved = await resolveRuntimes(runtimes, LAUNCHD_PATH);
-		expect(resolved.tmux.kind).toBe("unavailable");
-		if (resolved.tmux.kind !== "unavailable") return;
+		expect(resolved.git.kind).toBe("unavailable");
+		if (resolved.git.kind !== "unavailable") return;
 		const timedOut = loginEnvironmentSummary({
 			kind: "failed",
 			shell: "/bin/zsh",
 			reason: "it did not answer within 10 seconds.",
 		});
-		const message = executableMissingMessage(resolved.tmux, timedOut);
+		const message = executableMissingMessage(resolved.git, timedOut);
 		// Both facts, in one sentence: what was not found, and why not.
 		expect(message).toContain(`could not find '${ABSENT_TOOL}' on PATH`);
 		expect(message).toContain("/bin/zsh");
@@ -414,9 +411,9 @@ describe("why an executable could not be found", () => {
 
 	it("says only what it knows when the import is not the reason", async () => {
 		const resolved = await resolveRuntimes(runtimes, LAUNCHD_PATH);
-		if (resolved.tmux.kind !== "unavailable") return;
-		expect(executableMissingMessage(resolved.tmux, undefined)).toBe(
-			runtimeUnavailableMessage(resolved.tmux),
+		if (resolved.git.kind !== "unavailable") return;
+		expect(executableMissingMessage(resolved.git, undefined)).toBe(
+			runtimeUnavailableMessage(resolved.git),
 		);
 	});
 });

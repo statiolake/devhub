@@ -186,7 +186,6 @@ export const DEFAULT_EXCLUDE_NAMES: readonly string[] = [
 
 const DEFAULT_SHELL = "/bin/zsh";
 const DEFAULT_GIT = "git";
-const DEFAULT_TMUX = "tmux";
 const DEFAULT_TMUX_SOCKET = "devhub";
 const DEFAULT_FONT_FAMILY = "ui-monospace";
 const MAX_TERMINAL_MARGIN = 64;
@@ -406,7 +405,6 @@ export interface GeneralConfig {
 export interface RuntimeConfig {
   readonly shell: string;
   readonly git: string;
-  readonly tmux: string;
   readonly tmux_socket_name: string;
   readonly tmux_args: readonly string[];
 }
@@ -677,7 +675,6 @@ export function defaultRuntimes(): RuntimeConfig {
   return {
     shell: DEFAULT_SHELL,
     git: DEFAULT_GIT,
-    tmux: DEFAULT_TMUX,
     tmux_socket_name: DEFAULT_TMUX_SOCKET,
     tmux_args: [],
   };
@@ -980,6 +977,8 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
     "it froze VS Code workbenches, and DevHub has no VS Code any more",
   "general.workbench_discard_minutes":
     "it discarded VS Code workbenches, and DevHub has no VS Code any more",
+  "runtimes.tmux":
+    "DevHub runs its own tmux, inside the app (and the same one on an SSH host), never one from your PATH",
   "runtimes.herdr":
     "an Agent is now a tmux session on DevHub's own socket, so there is no separate Agent runtime to point at; the program to run is each profile's own `command`",
 };
@@ -1307,7 +1306,6 @@ function validateRuntimes(runtimes: RuntimeConfig): void {
   for (const [key, value] of [
     ["shell", runtimes.shell],
     ["git", runtimes.git],
-    ["tmux", runtimes.tmux],
   ] as const) {
     if (value.includes("\0")) {
       fail("invalid_string", `runtimes.${key}`);
@@ -2157,7 +2155,7 @@ export function interpretConfig(document: unknown): Config {
   const runtimesTable = requireTable(table["runtimes"] ?? {}, "runtimes");
   checkKeys(
     runtimesTable,
-    ["shell", "git", "tmux", "tmux_socket_name", "tmux_args"],
+    ["shell", "git", "tmux_socket_name", "tmux_args"],
     "runtimes",
   );
 
@@ -2263,7 +2261,6 @@ export function interpretConfig(document: unknown): Config {
     runtimes: {
       shell: optionalString(runtimesTable, "shell", "runtimes", DEFAULT_SHELL),
       git: optionalString(runtimesTable, "git", "runtimes", DEFAULT_GIT),
-      tmux: optionalString(runtimesTable, "tmux", "runtimes", DEFAULT_TMUX),
       tmux_socket_name: optionalString(
         runtimesTable,
         "tmux_socket_name",
@@ -2509,7 +2506,6 @@ export function configDocument(config: Config): Record<string, TomlValue> {
     runtimes: {
       shell: config.runtimes.shell,
       git: config.runtimes.git,
-      tmux: config.runtimes.tmux,
       tmux_socket_name: config.runtimes.tmux_socket_name,
       tmux_args: [...config.runtimes.tmux_args],
     },

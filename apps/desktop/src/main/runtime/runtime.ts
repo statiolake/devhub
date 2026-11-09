@@ -306,18 +306,22 @@ export interface TerminalLauncherSpec {
 /**
  * The tmux one machine runs, and the environment it needs to run in.
  *
- * It is a method on the seam and not a `resolveProgram` at the caller because
- * the two machines answer it differently *in kind*, and the difference is a
- * policy rather than a lookup: this Mac uses the tmux the person installed
- * (`runtimes.tmux`), and a host uses the one DevHub put there. A caller that
- * had to choose between those would be a caller asking which machine it was
- * talking to — the one question this interface exists to stop being asked.
+ * Always DevHub's own, never one found on the PATH, and the same version on
+ * every machine (`product.json`'s `tmuxVersion`): on this machine the one
+ * inside the app (`out/tmux`, `terminal/bundledTmux.ts`), on a host the same
+ * build delivered under `~/.devhub-server/tmux/<version>`. DevHub reads tmux's
+ * answers as a protocol, and those differ between versions (tmux 3.4 escapes
+ * the separators DevHub frames its listings with; its control mode leaves
+ * DevHub's terminal blank), so a tmux DevHub did not choose is not one it
+ * runs. It is still a method on the seam because only a host has to be given
+ * one first.
  *
  * `environment` is what the resolved binary needs in order to be the tmux it
  * is: a shipped tmux carries its own compiled terminfo, and `TERMINFO` is how
- * it is told to read that and not the host's — which on a bare appliance is
- * not there at all. Locally there is nothing to add, and the empty record says
- * so rather than the absence of a field.
+ * a host's is told to read that — a bare appliance has no database at all.
+ * This machine has its own terminal's database, which the bundled tmux reads
+ * (`/usr/share/terminfo`, built in), and the empty record says so rather than
+ * the absence of a field.
  */
 export type TmuxProgram =
 	| {
@@ -509,7 +513,7 @@ export interface Runtime {
 	 * The tmux this machine's adapter runs, installed on it if that is what
 	 * this machine needs. Idempotent: one install per machine per DevHub start.
 	 */
-	tmuxProgram(configured: string, searchPath: string): Promise<TmuxProgram>;
+	tmuxProgram(): Promise<TmuxProgram>;
 
 	/**
 	 * DevHub's Neovim on this machine, installed on it if that is what this

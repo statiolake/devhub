@@ -11,11 +11,12 @@
 #   --stop                                   stop at the first failing stage
 #
 # Stages, and the CI job each one stands for:
-#   provision   system packages (Linux: Xvfb, Electron's libraries, tmux), the
+#   provision   system packages (Linux: Xvfb, Electron's libraries), the
 #               unprivileged test user (under root), `pnpm install`, npm's
 #               Electron (scripts/electron-path.sh) and the desktop build,
-#               which fetches the Neovim DevHub bundles into out/nvim and
-#               needs Go, for the devhub command in cli/.
+#               which fetches the Neovim and the tmux DevHub bundles into
+#               out/nvim and out/tmux (on a Mac it builds that tmux, once)
+#               and needs Go, for the devhub command in cli/.
 #               Idempotent: a second run is seconds. Not the app bundle:
 #               packaging (scripts/build-app.sh) is macOS-only.
 #   fmt         pnpm run fmt                                       checks
@@ -23,8 +24,9 @@
 #   typecheck   pnpm run typecheck (the desktop's main included)   checks
 #   vitest      @devhub/desktop vitest                             test-desktop
 #   pty         @devhub/desktop test:pty (node-pty under Electron) test-desktop
-#               Both run their real-Neovim tests on the bundled Neovim
-#               (out/nvim, `build:nvim`), never the machine's own.
+#               Both run their real-Neovim and real-tmux tests on the
+#               bundled Neovim and tmux (out/nvim and out/tmux, `build:nvim`
+#               and `build:tmux`), never the machine's own.
 #   scripts     pnpm run test:scripts                              checks
 #   cli         pnpm run test:cli (gofmt, go vet, go test in cli/) checks
 #   app         the app smoke test (scripts/smoke_packaged_app.py). On macOS
@@ -120,14 +122,9 @@ prepare_test_user() {
 	fi
 }
 
-# The tmux the terminal tests run on Linux; see provision_tmux.
-TMUX_VERSION="$(cd scripts && python3 -c 'from build_tmux import TMUX; print(TMUX.version)')"
-TEST_TMUX="$REPO_ROOT/tmux-build/release/$TMUX_VERSION/bin/tmux"
-
-# What every test stage runs with: DevHub's tmux where it was provisioned, and
-# a UTF-8 locale (tmux renders what it cannot encode as `_`; CI's runners have
-# one, a container's POSIX default is not one).
-if [ -x "$TEST_TMUX" ]; then export DEVHUB_TEST_TMUX="$TEST_TMUX"; fi
+# What every test stage runs with: a UTF-8 locale (tmux renders what it
+# cannot encode as `_`; CI's runners have one, a container's POSIX default is
+# not one).
 if [ "$OS" = Linux ]; then
 	case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
 		*UTF-8* | *utf8* | *UTF8* | *utf-8*) ;;
@@ -246,17 +243,18 @@ run_stage() {
 }
 
 # --- provision --------------------------------------------------------------
-# Electron's runtime libraries, Xvfb, and what the tests start (tmux, ssh,
-# lsof, git). Debian/Ubuntu package names; only installed when missing.
+# Electron's runtime libraries, Xvfb, and what the tests start (ssh, lsof,
+# git). Not tmux: the tests and the app run DevHub's own (out/tmux).
+# Debian/Ubuntu package names; only installed when missing.
 LINUX_PACKAGES=(
-	xvfb xauth tmux openssh-client lsof git curl ca-certificates build-essential python3
+	xvfb xauth openssh-client lsof git curl ca-certificates build-essential python3
 	libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libxtst6 libxkbfile1 libsecret-1-0
 	libdrm2 libxdamage1 libxrandr2 libxcomposite1 libatk-bridge2.0-0t64 libcups2t64 libkrb5-3
 )
 
 provision_system() {
 	[ "$OS" = Linux ] || return 0
-	command -v dpkg-query >/dev/null || { echo "not Debian/Ubuntu: install Xvfb, xauth, tmux and Electron's libraries yourself"; return 0; }
+	command -v dpkg-query >/dev/null || { echo "not Debian/Ubuntu: install Xvfb, xauth and Electron's libraries yourself"; return 0; }
 	local missing=() package resolved
 	for package in "${LINUX_PACKAGES[@]}"; do
 		resolved="$package"
@@ -287,32 +285,10 @@ provision_test_user() {
 	fi
 }
 
-# The tmux the terminal tests run. They take the machine's own (the macOS
-# runner's is Homebrew's, which is current); Ubuntu 24.04's 3.4 escapes the
-# control characters DevHub frames tmux's listings with, so on Linux the tests
-# get the tmux DevHub itself publishes and installs on Linux hosts
-# (scripts/build_tmux.py, release tmux-<version>), through DEVHUB_TEST_TMUX.
-
-provision_tmux() {
-	[ "$OS" = Linux ] || return 0
-	if [ -x "$TEST_TMUX" ]; then
-		echo "tmux for the tests: $("$TEST_TMUX" -V) at ${TEST_TMUX#"$REPO_ROOT"/}"
-		return 0
-	fi
-	local arch tarball url
-	case "$(uname -m)" in x86_64) arch=x64 ;; aarch64 | arm64) arch=arm64 ;; *) echo "no published tmux for $(uname -m)" >&2; return 1 ;; esac
-	tarball="$(cd scripts && python3 -c "from build_tmux import tarball_name; print(tarball_name('linux', '$arch', '$TMUX_VERSION'))")"
-	url="https://github.com/statiolake/devhub/releases/download/tmux-$TMUX_VERSION/$tarball"
-	mkdir -p "$(dirname "$(dirname "$TEST_TMUX")")"
-	curl -fsSL "$url" | tar -xz --strip-components 1 -C "$(dirname "$(dirname "$TEST_TMUX")")"
-	echo "tmux for the tests: $("$TEST_TMUX" -V), from $url"
-}
-
 provision() {
 	set -e
 	provision_system
 	provision_test_user
-	provision_tmux
 	pnpm install --frozen-lockfile
 	echo "electron: $(apps/desktop/scripts/electron-path.sh)"
 	# The build compiles the devhub command (cli/, Go); go.mod states the
@@ -326,13 +302,13 @@ provision() {
 # --- the stages -------------------------------------------------------------
 stage_vitest() {
 	prepare_test_user || return 1
-	(cd apps/desktop && pnpm run build:nvim && pnpm run build:bash) || return 1
+	(cd apps/desktop && pnpm run build:nvim && pnpm run build:bash && pnpm run build:tmux) || return 1
 	(cd apps/desktop && as_test_user node_modules/.bin/vitest run)
 }
 
 stage_pty() {
 	prepare_test_user || return 1
-	(cd apps/desktop && pnpm run build:nvim && pnpm run build:bash) || return 1
+	(cd apps/desktop && pnpm run build:nvim && pnpm run build:bash && pnpm run build:tmux) || return 1
 	(cd apps/desktop && as_test_user test/terminal/run-under-electron.sh)
 }
 
@@ -363,9 +339,6 @@ stage_app() {
 		local args=()
 		# Chromium refuses to run as root with its sandbox on.
 		[ "$(id -u)" = 0 ] && args+=(--electron-arg=--no-sandbox)
-		# The app runs `tmux` from the PATH, as on a Mac (Homebrew's, current):
-		# here that is DevHub's own, not Ubuntu's 3.4 (see provision_tmux).
-		[ -x "$TEST_TMUX" ] && PATH="$(dirname "$TEST_TMUX"):$PATH"
 		xvfb-run -a -s "-screen 0 1280x1024x24" scripts/smoke_packaged_app.py --layout "$layout" "${args[@]}"
 	else
 		scripts/smoke_packaged_app.py --source

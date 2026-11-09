@@ -642,6 +642,18 @@ describe("parsing", () => {
     expect(saved).not.toContain("color_scheme");
   });
 
+  it("retires runtimes.tmux: DevHub runs its own tmux, never a configured one", () => {
+    const retired =
+      'version = 1\n[runtimes]\ntmux = "/opt/homebrew/bin/tmux"\n';
+    expect(parseConfig(retired)).toEqual(defaultConfig());
+    expect(retiredKeysIn(parseConfigText(retired))).toEqual([
+      { key: "runtimes.tmux", replacement: expect.any(String) },
+    ]);
+    expect(configOntoDocument(retired, parseConfig(retired))).not.toContain(
+      "homebrew",
+    );
+  });
+
   it("refuses a version it does not implement", () => {
     expect(
       codeOf(() =>

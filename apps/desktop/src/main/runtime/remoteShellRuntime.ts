@@ -683,8 +683,8 @@ export abstract class RemoteShellRuntime {
 	/**
 	 * The tmux DevHub put on this machine, put there now if it is not already.
 	 *
-	 * `runtimes.tmux` is not consulted and the far machine's own tmux is never
-	 * used. That is a decision and not an oversight: tmux's control output — the
+	 * The far machine's own tmux is never used, as this machine's PATH's is
+	 * not here (`bundledTmux.ts`). That is a decision and not an oversight: tmux's control output — the
 	 * `list-sessions` format, `capture-pane -e`, `display-message -p` — differs
 	 * between versions in ways that surface as an Agent whose output is subtly
 	 * wrong rather than as an error, and this adapter is written against one
@@ -704,13 +704,7 @@ export abstract class RemoteShellRuntime {
 	 * `bin/tmux -V` answers is an install that has happened, whether this DevHub
 	 * did it, an older one did, or somebody unpacked the tarball by hand.
 	 */
-	async tmuxProgram(
-		// `runtimes.tmux` and this machine's PATH, both deliberately unread:
-		// which tmux runs on a far machine is not a thing a person configures per
-		// machine, and the search path here names nothing there.
-		_configured?: string,
-		_searchPath?: string,
-	): Promise<TmuxProgram> {
+	async tmuxProgram(): Promise<TmuxProgram> {
 		// Outside the catch below: a missing delivery is not something the next
 		// window should retry, and reporting it as "tmux is unavailable on that
 		// machine" would send whoever reads it to look at the machine.

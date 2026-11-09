@@ -186,6 +186,53 @@ The programs inside the terminal are told the theme too — `DEVHUB_THEME`,
 `theme.json` that is rewritten on every change, and `User DevhubTheme` in the
 managed Neovim — see `docs/window-and-pages.md`, "Terminal programs".
 
+## DevHub's tmux
+
+Every tmux DevHub starts or runs is its own: tmux 3.7c
+(`product.json`'s `tmuxVersion`), built by `scripts/build_tmux.py` and never
+looked up on the PATH, as Neovim is (`main/terminal/bundledTmux.ts`). Here it
+is inside the app (`out/tmux`, unpacked by `build:tmux`: the published static
+Linux tarball, or the darwin-arm64 build on a Mac, which packaging signs); on
+an SSH host it is the same build delivered under
+`~/.devhub-server/tmux/<version>` (`docs/remote-ssh.md`). The server, every
+command sent to it, the control clients, the `devhub --tell` handle and the
+`tmux` a pane runs are that binary. There is no `runtimes.tmux` any more (a
+retired key: it is ignored, with a notice) and no accepted range of versions:
+tmux 3.4 escapes the C0 separators DevHub frames its listings with, and
+Ubuntu's 3.4 leaves the control-mode terminal blank, so a tmux DevHub did not
+choose is not one it runs.
+
+**A pane's `tmux`.** The pane's own commands, a binding's `run-shell 'tmux
+…'`, a `copy-pipe "tmux load-buffer -w -"` and a popup's `tmux move-pane`
+(the person's `bind m`) run whatever `tmux` the PATH has, and a client of
+another version is a client of another protocol to DevHub's server. So the
+directory DevHub's `nvim` is in (`ensureNeovimShim`) also holds a `tmux`
+(`paneTmuxScript`): `exec <DevHub's tmux> "$@"`, by its absolute path on
+that machine. It is first on every pane's PATH (`panePath`, stated on the
+client, so the server's global environment — what `run-shell` and
+`copy-pipe` jobs get — has it too), zsh's hook keeps it first through the
+person's startup files, once after `.zshenv` for a `zsh -c` and before every
+prompt (`neovimShimZshenv`), and a popup is given the PATH and that hook's
+variables from tmux's environment (`#openPopup`). On a host that is the
+delivered binary ahead of the host's own tmux: checked against a local sshd
+with Ubuntu's 3.4 first on the host's PATH, `command -v tmux` in a pane named
+the shim and `tmux -V` said 3.7c.
+
+**A server an older DevHub started.** A tmux server keeps its own version
+whatever client talks to it — format expansion and control mode are the
+server's — so a server an earlier DevHub started with the PATH's tmux
+(Homebrew's, Ubuntu's 3.4) is still that tmux under the bundled client. Each
+runtime asks the running server `#{version}` once per socket
+(`ensureVersion`); one that is not DevHub's version is refused as
+`runtime_incompatible`, with a sentence naming the socket, both versions and
+the command that stops it. DevHub does not stop it itself: its sessions may be
+running Agents, which are the person's to end. Once it is gone, DevHub starts
+its own on the same socket and reopens the Workspaces' sessions as after a
+reboot. No server, or one that will not answer, is not a mismatch (the
+marker probe judges the latter). The same rule meets a future bump of the
+pinned version: the server of the previous one is refused until it is
+stopped.
+
 ## The terminal in tmux control mode (in progress)
 
 DevHub's terminals are moving from one xterm.js per tmux _client_ (tmux
@@ -548,15 +595,6 @@ Open, in order:
 - **Phase 4**: the tabs are done (mock A, above, "The window tabs");
   deleting the xterm.js path, the pty clients of the pty host and the
   `tmux_control_mode` key together is next.
-- **SSH hosts' `tmux` on PATH.** A host's pane (and a popup there) finds the
-  host's own `tmux`, which may not talk to DevHub's 3.7c server. The clean
-  fix is two places, both to be checked against an sshd: `panePath`
-  (`main/terminal/tmux.ts`) puts `dirname(tmuxPath())` after
-  `paneBinDirectory` when that is set (a host); and a popup's PATH
-  (`#openPopup`, which reads `show-environment`, the session's `-e` PATH,
-  not the pane's) gets the same directory in front. Not done: the popup half
-  needs the host to verify, and half of it would leave panes and popups
-  disagreeing.
 - **The GPU process's compositing** (36–40 % under Xvfb) and the in-app
   `cat` time are to be measured on the Mac (see "Throughput, profiled").
 - Smaller: a drag or double-click selection in copy mode (tmux takes the
@@ -643,9 +681,9 @@ sent as `printf` escapes of `export` lines, so a value holds anything);
 as the keys are: a press, release or wheel inside it is reported to its
 program when the program asked (SGR), and nothing reaches the panes. Seen on
 the way:
-a host's pane finds the host's own `tmux` on its PATH, not DevHub's (on the
+a host's pane found the host's own `tmux` on its PATH, not DevHub's (on the
 test host a 3.4, which cannot talk to the 3.7c server), in a popup and in a
-pane alike.
+pane alike; a pane's `tmux` is now DevHub's ("DevHub's tmux", above).
 
 **`command-prompt` and `confirm-before` are DevHub's too**
 (`main/ptyHost/control/prompt.ts`), a binding that is one of them and

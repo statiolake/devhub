@@ -95,7 +95,6 @@ export interface SettingsGeneralWire {
 export interface SettingsRuntimeConfigWire {
 	readonly shell: string;
 	readonly git: string;
-	readonly tmux: string;
 	readonly tmuxSocketName: string;
 	readonly tmuxArgs: readonly string[];
 }

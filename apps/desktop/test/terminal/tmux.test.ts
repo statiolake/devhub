@@ -10,6 +10,7 @@
 import {
   chmodSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -48,6 +49,7 @@ import {
   isRootMetadata,
   isWorkspaceSessionName,
   parseNumericPrefix,
+  serverVersionMismatch,
   sessionMatches,
   workspaceDigest,
 } from "../../src/main/terminal/tmux";
@@ -76,6 +78,7 @@ function runtime(overrides: {
   socket?: string;
   environment?: Record<string, string | undefined>;
   timeoutMs?: number;
+  serverVersion?: string;
 }) {
   const root = overrides.home ?? SCRATCH_ROOT;
   return new TmuxTerminalRuntime({
@@ -95,6 +98,9 @@ function runtime(overrides: {
     tmuxArgs: overrides.tmuxArgs ?? [],
     effectiveSocketName: overrides.socket ?? "devhub",
     timeoutMs: overrides.timeoutMs ?? 1,
+    ...(overrides.serverVersion === undefined
+      ? {}
+      : { serverVersion: overrides.serverVersion }),
   });
 }
 
@@ -516,23 +522,6 @@ describe("provider output parsing", () => {
     ).toThrow();
     expect(parseRecords(Buffer.from(""), 3)).toEqual([]);
   });
-
-  it("reads tmux 3.4's escaped separators, and only where none is raw", () => {
-    // tmux 3.4 writes the C0 separators of a format as vis(3) octal escapes
-    // (measured: `list-sessions -F` under -u, any locale).
-    const listing = "scratch\\037global\\037/a\\036\nws\\037\\037/x\ny\\036\n";
-    expect(parseRecords(Buffer.from(listing), 3)).toEqual([
-      ["scratch", "global", "/a"],
-      ["ws", "", "/x\ny"],
-    ]);
-    // A tmux that writes them raw is read as it wrote: the same text inside
-    // a value is the value's, not a separator.
-    expect(
-      parseRecords(Buffer.from("a\u001fb\\036\u001fc\u001e\n"), 3),
-    ).toEqual([["a", "b\\036", "c"]]);
-    // An escaped answer that stops mid-record is still malformed.
-    expect(() => parseRecords(Buffer.from("a\\037b\\037c\n"), 3)).toThrow();
-  });
 });
 
 describe("executable resolution", () => {
@@ -865,6 +854,68 @@ describe("what a tmux command says when it goes wrong", () => {
     expect((await runner.preflight(socketName("devhub"))).state).toBe(
       "wrong_marker",
     );
+  });
+
+  /**
+   * A server an older DevHub started with the PATH's tmux keeps that tmux's
+   * behaviour under DevHub's own client, so it is refused — named, with the
+   * command that stops it — and never driven or stopped by DevHub.
+   */
+  it("refuses a running server of another tmux version, and stops nothing", async () => {
+    const log = join(home(), "argv");
+    const runner = runtime({
+      timeoutMs: 5_000,
+      serverVersion: "3.7c",
+      tmux: fakeTmux(
+        `echo "$*" >> ${JSON.stringify(log)}\ncase " $* " in *" #{version} "*) echo "3.4"; exit 0 ;; esac\nexit 1`,
+      ),
+    });
+    const refused = runner.preflight(socketName("devhub"));
+    await expect(refused).rejects.toMatchObject({ code: "incompatible" });
+    await expect(refused).rejects.toMatchObject({
+      detail: expect.stringContaining(
+        'The tmux server on socket "devhub" is tmux 3.4, not DevHub\'s own 3.7c',
+      ),
+    });
+    await expect(runner.agentRound([])).rejects.toMatchObject({
+      code: "incompatible",
+    });
+    const asked = readFileSync(log, "utf8");
+    expect(asked).not.toContain("kill-server");
+    expect(asked).not.toContain("kill-session");
+    expect(
+      terminalFailureFromPort(
+        portFailure("incompatible", {
+          detail: serverVersionMismatch(
+            "devhub",
+            "3.4",
+            "3.7c",
+            "",
+            "/a b/tmux",
+          ),
+        }),
+      ).summary,
+    ).toContain("`'/a b/tmux' -L devhub kill-server`");
+  });
+
+  it("drives a server of its own version, and asks it once", async () => {
+    const log = join(home(), "argv");
+    const runner = runtime({
+      timeoutMs: 5_000,
+      serverVersion: "3.7c",
+      tmux: fakeTmux(
+        `echo "$*" >> ${JSON.stringify(log)}\ncase " $* " in *" #{version} "*) echo "3.7c"; exit 0 ;; esac\necho "unknown command: display-message" >&2\nexit 1`,
+      ),
+    });
+    expect((await runner.preflight(socketName("devhub"))).state).toBe(
+      "wrong_marker",
+    );
+    await runner.preflight(socketName("devhub"));
+    expect(
+      readFileSync(log, "utf8")
+        .split("\n")
+        .filter((line) => line.includes("#{version}")),
+    ).toHaveLength(1);
   });
 
   it("says which command fell silent, and how long DevHub waited", async () => {

@@ -28,6 +28,7 @@
  * the old socket and the commit of the new effective name.
  */
 
+import { shellQuote } from "../runtime/quote.js";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { localRuntime } from "../runtime/registry.js";
 import { NO_USER_TMUX_CONFIG } from "../runtime/runtime.js";
@@ -66,7 +67,6 @@ import {
 	serverReach,
 	shapeFailure,
 	splitRecords,
-	withRawSeparators,
 	type CommandOutput,
 	type CommandSpec,
 	type ResolvedExecutable,
@@ -105,6 +105,7 @@ import {
 	NVIM_UI_OPTION,
 	NVIM_SHIM_VARIABLE,
 	NVIM_SHIM_ZSH_DIRECTORY,
+	paneTmuxScript,
 	USER_ZDOTDIR_VARIABLE,
 	neovimShimScript,
 	neovimShimZshenv,
@@ -151,8 +152,6 @@ const GLOBAL_ID = "global";
 /** The marker value a session that is not an Agent carries. */
 const NO_AGENT = "none";
 export const SCRATCH_SESSION = "scratch";
-const MIN_TMUX_MAJOR = 3;
-const MIN_TMUX_MINOR = 3;
 /** Which of the two answers in one inventory a record came from. */
 const MARKER_RECORD = "marker";
 const SESSION_RECORD = "session";
@@ -383,7 +382,7 @@ function bootstrapConfig(
 		// is spelled.
 		//
 		// No `terminal-overrides Tc` fallback: `terminal-features` arrived in tmux
-		// 3.2 and DevHub already refuses anything below 3.3 (`MIN_TMUX_MINOR`), so
+		// 3.2 and every tmux DevHub runs is its own 3.7c (`bundledTmux.ts`), so
 		// the older spelling is unreachable and would only be a second way to say
 		// the same thing.
 		"set -as terminal-features ',*:RGB'",
@@ -630,6 +629,26 @@ function markerValue(raw: string): string | undefined {
 
 function agentIdMarker(raw: string | undefined): string {
 	return raw === undefined ? NO_AGENT : raw;
+}
+
+/**
+ * What a person is told about a running server that is not DevHub's tmux:
+ * which socket, both versions, that nothing was stopped, and the one command
+ * that clears it. Exported for its test.
+ */
+export function serverVersionMismatch(
+	socket: string,
+	running: string,
+	expected: string,
+	where: string,
+	tmux: string,
+): string {
+	const version = running.length > 0 ? `tmux ${running}` : "another tmux";
+	return (
+		`The tmux server on socket "${socket}"${where} is ${version}, not DevHub's own ${expected}. ` +
+		`When its sessions are done, stop it with \`${shellQuote(tmux)} -L ${socket} kill-server\` and DevHub starts its own. ` +
+		"DevHub leaves it running: an earlier DevHub started it with the tmux on the PATH, most likely, and its Agents are yours to end."
+	);
 }
 
 /**
@@ -1367,7 +1386,7 @@ export type RuntimeExecutable =
 
 export interface TmuxTerminalRuntimeOptions {
 	readonly context: RuntimeLaunchContext;
-	/** The configured `runtimes.tmux`, already resolved; unavailable disables the runtime. */
+	/** DevHub's own tmux on that machine (`Runtime.tmuxProgram`); unavailable disables the runtime. */
 	readonly tmux: RuntimeExecutable;
 	/**
 	 * What that particular tmux needs in its environment in order to be itself.
@@ -1376,11 +1395,18 @@ export interface TmuxTerminalRuntimeOptions {
 	 * a statically linked ncurses has the code and no database and a bare
 	 * appliance has no database either; `TERMINFO` is how it is told to read the
 	 * one that travelled with it. It belongs to the executable and not to the
-	 * context: point `runtimes.tmux` at a different binary and this is wrong,
-	 * which is exactly why it arrives beside the path rather than in the shared
+	 * context: another machine's tmux would need something else, which is
+	 * exactly why it arrives beside the path rather than in the shared
 	 * launch environment.
 	 */
 	readonly tmuxEnvironment?: Readonly<Record<string, string>>;
+	/**
+	 * The tmux version every server this runtime drives must be: the one it
+	 * runs (`product.json`'s `tmuxVersion`). A running server that answers
+	 * another — one an older DevHub started with the tmux on the PATH — is
+	 * refused, never driven and never stopped (`ensureVersion`). Absent: any.
+	 */
+	readonly serverVersion?: string;
 	/** The configured `runtimes.shell`; only its basename is used, for inspection. */
 	readonly shell: ResolvedExecutable | undefined;
 	/** The configured `runtimes.tmux_args`. Anything unsafe disables the runtime. */
@@ -1672,16 +1698,15 @@ export class TmuxTerminalRuntime {
 	private neovimShimReady = false;
 	/** One in-flight bring-up per socket, shared by concurrent callers. */
 	private readonly serverBootstraps = new Map<SocketName, Promise<void>>();
+	private readonly serverVersion: string | undefined;
 	/**
-	 * The executable whose `tmux -V` this runtime has already accepted.
+	 * The socket whose running server answered `serverVersion`.
 	 *
-	 * Every operation begins by checking the version, and the answer cannot
-	 * change under a resolved executable: the path is canonical and the runtime
-	 * never re-derives it, so a second `-V` is a process spent re-reading a
-	 * constant. A replaced binary still cannot slip past — the very next tmux
-	 * command runs the new one, and reports its own failure.
+	 * Every operation begins by checking it, and a server's version cannot
+	 * change while it runs, so once is enough; a socket with no server is
+	 * asked again next time, since the server DevHub then starts is its own.
 	 */
-	private acceptedVersionOf: string | undefined;
+	private acceptedServerOn: SocketName | undefined;
 	private readonly themeEnvironment: () => Readonly<Record<string, string>>;
 	readonly timeoutMs: number;
 
@@ -1703,6 +1728,7 @@ export class TmuxTerminalRuntime {
 		// whose ssh carries none — writes each of them as `_`.
 		this.tmuxArgs = argumentsSafe ? ["-u", ...options.tmuxArgs] : [];
 		this.tmuxOwnEnvironment = options.tmuxEnvironment ?? {};
+		this.serverVersion = options.serverVersion;
 		this.shellName = options.shell?.basename;
 		this.effectiveSocket = isValidSocketName(options.effectiveSocketName)
 			? socketName(options.effectiveSocketName)
@@ -3113,7 +3139,7 @@ export class TmuxTerminalRuntime {
 				deadline,
 			);
 			if (!answer.success) throw answer.refusal();
-			const [agentId, pid] = withRawSeparators(parseCapture(answer.stdout))
+			const [agentId, pid] = parseCapture(answer.stdout)
 				.split("\n")[0]!
 				.split(FIELD_SEPARATOR);
 			if (agentId !== record.agentId) throw portFailure("conflict");
@@ -3654,35 +3680,51 @@ export class TmuxTerminalRuntime {
 			: "wrong";
 	}
 
+	/**
+	 * Refuse a running server that is not the tmux this runtime runs.
+	 *
+	 * The executable is DevHub's own (`bundledTmux.ts`, or the one delivered to
+	 * a host), so the client needs no `-V`. The server may not be: one an
+	 * older DevHub started with the tmux on the PATH (Homebrew's, Ubuntu's 3.4)
+	 * outlives it, and a tmux server keeps its own version whatever client
+	 * talks to it — format expansion, control mode and the rest are the
+	 * server's, so a 3.7c client of a 3.4 server still gets 3.4's escaped
+	 * separators and blank control-mode panes. Such a server is refused with a
+	 * sentence naming both versions and what to do, and is never stopped by
+	 * DevHub: its sessions may be running Agents, which are the person's to end.
+	 *
+	 * No server is not a mismatch (DevHub starts its own), and a server that
+	 * will not answer is left to the marker probe that follows, which reads it
+	 * as somebody else's.
+	 */
 	async ensureVersion(
 		socket: SocketName,
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
 	): Promise<void> {
-		const executable = this.executable().path;
-		if (this.acceptedVersionOf === executable) return;
+		const expected = this.serverVersion;
+		if (expected === undefined || this.acceptedServerOn === socket) return;
 		const output = await this.runTmux(
 			socket,
-			["-V"],
+			["display-message", "-p", "#{version}"],
 			this.contextHome,
 			cancel,
 			deadline,
 		);
-		if (!output.success) throw portFailure("unavailable");
-		const line = parseLines(output.stdout)[0];
-		if (line === undefined || !line.startsWith("tmux ")) {
-			throw portFailure("incompatible");
+		if (!output.success) return;
+		const running = parseLines(output.stdout)[0] ?? "";
+		if (running !== expected) {
+			throw portFailure("incompatible", {
+				detail: serverVersionMismatch(
+					socket,
+					running,
+					expected,
+					this.where,
+					this.tmuxPath(),
+				),
+			});
 		}
-		const parts = line.slice("tmux ".length).split(".");
-		const major = parseNumericPrefix(parts[0] ?? "");
-		const minor = parseNumericPrefix(parts[1] ?? "");
-		if (
-			major < MIN_TMUX_MAJOR ||
-			(major === MIN_TMUX_MAJOR && minor < MIN_TMUX_MINOR)
-		) {
-			throw portFailure("incompatible");
-		}
-		this.acceptedVersionOf = executable;
+		this.acceptedServerOn = socket;
 	}
 
 	targetIdentity(
@@ -3866,9 +3908,17 @@ export class TmuxTerminalRuntime {
 	}
 
 	/**
-	 * The PATH a pane DevHub creates gets, with DevHub's own `devhub` in front.
+	 * The PATH a pane DevHub creates gets: DevHub's `nvim` and `tmux` in front
+	 * on every machine (`ensureNeovimShim`), and on a host DevHub's own
+	 * `devhub` after them.
 	 *
-	 * `undefined` on the machine DevHub runs on: here `devhub` is whatever the
+	 * The `tmux` is not a preference. The pane is in DevHub's server, and a
+	 * `tmux` found further down the PATH — a host's own, Ubuntu's 3.4 — is a
+	 * client of another version talking to it. The binary's own directory
+	 * would not stay first through a person's startup files; the shim's is
+	 * kept first by zsh's hook (`neovimShimZshenv`), so it is there.
+	 *
+	 * No `devhub` on the machine DevHub runs on: here `devhub` is whatever the
 	 * person installed on their own PATH, and putting a second one ahead of it
 	 * would be DevHub overruling a choice they made. On a host nothing on the
 	 * PATH can reach DevHub at all, so this is the difference between having
@@ -3910,33 +3960,50 @@ export class TmuxTerminalRuntime {
 	}
 
 	/**
-	 * Write DevHub's `nvim` on this machine, if it is wanted and not written
-	 * yet; whether it is there. It runs DevHub's Neovim, so that is asked for
-	 * first (on a host, delivered then). A machine that has none, or refuses
-	 * the file, is logged and its panes get no `nvim` of DevHub's — they run
-	 * whatever `nvim` the person has; it is tried again for the next session.
+	 * Write DevHub's `nvim` and `tmux` on this machine, if they are wanted and
+	 * not written yet; whether DevHub's `nvim` is there.
+	 *
+	 * The `tmux` (`paneTmuxScript`) goes first, whatever becomes of the
+	 * `nvim`: it is what makes a pane's `tmux` — and a binding's, a popup's —
+	 * DevHub's own rather than the PATH's, and from then on the directory is
+	 * in front of every pane's PATH (`panePath`). The `nvim` runs DevHub's
+	 * Neovim, so that is asked for first (on a host, delivered then). A
+	 * machine that has none is logged, any `nvim` an earlier start left there
+	 * is removed, and its panes run whatever `nvim` the person has; it is
+	 * tried again for the next session. A directory DevHub cannot write is
+	 * logged and tried again too.
 	 */
 	async ensureNeovimShim(): Promise<boolean> {
 		const shim = this.neovimShim;
 		if (shim === undefined || !shim.wanted()) return false;
+		if (this.tmux.kind === "unavailable") return false;
 		this.neovimShimWritten ??= (async () => {
 			try {
+				if (!this.neovimShimReady) {
+					await this.host.makeDirectory(
+						join(shim.directory, NVIM_SHIM_ZSH_DIRECTORY),
+					);
+					await this.host.writeTextFile(
+						join(shim.directory, NVIM_SHIM_ZSH_DIRECTORY, ".zshenv"),
+						neovimShimZshenv(),
+						0o644,
+					);
+					await this.host.writeTextFile(
+						join(shim.directory, "tmux"),
+						paneTmuxScript(this.tmuxPath()),
+						0o755,
+					);
+					this.neovimShimReady = true;
+				}
 				const nvim = await this.host.neovimProgram();
 				if (nvim.kind === "unavailable") {
 					console.error(
 						`[devhub] DevHub's nvim is not on panes${this.where}: ${nvim.reason}`,
 					);
+					await this.host.removeTree(join(shim.directory, "nvim"));
 					this.neovimShimWritten = undefined;
 					return false;
 				}
-				await this.host.makeDirectory(
-					join(shim.directory, NVIM_SHIM_ZSH_DIRECTORY),
-				);
-				await this.host.writeTextFile(
-					join(shim.directory, NVIM_SHIM_ZSH_DIRECTORY, ".zshenv"),
-					neovimShimZshenv(),
-					0o644,
-				);
 				await this.host.writeTextFile(
 					join(shim.directory, "nvim"),
 					neovimShimScript({
@@ -3946,12 +4013,12 @@ export class TmuxTerminalRuntime {
 					}),
 					0o755,
 				);
-				this.neovimShimReady = true;
 				return true;
 			} catch (failure: unknown) {
 				console.error(
-					`[devhub] DevHub's nvim could not be written${this.where}: ${failureText(failure)}`,
+					`[devhub] DevHub's nvim and tmux could not be written${this.where}: ${failureText(failure)}`,
 				);
+				this.neovimShimWritten = undefined;
 				return false;
 			}
 		})();

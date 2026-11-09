@@ -26,21 +26,17 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { makeSocketDir } from "../src/model/testScratch";
 
-// `DEVHUB_TEST_TMUX` names one first: a machine whose own tmux is older than
-// the one these tests are written against (Ubuntu 24.04's 3.4 escapes the
-// record separators DevHub frames its listings with) points it at DevHub's
-// published tmux. scripts/test-local.sh does.
-const TMUX_CANDIDATES = [
-  ...(process.env["DEVHUB_TEST_TMUX"] ? [process.env["DEVHUB_TEST_TMUX"]] : []),
-  "/opt/homebrew/bin/tmux",
-  "/usr/local/bin/tmux",
-  "/usr/bin/tmux",
-];
+// The tmux DevHub runs, inside the app (`src/main/terminal/bundledTmux.ts`,
+// `out/tmux`, fetched by `build:tmux`, which `test` runs first): never the
+// machine's own, which is a version DevHub does not run.
+const BUNDLED_TMUX = fileURLToPath(
+  new URL("../out/tmux/bin/tmux", import.meta.url),
+);
 
-/** The tmux these tests run, or nothing on a machine that has none. */
-export const TMUX = TMUX_CANDIDATES.find((path) => existsSync(path));
+export const TMUX = existsSync(BUNDLED_TMUX) ? BUNDLED_TMUX : undefined;
 
 /**
  * The directory tmux actually puts the sockets in, under `TMUX_TMPDIR`.

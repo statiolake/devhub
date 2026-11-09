@@ -5,9 +5,9 @@
  * them, and `TmuxTerminalRuntime` speaks to exactly one server — so there is
  * one adapter per machine and it is built the same way for every machine: its
  * `$HOME` read from that machine, the configured shell resolved on it, its tmux
- * obtained from it — `Runtime.tmuxProgram`, which is where the two machines
- * differ, because this Mac uses the person's tmux and a host uses the one
- * DevHub installs there — and every command sent through its `exec`.
+ * obtained from it — `Runtime.tmuxProgram`: DevHub's own on every machine,
+ * the one inside the app here and the one DevHub installs on a host — and
+ * every command sent through its `exec`.
  *
  * The cache is not an optimisation, for the same reason `runtimeFor`'s is not:
  * an adapter *owns* things — the in-flight bring-up per socket, the accepted
@@ -34,11 +34,12 @@ import type { Runtime, RuntimeId } from "../runtime/runtime.js";
 import type { SettingsReader } from "./runningSettings.js";
 import type { SocketName } from "../terminal/ports.js";
 import { themePublicationIfInstalled } from "./themePublication.js";
+import { devhubProduct } from "../product.js";
 
 export interface TerminalRuntimesOptions {
 	/**
 	 * The settings DevHub runs on, asked as each machine's adapter is built:
-	 * `[runtimes] tmux`, `shell` and `tmux_args` as they are then.
+	 * `[runtimes] shell` and `tmux_args` as they are then.
 	 */
 	readonly settings: SettingsReader;
 	readonly effectiveSocketName: string;
@@ -152,16 +153,14 @@ export class TerminalRuntimes {
 		// See `Runtime.environment`.
 		const environment = await host.environment();
 		const searchPath = environment["PATH"] ?? "";
-		const configuredTmux = config.runtimes.tmux;
 		const configuredShell = config.runtimes.shell;
 		const [home, scratch, tmux, shell] = await Promise.all([
 			host.home(),
 			host.scratchDirectory(),
-			// Not `resolveProgram`: which tmux a machine runs is that machine's
-			// answer to give, and the two machines answer it differently in kind
-			// — this Mac uses the person's, a host uses the one DevHub installs
-			// on it. See `Runtime.tmuxProgram`.
-			host.tmuxProgram(configuredTmux, searchPath),
+			// Not `resolveProgram`: DevHub's own tmux, never the PATH's — the
+			// app's here, the one DevHub installs on a host. See
+			// `Runtime.tmuxProgram`.
+			host.tmuxProgram(),
 			host.resolveProgram(configuredShell, searchPath),
 		]);
 		return new TmuxTerminalRuntime({
@@ -173,10 +172,12 @@ export class TerminalRuntimes {
 							kind: "resolved",
 							value: {
 								path: tmux.path,
-								basename: basenameOf(configuredTmux),
+								basename: "tmux",
 							},
 						},
 			tmuxEnvironment: tmux.kind === "resolved" ? tmux.environment : {},
+			// The version every server it drives must be: the one it runs.
+			serverVersion: devhubProduct().tmuxVersion,
 			shell:
 				shell.kind === "unavailable"
 					? undefined

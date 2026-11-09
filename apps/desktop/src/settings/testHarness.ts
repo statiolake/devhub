@@ -61,7 +61,6 @@ export function testConfig(
     runtimes: {
       shell: "/bin/zsh",
       git: "git",
-      tmux: "tmux",
       tmuxSocketName: "devhub",
       tmuxArgs: [],
     },

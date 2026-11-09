@@ -24,7 +24,7 @@ on one that is not on its list with a reason; it also fails on any
 | Electron 43.7.7 (its Node runs main and every utility process: process host, pty host, Neovim host, conversation engine; and the login-environment printer as `ELECTRON_RUN_AS_NODE=1`) | the app | — |
 | Neovim 0.12.6 | `out/nvim` (`build:nvim`) | delivered, `~/.devhub-server/nvim/<v>` |
 | bash 5.3.20 | `out/bash` (`build:bash`): Linux, the published static tarball; macOS, `scripts/build_bash.py darwin-arm64`, built from the same pinned source and patches, linked against libSystem only, signed by packaging | delivered, `~/.devhub-server/bash/<v>` (static, musl) |
-| tmux 3.7c | being moved into the app (separate change); until then `runtimes.tmux` | delivered, `~/.devhub-server/tmux/<v>` |
+| tmux 3.7c | `out/tmux` (`build:tmux`): Linux, the published static tarball; macOS, `scripts/build_tmux.py darwin-arm64`, linked against libSystem only, signed by packaging. `runtimes.tmux` is retired | delivered, `~/.devhub-server/tmux/<v>` |
 | the `devhub` command (Go) | `out/cli/<os>-<arch>/devhub`, exec'd by the launcher | delivered, `~/.devhub-server/devhub/<digest>` |
 | libghostty-vt | `out/vt/ghostty-vt.wasm` | — |
 | node-pty | its N-API prebuild in `node_modules` | — |
@@ -55,7 +55,8 @@ Every place DevHub starts a program at runtime, with its category:
 | what | where | |
 | --- | --- | --- |
 | Neovim: the keeper's `nvim --headless --listen`, the shim's `nvim --embed`, the shim's tty-key reader `nvim -l` | `managedNeovim.ts`, `terminalNeovimShim.ts`, `terminalNeovimTtyKeys.ts` | bundled/delivered, by absolute path (`$real`) |
-| tmux, the server and every client (node-pty, `tmux -C`, bounded commands) | `terminal/tmux.ts`, `ptyHost/`, `surfaces.ts` | delivered on hosts; here, the bundled tmux is a separate change |
+| tmux, the server and every client (node-pty, `tmux -C`, bounded commands) | `terminal/tmux.ts`, `ptyHost/`, `surfaces.ts` | bundled (`terminal/bundledTmux.ts`) / delivered, by absolute path |
+| a pane's `tmux` (typed, a binding's `run-shell`, `copy-pipe`, a popup's) | `paneTmuxScript`, beside the `nvim` shim and first on every pane's PATH | bundled/delivered, by absolute path (`docs/terminal-mode.md`, "DevHub's tmux") |
 | the `devhub` command | the launcher (`cli/install.ts`), a host's shim (`terminal/launcher.ts`) | bundled/delivered |
 | `devhub-exec-clean`, `devhub-footprint`, `devhub-input-source`, `devhub-whisper{,-server}` | `cleanSpawn.ts`, `taskManagerReading.ts`, `inputSourceHelper.ts`, `voice/` | bundled |
 
@@ -99,4 +100,6 @@ Every place DevHub starts a program at runtime, with its category:
 (the bundled bash is the pinned version and is what a local Claude Agent
 gets), `runtime/agentShell.test.ts` and the host install in `ssh.test.ts`; the
 smoke test (`scripts/smoke_packaged_app.py`) requires `out/bash/bin/bash` in
-the packaged layout and runs it with an empty environment.
+the packaged layout and runs it with an empty environment, and requires
+`out/tmux/bin/tmux`, runs it, and checks that the app's tmux server is that
+binary and that a pane's `tmux` runs it.

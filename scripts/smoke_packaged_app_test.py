@@ -143,6 +143,9 @@ class AppLayout(unittest.TestCase):
 		(self.app / "out/nvim/bin/nvim").chmod(0o755)
 		self.write("out/bash/bin/bash", "#!/bin/sh\n")
 		(self.app / "out/bash/bin/bash").chmod(0o755)
+		self.write("out/tmux/bin/tmux", "#!/bin/sh\n")
+		(self.app / "out/tmux/bin/tmux").chmod(0o755)
+		self.write("out/tmux/terminfo/t/tmux-256color")
 		sums = []
 		for name in ("darwin-arm64", "linux-x64", "linux-arm64"):
 			binary = self.app / "out" / "cli" / name / "devhub"
@@ -181,6 +184,12 @@ class AppLayout(unittest.TestCase):
 		(self.app / "out/bash/bin/bash").unlink()
 		faults = check_app_layout(self.app, "linux-x64")
 		self.assertTrue(any("out/bash/bin/bash" in fault for fault in faults))
+
+	def test_names_a_missing_tmux(self) -> None:
+		self.lay_out()
+		(self.app / "out/tmux/bin/tmux").unlink()
+		faults = check_app_layout(self.app, "linux-x64")
+		self.assertTrue(any("out/tmux/bin/tmux" in fault for fault in faults))
 
 	def test_names_a_build_that_states_no_commit(self) -> None:
 		self.lay_out()

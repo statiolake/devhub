@@ -17,7 +17,10 @@ It also reads a bundle before starting it, for the faults a reply cannot rule
 out: a dependency, a native helper, the libghostty wasm or the Neovim missing
 from `Resources/app` takes one feature down and leaves the rest of the app
 answering. See `check_app_layout`; `exercise_neovim` runs the bundled Neovim
-and asks it its version and its runtime.
+and asks it its version and its runtime, and `exercise_tmux` the bundled tmux
+its version. Once the file is open, `check_tmux_server` asks the tmux server
+the app started whether it is that tmux — the executable, not one from the
+PATH — and whether its panes find it first on theirs.
 
 It starts the app under its own profile, `smoke`, and that is not a detail. A
 DevHub launched on the *default* profile is the user's DevHub: it reads
@@ -143,6 +146,11 @@ def check_app_layout(app_dir: Path, platform_name: str) -> list[str]:
 		faults.append("out/nvim/share/nvim/runtime is missing: Neovim has no runtime")
 	if not os.access(app_dir / "out" / "bash" / "bin" / "bash", os.X_OK):
 		faults.append("out/bash/bin/bash is missing or not executable: no Claude Agent can start")
+	tmux = bundled_tmux(app_dir)
+	if not os.access(tmux, os.X_OK):
+		faults.append("out/tmux/bin/tmux is missing or not executable: no terminal can start")
+	if not (app_dir / "out" / "tmux" / "terminfo").is_dir():
+		faults.append("out/tmux/terminfo is missing: the bundled tmux's build is incomplete")
 	product_file = app_dir / "product.json"
 	product = json.loads(product_file.read_text()) if product_file.is_file() else {}
 	if not product.get("commit"):
@@ -278,6 +286,76 @@ def exercise_bash(app_dir: Path) -> str | None:
 	return None
 
 
+def bundled_tmux(app_dir: Path) -> Path:
+	"""The tmux inside the app (`out/tmux`, `main/terminal/bundledTmux.ts`)."""
+	return app_dir / "out" / "tmux" / "bin" / "tmux"
+
+
+def exercise_tmux(app_dir: Path) -> str | None:
+	"""Run `out/tmux/bin/tmux -V`; None, or what was wrong."""
+	pinned = json.loads((app_dir / "product.json").read_text()).get("tmuxVersion")
+	try:
+		result = subprocess.run(
+			[str(bundled_tmux(app_dir)), "-V"], capture_output=True, text=True, timeout=30
+		)
+	except (OSError, subprocess.TimeoutExpired) as error:
+		return f"the bundled tmux did not run: {error}"
+	if result.returncode != 0 or result.stdout.strip() != f"tmux {pinned}":
+		return f"the bundled tmux answered {result.stdout.strip() or result.stderr.strip()!r}, and product.json pins tmux {pinned}"
+	print(f"    the bundled {result.stdout.strip()} ran")
+	return None
+
+
+def server_executable(pid: int) -> Path | None:
+	"""The program a process runs, as the kernel says (Linux) or `ps` (macOS)."""
+	if sys.platform == "linux":
+		try:
+			return Path(os.readlink(f"/proc/{pid}/exe"))
+		except OSError:
+			return None
+	result = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True)
+	return Path(result.stdout.strip()) if result.returncode == 0 and result.stdout.strip() else None
+
+
+def check_tmux_server(tmux: Path, environment: dict[str, str]) -> str | None:
+	"""The app's tmux server is the bundled tmux, and its panes' `tmux` is too.
+
+	Asked of the server on the smoke profile's socket: its version, the
+	program its process runs, and the `tmux` first on the PATH it gives a
+	pane — DevHub's pane shim, which runs the bundled tmux by its path.
+	"""
+	socket_name = f"devhub-{SMOKE_PROFILE}"
+	asked = subprocess.run(
+		[str(tmux), "-L", socket_name, "display-message", "-p", "#{version} #{pid}"],
+		env=environment,
+		capture_output=True,
+		text=True,
+		timeout=30,
+	)
+	if asked.returncode != 0:
+		return f"the app's tmux server did not answer on {socket_name}: {asked.stderr.strip()}"
+	version, _, pid = asked.stdout.strip().partition(" ")
+	program = server_executable(int(pid)) if pid.isdigit() else None
+	if program is None or program.resolve() != tmux.resolve():
+		return f"the app's tmux server (tmux {version}, pid {pid}) runs {program}, not the bundled {tmux}"
+	path = subprocess.run(
+		[str(tmux), "-L", socket_name, "show-environment", "-g", "PATH"],
+		env=environment,
+		capture_output=True,
+		text=True,
+		timeout=30,
+	).stdout.strip()
+	first = Path(path.removeprefix("PATH=").split(":")[0]) / "tmux"
+	try:
+		shim = first.read_text()
+	except OSError as error:
+		return f"a pane's PATH starts {path.removeprefix('PATH=').split(':')[0]}, with no DevHub tmux in it ({error})"
+	if str(tmux) not in shim:
+		return f"the tmux first on a pane's PATH ({first}) is not the bundled one:\n{shim}"
+	print(f"    the app's tmux server is the bundled tmux {version}, and a pane's `tmux` ({first}) runs it")
+	return None
+
+
 def exercise_app(electron: Path, app_dir: Path) -> str | None:
 	"""Run `EXERCISE` in `electron` as Node; None, or what failed."""
 	with tempfile.TemporaryDirectory(prefix="devhub-exercise-") as scratch:
@@ -397,7 +475,7 @@ def smoke_source(repo: Path, timeout: float, settle: float, electron_args: list[
 	user_data = source_user_data_directory(repo, environment)
 	print(f"    a source run (apps/desktop/scripts/dev.sh) under the {SMOKE_PROFILE} profile")
 	cli = cli_binary(repo / "apps" / "desktop", host_platform())
-	return run_and_probe(cli, argv, environment, state, user_data, timeout, settle)
+	return run_and_probe(cli, argv, environment, state, user_data, timeout, settle, bundled_tmux(repo / "apps" / "desktop"))
 
 
 def host_platform() -> str:
@@ -417,15 +495,17 @@ def smoke(app: Path, timeout: float, settle: float = 5.0) -> int:
 		for fault in faults:
 			print(f"    {fault}", file=sys.stderr)
 		return 1
-	print("    Resources/app has its entry, its dependencies, its helpers, its wasm, its Neovim and its bash")
-	problem = exercise_neovim(app / "Contents" / "Resources" / "app") or exercise_bash(app / "Contents" / "Resources" / "app")
+	print("    Resources/app has its entry, its dependencies, its helpers, its wasm, its Neovim, its bash and its tmux")
+	app_dir = app / "Contents" / "Resources" / "app"
+	problem = exercise_neovim(app_dir) or exercise_bash(app_dir) or exercise_tmux(app_dir)
 	if problem is not None:
 		print(f"    {problem}", file=sys.stderr)
 		return 1
 	state = Path(tempfile.mkdtemp(prefix="devhub-smoke-"))
 	argv, environment = launch_command(executable, state)
 	cli = cli_binary(app / "Contents" / "Resources" / "app", host_platform())
-	return run_and_probe(cli, argv, environment, state, user_data_directory(state), timeout, settle)
+	tmux = bundled_tmux(app / "Contents" / "Resources" / "app")
+	return run_and_probe(cli, argv, environment, state, user_data_directory(state), timeout, settle, tmux)
 
 
 def smoke_layout(repo: Path, app_dir: Path, timeout: float, settle: float, electron_args: list[str]) -> int:
@@ -437,8 +517,8 @@ def smoke_layout(repo: Path, app_dir: Path, timeout: float, settle: float, elect
 		for fault in faults:
 			print(f"    {fault}", file=sys.stderr)
 		return 1
-	print("    the layout has its entry, its dependencies, its wasm, its Neovim and its bash")
-	problem = exercise_neovim(app_dir) or exercise_bash(app_dir)
+	print("    the layout has its entry, its dependencies, its wasm, its Neovim, its bash and its tmux")
+	problem = exercise_neovim(app_dir) or exercise_bash(app_dir) or exercise_tmux(app_dir)
 	if problem is not None:
 		print(f"    {problem}", file=sys.stderr)
 		return 1
@@ -456,7 +536,7 @@ def smoke_layout(repo: Path, app_dir: Path, timeout: float, settle: float, elect
 		Path(environment[directory]).mkdir(parents=True, exist_ok=True)
 	print(f"    {app_dir} under npm's Electron, the {SMOKE_PROFILE} profile")
 	cli = cli_binary(app_dir, host_platform())
-	return run_and_probe(cli, argv, environment, state, user_data_directory(state), timeout, settle)
+	return run_and_probe(cli, argv, environment, state, user_data_directory(state), timeout, settle, bundled_tmux(app_dir))
 
 
 def run_and_probe(
@@ -467,9 +547,11 @@ def run_and_probe(
 	user_data: Path,
 	timeout: float,
 	settle: float,
+	tmux: Path,
 ) -> int:
-	"""Start the app, require a reply on its control socket and an opened
-	file it outlives, and take it and its state down again whatever happened."""
+	"""Start the app, require a reply on its control socket, an opened file it
+	outlives and a tmux server that is its own, and take it and its state down
+	again whatever happened."""
 	# A file rather than a pipe: nothing reads a pipe while the app runs, and
 	# an app that fills one blocks on its own console.log.
 	log_path = state / "app.log"
@@ -516,6 +598,11 @@ def run_and_probe(
 			print(log_tail(log_path), file=sys.stderr)
 			return 1
 		print(f"    devhub smoke.txt opened it: {opened.stdout.strip()}")
+		problem = check_tmux_server(tmux, environment)
+		if problem is not None:
+			print(f"    {problem}", file=sys.stderr)
+			print(log_tail(log_path), file=sys.stderr)
+			return 1
 		problem = outlives(process, settle)
 		if problem is not None:
 			print(f"    {problem}", file=sys.stderr)
@@ -533,10 +620,11 @@ def run_and_probe(
 			pass
 		process.wait(timeout=30)
 		# tmux daemonizes out of the session, so a server the app started is
-		# ended by name, on the socket directory the run was given.
-		if "TMUX_TMPDIR" in environment and shutil.which("tmux"):
+		# ended by name, with the app's own tmux, on the socket directory the
+		# run was given.
+		if os.access(tmux, os.X_OK):
 			subprocess.run(
-				["tmux", "-L", f"devhub-{SMOKE_PROFILE}", "kill-server"],
+				[str(tmux), "-L", f"devhub-{SMOKE_PROFILE}", "kill-server"],
 				env=environment,
 				capture_output=True,
 			)

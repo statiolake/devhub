@@ -55,12 +55,9 @@ import { PtyHost } from "../../out/test-terminal/main/ptyHost/host.js";
 const SCRATCH_ROOT = fileURLToPath(
   new URL("../../../../.spike/", import.meta.url),
 );
-// DEVHUB_TEST_TMUX first, as in test/tmuxSockets.ts.
+// The tmux DevHub runs, inside the app (out/tmux), as in test/tmuxSockets.ts.
 const TMUX = [
-  ...(process.env.DEVHUB_TEST_TMUX ? [process.env.DEVHUB_TEST_TMUX] : []),
-  "/opt/homebrew/bin/tmux",
-  "/usr/local/bin/tmux",
-  "/usr/bin/tmux",
+  fileURLToPath(new URL("../../out/tmux/bin/tmux", import.meta.url)),
 ].find((path) => existsSync(path));
 
 function scratchDirectory(label) {
