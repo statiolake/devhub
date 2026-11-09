@@ -180,6 +180,26 @@ export function mixColors(rgb: number, under: number, percent: number): number {
   return channel(16) | channel(8) | channel(0);
 }
 
+/**
+ * Highlights laid over a window's rows or a region of its text — they
+ * scroll with the text, so a window's ground is never taken from them.
+ */
+const OVER_TEXT =
+  /^(Diff(Add|Change|Delete|Text)|CursorLine(Nr|Sign|Fold)?|CursorColumn|ColorColumn|Visual(NOS)?|Search|CurSearch|IncSearch|Substitute|Folded|QuickFixLine|MatchParen)$/;
+
+/**
+ * Whether a cell in `attr` is drawn in its window's own ground, or in a
+ * column's that runs the window's height (its sign or number column's):
+ * not in a diff's, the cursor line's, Visual's, a match's or any highlight
+ * laid over the text, nor reversed (`separatorsOf`).
+ */
+export function isOwnGround(attr: HlAttr | undefined): boolean {
+  if (attr === undefined) return true;
+  if (attr.reverse === true) return false;
+  if (attr.background === undefined) return true;
+  return !(attr.groups ?? []).some((g) => OVER_TEXT.test(g));
+}
+
 /** A highlight's colours on the default ones, `reverse` applied. */
 export function resolveColors(
   attr: HlAttr | undefined,
@@ -1143,6 +1163,8 @@ export class GridPainter {
         const attr = state.hl.get(g?.hls[index] ?? 0);
         return resolveColors(attr, state.defaults).bg;
       },
+      (grid, index) =>
+        isOwnGround(state.hl.get(state.grids.get(grid)?.hls[index] ?? 0)),
     );
     const key = JSON.stringify(separators);
     if (key === this.separatorsKey) return;

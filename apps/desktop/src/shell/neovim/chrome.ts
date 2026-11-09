@@ -250,18 +250,29 @@ export interface Separator {
 }
 
 /**
+ * Whether a window's cell is drawn in the window's own ground (its
+ * `Normal`, its sign column's), not in a highlight laid over a line or a
+ * region of its text (a diff's, the cursor line's, Visual's).
+ */
+export type IsGround = (grid: number, index: number) => boolean;
+
+/**
  * The cells of grid 1 in a column right of a window or left of one, and
- * the grounds either side: a window's is the colour most of its cells next
- * to the column have (its `Normal`, its sign column's), so a cursor line
- * does not bleed into it; elsewhere (a status line beside) that cell's.
- * The separator's two halves continue what is beside them and only its
- * line is left between.
+ * the grounds either side: a window's is its own ground (`isGround`), the
+ * colour most of those of its cells next to the column have (its `Normal`,
+ * its sign column's), else of those anywhere in it — never a highlight laid
+ * over its text, so a cursor line does not bleed into it, and what scrolls past
+ * (a diff hunk taller than half the window) does not recolour it: the
+ * separator is the windows' edge, which scrolling never touches; elsewhere
+ * (a status line beside) that cell's. The separator's two halves continue
+ * what is beside them and only its line is left between.
  */
 export function separatorsOf(
   boxes: readonly GridBox[],
   width: number,
   height: number,
   bgOf: BgOf,
+  isGround: IsGround = () => true,
 ): Separator[] {
   const windows = boxes.filter((box) => !box.float && box.win !== undefined);
   const at = (row: number, col: number) =>
@@ -277,13 +288,29 @@ export function separatorsOf(
   const edgeOf = (box: GridBox) => {
     let edge = edges.get(box.grid);
     if (!edge) {
-      const first: number[] = [];
-      const last: number[] = [];
-      for (let row = 0; row < box.height; row += 1) {
-        first.push(bgOf(box.grid, row * box.width));
-        last.push(bgOf(box.grid, row * box.width + box.width - 1));
-      }
-      edge = { first: commonest(first) ?? 0, last: commonest(last) ?? 0 };
+      let whole: number | null | undefined = null;
+      const anywhere = () => {
+        if (whole !== null) return whole;
+        const own: number[] = [];
+        for (let i = 0; i < box.width * box.height; i += 1)
+          if (isGround(box.grid, i)) own.push(bgOf(box.grid, i));
+        whole = commonest(own);
+        return whole;
+      };
+      // The ground at a column, else anywhere in the window, else (no cell
+      // in its own ground: a hunk filling it) the column's commonest.
+      const at = (col: number) => {
+        const all: number[] = [];
+        const own: number[] = [];
+        for (let row = 0; row < box.height; row += 1) {
+          const i = row * box.width + col;
+          const bg = bgOf(box.grid, i);
+          all.push(bg);
+          if (isGround(box.grid, i)) own.push(bg);
+        }
+        return commonest(own) ?? anywhere() ?? commonest(all) ?? 0;
+      };
+      edge = { first: at(0), last: at(box.width - 1) };
       edges.set(box.grid, edge);
     }
     return edge;

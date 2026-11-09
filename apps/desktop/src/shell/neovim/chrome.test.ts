@@ -81,6 +81,40 @@ describe("a window separator", () => {
       { row: 3, col: 5, left: LEFT, right: RIGHT },
     ]);
   });
+  it("keeps a window's own ground while a diff hunk scrolls past it", () => {
+    // Window 2 (rows 0–9, 6 columns) left of the column, window 3 right of
+    // it. A hunk 7 rows tall in DiffChange scrolls up through window 2: at
+    // every offset the separator is the same, the window's Normal beside it,
+    // as the commonest colour of its edge alone (DiffChange from offset 0 to
+    // 3) was not.
+    const NORMAL_L = 0x111111;
+    const NORMAL_R = 0x222222;
+    const HUNK = 0x553300;
+    const SIGNS = 0x050505;
+    const boxes = [box(2, 0, 0, 6, 10), box(3, 0, 7, 3, 10)];
+    const at = (top: number) => {
+      const hunk = (row: number) => row >= top && row < top + 7;
+      const bgOf = (grid: number, index: number) => {
+        if (grid !== 2) return grid === 3 && index % 3 === 0 ? SIGNS : NORMAL_R;
+        return hunk(Math.floor(index / 6)) ? HUNK : NORMAL_L;
+      };
+      const isGround = (grid: number, index: number) =>
+        grid !== 2 || !hunk(Math.floor(index / 6));
+      return separatorsOf(boxes, 10, 10, bgOf, isGround);
+    };
+    const still = at(9);
+    for (let top = 8; top >= -7; top -= 1) expect(at(top)).toEqual(still);
+    expect(still[0]).toEqual({ row: 0, col: 6, left: NORMAL_L, right: SIGNS });
+    // A window its hunk fills, no cell of its own ground left: the hunk's.
+    const filled = separatorsOf(
+      boxes,
+      10,
+      10,
+      (grid) => (grid === 2 ? HUNK : NORMAL_R),
+      (grid) => grid !== 2,
+    );
+    expect(filled[0]?.left).toBe(HUNK);
+  });
 });
 
 describe("the end of the buffer", () => {

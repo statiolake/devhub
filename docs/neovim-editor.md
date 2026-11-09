@@ -295,6 +295,13 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     between cells or rows (a terminal's grid shows one).
   - A window separator's cell is drawn as the two sides meeting
     (`separatorsOf`): each half in the ground beside it, its line between.
+    A window's ground there is its own (`Normal`, `NormalNC`, its sign or
+    number column's: `isOwnGround`), never a highlight laid over its text
+    (a diff's, the cursor line's, Visual's), so nothing scrolling past
+    recolours the separator. It took the commonest colour of the window's
+    edge, and a diff hunk taller than half the window turned the whole
+    half DiffText's beside unchanged lines, then flipped it back mid-scroll
+    (seen in the app: the border's colour jumping while the text glided).
   - The `~` past the end of a buffer (in `EndOfBuffer`) is not drawn while
     the window's `fillchars` has no `eob:` of the person's
     (`isEndOfBuffer`); a `:setlocal fillchars` is seen at once
