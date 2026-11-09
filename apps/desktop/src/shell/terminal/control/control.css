@@ -82,6 +82,14 @@
   border: 1px solid var(--control-cursor);
 }
 
+/* An IME's preedit: a canvas the painter draws as it draws the panes, at
+   the cursor, over it. */
+.control-preedit {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+}
+
 /* The keys' and the IME's textarea: at the cursor, so a composition's
    candidates open there, and invisible. */
 .control-input {

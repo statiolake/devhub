@@ -370,7 +370,10 @@ picks it by the setting and mounts the other one when it changes.
 - **Keys.** By tmux's names (`controlKeys.ts`), so the prefix and the
   bindings are tmux's; Option is Meta per `mac_option_is_meta`, by the
   physical key. Text an IME commits, and a dead key's character, go to the
-  active pane as bytes; a paste is bracketed when the pane's program asked.
+  active pane as bytes, once per commit; while an IME composes, its preedit
+  is drawn at the cursor, underlined, each character on the cells it will
+  take (`neovim/ime.ts` and the painter's `paintPreedit`, as in the Neovim
+  editor), and the IME's candidates open after it; a paste is bracketed when the pane's program asked.
   Keys typed while a client is being attached are held for it.
 - **Mouse.** A click selects its pane; a pane whose program asked for SGR
   mouse reports gets presses, releases and the wheel. Scrolling back

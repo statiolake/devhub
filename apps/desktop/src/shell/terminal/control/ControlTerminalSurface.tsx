@@ -10,6 +10,13 @@ import "./chooser.css";
 import { useColorScheme } from "../../appearance";
 import { Failure, Waiting } from "../../components/shell/SurfaceState";
 import { GridPainter, mixColors, rgbOfCss } from "../../neovim/painter";
+import {
+  IDLE,
+  imeStep,
+  preeditLayout,
+  type ImeEvent,
+  type ImeState,
+} from "../../neovim/ime";
 import { OptionKeys } from "../../surfaces/optionKey";
 import {
   activePalette,
@@ -181,6 +188,10 @@ export function ControlTerminalSurface({
     chooserEl.hidden = true;
     const numbersEl = document.createElement("div");
     const copyEl = document.createElement("div");
+    // An IME's preedit, drawn at the cursor as the Neovim editor draws it.
+    const preedit = document.createElement("canvas");
+    preedit.className = "control-preedit";
+    preedit.hidden = true;
     const input = document.createElement("textarea");
     input.className = "control-input";
     input.setAttribute("aria-label", `${surfaceLabel} terminal input`);
@@ -196,6 +207,7 @@ export function ControlTerminalSurface({
       numbersEl,
       copyEl,
       cursor,
+      preedit,
       input,
     );
 
@@ -405,6 +417,7 @@ export function ControlTerminalSurface({
         input.style.left = cursor.style.left;
         input.style.top = cursor.style.top;
       }
+      if (ime.preedit !== "") placePreedit();
       if (lastSeq > ackedSeq) {
         ackedSeq = lastSeq;
         send({ kind: "ack", seq: lastSeq });
@@ -860,17 +873,62 @@ export function ControlTerminalSurface({
       markTyped();
       send({ kind: "bytes", bytes: new TextEncoder().encode(text) });
     };
-    // Text the keydown did not take: an IME's commit, a dead key's character.
-    const onCompositionEnd = (event: CompositionEvent) => {
-      sendText(event.data);
-      input.value = "";
+    // Text the keydown did not take: an IME's commit, a dead key's
+    // character. While an IME composes, its preedit is drawn at the cursor,
+    // cell by cell as the pane will hold it, and nothing reaches the pane;
+    // the commit is sent once (`neovim/ime.ts`, the Neovim editor's rule).
+    let ime: ImeState = IDLE;
+    let preeditAt = { left: "", top: "" };
+    const placePreedit = () => {
+      const text = ime.preedit;
+      preedit.hidden = text === "";
+      if (text === "") return;
+      // Where the textarea is put for the cursor; it then moves past the
+      // preedit, so the IME's candidates open after it.
+      if (!input.dataset.preedit) {
+        preeditAt = { left: input.style.left, top: input.style.top };
+        input.dataset.preedit = "true";
+      }
+      const layout = preeditLayout(text);
+      painter.paintPreedit(
+        preedit,
+        layout,
+        view.state.defaults.foreground,
+        view.state.defaults.background,
+      );
+      preedit.style.left = preeditAt.left;
+      preedit.style.top = preeditAt.top;
+      input.style.left = `${String(
+        parseFloat(preeditAt.left || "0") + layout.cells * cell().width,
+      )}px`;
     };
+    const onIme = (event: ImeEvent) => {
+      const step = imeStep(ime, event);
+      ime = step.state;
+      if (step.commit !== undefined) sendText(step.commit);
+      if (step.clear) input.value = "";
+      if (ime.preedit === "" && input.dataset.preedit) {
+        delete input.dataset.preedit;
+        input.style.left = preeditAt.left;
+        input.style.top = preeditAt.top;
+      }
+      placePreedit();
+    };
+    const onCompositionStart = () => onIme({ type: "compositionstart" });
+    const onCompositionUpdate = (event: CompositionEvent) =>
+      onIme({ type: "compositionupdate", data: event.data });
+    const onCompositionEnd = (event: CompositionEvent) =>
+      onIme({ type: "compositionend", data: event.data });
     const onInput = (event: Event) => {
       const e = event as InputEvent;
-      if (e.isComposing) return;
-      sendText(input.value);
-      input.value = "";
+      onIme({
+        type: "input",
+        inputType: e.inputType,
+        data: e.data,
+        isComposing: e.isComposing,
+      });
     };
+    const onBlur = () => onIme({ type: "reset" });
     const onPaste = (event: ClipboardEvent) => {
       const text = event.clipboardData?.getData("text/plain") ?? "";
       event.preventDefault();
@@ -993,7 +1051,10 @@ export function ControlTerminalSurface({
 
     input.addEventListener("keydown", onKeyDown);
     input.addEventListener("keyup", onKeyUp);
+    input.addEventListener("compositionstart", onCompositionStart);
+    input.addEventListener("compositionupdate", onCompositionUpdate);
     input.addEventListener("compositionend", onCompositionEnd);
+    input.addEventListener("blur", onBlur);
     input.addEventListener("input", onInput);
     input.addEventListener("paste", onPaste);
     host.addEventListener("paste", markTyped, true);
