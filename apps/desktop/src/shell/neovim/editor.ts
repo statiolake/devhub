@@ -107,6 +107,15 @@ const BLINK_FADE_MS = 120;
 /** A cursor's glide from cell to cell (`glideCursor`). */
 const CURSOR_GLIDE_MS = 70;
 
+/**
+ * The stacking order of ambient status (notifications) among the grids':
+ * a float's is 100 + its zindex and a window's 1, so this is a float at
+ * zindex 45 — fidget's — over every window and under every float at
+ * Neovim's default zindex (50) or above: a picker, a hover, a plugin's
+ * window covers a notification, never the other way round.
+ */
+export const AMBIENT_Z = 100 + 45;
+
 export class NeovimEditor {
   readonly state: NeovimUiState = initialUiState(themeColors());
   private pending: RedrawChanges = emptyChanges();
@@ -211,6 +220,27 @@ export class NeovimEditor {
     this.watchFonts();
     this.watchViewFocus();
   }
+
+  /**
+   * The element ambient status is drawn in (the notifications, `Toasts`):
+   * a level of the editor's band at `AMBIENT_Z`, over the windows and under
+   * the floats — what the person is working in covers it, as fidget's own
+   * window (zindex 45) is under a picker's (docs/rendering-layers.md,
+   * "Bands").
+   */
+  ambient(): HTMLElement {
+    if (!this.ambientLevel) {
+      const el = document.createElement("div");
+      el.className = "nvim-level nvim-ambient";
+      el.style.zIndex = String(AMBIENT_Z);
+      el.dataset.z = String(AMBIENT_Z);
+      this.gridLayer.append(el);
+      this.ambientLevel = el;
+    }
+    return this.ambientLevel;
+  }
+
+  private ambientLevel: HTMLDivElement | undefined;
 
   /**
    * Where what the page lays over `grid` as `part` goes (`GridPainter.over`):
@@ -1258,12 +1288,12 @@ export class NeovimEditor {
         at.col,
       ]);
     };
-    // A GUI window, a view (framed or not), a card and a popup are DevHub's: their
-    // own clicks and wheel (all but the popup are in the grids' layer, in
-    // their window's clip).
+    // A GUI window, a view (framed or not), a card, a popup and the
+    // notifications are DevHub's: their own clicks and wheel (all but the
+    // popup are in the grids' layer).
     const ownedByGui = (event: Event) =>
       (event.target as HTMLElement).closest(
-        ".nvim-gui-window, .nvim-popup, .nvim-view, .nvim-inline-card, .nvim-view-frame",
+        ".nvim-gui-window, .nvim-popup, .nvim-view, .nvim-inline-card, .nvim-view-frame, .nvim-toasts",
       ) !== null || forwardedToFrame(event);
     // A framed view (gui.view{ frame }) lies over its float, under the levels
     // of the floats above it (its preview's): a level takes the event, so it

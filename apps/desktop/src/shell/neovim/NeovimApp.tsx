@@ -851,15 +851,22 @@ function NeovimSurface({
           </>
         ) : null}
       </div>
-      <Toasts
-        toasts={decorations.toasts}
-        dismiss={dismiss}
-        bottom={toastBottom(editor, boxes, decorations.pager)}
-        right={toastRight(editor, boxes)}
-        surface={editor?.surface()}
-        cell={editor?.cellMetrics()}
-        fontSize={editor?.font().size}
-      />
+      {editor
+        ? // Ambient status: over the windows, under every float
+          // (`NeovimEditor.ambient`).
+          createPortal(
+            <Toasts
+              toasts={decorations.toasts}
+              dismiss={dismiss}
+              bottom={toastBottom(editor, boxes, decorations.pager)}
+              right={toastRight(editor, boxes)}
+              surface={editor.surface()}
+              cell={editor.cellMetrics()}
+              fontSize={editor.font().size}
+            />,
+            editor.ambient(),
+          )
+        : null}
       {connection.kind === "connecting" ? (
         <div className="nvim-status">Starting Neovim…</div>
       ) : null}

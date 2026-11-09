@@ -65,7 +65,7 @@ What follows the rule in code:
 - Bands (`neovim.css`, `--nvim-band-*`): the editor is stacked in bands,
   each one stacking context, so nothing in one is drawn over a band above
   it, whatever its own z-index. `.nvim-host` is a band of the surface,
-  under the toasts and the status. A guard test (`bands.test.ts`) holds
+  under the status. A guard test (`bands.test.ts`) holds
   the order and fails on a numeric z-index in `neovim.css`. Inside the
   host, bottom to top:
   - **editor** (`.nvim-editor`, made by `NeovimEditor`): Neovim's
@@ -73,6 +73,12 @@ What follows the rule in code:
     (riders, the cursor, GUI windows and views, in its
     clip). A float's 100 + zindex orders it among the grids and nothing
     else: which-key at 1000 is still under every band above.
+    The notifications (`gui.notify`, `Toasts`) are a level of this band at
+    `AMBIENT_Z` (100 + 45, fidget's zindex): over the windows, under every
+    float at Neovim's default zindex or above. A notification is ambient
+    status; it yields to what the person is working in — a picker, a
+    hover, a plugin's window — as fidget's own window does, rather than
+    being drawn over a picker's rows as a band over the floats would.
   - **popup**: `gui.popup` (hovers, LSP floats). Asked for by a key and
     closed by the next cursor move, so a float must not hide what was just
     asked to be read.

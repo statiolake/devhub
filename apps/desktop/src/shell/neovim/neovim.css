@@ -38,12 +38,13 @@
    * band is one stacking context, so nothing in a band, whatever its own
    * z-index, is drawn over a band above it or under one below it.
    *
-   * Over the editor (`.nvim-host`), in the surface: the toasts, then the
-   * status (starting, failed), which stands for the whole editor.
+   * Over the editor (`.nvim-host`), in the surface: the status (starting,
+   * failed), which stands for the whole editor. The notifications are not
+   * a band: they are ambient status, drawn among the grids under the
+   * floats (`NeovimEditor.ambient`).
    */
   --nvim-band-host: 0;
-  --nvim-band-toasts: 1;
-  --nvim-band-status: 2;
+  --nvim-band-status: 1;
   /*
    * In `.nvim-host`: the editor first — Neovim's composition, the grids at
    * their stacking orders (grid 1, the windows, each float at 100 + its
@@ -637,10 +638,10 @@
 
   position: absolute;
   right: 12px;
-  z-index: var(--nvim-band-toasts);
   max-width: min(520px, calc(100% - 24px));
   pointer-events: none;
-  font-family: inherit;
+  /* Among the grids, which set the grid's font: the UI face, by name. */
+  font-family: var(--nvim-ui-font);
   font-size: var(--nvim-ui-size, 12px);
   line-height: var(--nvim-line, 18px);
   font-weight: 400;

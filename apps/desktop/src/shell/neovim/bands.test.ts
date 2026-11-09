@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { AMBIENT_Z } from "./editor";
 
 /**
  * The editor's stacking bands (`neovim.css`, docs/rendering-layers.md):
@@ -37,7 +38,7 @@ describe("the editor's bands", () => {
     ]);
     expect([...inHost].sort((x, y) => x - y)).toEqual(inHost);
     expect(new Set(inHost).size).toBe(inHost.length);
-    const surface = order(["host", "toasts", "status"]);
+    const surface = order(["host", "status"]);
     expect([...surface].sort((x, y) => x - y)).toEqual(surface);
     expect(new Set(surface).size).toBe(surface.length);
   });
@@ -48,5 +49,12 @@ describe("the editor's bands", () => {
     for (const m of (await css()).matchAll(/z-index:\s*([^;]+);/g)) {
       expect(m[1]).toMatch(/^(var\(--nvim-band-[a-z]+\)|-1)$/);
     }
+  });
+
+  it("put the notifications over the windows and under every float", () => {
+    // A window's grid is at 1, a float at 100 + its zindex (Neovim's
+    // default 50; fidget's own window 45).
+    expect(AMBIENT_Z).toBeGreaterThan(1);
+    expect(AMBIENT_Z).toBeLessThan(100 + 50);
   });
 });
