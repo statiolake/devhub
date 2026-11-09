@@ -94,7 +94,11 @@ describe("ActivityLine", () => {
     const { container, rerender } = render(
       <ActivityLine transcript={transcriptOf([])} />,
     );
-    expect(container).toBeEmptyDOMElement();
+    // Idle, only the line's room is kept: empty, and not announced.
+    expect(container.querySelector(".conversation-activity")).toBeNull();
+    const slot = container.querySelector(".conversation-activity-slot");
+    expect(slot).toBeEmptyDOMElement();
+    expect(slot).toHaveAttribute("aria-hidden", "true");
     rerender(
       <ActivityLine
         transcript={transcriptOf([put(user("u", "hi")), RUNNING])}

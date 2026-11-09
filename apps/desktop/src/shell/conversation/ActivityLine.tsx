@@ -17,7 +17,8 @@ export const ACTIVITY_EXIT_MS = 180;
  * it: a pulsing indicator, what the Agent is doing, how long the turn has
  * taken and roughly how much it has written. It is the transcript's last
  * child, so a following transcript keeps it in view and one scrolled up is
- * not moved. When the turn ends it fades for a moment, then is gone.
+ * not moved. When the turn ends it fades for a moment, then is gone, its
+ * room kept empty for the next turn's line.
  */
 export function ActivityLine({
   transcript,
@@ -50,7 +51,12 @@ export function ActivityLine({
     return () => clearTimeout(timer);
   }, [running]);
   const shown = activity ?? last.current;
-  if (shown === undefined) return null;
+  // Idle, its room is kept (`conversation-activity-slot`, as tall as the
+  // line): a line that came and went with each turn lengthened the
+  // transcript as the turn began and shortened it as it ended, and a
+  // transcript followed to its end moved by that much both times.
+  if (shown === undefined)
+    return <div className="conversation-activity-slot" aria-hidden="true" />;
   const label = activityLabel(shown);
   const tokens = estimateTokens(transcript);
   const elapsed = formatElapsed(now - (startedAt ?? now));

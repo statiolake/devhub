@@ -335,8 +335,10 @@ function PersonMessageView({
         {entry.text !== "" ? <SkillText text={entry.text} /> : null}
       </PersonBubble>
       <ImageStrip images={entry.images} />
+      {/* Rewind before Copy: the row stands at the right edge, so Copy,
+          which is always there, keeps its place while Rewind comes and goes
+          with the turn (`rewindTargets`). */}
       <div className="conversation-message-actions">
-        <CopyButton text={entry.text} label="Copy message" />
         {rewindable ? (
           <button
             type="button"
@@ -348,6 +350,7 @@ function PersonMessageView({
             <RewindIcon />
           </button>
         ) : null}
+        <CopyButton text={entry.text} label="Copy message" />
       </div>
       {confirming && rewindable ? (
         <div
@@ -441,6 +444,10 @@ function PlanChecklist({ steps }: { readonly steps: readonly PlanStep[] }) {
 
 function AssistantView({ entry }: { readonly entry: AssistantEntry }) {
   const source = answerSource(entry);
+  // The row is there from the answer's first block of text, empty as it
+  // may still be: drawn only once a word had arrived, it came a frame after
+  // the text began, and moved what follows the answer down by its height.
+  const answers = entry.blocks.some((block) => block.kind === "text");
   return (
     <div
       className="conversation-assistant"
@@ -454,7 +461,7 @@ function AssistantView({ entry }: { readonly entry: AssistantEntry }) {
           streaming={entry.streaming && index === entry.blocks.length - 1}
         />
       ))}
-      {source.length > 0 ? (
+      {answers ? (
         <div className="conversation-message-actions">
           <CopyButton text={source} label="Copy answer" />
         </div>
@@ -867,6 +874,9 @@ export function SendingView({ message }: { readonly message: SendingMessage }) {
           {message.text !== "" ? message.text : null}
         </PersonBubble>
         <ImageStrip images={message.images} />
+        {/* The actions' row, empty and hidden: the bubble takes the room its
+            echo will, so the echo replaces it without moving anything. */}
+        <div className="conversation-message-actions" aria-hidden="true" />
       </div>
     </div>
   );

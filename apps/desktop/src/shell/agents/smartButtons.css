@@ -20,7 +20,7 @@
    a line pops into being on the pop spring, scaled up from small, and lines
    arriving together pop one after another; a button lifts a pixel under the
    pointer and gives under the press, springing back; a line that leaves
-   shrinks away quickly and the stack closes up behind it. */
+   shrinks away quickly where it stands. */
 .smart-buttons {
   /* How the box materialises and fades back, in every state below. */
   --smart-materialize:
@@ -97,14 +97,16 @@
    coming off it (`"out"`) are animated by the component on the box's
    transform alone (`snapGlide.ts`): its place is never eased. */
 
-/* A line coming and going. It comes in on the pop spring: up from small,
-   overshooting a little and settling, while the stack makes room for it;
-   lines arriving together follow one another (`--smart-order`, set by the
-   component). It goes quickly, shrinking and fading as the stack closes up.
-   An exiting line stays mounted until done. */
+/* A line coming and going. It takes its room at once — the box is laid out
+   at its final size in the first frame, so what is measured off it (its
+   place on the composer, the transcript's reserve) is final too — and pops
+   in there on the pop spring: up from small, overshooting a little and
+   settling; lines arriving together follow one another (`--smart-order`,
+   set by the component). It goes quickly, shrinking and fading in its place;
+   an exiting line stays mounted, keeping its room, until done. Only
+   transform and opacity move (docs/motion.md). */
 @keyframes smart-button-enter {
   from {
-    max-height: 0;
     opacity: 0;
     transform: scale(var(--motion-scale-pop));
   }
@@ -112,24 +114,10 @@
   30% {
     opacity: 1;
   }
-
-  to {
-    max-height: 32px;
-    opacity: 1;
-    transform: none;
-  }
 }
 
 @keyframes smart-button-exit {
-  from {
-    max-height: 32px;
-    opacity: 1;
-    transform: none;
-  }
-
   to {
-    max-height: 0;
-    margin-bottom: -2px;
     opacity: 0;
     transform: scale(0.8);
   }

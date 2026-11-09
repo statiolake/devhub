@@ -124,7 +124,10 @@ export function entry(id: string): HTMLElement {
 export function topLevel(): HTMLElement[] {
   const transcript = document.querySelector(".conversation-transcript");
   if (!transcript) throw new Error("no transcript is drawn");
-  return [...topLevelElements(transcript)];
+  // The activity line's room, kept while no turn runs, is not a line.
+  return [...topLevelElements(transcript)].filter(
+    (element) => !element.classList.contains("conversation-activity-slot"),
+  );
 }
 
 /** A setting's picker in the composer's toolbar, by the word it is named with. */

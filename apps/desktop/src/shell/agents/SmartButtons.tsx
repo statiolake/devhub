@@ -359,10 +359,20 @@ export function SmartButtons({
     agent.presentation === "gui" &&
     (spotNow === undefined ||
       (isAnchoredSpot(spotNow) && spotNow.anchored === "top"));
-  const reserve =
+  //
+  // The room is held, not followed: once the stack has stood on the
+  // composer, its room stays at the most it has taken until the person moves
+  // the stack off. Lines leave when a turn starts and come back when it ends;
+  // a reserve that went with them took the transcript's end down under a
+  // followed conversation as the turn began and back up as it ended — the
+  // whole transcript moving twice a turn for buttons that were not there.
+  const held = useRef(0);
+  const measuredReserve =
     onComposer && present.length > 0 && metrics !== undefined
       ? Math.ceil(metrics.box.height + SPACING.gui.gap)
       : 0;
+  held.current = onComposer ? Math.max(held.current, measuredReserve) : 0;
+  const reserve = held.current;
   useLayoutEffect(() => {
     const surface = own.current?.parentElement?.querySelector<HTMLElement>(
       `[data-surface-key="agent:${agent.id}"]`,

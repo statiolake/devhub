@@ -216,6 +216,10 @@
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  /* The bar's room is kept on both sides whether or not there is anything
+     to scroll, so the column stays centred and keeps its width when the
+     transcript first grows past the pane (docs/motion.md). */
+  scrollbar-gutter: stable both-edges;
   overflow-anchor: auto;
 }
 
@@ -272,6 +276,20 @@
   contain-intrinsic-size: none;
 }
 
+/* What is added is added at the end, and an element that is born skippable
+   is its placeholder size (120px for an entry, 6000px for a chunk) until
+   the browser has had a frame to see it is on screen: the transcript was
+   that much taller for a frame, following the end scrolled to it, and the
+   next frame took it back — a send's bubble came in 50px off and jumped.
+   So the last chunk, and the transcript's last lines after the chunks (a
+   bubble being sent, a request, the compaction), are never skipped: they
+   are where the reader is. A chunk that stops being the last has been laid
+   out, and is skipped at the size it had (`auto`). */
+.conversation-chunk:last-child,
+.conversation-chunks ~ .conversation-entry {
+  content-visibility: visible;
+}
+
 /* The top-level entries are in chunks (`entryChunks.tsx`): the first entry of
    a chunk after another is spaced as the entry after the last drawn one of
    the chunk before, whose kind is the chunk's `data-after`. A chunk is a
@@ -292,6 +310,20 @@
     [data-kind="user"],
     [data-kind="answer"]
   ) {
+  margin-top: var(--space-5);
+}
+
+/* The transcript's last lines — a message being sent, the compaction, a
+   request with no call — come after the chunks' container, not after an
+   entry, and are spaced as the entry they will be: a "sending" bubble stands
+   exactly where its echo is drawn in the last chunk, so the echo taking its
+   place moves nothing. */
+.conversation-chunks:not(:empty) + .conversation-entry {
+  margin-top: var(--space-3);
+}
+
+.conversation-chunks:not(:empty)
+  + .conversation-entry:is([data-kind="user"], [data-kind="answer"]) {
   margin-top: var(--space-5);
 }
 
@@ -3198,6 +3230,15 @@ label.conversation-question-option:hover,
     transform var(--motion-exit) var(--ease-exit);
 }
 
+/* The line's room while no turn runs: as tall as the line, so its coming
+   and going changes nothing about the transcript's length. */
+.conversation-activity-slot {
+  height: 1lh;
+  margin-top: var(--space-3);
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+
 .conversation-transcript[data-settled] > .conversation-activity {
   animation: conversation-rise-in var(--motion-slow) var(--ease-enter);
 }
@@ -3399,6 +3440,10 @@ label.conversation-question-option:hover,
 
 .conversation-footer-row {
   display: flex;
+  /* The row's room is kept before the context readout or a background task
+     has anything to say (a line of their 0.75em text), so their arriving
+     after the first reply does not lift the composer. */
+  min-height: calc(0.75 * 1lh);
   align-items: center;
   gap: var(--space-3);
 }
@@ -3459,6 +3504,7 @@ label.conversation-question-option:hover,
 
 .conversation-background-list {
   overflow: auto;
+  scrollbar-gutter: stable;
   max-height: 10em;
   padding: 0;
   margin: var(--space-1) 0 0;

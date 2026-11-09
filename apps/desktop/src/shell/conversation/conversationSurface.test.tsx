@@ -947,12 +947,9 @@ describe("pending requests", () => {
         opened(toolRequest("r1", undefined)),
       ]),
     );
-    const transcript = document.querySelector(".conversation-transcript")!;
-    expect(transcript.lastElementChild).toHaveAttribute(
-      "data-entry-id",
-      "request:r1",
-    );
-    expect(transcript.lastElementChild).toHaveTextContent("Allow once");
+    const last = topLevel().at(-1);
+    expect(last).toHaveAttribute("data-entry-id", "request:r1");
+    expect(last).toHaveTextContent("Allow once");
   });
 
   it("answers a question with the options picked and the text typed", async () => {
@@ -1210,9 +1207,7 @@ describe("what DevHub will do about a usage limit", () => {
       "info",
     );
     expect(line).toHaveTextContent("Rate limited — resuming at 16:50");
-    expect(
-      document.querySelector(".conversation-transcript")!.lastElementChild,
-    ).toBe(line);
+    expect(topLevel().at(-1)).toBe(line);
     fireEvent.click(within(line).getByRole("button", { name: "Cancel" }));
     await waitFor(() => {
       expect(actions.cancelLimitResume).toHaveBeenCalledTimes(1);
