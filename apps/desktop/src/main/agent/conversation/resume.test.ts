@@ -718,6 +718,20 @@ describe("the session of a terminal Agent", () => {
 		}
 	}
 
+	/** Until process `pid` runs `command`. */
+	async function commandIs(pid: number, command: string): Promise<void> {
+		for (let tries = 0; tries < 200; tries += 1) {
+			const name = await new Promise<string>((resolve) =>
+				execFile("ps", ["-o", "comm=", "-p", String(pid)], (_, out) =>
+					resolve(String(out).trim()),
+				),
+			);
+			if (name.split("/").pop() === command) return;
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+		throw new Error(`process ${String(pid)} never ran ${command}`);
+	}
+
 	/** Until a process under `pid` has exited and is not reaped. */
 	async function zombieUnder(pid: number): Promise<void> {
 		for (let tries = 0; tries < 200; tries += 1) {
@@ -982,6 +996,9 @@ ${options.zombie === true ? `exec perl -e 'fork or exit 0; sleep 30'` : "exec sl
 
 	it("says what was in the pane when it has no thread", async () => {
 		const quiet = await pane(': >"$READY"; exec sleep 30');
+		// It touched `ready` as the shell it still was: the pane is `sleep`
+		// once the shell has exec'd it.
+		await commandIs(quiet, "sleep");
 		const refusal = await drawnAs(
 			terminalSession(fakeRuntime(dir), CODEX, quiet),
 		);
@@ -1098,16 +1115,28 @@ function fakeRuntime(home: string): Runtime {
 				throw new RuntimeFileError(path, (error as { code?: string }).code);
 			}
 		},
-		// As the real runner does (`childRun.ts`): a script that ends without
-		// reading its input answers with its own status, and only one that
-		// says it succeeded with its input unread has failed to take it.
+		// As the real runner does (`childRun.ts`): a request with no input
+		// gives the script none (no pipe to write into, so nothing to break
+		// when it ends without reading); a script that ends without reading
+		// the input it was given answers with its own status, and only one
+		// that says it succeeded with its input unread has failed to take it.
 		exec: (request) =>
 			new Promise((resolve, reject) => {
 				let unread: Error | undefined;
+				// `stdio` is spawn's, which execFile passes on.
+				const options = {
+					env: request.env as NodeJS.ProcessEnv,
+					encoding: "buffer" as const,
+					stdio: [
+						request.stdin === undefined ? "ignore" : "pipe",
+						"pipe",
+						"pipe",
+					],
+				};
 				const child = execFile(
 					request.argv[0]!,
 					request.argv.slice(1),
-					{ env: request.env as NodeJS.ProcessEnv, encoding: "buffer" },
+					options,
 					(error, stdout, stderr) => {
 						if (!error && unread) {
 							reject(unread);
@@ -1121,10 +1150,11 @@ function fakeRuntime(home: string): Runtime {
 						});
 					},
 				);
+				if (request.stdin === undefined) return;
 				child.stdin!.on("error", (error) => {
 					unread ??= error;
 				});
-				child.stdin!.end(request.stdin ?? Buffer.alloc(0));
+				child.stdin!.end(request.stdin);
 			}),
 	};
 	return runtime as Runtime;

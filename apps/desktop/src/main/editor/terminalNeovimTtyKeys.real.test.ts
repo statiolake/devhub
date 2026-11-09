@@ -73,48 +73,48 @@ async function start(): Promise<{
 	return { client, reader };
 }
 
+/**
+ * The keys Neovim was given after `chunks` were written into the reader's
+ * input, each `[bytes, keys]`: once a chunk is written, the next waits
+ * until Neovim has had that many keys in all. A fixed pause between them
+ * was not enough on a loaded machine: two chunks written before the reader
+ * read the first came to it as one read, and a lone ESC followed by a
+ * sequence is Alt with it, not two keys.
+ */
 async function keysAfter(
 	client: NeovimClient,
 	reader: ChildProcess,
-	chunks: readonly string[],
-	count: number,
+	chunks: readonly (readonly [string, number])[],
 ): Promise<string[]> {
-	for (const chunk of chunks) {
+	const got = async () =>
+		(await client.request("nvim_exec_lua", ["return _G.got", []])) as string[];
+	let had = 0;
+	for (const [chunk, count] of chunks) {
 		reader.stdin?.write(Buffer.from(chunk, "latin1"));
-		await new Promise((resolve) => setTimeout(resolve, 60));
-	}
-	let got: string[] = [];
-	for (let attempt = 0; attempt < 100 && got.length < count; attempt += 1) {
-		got = (await client.request("nvim_exec_lua", [
-			"return _G.got",
-			[],
-		])) as string[];
-		if (got.length < count) {
+		if (count === had) continue;
+		had = count;
+		for (let attempt = 0; attempt < 400; attempt += 1) {
+			if ((await got()).length >= count) break;
 			await new Promise((resolve) => setTimeout(resolve, 25));
 		}
 	}
-	return got;
+	return await got();
 }
 
 describe.skipIf(NVIM === undefined)("what tmux writes into a pane", () => {
 	it("reaches Neovim as keys, in every encoding tmux uses", async () => {
 		const { client, reader } = await start();
-		const got = await keysAfter(
-			client,
-			reader,
-			[
-				"\x11", // C-q, legacy: send-prefix
-				"\x1b[113;5u", // C-q, CSI u
-				"\x1b[27;5;113~", // C-q, xterm's modifyOtherKeys
-				"a<",
-				"\t\r\x7f\x1b",
-				"\x1b[1;5A\x1b[15~\x1bOP",
-				"\x1b[2", // a sequence split across two reads
-				"4~",
-				"\xc3\xa9", // é
-			],
-			14,
-		);
+		const got = await keysAfter(client, reader, [
+			["\x11", 1], // C-q, legacy: send-prefix
+			["\x1b[113;5u", 2], // C-q, CSI u
+			["\x1b[27;5;113~", 3], // C-q, xterm's modifyOtherKeys
+			["a<", 5],
+			["\t\r\x7f\x1b", 9], // a lone ESC, read by itself
+			["\x1b[1;5A\x1b[15~\x1bOP", 12],
+			["\x1b[2", 12], // a sequence split across two reads
+			["4~", 13],
+			["\xc3\xa9", 14], // é
+		]);
 		expect(got).toEqual([
 			"<C-Q>",
 			"<C-Q>",
@@ -137,11 +137,21 @@ describe.skipIf(NVIM === undefined)("what tmux writes into a pane", () => {
 	it("reaches Neovim as one paste when it is bracketed", async () => {
 		const { client, reader } = await start();
 		await client.request("nvim_input", ["i"]);
-		await keysAfter(client, reader, ["\x1b[200~one\rtw", "o\x1b[20", "1~"], 1);
-		const pasted = (await client.request("nvim_exec_lua", [
-			"return _G.pasted",
-			[],
-		])) as string[];
+		await keysAfter(client, reader, [
+			["\x1b[200~one\rtw", 0],
+			["o\x1b[20", 0],
+			["1~", 0],
+		]);
+		let pasted: string[] = [];
+		for (let attempt = 0; attempt < 400 && pasted.length === 0; attempt += 1) {
+			pasted = (await client.request("nvim_exec_lua", [
+				"return _G.pasted",
+				[],
+			])) as string[];
+			if (pasted.length === 0) {
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			}
+		}
 		expect(pasted).toEqual(["one\ntwo"]);
 		expect(
 			await client.request("nvim_buf_get_lines", [0, 0, -1, false]),
