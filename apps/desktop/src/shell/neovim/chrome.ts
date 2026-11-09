@@ -80,7 +80,7 @@ export const NO_THEME: PaintTheme = {
 };
 
 /**
- * Asked with `nvim_exec_lua` (0.9+: `nvim_get_hl`): each group's colours,
+ * Asked with `nvim_exec_lua` (`nvim_get_hl`): each group's colours,
  * links followed; `cmdheight`; the global `fillchars` and each window's
  * of the tab page; blink.cmp's kind icons once blink is loaded (only read:
  * asking would load a lazy plugin).

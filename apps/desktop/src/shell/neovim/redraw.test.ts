@@ -139,11 +139,6 @@ describe("the redraw reducer", () => {
       ["win_viewport", [2, 1000, 4, 26, 5, 0, 200, 1]],
     ]);
     expect(changes.scrolled.get(2)).toBe(4);
-    // 0.9 sends no scroll_delta: nothing to glide.
-    const old = applyRedraw(state, [
-      ["win_viewport", [2, 1000, 9, 31, 9, 0, 200]],
-    ]);
-    expect(old.scrolled.size).toBe(0);
   });
 
   it("keeps a float that would run past the screen's edge on it", () => {
@@ -184,7 +179,7 @@ describe("the redraw reducer", () => {
     expect(rounded?.lined).toBe(true);
     // Drawn as DevHub's frame, cut at its lines (`frame.ts`).
     expect(rounded?.frame?.corners.tl).toBe("╭");
-    // No border (or 0.9, which does not say): neither.
+    // No border: neither.
     expect(floatBorder(state.grids.get(4)!, undefined)).toEqual({});
     expect(
       floatBorder(state.grids.get(4)!, {
@@ -326,7 +321,7 @@ describe("the redraw reducer", () => {
     });
     applyRedraw(state, [
       ["popupmenu_hide", []],
-      ["cmdline_hide", []],
+      ["cmdline_hide", [1]],
     ]);
     expect(state.popupmenu).toBeUndefined();
     expect(state.cmdline).toEqual([]);

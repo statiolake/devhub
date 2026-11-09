@@ -165,13 +165,11 @@ export interface NeovimUiState {
   /** Which window each grid is, as `win_pos` and `win_viewport` say. */
   readonly gridWins: Map<number, number>;
   /**
-   * 0.10+ `win_viewport_margins`, by grid: the cells around a window's text
+   * `win_viewport_margins`, by grid: the cells around a window's text
    * area — a float's border, a winbar. (It can come before the window's
    * position.)
    */
   readonly margins: Map<number, Margins>;
-  /** Neovim says how far each window scrolled (0.10+ `scroll_delta`). */
-  scrollDeltas: boolean;
   /**
    * Each float's `title` and `footer`, by window handle, as
    * `nvim_win_get_config` answered (the page asks when a border holds text):
@@ -259,7 +257,6 @@ export function initialUiState(
     grids: new Map(),
     gridWins: new Map(),
     margins: new Map(),
-    scrollDeltas: false,
     floatLabels: new Map(),
     windows: new Map(),
     hl: new Map(),
@@ -638,9 +635,7 @@ function applyEvent(
         curcol: num(args[5]),
         lineCount: num(args[6]),
       };
-      // 0.10+: how many screen rows the view scrolled, for a GUI that
-      // animates it (0.9 sends none).
-      if (args.length > 7) state.scrollDeltas = true;
+      // How many screen rows the view scrolled, for a GUI that animates it.
       const delta = num(args[7]);
       if (delta !== 0) {
         const grid = num(args[0]);
@@ -762,12 +757,8 @@ function applyEvent(
       return;
     }
     case "cmdline_hide": {
-      // 0.9 sends no level; 0.10 sends it. Without one, the innermost goes.
-      const level = args.length > 0 ? num(args[0]) : undefined;
-      state.cmdline =
-        level === undefined
-          ? state.cmdline.slice(0, -1)
-          : state.cmdline.filter((one) => one.level < level);
+      const level = num(args[0]);
+      state.cmdline = state.cmdline.filter((one) => one.level < level);
       changes.cmdline = true;
       return;
     }
@@ -885,8 +876,7 @@ export interface GridBox {
 /**
  * How a float's border shows: `crop` when its cells are blank (but for rows
  * of text above or below, which are kept), `frame` when it is lines,
- * `lined` when it draws something else, neither without one (or before
- * 0.10, which does not say).
+ * `lined` when it draws something else, neither without one.
  */
 export function floatBorder(
   grid: Grid,

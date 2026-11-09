@@ -587,7 +587,6 @@ export class GridPainter {
       if (rows.length > 0) this.refreshSlide(box.grid, entry);
       if (
         moved &&
-        state.scrollDeltas &&
         !changes.scrolled.has(box.grid) &&
         !box.float &&
         box.win !== undefined &&
@@ -630,11 +629,10 @@ export class GridPainter {
 
   /**
    * Whether a grid scrolls in pixels: a window's (not a float's, not the
-   * message grid's), with Neovim saying how far it scrolls (0.10+).
+   * message grid's), with Neovim saying how far it scrolls.
    */
   private smoothable(state: NeovimUiState, box: GridBox): boolean {
     return (
-      state.scrollDeltas &&
       !box.float &&
       box.grid !== 1 &&
       state.windows.get(box.grid)?.placement.kind === "window"
@@ -1640,7 +1638,7 @@ export class GridPainter {
 
   /**
    * Lines Neovim moved inside a window that did not scroll — a `dd`, a
-   * `p` or an `o` (`grid_scroll` with no `scroll_delta`; 0.10+, which says
+   * `p` or an `o` (`grid_scroll` with no `scroll_delta`, which says
    * a window scrolled) — slide from where they were into place in
    * `SLIDE_MS`: what was deleted closes up, what was put in opens a gap.
    * An image of the region as now painted, moved inside a clip of the
