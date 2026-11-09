@@ -48,7 +48,7 @@ export type ChildOutcome =
 	  }
 	/** It could not be started, or failed on its own (the `error` event). */
 	| { readonly kind: "spawn-error"; readonly error: ChildError }
-	/** It stopped reading its input before all of it was written. */
+	/** It stopped reading its input before all of it was written, and closed as a success. */
 	| { readonly kind: "stdin-error"; readonly error: ChildError }
 	/** A stream went past its cap under `overflow: "fail"`. */
 	| { readonly kind: "overflow" };
@@ -128,14 +128,20 @@ export function runChildHere(
 		settle(ending);
 	};
 
+	// A program that stops reading before its input is all written has not
+	// been given what the caller handed it — and without a listener the EPIPE
+	// that says so is an uncaught exception. It is held until the child
+	// closes rather than answered at once: a program that refuses before it
+	// reads (a host script that finds its host gone, and exits with the
+	// status that says so) has answered for itself, and its status and stderr
+	// are that answer. Which of the two arrived first is only how quickly the
+	// child ran. Only a child that closes as a success with its input unread
+	// is the `stdin-error`. After the run has settled (it was killed at its
+	// deadline, say), `finish` ignores it: the settled answer already says why.
+	let unread: ChildError | undefined;
 	if (request.stdin !== undefined) {
-		// A program that stops reading before its input is all written has not
-		// been given what the caller handed it — and without a listener the
-		// EPIPE that says so is an uncaught exception. After the run has
-		// settled (it was killed at its deadline, say), `finish` ignores it:
-		// the settled answer already says why.
 		child.stdin?.on("error", (error: NodeJS.ErrnoException) => {
-			finish({ kind: "stdin-error", error: childError(error) });
+			unread ??= childError(error);
 		});
 		child.stdin?.end(Buffer.from(request.stdin));
 	}
@@ -181,6 +187,10 @@ export function runChildHere(
 	// `close` rather than `exit`: the drain is part of the same budget, so a
 	// descendant holding a pipe open cannot be mistaken for completion.
 	child.on("close", (code, signal) => {
+		if (unread !== undefined && code === 0 && signal === null) {
+			finish({ kind: "stdin-error", error: unread });
+			return;
+		}
 		finish({
 			kind: "closed",
 			code,

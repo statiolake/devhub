@@ -478,7 +478,7 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			const cli = Number(readFileSync(join(directory, "cli"), "utf8"));
 			expect(() => process.kill(cli, 0)).toThrow();
 			const refused = await failureOf(link.write('{"after":"death"}', 0));
-			expect(refused.code).toBe("host_gone");
+			expect(refused.code, refused.message).toBe("host_gone");
 			expect(refused.message).toContain("nothing is reading its input");
 		}, 20_000);
 
