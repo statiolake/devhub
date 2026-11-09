@@ -227,8 +227,10 @@ z-order and opaque canvas — and where the code still falls short:
   corner's arc as the radius), with the shadow following that outline.
   Framed floats edge to edge meet half way between their lines and the
   edge they share is drawn once (`framePieces`); only the panel's outer
-  corners stay round. A borderless float wholly behind framed ones (a
-  picker's root box) is not drawn (`underFrames`). The `title` and
+  corners stay round. A borderless float inside the rectangle the framed
+  floats over it span (a picker's root box) is clipped by them
+  (`frameCuts`, `cutClip`): drawn where no frame is over it and inside
+  their lines, never in the half cell outside a line. The `title` and
   `footer` are labels on the line, in their highlights, where Neovim put
   them (`title_pos`/`footer_pos`), the line broken around them: the page
   asks `nvim_win_get_config` when a border holds text, and until the

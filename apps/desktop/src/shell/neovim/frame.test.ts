@@ -7,7 +7,7 @@ import {
   labelBox,
   type FloatFrame,
 } from "./frame";
-import { framePieces, underFrames, type FramedMember } from "./floats";
+import { cutClip, frameCuts, framePieces, type FramedMember } from "./floats";
 import { hitTest } from "./mouse";
 import type { Grid, GridBox } from "./redraw";
 
@@ -389,14 +389,45 @@ describe("a picker's borderless box behind its framed windows", () => {
   const list = at(44, 10, 20, 153, { lined: true, frame });
   const preview = at(47, 30, 20, 154, { lined: true, frame });
 
-  it("is not drawn where framed windows above cover it whole", () => {
-    expect([...underFrames([root, list, preview])]).toEqual([42]);
-    // Uncovered by one cell: drawn.
-    expect([...underFrames([{ ...root, width: 41 }, list, preview])]).toEqual(
+  it("is cut by the framed windows above it, not hidden", () => {
+    expect([...frameCuts([root, list, preview]).entries()]).toEqual([
+      [42, [list, preview]],
+    ]);
+    // A preview a row shorter: the box is cut all the same.
+    const short = { ...preview, height: 5 };
+    expect([...frameCuts([root, list, short]).keys()]).toEqual([42]);
+    // Past the rectangle they span (a backdrop, a hover under the panel):
+    // not their box, not cut.
+    expect([
+      ...frameCuts([{ ...root, width: 41 }, list, preview]).keys(),
+    ]).toEqual([]);
+    // Above them: not cut.
+    expect([...frameCuts([{ ...root, z: 160 }, list, preview]).keys()]).toEqual(
       [],
     );
-    // Above them: drawn.
-    expect([...underFrames([{ ...root, z: 160 }, list, preview])]).toEqual([]);
+  });
+
+  it("is drawn inside the frames' lines and where no frame is over it", () => {
+    const cell = { width: 8, height: 20 };
+    const shape = (col: number) => ({
+      x: col * 8 + 4,
+      y: 2 * 20 + 10,
+      w: 20 * 8 - 8,
+      h: 6 * 20 - 20,
+      radii: { tl: 0, tr: 0, br: 0, bl: 0 },
+    });
+    const shapes = new Map([
+      [44, shape(10)],
+      [47, shape(30)],
+    ]);
+    const short = { ...preview, height: 5 };
+    const clip = cutClip(root, [list, short], shapes, cell, { x: 80, y: 40 });
+    // The cells under no frame (the preview's last row), then each
+    // frame's inside.
+    expect(clip).toBe(
+      `path("M160 100h160v20h-160Z` +
+        `M4 10L156 10L156 110L4 110L4 10ZM164 10L316 10L316 110L164 110L164 10Z")`,
+    );
   });
 
   it("takes no click: outside the lines is what is behind", () => {

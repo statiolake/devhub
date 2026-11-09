@@ -175,8 +175,18 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   until the Neovim is drawn in the terminal's page.
 - `painter.ts:583-588` (`underFrames`): a borderless float wholly behind
   framed ones (a picker's root box) is not drawn, because its ground would
-  show in the framed floats' cut-away border cells. **Open**: the framed
-  floats' cut-out should be their own clip, not the lower layer's absence.
+  show in the framed floats' cut-away border cells. **Fixed** ("Neovim
+  editor: a panel's box is clipped by its frames, not hidden"): a
+  borderless float inside the rectangle the framed floats over it span is
+  their panel's box (`frameCuts`); it is drawn, its canvas and its ground
+  in the shadow clipped (`cutClip`) to its cells under no frame and, under
+  the frames, to their shapes inside their lines, so the half cell outside
+  a line shows what is under the panel. A float past that rectangle (a
+  backdrop) is not cut. Clicks follow the clip. Checked in the app with a
+  snacks picker in its `default` layout over its backdrop: the open half
+  cell is the backdrop's tint round the rounded corners, as before; a box
+  with a cell under no frame (a shorter preview) is now drawn there
+  rather than not at all.
 - `editor.ts:551-560` the cursor is hidden (`visibility`) when its row
   scrolls out of the text area, and `riders.ts` cuts riders with a computed
   `clip-path`: both because they are not children of the window's clipping
@@ -250,7 +260,8 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 2. ~~Cursor and riders inside their window's layer~~ fixed: their grid's
    clip.
 3. ~~Separators as elements~~ fixed: panes and boundaries.
-4. `underFrames` replaced by a clip of the framed floats.
+4. ~~`underFrames` replaced by a clip of the framed floats~~ fixed:
+   `frameCuts`, `cutClip`.
 5. ~~The control surface's z table~~ fixed: `CONTROL_Z`.
 6. ~~Device-pixel snapping of labels, hairlines and outlines~~ fixed.
 7. A Neovim overlay on a tmux pane reaching the pane's boundary, its grid

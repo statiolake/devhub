@@ -10,7 +10,7 @@
  */
 
 import { frameGeometry, insideRounded } from "./frame";
-import { underFrames } from "./floats";
+import { frameCuts, inFrameCells } from "./floats";
 import type { GridBox } from "./redraw";
 
 export interface CellMetrics {
@@ -33,12 +33,14 @@ export function hitTest(
 ): MouseTarget {
   const row = Math.max(0, Math.floor(y / cell.height));
   const col = Math.max(0, Math.floor(x / cell.width));
-  const hidden = underFrames(boxes);
+  const cuts = frameCuts(boxes);
   for (let i = boxes.length - 1; i >= 0; i -= 1) {
     const box = boxes[i];
     if (box === undefined || box.grid === 1) continue;
-    // Not drawn: behind framed floats, which are the panel's edge.
-    if (hidden.has(box.grid)) continue;
+    // Cut by framed floats above it: in their cells it is drawn only
+    // inside their lines, where they take the click themselves.
+    const cut = cuts.get(box.grid);
+    if (cut !== undefined && inFrameCells(cut, row, col)) continue;
     if (box.frame) {
       if (insideFrame(box, boxes, cell, x, y)) {
         return {

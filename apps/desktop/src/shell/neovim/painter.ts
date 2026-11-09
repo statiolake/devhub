@@ -43,10 +43,12 @@ import {
 import {
   bandGround,
   floatClusters,
+  cutClip,
+  frameCuts,
   framePieces,
-  underFrames,
   type FloatCorners,
   type FramedMember,
+  type FrameShape,
 } from "./floats";
 import {
   NO_THEME,
@@ -423,6 +425,8 @@ interface Piece {
   readonly borders?: readonly string[];
   /** A blended framed member's text area, left out. */
   readonly hole?: string;
+  /** A member under framed floats: their cut (`cutClip`). */
+  readonly clip?: string;
   /** A framed member's zindex: its lines are drawn at it. */
   readonly z?: number;
 }
@@ -747,13 +751,12 @@ export class GridPainter {
       this.painted.set(grid, (this.painted.get(grid) ?? 0) + rows);
     }
     const all = forceAll || changes.colors;
-    const hidden = underFrames(boxes);
-    const shown = boxes.filter((box) => !hidden.has(box.grid));
-    for (const grid of hidden) {
-      const entry = this.canvases.get(grid);
-      if (entry) entry.canvas.style.display = "none";
-    }
-    const corners = this.placeClusters(state, shown);
+    // A borderless float under framed ones is drawn, clipped by their cut
+    // (`frameCuts`): never in the half cell outside a frame's line.
+    const shown = boxes;
+    const cuts = frameCuts(boxes);
+    const shapes = new Map<number, FrameShape>();
+    const corners = this.placeClusters(state, shown, cuts, shapes);
     const scrollbars = floatScrollbars(state, shown);
     this.placePanes(state, shown);
     for (const box of shown) {
@@ -805,12 +808,18 @@ export class GridPainter {
       // in the middle of its cell, the gutter left to the menu's ground,
       // as an overlay scrollbar.
       const part = scrollbars.get(box.grid);
+      const cut = cuts.get(box.grid);
       canvas.style.clipPath =
         part === "thumb"
           ? this.thumbClip()
           : part === "gutter"
             ? "inset(50%)"
-            : "";
+            : cut !== undefined
+              ? cutClip(box, cut, shapes, this.metrics, {
+                  x: (box.col + crop.left) * this.metrics.width,
+                  y: (box.row + crop.top) * this.metrics.height,
+                })
+              : "";
       // A blank blended float (a picker's or a dialog's backdrop) is one
       // tint over everything: a layer of its colour, no bitmap to paint.
       const backdrop = box.float ? this.backdropOf(state, box) : undefined;
@@ -1649,6 +1658,8 @@ export class GridPainter {
   private placeClusters(
     state: NeovimUiState,
     boxes: readonly GridBox[],
+    cuts: ReadonlyMap<number, readonly GridBox[]>,
+    shapes: Map<number, FrameShape>,
   ): Map<number, FloatCorners> {
     const { width: cw, height: ch } = this.metrics;
     const corners = new Map<number, FloatCorners>();
@@ -1667,40 +1678,55 @@ export class GridPainter {
     const colors = (hl: number) =>
       resolveColors(hl ? state.hl.get(hl) : undefined, state.defaults);
     const px = (v: number) => `${String(v)}px`;
-    for (const cluster of floatClusters(shown)) {
+    // Every framed member's shape first: a float under framed ones, in
+    // its cluster or another, is clipped by theirs (`cutClip`).
+    const panels = floatClusters(shown).map((cluster) => {
+      const framed: (FramedMember & { box: GridBox })[] = [];
+      for (const m of cluster.members) {
+        const box = byGrid.get(m.grid);
+        if (!box?.frame) continue;
+        framed.push({
+          grid: m.grid,
+          rect: m.rect,
+          box,
+          geometry: frameGeometry(
+            box.frame,
+            box,
+            this.metrics,
+            this.dpr,
+            this.font.size,
+          ),
+        });
+      }
+      const framedPieces = framePieces(framed, this.dpr);
+      for (const piece of framedPieces) shapes.set(piece.grid, piece);
+      return { cluster, framed, framedPieces };
+    });
+    for (const { cluster, framed, framedPieces } of panels) {
       const first = cluster.members[0];
       const grid = first ? state.grids.get(first.grid) : undefined;
       const ground = colors(grid?.hls[0] ?? 0).bg;
       const blended = cluster.members.some((m) => blendOf(m.grid) > 0);
       const pieces: Piece[] = [];
       const labels: Label[] = [];
-      const framed: (FramedMember & { box: GridBox })[] = [];
       for (const m of cluster.members) {
         corners.set(m.grid, m.corners);
         const box = byGrid.get(m.grid);
-        if (box?.frame) {
-          framed.push({
-            grid: m.grid,
-            rect: m.rect,
-            box,
-            geometry: frameGeometry(
-              box.frame,
-              box,
-              this.metrics,
-              this.dpr,
-              this.font.size,
-            ),
-          });
-          continue;
-        }
+        if (box?.frame) continue;
         if (blendOf(m.grid) > 0) continue;
+        const x = m.rect.col * cw;
+        const y = m.rect.row * ch;
+        const cut = box ? cuts.get(box.grid) : undefined;
         pieces.push({
-          x: m.rect.col * cw,
-          y: m.rect.row * ch,
+          x,
+          y,
           w: m.rect.width * cw,
           h: m.rect.height * ch,
           radius: m.lined ? "0" : radii(m.corners, FLOAT_RADIUS),
           background: cssColor(ground),
+          ...(box && cut
+            ? { clip: cutClip(box, cut, shapes, this.metrics, { x, y }) }
+            : {}),
         });
       }
       const framedGrids = new Set(framed.map((f) => f.grid));
@@ -1716,7 +1742,7 @@ export class GridPainter {
         });
       }
       const geometries = new Map(framed.map((f) => [f.grid, f]));
-      for (const piece of framePieces(framed, this.dpr)) {
+      for (const piece of framedPieces) {
         const member = geometries.get(piece.grid);
         const frame = member?.box.frame;
         if (!member || !frame) continue;
@@ -1778,6 +1804,7 @@ export class GridPainter {
           piece.style.borderLeft = part.borders[3] ?? "none";
         }
         if (part.hole) piece.style.clipPath = part.hole;
+        else if (part.clip) piece.style.clipPath = part.clip;
         if (!lines) {
           // The ground only, for the shadow's outline.
           piece.style.border = "none";

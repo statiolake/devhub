@@ -366,36 +366,131 @@ export function framePieces(
 }
 
 /**
- * Borderless floats whose every cell is under framed floats above them: a
- * picker's root box (snacks' layout window, `border = 'none'`) exactly
- * behind its framed list and preview. Drawn, it would fill the half cell
- * outside their lines the frames leave open; so it is not drawn, and a
- * click there goes to what is behind, as outside any frame.
+ * Borderless floats that are the box of a panel of framed floats above
+ * them, each with those framed floats: a picker's root box (snacks' layout
+ * window, `border = 'none'`) behind its framed list and preview — a float
+ * inside the rectangle the framed floats over it span. A framed float is
+ * cut at its lines, the half cell outside them left open; the box under it
+ * is drawn, clipped by that cut (`cutClip`), so what is under the panel
+ * shows there and a click there goes to it, as outside any frame. A float
+ * past that rectangle (a backdrop's tint over the whole screen, a hover
+ * under the picker) is not its box: it is what is under the panel.
  */
-export function underFrames(boxes: readonly GridBox[]): Set<number> {
-  const out = new Set<number>();
+export function frameCuts(
+  boxes: readonly GridBox[],
+): Map<number, readonly GridBox[]> {
+  const out = new Map<number, readonly GridBox[]>();
   const framed = boxes.filter((b) => b.float && b.frame !== undefined);
   if (framed.length === 0) return out;
   for (const box of boxes) {
     if (!box.float || box.frame || box.lined) continue;
-    const above = framed.filter((f) => f.z > box.z);
-    if (above.length === 0) continue;
     const r = drawnRect(box);
-    let all = r.width > 0 && r.height > 0;
-    for (let row = r.row; all && row < r.row + r.height; row += 1) {
-      for (let col = r.col; all && col < r.col + r.width; col += 1) {
-        all = above.some(
-          (f) =>
-            row >= f.row &&
-            row < f.row + f.height &&
-            col >= f.col &&
-            col < f.col + f.width,
-        );
-      }
+    if (r.width <= 0 || r.height <= 0) continue;
+    const above = framed.filter(
+      (f) =>
+        f.z > box.z &&
+        f.row < r.row + r.height &&
+        f.row + f.height > r.row &&
+        f.col < r.col + r.width &&
+        f.col + f.width > r.col,
+    );
+    if (above.length === 0) continue;
+    const top = Math.min(...above.map((f) => f.row));
+    const left = Math.min(...above.map((f) => f.col));
+    const bottom = Math.max(...above.map((f) => f.row + f.height));
+    const right = Math.max(...above.map((f) => f.col + f.width));
+    if (
+      r.row >= top &&
+      r.col >= left &&
+      r.row + r.height <= bottom &&
+      r.col + r.width <= right
+    ) {
+      out.set(box.grid, above);
     }
-    if (all) out.add(box.grid);
   }
   return out;
+}
+
+/** Whether a cell is in a framed float's cells: its cut, outside its lines. */
+export function inFrameCells(
+  above: readonly GridBox[],
+  row: number,
+  col: number,
+): boolean {
+  return above.some(
+    (f) =>
+      row >= f.row &&
+      row < f.row + f.height &&
+      col >= f.col &&
+      col < f.col + f.width,
+  );
+}
+
+/** A framed float's shape inside its lines (`framePieces`), in CSS pixels. */
+export interface FrameShape {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  readonly radii: Readonly<Record<Corner, number>>;
+}
+
+/**
+ * The clip of a float under framed ones (`frameCuts`), as a CSS
+ * `clip-path`, in the coordinates of an element at `origin`: its cells
+ * outside the framed floats' cells, and inside those the framed floats'
+ * shapes — never the half cell outside a frame's line. The parts do not
+ * overlap, so the path's union is theirs. A framed float without a shape
+ * known leaves its cells uncut.
+ */
+export function cutClip(
+  box: GridBox,
+  above: readonly GridBox[],
+  shapes: ReadonlyMap<number, FrameShape>,
+  cell: { readonly width: number; readonly height: number },
+  origin: { readonly x: number; readonly y: number },
+): string {
+  const r = drawnRect(box);
+  const cutters = above.filter((f) => shapes.has(f.grid));
+  const parts: string[] = [];
+  const n = (v: number) => String(Math.round(v * 1000) / 1000);
+  const rect = (x: number, y: number, w: number, h: number) =>
+    `M${n(x - origin.x)} ${n(y - origin.y)}h${n(w)}v${n(h)}h${n(-w)}Z`;
+  for (let row = r.row; row < r.row + r.height; row += 1) {
+    let start: number | undefined;
+    for (let col = r.col; col <= r.col + r.width; col += 1) {
+      const open = col < r.col + r.width && !inFrameCells(cutters, row, col);
+      if (open && start === undefined) start = col;
+      if (!open && start !== undefined) {
+        parts.push(
+          rect(
+            start * cell.width,
+            row * cell.height,
+            (col - start) * cell.width,
+            cell.height,
+          ),
+        );
+        start = undefined;
+      }
+    }
+  }
+  for (const f of cutters) {
+    const s = shapes.get(f.grid);
+    if (!s) continue;
+    const { tl, tr, br, bl } = s.radii;
+    const x = s.x - origin.x;
+    const y = s.y - origin.y;
+    // A corner without a radius is where the line before it ends.
+    const arc = (rad: number, ex: number, ey: number) =>
+      rad > 0 ? `A${n(rad)} ${n(rad)} 0 0 1 ${n(ex)} ${n(ey)}` : "";
+    parts.push(
+      `M${n(x + tl)} ${n(y)}L${n(x + s.w - tr)} ${n(y)}${arc(tr, x + s.w, y + tr)}` +
+        `L${n(x + s.w)} ${n(y + s.h - br)}${arc(br, x + s.w - br, y + s.h)}` +
+        `L${n(x + bl)} ${n(y + s.h)}${arc(bl, x, y + s.h - bl)}` +
+        `L${n(x)} ${n(y + tl)}${arc(tl, x + tl, y)}Z`,
+    );
+  }
+  return `path("${parts.join("")}")`;
 }
 
 /**
