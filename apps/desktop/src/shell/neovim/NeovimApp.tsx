@@ -146,10 +146,24 @@ function NeovimSurface({
   });
   const [generation, setGeneration] = useState(0);
   const surfaceRef = useRef<HTMLDivElement>(null);
-  // Whether the view is on its pane (`NeovimPlacement`): until it is, its
-  // size is no pane's, and a UI attached at it would have Neovim reshape
-  // its windows. What waits to attach until then.
-  const placed = useRef({ ready: false, waiting: new Set<() => void>() });
+  // Whether the view is on its pane (`NeovimPlacement`) and the grid's
+  // cell is the person's font's (`appearance`): until both, the grid the
+  // view holds is no pane's, and a UI attached at it would have Neovim
+  // reshape its windows. What waits to attach until then.
+  const placed = useRef({
+    view: false,
+    font: false,
+    ready: false,
+    waiting: new Set<() => void>(),
+  });
+  const release = useCallback(() => {
+    const p = placed.current;
+    if (p.ready || !p.view || !p.font) return;
+    p.ready = true;
+    const waiting = [...p.waiting];
+    p.waiting.clear();
+    for (const go of waiting) go();
+  }, []);
   useEffect(() => {
     let target: NeovimPlacement | undefined;
     const check = () => {
@@ -159,11 +173,8 @@ function NeovimSurface({
         Math.abs(window.innerHeight - target.height) >= 1
       )
         return;
-      const p = placed.current;
-      p.ready = true;
-      const waiting = [...p.waiting];
-      p.waiting.clear();
-      for (const go of waiting) go();
+      placed.current.view = true;
+      release();
     };
     const off = bridge.neovim.onPlaced((placement) => {
       target = placement;
@@ -182,7 +193,7 @@ function NeovimSurface({
       off();
       window.removeEventListener("resize", check);
     };
-  }, [bridge]);
+  }, [bridge, release]);
   const [, setTick] = useState(0);
   const [guiContent, setGuiContent] = useState<ReadonlyMap<number, GuiContent>>(
     new Map(),
@@ -398,7 +409,11 @@ function NeovimSurface({
 
   useEffect(() => {
     editorRef.current?.updateSettings(settings);
-  }, [settings]);
+    // The person's font is the grid's now: a waiting attach may go.
+    if (appearance === undefined) return;
+    placed.current.font = true;
+    release();
+  }, [settings, appearance, release]);
 
   // An SSH drop: attach again by itself, a few times, further apart.
   const autoReconnect =
