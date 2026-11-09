@@ -309,15 +309,17 @@
   transition: background-color var(--motion-fast) var(--ease-standard);
 }
 
+/* The knob slides on its transform, never its place (docs/motion.md). */
 .orchestrator-pause-knob {
   position: absolute;
   top: 1px;
-  left: 11px;
+  left: 1px;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: var(--accent-ink);
-  transition: left var(--motion-fast) var(--ease-standard);
+  transform: translateX(10px);
+  transition: transform var(--motion-fast) var(--ease-standard);
 }
 
 .orchestrator-pause[aria-checked="false"] .orchestrator-pause-track {
@@ -325,7 +327,7 @@
 }
 
 .orchestrator-pause[aria-checked="false"] .orchestrator-pause-knob {
-  left: 1px;
+  transform: none;
   background: var(--surface);
 }
 
@@ -516,6 +518,7 @@
 .orchestrator-files {
   padding: var(--space-2) 0 var(--space-4);
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .orchestrator-files-root {
@@ -607,6 +610,7 @@
 .orchestrator-lanes {
   padding: var(--space-2) 0 var(--space-4);
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .orchestrator-lane {
@@ -963,6 +967,7 @@
   padding: var(--space-3) var(--board-pad) var(--space-3);
   overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   overflow-wrap: anywhere;
   font-size: 13px;
   line-height: 1.6;

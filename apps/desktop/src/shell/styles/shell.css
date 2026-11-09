@@ -200,6 +200,7 @@
 .sidebar-scroll-region {
   overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   flex: 1;
   padding: var(--sidebar-scroll-inset) var(--sidebar-scroll-inset)
     var(--space-4);

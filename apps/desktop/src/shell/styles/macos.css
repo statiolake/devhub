@@ -251,6 +251,7 @@
   padding: 0;
   list-style: none;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .mac-list-row {
@@ -896,6 +897,7 @@
   margin: 0;
   padding: var(--space-2) 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   list-style: none;
   border-top: 1px solid var(--line-soft);
 }
@@ -971,6 +973,7 @@
   flex: 1;
   min-width: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: var(--space-3) var(--space-4);
   border-left: 1px solid var(--line-soft);
   font-size: 12px;

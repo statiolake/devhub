@@ -849,6 +849,12 @@ a {
    its gutter reads as a document's, not a panel's. The thumb is drawn inside
    a transparent border, which is what widens on hover.
 
+   Styled, the bar is never an overlay — on the Mac too it takes its 10px —
+   so a list that grows past its box narrowed by that much the moment it
+   did, and everything in it moved sideways and could wrap anew. Every list
+   that may grow keeps the bar's room whether or not it scrolls
+   (`scrollbar-gutter: stable`; docs/motion.md).
+
    A terminal's is xterm's own, drawn by xterm (it keeps its theme), so its
    subtree is left alone. The workbench is a page of its own and never sees
    this sheet. */
