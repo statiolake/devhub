@@ -1,7 +1,11 @@
 /**
- * A Neovim drawn by DevHub over its terminal pane: one page per overlay
- * (`neovim.html#tnv:<n>`, `main/editor/terminalNeovims.ts`), whether the
- * Neovim was typed in a pane or is a Workspace's `devhub-nvim` one.
+ * A Neovim drawn by DevHub in its terminal pane: one surface per overlay
+ * (`tnv:<n>`, `main/editor/terminalNeovims.ts`), whether the Neovim was
+ * typed in a pane or is a Workspace's `devhub-nvim` one, mounted by the
+ * terminal's own page (`shell/pane/PaneNeovims.tsx`) in the pane's place
+ * among the panes' layers — so it moves with its pane, and tmux's popups,
+ * prompts and menus stack over it (docs/rendering-layers.md). The page
+ * may hold several; each is its own UI, by its key.
  *
  * # What is Neovim's and what is DevHub's
  *
@@ -22,20 +26,23 @@
  *
  * # Its contract with main
  *
- * - **reads**: the appearance (the monospace font and the Option key).
- * - **asks**: `neovim.attach` once mounted, then `neovim.call` for every
- *   key, click, scroll and resize.
+ * - **reads**: the appearance (the monospace font and the Option key),
+ *   handed down by the terminal's page.
+ * - **asks**: `neovim.attach` once its pane has placed it, then
+ *   `neovim.call` for every key, click, scroll and resize.
  * - **is pushed**: `redraw`, `ended`, GUI windows and their messages.
+ *
+ * # Its failures are its own
+ *
+ * It shares its page with the terminal and the other Neovims. Its UI's end
+ * (Neovim gone, the host restarted) is shown in its pane, with Retry; a
+ * redraw it cannot apply resets it and attaches again; a render that throws
+ * is caught by its pane's boundary (`PaneNeovims`). None of them reaches the
+ * terminal or another Neovim.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { devhub } from "./client";
-import {
-  useAppearance,
-  useProjection,
-  useRaiseFailure,
-} from "../model/pageModel";
 import { decorOf } from "./decor";
 import { NeovimEditor } from "./editor";
 import { terminalCellFont } from "./cellFont";
@@ -84,10 +91,11 @@ import {
   type Decorations,
 } from "./decorations";
 import type {
+  DevhubNeovimApi,
   NeovimGuiWindowWire,
   NeovimGuiWindowsWire,
-  NeovimPlacement,
 } from "../../ipc/neovim";
+import type { TerminalNeovimKeyWire } from "../../ipc/contract";
 import type { AppAppearance } from "../../ipc/appShell";
 
 type Connection =
@@ -112,39 +120,66 @@ interface GuiContent {
   readonly keyboard: GuiKeyboard;
 }
 
-/** `workspaceId` is the overlay's key, the id every Neovim call names. */
-export function NeovimApp({ workspaceId }: { readonly workspaceId: string }) {
-  const bridge = useMemo(() => devhub(), []);
-  const reportFailure = useRaiseFailure(bridge);
-  const { state, attempt } = useProjection(bridge, reportFailure, () => {});
-  const appearance = useAppearance(bridge, reportFailure, attempt);
-  if (state.status !== "ready") return null;
-  return (
-    <div className="app-shell neovim-page">
-      <NeovimSurface workspaceId={workspaceId} appearance={appearance} />
-    </div>
-  );
+/** What a Neovim surface needs of its page's bridge. */
+export interface NeovimSurfaceBridge {
+  readonly neovim: DevhubNeovimApi;
+  openExternalUrl(url: string): Promise<void>;
 }
 
-function NeovimSurface({
+/** What the page that places a Neovim asks of it (`PaneNeovims`). */
+export interface NeovimHandle {
+  /** Ask for the grid a view this size holds (`NeovimEditor.resizeFor`). */
+  resizeFor(
+    width: number,
+    height: number,
+  ): { cols: number; rows: number } | undefined;
+  /** Grid 1 as Neovim last drew it. */
+  drawnSize(): { cols: number; rows: number } | undefined;
+  /** Neovim's default background: its pane's ground. */
+  background(): number | undefined;
+  /** A keystroke main took for it (`TerminalNeovimKeyWire`). */
+  typeKey(key: TerminalNeovimKeyWire): void;
+  /** Whether the page's focus is in it (its textarea or a GUI window). */
+  focused(): boolean;
+}
+
+/**
+ * One Neovim, drawn. `workspaceId` is the overlay's key, the id every
+ * Neovim call names. `placed`: its element is on its pane at the pane's
+ * size (shown there, or hidden where it last was) — until then the size
+ * it has is no pane's, and a UI attached at it would make Neovim reshape
+ * its windows to fit, which growing back does not undo (a split's upper
+ * window left one row tall). `keys`: it has the page's keys.
+ */
+export function NeovimSurface({
   workspaceId,
   appearance,
+  bridge,
+  placed: onPane,
+  keys,
+  handle,
+  changed,
 }: {
   readonly workspaceId: string;
   readonly appearance: AppAppearance | undefined;
+  readonly bridge: NeovimSurfaceBridge;
+  readonly placed: boolean;
+  readonly keys: boolean;
+  /** Told its handle once its editor is made, and `null` when it goes. */
+  readonly handle: (handle: NeovimHandle | null) => void;
+  /** Told when what its handle answers may have changed. */
+  readonly changed: () => void;
 }) {
-  const bridge = useMemo(() => devhub(), []);
   const hostRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<NeovimEditor | null>(null);
   const [connection, setConnection] = useState<Connection>({
     kind: "connecting",
   });
   const [generation, setGeneration] = useState(0);
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  // Whether the view is on its pane (`NeovimPlacement`) and the grid's
-  // cell is the person's font's (`appearance`): until both, the grid the
-  // view holds is no pane's, and a UI attached at it would have Neovim
-  // reshape its windows. What waits to attach until then.
+  // Whether the element is on its pane (`placed`) and the grid's cell is
+  // the person's font's (`appearance`): until both, a UI attached at the
+  // grid it holds would have Neovim reshape its windows. What waits to
+  // attach until then.
   const placed = useRef({
     view: false,
     font: false,
@@ -160,35 +195,16 @@ function NeovimSurface({
     for (const go of waiting) go();
   }, []);
   useEffect(() => {
-    let target: NeovimPlacement | undefined;
-    const check = () => {
-      if (target === undefined) return;
-      if (
-        Math.abs(window.innerWidth - target.width) >= 1 ||
-        Math.abs(window.innerHeight - target.height) >= 1
-      )
-        return;
-      placed.current.view = true;
-      release();
-    };
-    const off = bridge.neovim.onPlaced((placement) => {
-      target = placement;
-      // Over a tmux pane, the view reaches the boundary beside it: this
-      // much of it is past the pane's cells, Neovim's ground. Set here, not
-      // by a render, so the grid is fitted inside it at the attach.
-      const surface = surfaceRef.current;
-      if (surface) {
-        const { top, right, bottom, left } = placement.inset;
-        surface.style.padding = `${String(top)}px ${String(right)}px ${String(bottom)}px ${String(left)}px`;
-      }
-      check();
-    });
-    window.addEventListener("resize", check);
-    return () => {
-      off();
-      window.removeEventListener("resize", check);
-    };
-  }, [bridge, release]);
+    if (!onPane) return;
+    placed.current.view = true;
+    release();
+  }, [onPane, release]);
+  const keysRef = useRef(keys);
+  keysRef.current = keys;
+  const changedRef = useRef(changed);
+  changedRef.current = changed;
+  const handleRef = useRef(handle);
+  handleRef.current = handle;
   const [, setTick] = useState(0);
   const [guiContent, setGuiContent] = useState<ReadonlyMap<number, GuiContent>>(
     new Map(),
@@ -235,11 +251,43 @@ function NeovimSurface({
       settingsRef.current,
     );
     editorRef.current = editor;
-    // For DevTools: the state the page is drawing.
-    (window as unknown as { neovimEditor?: NeovimEditor }).neovimEditor =
-      editor;
+    editor.setKeys(keysRef.current);
+    // For DevTools: the state each Neovim on the page is drawing, by key.
+    const debug = window as unknown as {
+      neovimEditors?: Record<string, NeovimEditor>;
+    };
+    (debug.neovimEditors ??= {})[workspaceId] = editor;
+    handleRef.current({
+      resizeFor: (width, height) => editor.resizeFor(width, height),
+      drawnSize: () => editor.drawnSize(),
+      background: () =>
+        editor.state.grids.has(1)
+          ? editor.state.defaults.background
+          : undefined,
+      typeKey: (key) => {
+        editor.typeKey(key);
+      },
+      focused: () => {
+        const active = document.activeElement;
+        return (
+          active !== null &&
+          (active === editor.input ||
+            [...frames.current.values()].includes(active as HTMLIFrameElement))
+        );
+      },
+    });
+    // What the pane is placed from: grid 1's size and Neovim's ground.
+    let told = "";
     const unsubscribe = editor.subscribe(() => {
       setTick((tick) => tick + 1);
+      const size = editor.drawnSize();
+      const now = `${String(size?.cols)}x${String(size?.rows)}:${String(
+        editor.state.grids.has(1) ? editor.state.defaults.background : "",
+      )}`;
+      if (now !== told) {
+        told = now;
+        changedRef.current();
+      }
       // Neovim's messages: to the corner, or the pager (`messages.ts`).
       const events = editor.takeMessages();
       if (events.length === 0) return;
@@ -275,7 +323,24 @@ function NeovimSurface({
       }
     });
     const offRedraw = bridge.neovim.onRedraw((id, batches) => {
-      if (id === workspaceId) editor.redraw(batches);
+      if (id !== workspaceId) return;
+      try {
+        editor.redraw(batches);
+      } catch (error) {
+        // A redraw this page cannot apply: this Neovim starts over (its
+        // screen from a new attach), and nothing else on the page is
+        // touched.
+        console.error(
+          `[devhub] the Neovim ${workspaceId} could not draw`,
+          error,
+        );
+        editor.reset();
+        setConnection({
+          kind: "failed",
+          message: "DevHub could not draw this Neovim. Reconnecting…",
+          reconnect: true,
+        });
+      }
     });
     const offEnded = bridge.neovim.onEnded((id, reason, reconnect) => {
       if (id !== workspaceId) return;
@@ -351,7 +416,7 @@ function NeovimSurface({
         const frame = frames.current.get(control.id);
         if (control.action === "edit") {
           setEditing(control.id);
-          frame?.focus();
+          if (keysRef.current) frame?.focus();
         } else if (control.action === "leave") {
           setEditing((before) => (before === control.id ? undefined : before));
           editor.focus();
@@ -401,7 +466,7 @@ function NeovimSurface({
           editor.focus();
         });
     };
-    // Once the view is on its pane, at its size (`NeovimPlacement`).
+    // Once its element is on its pane, at the pane's size (`placed`).
     const place = placed.current;
     if (place.ready) attach();
     else place.waiting.add(attach);
@@ -417,6 +482,9 @@ function NeovimSurface({
       offEvent();
       editor.dispose();
       editorRef.current = null;
+      if (debug.neovimEditors?.[workspaceId] === editor)
+        delete debug.neovimEditors[workspaceId];
+      handleRef.current(null);
     };
   }, [bridge, workspaceId, generation]);
 
@@ -604,12 +672,16 @@ function NeovimSurface({
     keysIntoFrame(currentKeyboard, editing === currentGui.id);
   useEffect(() => {
     if (!editor) return;
+    editor.setKeys(keys);
+    // Without the keys it leaves the page's focus alone: the terminal or
+    // another Neovim has it (`PaneNeovims` moves it).
+    if (!keys) return;
     if (!intoFrame || currentGui === undefined) {
       if (document.activeElement !== editor.input) editor.focus();
       return;
     }
     frames.current.get(currentGui.id)?.focus();
-  }, [editor, currentGui, intoFrame]);
+  }, [editor, currentGui, intoFrame, keys]);
   // A field whose window is no longer current has lost the keys (Lua
   // stopped insert mode); the ring shows only in the current window.
   useEffect(() => {
@@ -695,7 +767,6 @@ function NeovimSurface({
 
   return (
     <div
-      ref={surfaceRef}
       className="neovim-surface"
       style={
         nvim

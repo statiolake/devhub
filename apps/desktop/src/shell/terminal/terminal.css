@@ -25,3 +25,15 @@
   background: var(--surface);
   inset: 0;
 }
+
+/* The Neovims over an xterm.js terminal's panes (`PolledNeovims.tsx`),
+   in the page's own coordinates. */
+.polled-neovims {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.polled-neovims > .pane-neovim {
+  pointer-events: auto;
+}

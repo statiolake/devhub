@@ -149,6 +149,12 @@ export interface ChordHost {
 	 */
 	terminalZoom(direction: TerminalZoomDirection): boolean;
 	/**
+	 * Whether the keys typed on this page are a Neovim's: a terminal page
+	 * whose Neovim drawn over the active pane has them
+	 * (`editor/terminalNeovims.ts`). Its editing keys are Neovim's own.
+	 */
+	neovimHasKeys?(surfaceUrl: string): boolean;
+	/**
 	 * Back or Forward through the places the window has shown — `Cmd+[` and
 	 * `Cmd+]` on DevHub's own pages (`historyKeys.ts`).
 	 *
@@ -409,7 +415,11 @@ export function handleInput(
 			take();
 			return;
 		}
-		const command = editingCommandFor(url, stroke);
+		const command = editingCommandFor(
+			url,
+			stroke,
+			host.neovimHasKeys?.(url) ?? false,
+		);
 		if (!command) return;
 		take();
 		editing(command.role);

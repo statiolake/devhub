@@ -25,10 +25,12 @@
  *
  * # Where an overlay goes
  *
- * The terminal's page says where its emulator's screen is and how many cells
- * it has (`screen`); the reading says where the pane is in cells, and whether
- * a status line on top pushes it down. The overlay is that rectangle, in the
- * terminal view's own coordinates — exactly the pane, never its border. It is
+ * In the terminal's own page, over its pane: the page mounts each overlay's
+ * Neovim (`shell/pane/PaneNeovims.tsx`) and draws it among the pane's own
+ * layers. In control mode the page lays out the panes itself and puts the
+ * Neovim in its pane, moving with it (`docs/pane-motion.md`); polled, it is
+ * told the pane's cells and whether a status line on top pushes it down
+ * (`neovims`), and places the Neovim over its emulator's screen. It is
  * hidden whenever the pane is not what tmux shows: another window, a zoomed
  * sibling, the pane in a mode (copy mode, a chooser), or no DevHub client.
  *
@@ -49,13 +51,12 @@
  *
  * A terminal in control mode (`docs/terminal-mode.md`) draws its panes
  * itself, from the layout tmux pushes, so its page knows each pane's
- * rectangle exactly and says it (`controlPanes`): where the panes' cells
- * start, a cell's size, the shown window's panes, every pane's window, mode
- * and `@devhub-nvim`, the client and the prefixes. Nothing is polled; the
- * overlay moves with the panes as they are painted. The sockets the page
+ * panes and says what they are (`controlPanes`): the shown window's panes,
+ * which is active, every pane's mode and `@devhub-nvim`, the client and the
+ * prefixes. Nothing is polled; the page moves the Neovim with its pane. The sockets the page
  * names are only a hint: each change of them is a reading of tmux here, and
  * only a socket that reading confirms is attached to. The prefix typed in
- * the overlay is handed to the terminal's page as the keystroke it was, since
+ * the overlay is handed to the terminal surface as the keystroke it was, since
  * that page's control client keeps its own place in tmux's key tables
  * (`ptyHost/control/keyGuard.ts`); a prompt or a chooser is DevHub's to draw
  * there (or refused), so every key after the prefix gives the keys back once
@@ -78,21 +79,6 @@ export interface TerminalNeovimPane {
 	readonly inMode: boolean;
 	/** `@devhub-nvim`: the socket its `nvim` listens on, on its machine. */
 	readonly socket: string;
-	/**
-	 * How far past its cells the overlay may reach, in the terminal page's
-	 * CSS pixels per side: to the boundary beside it, as the pane's ground
-	 * does (control mode's `paneReach`). None when polled: a TUI's border
-	 * is a character in a cell.
-	 */
-	readonly reach?: PaneReach;
-}
-
-/** CSS pixels per side (`TerminalNeovimPane.reach`, `OverlayRect.inset`). */
-export interface PaneReach {
-	readonly left: number;
-	readonly top: number;
-	readonly right: number;
-	readonly bottom: number;
 }
 
 /** DevHub's tmux client on the session. */
@@ -196,32 +182,6 @@ export function parseTerminalNeovimReading(
 	return { panes, client };
 }
 
-/**
- * Where the terminal page's emulator draws, in the page's CSS pixels. Its
- * cells are the tmux client's: that client is the pty the emulator drives.
- */
-export interface TerminalScreen {
-	readonly x: number;
-	readonly y: number;
-	readonly width: number;
-	readonly height: number;
-	/** The page's zoom: CSS pixels to the view's. */
-	readonly zoom: number;
-}
-
-export interface OverlayRect {
-	readonly x: number;
-	readonly y: number;
-	readonly width: number;
-	readonly height: number;
-	/**
-	 * How much of the rectangle, per side, is past the pane's cells (its
-	 * reach to the boundary): the page draws its grid inside it, Neovim's
-	 * ground in it. None when the rectangle is the cells'.
-	 */
-	readonly inset?: PaneReach;
-}
-
 /** Whether tmux is showing this pane to DevHub's client. */
 export function paneShown(
 	pane: TerminalNeovimPane,
@@ -235,119 +195,17 @@ export function paneShown(
 	);
 }
 
-/** The pane's rectangle in the terminal view, on whole pixels. */
-export function overlayRect(
-	pane: TerminalNeovimPane,
-	client: TerminalNeovimClient,
-	screen: TerminalScreen,
-): OverlayRect | undefined {
-	const cols = client.width;
-	const rows = client.height;
-	if (
-		!(cols > 0 && rows > 0) ||
-		!(screen.width > 0 && screen.height > 0 && screen.zoom > 0)
-	) {
-		return undefined;
-	}
-	const cellWidth = (screen.width / cols) * screen.zoom;
-	const cellHeight = (screen.height / rows) * screen.zoom;
-	const originX = screen.x * screen.zoom;
-	const originY = screen.y * screen.zoom;
-	const row = pane.top + client.statusTop;
-	const left = Math.round(originX + pane.left * cellWidth);
-	const top = Math.round(originY + row * cellHeight);
-	const right = Math.round(originX + (pane.left + pane.width) * cellWidth);
-	const bottom = Math.round(originY + (row + pane.height) * cellHeight);
-	if (right <= left || bottom <= top) return undefined;
-	const cells = { x: left, y: top, width: right - left, height: bottom - top };
-	const reach = pane.reach;
-	if (reach === undefined) return cells;
-	// Out to the boundary, on whole pixels short of it: the line stays the
-	// terminal page's, and what is left of the gap is under a pixel.
-	const zoom = screen.zoom;
-	const out = {
-		left: Math.ceil(originX + pane.left * cellWidth - reach.left * zoom),
-		top: Math.ceil(originY + row * cellHeight - reach.top * zoom),
-		right: Math.floor(
-			originX + (pane.left + pane.width) * cellWidth + reach.right * zoom,
-		),
-		bottom: Math.floor(
-			originY + (row + pane.height) * cellHeight + reach.bottom * zoom,
-		),
-	};
-	const inset = {
-		left: Math.max(0, left - out.left),
-		top: Math.max(0, top - out.top),
-		right: Math.max(0, out.right - right),
-		bottom: Math.max(0, out.bottom - bottom),
-	};
-	if (inset.left + inset.top + inset.right + inset.bottom === 0) return cells;
-	return {
-		x: left - inset.left,
-		y: top - inset.top,
-		width: right - left + inset.left + inset.right,
-		height: bottom - top + inset.top + inset.bottom,
-		inset,
-	};
-}
-
 /**
- * Where an overlay's view goes in the window, its terminal's view being at
- * `terminal`: on its pane (`shown`, `views`), inside the terminal's view.
- * While tmux does not show the pane (another window, a zoomed sibling, copy
- * mode) the view is hidden at the pane's last place: the pane keeps its
- * size in tmux, and the page sizes Neovim's grid from its view, so a hidden
- * view the terminal's size would make the Neovim that size until its pane
- * is shown again. One never shown yet is put over the whole terminal.
- */
-export function overlayBounds(
-	terminal: OverlayRect,
-	shown: OverlayRect | undefined,
-	last: OverlayRect | undefined,
-): OverlayRect {
-	if (shown !== undefined) {
-		return {
-			x: terminal.x + shown.x,
-			y: terminal.y + shown.y,
-			width: Math.min(shown.width, terminal.width - shown.x),
-			height: Math.min(shown.height, terminal.height - shown.y),
-		};
-	}
-	if (last !== undefined) {
-		return {
-			x: terminal.x + last.x,
-			y: terminal.y + last.y,
-			width: last.width,
-			height: last.height,
-		};
-	}
-	return terminal;
-}
-
-/**
- * A control-mode terminal's panes, as its page draws them (`controlPanes`),
- * in the page's CSS pixels and in cells.
+ * A control-mode terminal's panes, as its page has them (`controlPanes`,
+ * `TerminalPanesWire`): what each is, not where it is drawn.
  */
 export interface ControlPanes {
-	/** Where the panes' cell (0, 0) is drawn, and a cell's size. */
-	readonly x: number;
-	readonly y: number;
-	readonly cellWidth: number;
-	readonly cellHeight: number;
-	readonly cols: number;
-	readonly rows: number;
-	readonly zoom: number;
 	readonly client: string;
 	readonly prefixes: readonly string[];
-	/** The shown window's panes, at their rectangles (a zoomed pane alone). */
+	/** The shown window's panes (a zoomed pane alone). */
 	readonly shown: readonly {
 		readonly pane: number;
-		readonly x: number;
-		readonly y: number;
-		readonly width: number;
-		readonly height: number;
 		readonly active: boolean;
-		readonly reach?: PaneReach;
 	}[];
 	/** Every pane of the session. */
 	readonly panes: readonly {
@@ -357,7 +215,7 @@ export interface ControlPanes {
 	}[];
 	/**
 	 * What DevHub draws over the panes is open (a popup, a prompt, a menu,
-	 * the picker): the page has the keys, and is put above the overlays.
+	 * the chooser): the terminal has the keys.
 	 */
 	readonly covered: boolean;
 }
@@ -368,20 +226,12 @@ const MAX_PANES = 1024;
  * A page's report of its panes, checked: numbers that are numbers, at most
  * `MAX_PANES` of each list; anything else is no report.
  */
-export function parseControlPanes(
-	value: unknown,
-	zoom: number,
-): ControlPanes | undefined {
+export function parseControlPanes(value: unknown): ControlPanes | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const v = value as Record<string, unknown>;
-	const finite = (n: unknown): n is number =>
-		typeof n === "number" && Number.isFinite(n);
 	const cell = (n: unknown): n is number =>
 		typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 100_000;
 	if (
-		![v.x, v.y, v.cellWidth, v.cellHeight].every(finite) ||
-		!cell(v.cols) ||
-		!cell(v.rows) ||
 		typeof v.client !== "string" ||
 		!Array.isArray(v.prefixes) ||
 		!v.prefixes.every((p) => typeof p === "string" && p.length < 64) ||
@@ -398,33 +248,11 @@ export function parseControlPanes(
 		if (
 			b === null ||
 			typeof b !== "object" ||
-			![b.pane, b.x, b.y, b.width, b.height].every(cell) ||
+			!cell(b.pane) ||
 			typeof b.active !== "boolean"
 		)
 			return undefined;
-		const r = b.reach as Record<string, unknown> | null | undefined;
-		const reach =
-			r !== null &&
-			typeof r === "object" &&
-			[r.left, r.top, r.right, r.bottom].every(
-				(v) => finite(v) && (v as number) >= 0 && (v as number) < 1000,
-			)
-				? {
-						left: r.left as number,
-						top: r.top as number,
-						right: r.right as number,
-						bottom: r.bottom as number,
-					}
-				: undefined;
-		shown.push({
-			pane: b.pane as number,
-			x: b.x as number,
-			y: b.y as number,
-			width: b.width as number,
-			height: b.height as number,
-			active: b.active,
-			...(reach !== undefined ? { reach } : {}),
-		});
+		shown.push({ pane: b.pane, active: b.active });
 	}
 	const panes: ControlPanes["panes"][number][] = [];
 	for (const item of v.panes as unknown[]) {
@@ -440,13 +268,6 @@ export function parseControlPanes(
 		panes.push({ pane: p.pane, inMode: p.inMode, socket: p.socket });
 	}
 	return {
-		x: v.x as number,
-		y: v.y as number,
-		cellWidth: v.cellWidth as number,
-		cellHeight: v.cellHeight as number,
-		cols: v.cols,
-		rows: v.rows,
-		zoom,
 		client: v.client,
 		prefixes: v.prefixes as string[],
 		shown,
@@ -458,50 +279,41 @@ export function parseControlPanes(
 /**
  * A control-mode page's panes as a reading, with the sockets a reading of
  * tmux confirmed (`confirmed`, by pane id) in place of the page's hints.
+ * Where a pane is is not in it: the page places its Neovim itself.
  */
 export function controlReading(
 	panes: ControlPanes,
 	confirmed: ReadonlyMap<string, string>,
-): { reading: TerminalNeovimReading; screen: TerminalScreen } {
+): TerminalNeovimReading {
 	const shown = new Map(panes.shown.map((box) => [box.pane, box]));
 	return {
-		reading: {
-			panes: panes.panes.map((pane) => {
-				const paneId = `%${String(pane.pane)}`;
-				const box = shown.get(pane.pane);
-				return {
-					paneId,
-					windowActive: box !== undefined,
-					paneActive: box?.active ?? false,
-					zoomed: false,
-					left: box?.x ?? 0,
-					top: box?.y ?? 0,
-					width: box?.width ?? 0,
-					height: box?.height ?? 0,
-					inMode: pane.inMode,
-					socket: confirmed.get(paneId) ?? "",
-					...(box?.reach !== undefined ? { reach: box.reach } : {}),
-				};
-			}),
-			client:
-				panes.client === ""
-					? undefined
-					: {
-							name: panes.client,
-							width: panes.cols,
-							height: panes.rows,
-							keyTable: "root",
-							statusTop: 0,
-							prefixes: panes.prefixes,
-						},
-		},
-		screen: {
-			x: panes.x,
-			y: panes.y,
-			width: panes.cols * panes.cellWidth,
-			height: panes.rows * panes.cellHeight,
-			zoom: panes.zoom,
-		},
+		panes: panes.panes.map((pane) => {
+			const paneId = `%${String(pane.pane)}`;
+			const box = shown.get(pane.pane);
+			return {
+				paneId,
+				windowActive: box !== undefined,
+				paneActive: box?.active ?? false,
+				zoomed: false,
+				left: 0,
+				top: 0,
+				width: 0,
+				height: 0,
+				inMode: pane.inMode,
+				socket: confirmed.get(paneId) ?? "",
+			};
+		}),
+		client:
+			panes.client === ""
+				? undefined
+				: {
+						name: panes.client,
+						width: 0,
+						height: 0,
+						keyTable: "root",
+						statusTop: 0,
+						prefixes: panes.prefixes,
+					},
 	};
 }
 
@@ -554,46 +366,11 @@ export function isTmuxKey(name: string, input: KeyInput): boolean {
 	return input.key === want && (!shift || input.shift);
 }
 
-/** Electron's names for the keys a redirected keystroke may be. */
-const FORWARDED_NAMES: Record<string, string> = {
-	Enter: "Enter",
-	Escape: "Escape",
-	Backspace: "Backspace",
-	Tab: "Tab",
-	Delete: "Delete",
-	ArrowUp: "Up",
-	ArrowDown: "Down",
-	ArrowLeft: "Left",
-	ArrowRight: "Right",
-	" ": "Space",
-};
-
-/** The US-layout key Electron's `sendInputEvent` names for a `code`. */
-function usKeyOfCode(code: string): string | undefined {
-	const letter = /^Key([A-Z])$/.exec(code);
-	if (letter !== null) return letter[1].toLowerCase();
-	const digit = /^Digit([0-9])$/.exec(code);
-	if (digit !== null) return digit[1];
-	const punctuation: Record<string, string> = {
-		Minus: "-",
-		Equal: "=",
-		BracketLeft: "[",
-		BracketRight: "]",
-		Backslash: "\\",
-		Semicolon: ";",
-		Quote: "'",
-		Comma: ",",
-		Period: ".",
-		Slash: "/",
-		Backquote: "`",
-		Space: "Space",
-	};
-	return punctuation[code];
-}
-
 /**
  * Whether the left Option is down, followed from the key events of one web
- * contents (`code` `AltLeft`), for `forwardedKey`.
+ * contents (`code` `AltLeft`): a keystroke main hands on says so
+ * (`TerminalNeovimKeyWire.leftOption`), since what it is typed into never
+ * saw the Option go down.
  */
 export class LeftOption {
 	private down = false;
@@ -605,56 +382,6 @@ export class LeftOption {
 		if (!input.alt) this.down = false;
 		return this.down;
 	}
-}
-
-/**
- * The keystroke a terminal took, as input events to send the overlay that
- * takes the keys from it: a key down, its character, a key up. A key with no
- * name Electron can send is not sent — the overlay has the keys from the
- * next one on.
- */
-export function forwardedKey(
-	input: KeyInput,
-	leftOption = false,
-): Electron.KeyboardInputEvent[] {
-	// An Option chord's `key` is what Option made of it (`≈`), which names no
-	// physical key: the key itself is sent, by its US name, so the overlay
-	// reads its `code` and the layout (`shell/surfaces/baseKeys.ts`).
-	const physical =
-		input.alt && input.code !== undefined ? usKeyOfCode(input.code) : undefined;
-	const keyCode =
-		FORWARDED_NAMES[input.key] ??
-		physical ??
-		([...input.key].length === 1 ? input.key : undefined);
-	if (keyCode === undefined) return [];
-	const modifiers: Electron.KeyboardInputEvent["modifiers"] = [];
-	if (input.shift) modifiers.push("shift");
-	if (input.control) modifiers.push("control");
-	if (input.alt) modifiers.push("alt");
-	if (input.meta) modifiers.push("meta");
-	const events: Electron.KeyboardInputEvent[] = [];
-	// The left Option is held, and the overlay never saw it go down: it is
-	// told (`AltLeft`), so `mac_option_is_meta = "left"` reads this chord and
-	// the ones after it as Meta. Its key up is the real one, which the
-	// overlay, focused from here on, sees.
-	if (input.alt && leftOption) {
-		events.push({
-			type: "keyDown",
-			keyCode: "Alt",
-			modifiers: ["alt", "left"],
-		});
-	}
-	events.push({ type: "keyDown", keyCode, modifiers });
-	if (
-		[...input.key].length === 1 &&
-		!input.control &&
-		!input.alt &&
-		!input.meta
-	) {
-		events.push({ type: "char", keyCode: input.key, modifiers });
-	}
-	events.push({ type: "keyUp", keyCode, modifiers });
-	return events;
 }
 
 /**
@@ -717,26 +444,39 @@ export interface TerminalNeovimsOptions {
 	readonly ports: TerminalNeovimPorts;
 	/** Told when an overlay appears, moves, hides, ends, or the keys move. */
 	readonly changed: () => void;
+	/**
+	 * An overlay went while its UI may be attached (its pane went, its
+	 * `nvim` took its socket back): the UI is let go of. Its page draws
+	 * every Neovim of its terminal and stays, so its going says nothing.
+	 */
+	readonly gone?: (key: string) => void;
 	readonly pollMs?: (machine: RuntimeId) => number;
 	readonly settleMs?: number;
 }
 
-/**
- * A control-mode terminal's overlaid panes (tmux pane numbers) and whether
- * its page is above them: `TerminalOverlaidWire` in `ipc/contract.ts`.
- */
-export interface OverlaidPanes {
-	readonly panes: readonly number[];
-	readonly raised: boolean;
+/** One overlay, as the terminal's page draws it (`TerminalNeovimWire`). */
+export interface OverlayView {
+	/** The id its UI attaches as. */
+	readonly key: string;
+	/** Its tmux pane's number. */
+	readonly pane: number;
+	/** tmux shows its pane to DevHub's client. */
+	readonly shown: boolean;
+	/** Polled: the pane's cells in the client's screen (`TerminalNeovimWire`). */
+	readonly cells?: {
+		readonly x: number;
+		readonly y: number;
+		readonly width: number;
+		readonly height: number;
+		readonly cols: number;
+		readonly rows: number;
+	};
 }
 
-/** One overlay, as the window draws it. */
-export interface OverlayView {
-	/** `neovim.html#<key>`: the page attaches as this id. */
-	readonly key: string;
-	readonly terminalId: string;
-	/** In the terminal view's coordinates; `undefined` while it is not shown. */
-	readonly rect: OverlayRect | undefined;
+/** The Neovims over one terminal's panes, and which has the keys. */
+export interface TerminalOverlays {
+	readonly overlays: readonly OverlayView[];
+	readonly keys?: string;
 }
 
 /** The ids the overlays' pages attach as, apart from Workspaces'. */
@@ -760,8 +500,6 @@ type Lend =
 	| {
 			readonly kind: "prefix";
 			readonly armed: boolean;
-			/** Handed to a control-mode page, whose own input event is not news. */
-			readonly handed?: boolean;
 	  }
 	| { readonly kind: "interactive" }
 	| { readonly kind: "user" };
@@ -769,15 +507,14 @@ type Lend =
 interface Watch {
 	terminal: OverlayTerminal;
 	onScreen: boolean;
-	screen: TerminalScreen | undefined;
 	reading: TerminalNeovimReading | undefined;
 	timer: ReturnType<typeof setTimeout> | undefined;
 	reading$: boolean;
 	lend: Lend | undefined;
 	/** The overlay's pane was active and shown at the last reading. */
 	activeShown: boolean;
-	/** `overlaid` as last said to the window. */
-	overlaid: string;
+	/** `neovims` as the last change said it. */
+	said: string;
 	/**
 	 * In control mode: the page's panes, and the sockets the last reading of
 	 * tmux confirmed. Absent: the page is xterm.js, and tmux is polled.
@@ -799,8 +536,6 @@ function deadKey(paneId: string, socket: string): string {
 export class TerminalNeovims {
 	private readonly watches = new Map<string, Watch>();
 	private readonly byKey = new Map<string, Overlay>();
-	/** Each terminal page's screen, kept from its first report on. */
-	private readonly screens = new Map<string, TerminalScreen>();
 	/**
 	 * Panes' sockets that could not be attached to, or whose Neovim ended: a
 	 * stale option, not a Neovim. By pane and socket, as a managed Neovim
@@ -839,9 +574,9 @@ export class TerminalNeovims {
 		for (const [terminalId, watch] of [...this.watches]) {
 			if (known.has(terminalId)) continue;
 			this.stop(watch);
-			this.screens.delete(terminalId);
 			for (const overlay of watch.overlays.values()) {
 				this.byKey.delete(overlay.key);
+				this.options.gone?.(overlay.key);
 			}
 			changed ||= watch.overlays.size > 0;
 			this.watches.delete(terminalId);
@@ -852,13 +587,12 @@ export class TerminalNeovims {
 				watch = {
 					terminal,
 					onScreen: false,
-					screen: this.screens.get(terminal.terminalId),
 					reading: undefined,
 					timer: undefined,
 					reading$: false,
 					lend: undefined,
 					activeShown: false,
-					overlaid: "",
+					said: "",
 					control: undefined,
 					overlays: new Map(),
 				};
@@ -875,17 +609,7 @@ export class TerminalNeovims {
 			if (shown) this.schedule(watch, 0);
 			else this.stop(watch);
 		}
-		if (changed) this.options.changed();
-	}
-
-	/** The terminal page's emulator, measured. */
-	screen(terminalId: string, screen: TerminalScreen): void {
-		this.screens.set(terminalId, screen);
-		const watch = this.watches.get(terminalId);
-		if (watch === undefined) return;
-		watch.screen = screen;
-		if (watch.overlays.size > 0) this.options.changed();
-		if (watch.onScreen) this.schedule(watch, 0);
+		if (changed) this.changed();
 	}
 
 	/**
@@ -945,40 +669,27 @@ export class TerminalNeovims {
 		}
 	}
 
-	/** Every overlay, for the window. */
-	views(): readonly OverlayView[] {
-		const views: OverlayView[] = [];
-		for (const watch of this.watches.values()) {
-			for (const overlay of watch.overlays.values()) {
-				views.push({
-					key: overlay.key,
-					terminalId: watch.terminal.terminalId,
-					rect: this.rectOf(watch, overlay),
-				});
-			}
-		}
-		return views;
+	/** The terminals that have an overlay, or had one at the last change. */
+	terminals(): readonly string[] {
+		return [...this.watches.keys()];
 	}
 
-	/**
-	 * In control mode, the panes whose overlay is shown, and whether the
-	 * terminal's page is to be above them: while what DevHub draws over the
-	 * panes is open, it is drawn over the Neovims too, and the page leaves
-	 * those panes clear (`TerminalOverlaidWire`).
-	 */
-	overlaid(terminalId: string): OverlaidPanes {
+	/** The overlays of a terminal, for its page, and which has the keys. */
+	neovims(terminalId: string): TerminalOverlays {
 		const watch = this.watches.get(terminalId);
-		if (watch?.control === undefined) return { panes: [], raised: false };
-		const panes: number[] = [];
+		if (watch === undefined) return { overlays: [] };
+		const overlays: OverlayView[] = [];
 		for (const overlay of watch.overlays.values()) {
-			if (this.rectOf(watch, overlay) === undefined) continue;
-			panes.push(Number(overlay.paneId.slice(1)));
+			const cells = this.cellsOf(watch, overlay);
+			overlays.push({
+				key: overlay.key,
+				pane: Number(overlay.paneId.slice(1)),
+				shown: this.shown(watch, overlay),
+				...(cells !== undefined ? { cells } : {}),
+			});
 		}
-		panes.sort((a, b) => a - b);
-		return {
-			panes,
-			raised: watch.control.panes.covered && panes.length > 0,
-		};
+		const keys = this.keyboardOverlay(terminalId);
+		return keys === undefined ? { overlays } : { overlays, keys };
 	}
 
 	/** The overlay the terminal's keys go to now, if any. */
@@ -1014,7 +725,7 @@ export class TerminalNeovims {
 			this.dead.delete(deadKey(pane.paneId, pane.socket));
 		}
 		watch.lend = undefined;
-		this.options.changed();
+		this.changed();
 		if (watch.control !== undefined) void this.confirm(watch);
 		else if (watch.onScreen) this.schedule(watch, 0);
 	}
@@ -1051,7 +762,7 @@ export class TerminalNeovims {
 				);
 			});
 		void overlay.localPath?.then((path) => this.options.ports.attached?.(path));
-		this.options.changed();
+		this.changed();
 	}
 
 	/** Its UI ended (Neovim exited) or never attached: the overlay goes. */
@@ -1065,7 +776,7 @@ export class TerminalNeovims {
 		if (watch !== undefined && watch.overlays.size === 0) {
 			watch.lend = undefined;
 		}
-		this.options.changed();
+		this.changed();
 		if (watch?.control !== undefined) this.applyControl(watch);
 		else if (watch?.onScreen === true) this.schedule(watch, 0);
 	}
@@ -1089,7 +800,7 @@ export class TerminalNeovims {
 					if (watch.control === undefined) this.schedule(watch, 0);
 				});
 		} else if (lent) {
-			this.options.changed();
+			this.changed();
 		}
 	}
 
@@ -1099,7 +810,7 @@ export class TerminalNeovims {
 		if (watch === undefined || watch.lend !== undefined) return;
 		if (this.keyboardOverlay(terminalId) === undefined) return;
 		watch.lend = { kind: "user" };
-		this.options.changed();
+		this.changed();
 	}
 
 	/**
@@ -1121,15 +832,15 @@ export class TerminalNeovims {
 			return "pass";
 		}
 		if (watch.control !== undefined) {
-			watch.lend = { kind: "prefix", armed: true, handed: true };
-			this.options.changed();
+			watch.lend = { kind: "prefix", armed: true };
+			this.changed();
 			return "hand";
 		}
 		watch.lend = { kind: "prefix", armed: true };
 		void this.options.ports
 			.enterPrefix(watch.terminal, client.name)
 			.catch(() => undefined);
-		this.options.changed();
+		this.changed();
 		return "prefix";
 	}
 
@@ -1149,15 +860,6 @@ export class TerminalNeovims {
 		const client = watch.reading?.client;
 		if (overlay?.attached !== true || client === undefined) return "pass";
 		const lend = watch.lend;
-		// The prefix the overlay handed this page, arriving.
-		if (
-			lend?.kind === "prefix" &&
-			lend.handed === true &&
-			client.prefixes.some((prefix) => isTmuxKey(prefix, input))
-		) {
-			watch.lend = { kind: "prefix", armed: true };
-			return "pass";
-		}
 		// The key after the prefix, the prefix again (`send-prefix`) included.
 		if (lend?.kind === "prefix" && lend.armed) {
 			if (
@@ -1184,8 +886,15 @@ export class TerminalNeovims {
 		if (lend?.kind === "prefix") return "pass";
 		if (client.keyTable !== "root") return "pass";
 		watch.lend = undefined;
-		this.options.changed();
+		this.changed();
 		return "redirect";
+	}
+
+	/** Told to the window: each terminal's `neovims` as it is now. */
+	private changed(): void {
+		for (const [terminalId, watch] of this.watches)
+			watch.said = JSON.stringify(this.neovims(terminalId));
+		this.options.changed();
 	}
 
 	/** DevHub is quitting: the Neovims run on, and the next DevHub adopts them. */
@@ -1207,15 +916,34 @@ export class TerminalNeovims {
 		return pane === undefined ? undefined : watch.overlays.get(pane.paneId);
 	}
 
-	private rectOf(watch: Watch, overlay: Overlay): OverlayRect | undefined {
+	/** Whether tmux shows the overlay's pane to DevHub's client. */
+	private shown(watch: Watch, overlay: Overlay): boolean {
 		const reading = watch.reading;
-		if (!watch.onScreen || reading?.client === undefined) return undefined;
-		if (watch.screen === undefined) return undefined;
+		if (!watch.onScreen || reading?.client === undefined) return false;
 		const pane = reading.panes.find(
 			(candidate) => candidate.paneId === overlay.paneId,
 		);
-		if (pane === undefined || !paneShown(pane, reading)) return undefined;
-		return overlayRect(pane, reading.client, watch.screen);
+		return pane !== undefined && paneShown(pane, reading);
+	}
+
+	/** Polled: the overlay's pane in the client's cells, while it is shown. */
+	private cellsOf(watch: Watch, overlay: Overlay): OverlayView["cells"] {
+		const client = watch.reading?.client;
+		if (watch.control !== undefined || client === undefined) return undefined;
+		if (!this.shown(watch, overlay)) return undefined;
+		const pane = watch.reading?.panes.find(
+			(candidate) => candidate.paneId === overlay.paneId,
+		);
+		if (pane === undefined || !(client.width > 0 && client.height > 0))
+			return undefined;
+		return {
+			x: pane.left,
+			y: pane.top + client.statusTop,
+			width: pane.width,
+			height: pane.height,
+			cols: client.width,
+			rows: client.height,
+		};
 	}
 
 	/** After a prefix binding ran: read again, and take the keys back if it is ours. */
@@ -1230,7 +958,7 @@ export class TerminalNeovims {
 				if (watch.reading?.client?.keyTable !== "root") return;
 				if (this.activeOverlay(watch) === undefined) return;
 				watch.lend = undefined;
-				this.options.changed();
+				this.changed();
 			});
 		}, this.options.settleMs ?? 120);
 	}
@@ -1296,29 +1024,11 @@ export class TerminalNeovims {
 	private applyControl(watch: Watch): void {
 		const control = watch.control;
 		if (control === undefined || this.disposed) return;
-		const { reading, screen } = controlReading(
-			control.panes,
-			control.confirmed,
-		);
-		this.apply(watch, reading, screen);
+		this.apply(watch, controlReading(control.panes, control.confirmed));
 	}
 
-	private apply(
-		watch: Watch,
-		reading: TerminalNeovimReading,
-		screen?: TerminalScreen,
-	): void {
-		const before = JSON.stringify(
-			this.views().filter(
-				(view) => view.terminalId === watch.terminal.terminalId,
-			),
-		);
-		const keysBefore = this.keyboardOverlay(watch.terminal.terminalId);
+	private apply(watch: Watch, reading: TerminalNeovimReading): void {
 		watch.reading = reading;
-		if (screen !== undefined) {
-			watch.screen = screen;
-			this.screens.set(watch.terminal.terminalId, screen);
-		}
 		let changed = false;
 		const live = new Map(reading.panes.map((pane) => [pane.paneId, pane]));
 		for (const [paneId, overlay] of [...watch.overlays]) {
@@ -1326,6 +1036,7 @@ export class TerminalNeovims {
 			if (live.get(paneId)?.socket === overlay.socket) continue;
 			watch.overlays.delete(paneId);
 			this.byKey.delete(overlay.key);
+			this.options.gone?.(overlay.key);
 			changed = true;
 		}
 		for (const pane of reading.panes) {
@@ -1357,22 +1068,21 @@ export class TerminalNeovims {
 			watch.lend = undefined;
 		}
 		watch.activeShown = activeShown;
-		// Said apart from the views: the page's `covered` comes with the
-		// reading that is applied here, after the panes were stored.
-		const overlaid = JSON.stringify(this.overlaid(watch.terminal.terminalId));
-		const after = JSON.stringify(
-			this.views().filter(
-				(view) => view.terminalId === watch.terminal.terminalId,
-			),
-		);
-		if (
-			changed ||
-			before !== after ||
-			keysBefore !== this.keyboardOverlay(watch.terminal.terminalId) ||
-			overlaid !== watch.overlaid
-		) {
-			this.options.changed();
-		}
-		watch.overlaid = overlaid;
+		const after = JSON.stringify(this.neovims(watch.terminal.terminalId));
+		if (changed || after !== watch.said) this.changed();
+	}
+}
+
+/**
+ * The terminal a terminal page's URL is for (`pane.html#<terminal id>`), or
+ * nothing for any other page.
+ */
+export function terminalIdOfPaneUrl(surfaceUrl: string): string | undefined {
+	const at = surfaceUrl.indexOf("/pane.html#");
+	if (at < 0) return undefined;
+	try {
+		return decodeURIComponent(surfaceUrl.slice(at + "/pane.html#".length));
+	} catch {
+		return undefined;
 	}
 }

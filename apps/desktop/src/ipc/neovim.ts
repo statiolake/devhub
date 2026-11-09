@@ -1,7 +1,9 @@
 /**
- * The Neovim editor page's wire: `neovim.html`, main, and the Neovim host.
+ * The Neovim editor's wire: the terminal page that draws a Neovim over its
+ * pane (`pane.html`, one UI per overlay, by its key), main, and the Neovim
+ * host.
  *
- * The page is a GUI for one headless Neovim (`docs/neovim-editor.md`). Main
+ * Each UI is a GUI for one Neovim (`docs/neovim-editor.md`). Main
  * finds or starts the Neovim and answers the attach; the UI's own connection
  * — the socket, the attach, the clipboard and GUI-window requests Neovim
  * makes — is the Neovim host's (`main/neovimHost/`), which forwards Neovim's
@@ -50,8 +52,6 @@ export const NEOVIM_CHANNELS = {
 	port: "devhub:neovim:port",
 	/** main → page: the Neovim host of this generation ended; its port is dead. */
 	restarted: "devhub:neovim:restarted",
-	/** main → page: its view is on its pane, and how (`NeovimPlacement`). */
-	placed: "devhub:neovim:placed",
 	/**
 	 * page → main: a Neovim's `vim.ui.select` / `vim.ui.input`, put to the
 	 * person in DevHub's quick pick; answered with the index or the text, -1
@@ -59,34 +59,6 @@ export const NEOVIM_CHANNELS = {
 	 */
 	quickPick: "devhub:neovim:quick-pick",
 } as const;
-
-/**
- * A Neovim over a tmux pane reaches the boundary beside the pane, as the
- * pane's ground does (`docs/rendering-layers.md`, "Panes and boundaries"):
- * this much of its view, in pixels per side, is past the pane's cells. The
- * page draws its grid inside it and Neovim's ground in it.
- */
-export interface NeovimInset {
-	readonly left: number;
-	readonly top: number;
-	readonly right: number;
-	readonly bottom: number;
-}
-
-/**
- * An overlay's view is on its pane (shown there, or hidden where it was
- * last shown): until main says so, the view's size is no pane's — not yet
- * placed, or over the whole terminal — and a UI attached at it, or a grid
- * resized to it, would make Neovim reshape its windows to fit, which
- * growing back does not undo (a split's upper window left one row tall).
- * So the page attaches, and asks for a size, only once placed.
- */
-export interface NeovimPlacement {
-	/** The view's size: the page is placed once its own is this. */
-	readonly width: number;
-	readonly height: number;
-	readonly inset: NeovimInset;
-}
 
 /** What the page asks for when it attaches. */
 export interface NeovimAttachRequest {
@@ -248,11 +220,6 @@ export interface DevhubNeovimApi {
 	onGuiSend(listener: (message: NeovimGuiMessage) => void): () => void;
 	onGuiEvent(listener: (event: NeovimGuiEvent) => void): () => void;
 	guiMessage(message: NeovimGuiMessage): void;
-	/**
-	 * The view's placement on its pane, as main last said it (if it has),
-	 * then each change. None until the view is on its pane.
-	 */
-	onPlaced(listener: (placement: NeovimPlacement) => void): () => void;
 	/** A Neovim's question in DevHub's quick pick; the answer, or -1. */
 	quickPick(request: QuickPickRequestWire): Promise<number | string>;
 }

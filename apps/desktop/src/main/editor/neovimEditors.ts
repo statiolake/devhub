@@ -1,7 +1,7 @@
 /**
  * The Neovim GUIs: every Neovim DevHub draws, as main holds them. With
- * `general.editor = "neovim"` each is a page over a terminal pane
- * (`neovim.html#tnv:<n>`, `terminalNeovims.ts`) — a `nvim` typed in a
+ * `general.editor = "neovim"` each is drawn in its terminal pane, by that
+ * terminal's page (`tnv:<n>`, `terminalNeovims.ts`) — a `nvim` typed in a
  * terminal, or a Workspace's `devhub-nvim` window, whose Neovim is the
  * managed one (`ManagedNeovims`) files DevHub opens go to.
  *
@@ -54,9 +54,9 @@ export interface NeovimEditorsOptions {
 	/** A UI's current buffer changed (`bufferName`). */
 	readonly onBuffer?: (key: string) => void;
 	/**
-	 * The Neovims drawn over terminal panes (`terminalNeovims.ts`): a page
-	 * attaches to its pane's Neovim by the overlay's key, and its end is the
-	 * overlay's.
+	 * The Neovims drawn over terminal panes (`terminalNeovims.ts`): a
+	 * terminal's page attaches each to its pane's Neovim by the overlay's
+	 * key, and a UI's end is its overlay's.
 	 */
 	readonly overlays: Pick<TerminalNeovims, "connection" | "attached" | "ended">;
 }
@@ -150,8 +150,9 @@ export class NeovimEditors {
 
 	/**
 	 * The page at `page` attaches as the UI of the overlay its id names
-	 * (`request.workspaceId`, `tnv:<n>`). Any other id is refused: there is
-	 * no Neovim page but an overlay's.
+	 * (`request.workspaceId`, `tnv:<n>`): a terminal's page, which may
+	 * hold several. Any other id is refused: there is no Neovim UI but an
+	 * overlay's.
 	 */
 	async attach(
 		page: NeovimPage,
@@ -189,8 +190,19 @@ export class NeovimEditors {
 	}
 
 	/**
-	 * A page has gone (its overlay ended, its terminal closed): its UI is let
-	 * go of with it. Neovim draws every UI at the smallest one's size, so a
+	 * An overlay went while its page stays (its pane went, its `nvim` took
+	 * its socket back): its UI is let go of, for the reason a page's are.
+	 */
+	letGoOf(key: string): void {
+		const entry = this.attached.get(key);
+		if (entry === undefined) return;
+		this.attached.delete(key);
+		this.letGo(key, entry.hosted);
+	}
+
+	/**
+	 * A page has gone (its terminal closed, or it loaded again): every UI
+	 * on it is let go of with it. Neovim draws every UI at the smallest one's size, so a
 	 * UI left attached without a page would hold the Neovim at whatever size
 	 * that page last had — the next page over the pane could never grow it.
 	 * The Neovim itself runs on; its end is said by its pane, not here.

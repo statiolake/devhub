@@ -45,7 +45,6 @@ export default defineConfig({
           new URL("./conversations.html", import.meta.url),
         ),
         pane: fileURLToPath(new URL("./pane.html", import.meta.url)),
-        neovim: fileURLToPath(new URL("./neovim.html", import.meta.url)),
         tooltip: fileURLToPath(new URL("./tooltip.html", import.meta.url)),
         settings: fileURLToPath(new URL("./settings.html", import.meta.url)),
         "task-manager": fileURLToPath(

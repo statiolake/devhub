@@ -42,7 +42,6 @@ export type ShellWindowKind =
 	| "sidebar"
 	| "agents"
 	| "pane"
-	| "neovim"
 	| "tooltip";
 
 export const WINDOW_TITLES: Readonly<Record<ShellWindowKind, string>> = {
@@ -58,7 +57,6 @@ export const WINDOW_TITLES: Readonly<Record<ShellWindowKind, string>> = {
 	sidebar: "DevHub",
 	agents: "DevHub",
 	pane: "DevHub",
-	neovim: "DevHub",
 	tooltip: "DevHub",
 };
 

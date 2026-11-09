@@ -25,7 +25,6 @@ const PAGES = [
   "shell/picker/main.tsx",
   "shell/toasts/main.tsx",
   "shell/tooltip/main.tsx",
-  "shell/neovim/main.tsx",
   "shell/pane/main.tsx",
   "settings/SettingsApp.tsx",
   "taskManager/TaskManagerApp.tsx",

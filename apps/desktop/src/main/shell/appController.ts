@@ -518,6 +518,7 @@ import { ManagedNeovims, socketDirectoryFor } from "../editor/managedNeovim.js";
 import { NeovimEditors } from "../editor/neovimEditors.js";
 import {
 	parseControlPanes,
+	terminalIdOfPaneUrl,
 	type TerminalNeovims,
 } from "../editor/terminalNeovims.js";
 import {
@@ -1185,6 +1186,9 @@ export class AppController {
 			// Which Neovim the Workspace's terminal shows is in the title.
 			changed: () => {
 				this.refreshWindowTitle();
+			},
+			gone: (key) => {
+				this.neovimEditors?.letGoOf(key);
 			},
 		});
 		this.neovimEditors = new NeovimEditors({
@@ -1857,6 +1861,13 @@ export class AppController {
 				// re-renders narrower and the rectangle it reports for the
 				// workbench is the freed width. Nothing here lays anything out.
 				this.dispatchOwn({ type: "toggle_sidebar" });
+			},
+			neovimHasKeys: (surfaceUrl) => {
+				const terminalId = terminalIdOfPaneUrl(surfaceUrl);
+				return (
+					terminalId !== undefined &&
+					this.terminalNeovims?.keyboardOverlay(terminalId) !== undefined
+				);
 			},
 			terminalZoom: (direction) => {
 				// A question that is up holds the keyboard, so this is all but
@@ -9234,48 +9245,31 @@ export class AppController {
 		receive(NEOVIM_CHANNELS.call, (_event, call: NeovimCall) => {
 			this.neovimEditors?.call(call);
 		});
-		// An Agent terminal's page, saying where its emulator draws: what a
-		// Neovim over one of its panes is placed from.
-		receive(
-			CHANNELS.reportTerminalScreen,
-			(event, terminalId: unknown, screen: unknown) => {
-				if (typeof terminalId !== "string") return;
-				const rect = screen as Partial<Record<string, unknown>> | null;
-				const numbers = ["x", "y", "width", "height"].map((field) =>
-					rect === null || typeof rect !== "object" ? NaN : rect[field],
-				);
-				if (!numbers.every((n) => typeof n === "number" && Number.isFinite(n)))
-					return;
-				const [x, y, width, height] = numbers as number[];
-				this.terminalNeovims?.screen(terminalId, {
-					x: x ?? 0,
-					y: y ?? 0,
-					width: width ?? 0,
-					height: height ?? 0,
-					zoom: event.sender.getZoomFactor(),
-				});
-			},
-		);
-		// The same page in tmux control mode: its panes, exactly.
+		// A terminal's page in tmux control mode: what its panes are.
 		receive(
 			CHANNELS.reportTerminalPanes,
-			(event, terminalId: unknown, panes: unknown) => {
+			(_event, terminalId: unknown, panes: unknown) => {
 				if (typeof terminalId !== "string") return;
-				const parsed =
-					panes === null
-						? undefined
-						: parseControlPanes(panes, event.sender.getZoomFactor());
+				const parsed = panes === null ? undefined : parseControlPanes(panes);
 				if (panes !== null && parsed === undefined) return;
 				this.terminalNeovims?.controlPanes(terminalId, parsed);
 			},
 		);
-		// The same page, asking which of its panes have a Neovim over them
-		// as it starts listening (`PaneBridge.onTerminalOverlaid`); each
-		// change is pushed by the window as it places the page.
-		handle(CHANNELS.askTerminalOverlaid, (_event, terminalId: unknown) =>
-			typeof terminalId === "string" && this.terminalNeovims !== undefined
-				? this.terminalNeovims.overlaid(terminalId)
-				: { panes: [], raised: false },
+		// The same page, asking for the Neovims over its panes as it starts
+		// listening (`PaneBridge.onTerminalNeovims`); each change is pushed.
+		handle(CHANNELS.askTerminalNeovims, (_event, terminalId: unknown) =>
+			typeof terminalId === "string"
+				? shellWindow().neovimsOf(terminalId)
+				: { overlays: [] },
+		);
+		// A press in it: into one of its Neovims, or the terminal beside.
+		receive(
+			CHANNELS.reportNeovimPointer,
+			(_event, terminalId: unknown, key: unknown) => {
+				if (typeof terminalId !== "string") return;
+				if (key !== null && typeof key !== "string") return;
+				shellWindow().neovimPointer(terminalId, key);
+			},
 		);
 		handle(
 			NEOVIM_CHANNELS.request,

@@ -475,7 +475,88 @@ export class NeovimEditor {
   }
 
   focus(): void {
+    if (!this.keys) return;
     this.input.focus({ preventScroll: true });
+  }
+
+  /**
+   * Whether this Neovim has its terminal page's keys (main's word,
+   * `TerminalNeovimsWire.keys`): the page holds the terminal and every
+   * Neovim over its panes, so a Neovim that focuses itself — an attach, an
+   * answered question — must not take them from the terminal or another
+   * Neovim. A press into it is the person's word, and gives them to it.
+   */
+  setKeys(keys: boolean): void {
+    this.keys = keys;
+  }
+
+  private keys = true;
+
+  /**
+   * Ask Neovim for the grid a view `width` by `height` holds, before the
+   * view is that size: its pane is about to be, and moves to it with the
+   * picture Neovim draws at it (docs/pane-motion.md). The size asked, or
+   * nothing before the attach.
+   */
+  resizeFor(
+    width: number,
+    height: number,
+  ): { cols: number; rows: number } | undefined {
+    if (this.size.cols === 0) return undefined;
+    const next = gridSizeFor(width, height, this.painter.cell());
+    if (next.cols !== this.size.cols || next.rows !== this.size.rows) {
+      this.size = next;
+      this.port.call("nvim_ui_try_resize", [next.cols, next.rows]);
+    }
+    return next;
+  }
+
+  /** Grid 1 as Neovim last drew it, or nothing yet. */
+  drawnSize(): { cols: number; rows: number } | undefined {
+    const grid = this.state.grids.get(1);
+    return grid === undefined
+      ? undefined
+      : { cols: grid.width, rows: grid.height };
+  }
+
+  /**
+   * A keystroke the page's terminal had, typed here: the key that gives
+   * this Neovim the keys, which tmux would have handed to its pane. As the
+   * textarea would read it, with plain text as text; `leftOption`, the left
+   * Option is held, which this one never saw go down.
+   */
+  typeKey(stroke: {
+    readonly key: string;
+    readonly code: string;
+    readonly control: boolean;
+    readonly alt: boolean;
+    readonly shift: boolean;
+    readonly meta: boolean;
+    readonly leftOption: boolean;
+  }): void {
+    const setting = this.settings.macOptionIsMeta;
+    if (stroke.alt && stroke.leftOption) {
+      this.optionKeys.isMeta(setting, {
+        type: "keydown",
+        code: "AltLeft",
+        altKey: true,
+      });
+    }
+    const event = {
+      type: "keydown",
+      key: stroke.key,
+      code: stroke.code,
+      ctrlKey: stroke.control,
+      altKey: stroke.alt,
+      shiftKey: stroke.shift,
+      metaKey: stroke.meta,
+      isComposing: false,
+    };
+    const meta = this.optionKeys.isMeta(setting, event);
+    const keys =
+      keyToNeovim(event, meta, this.baseKeys) ??
+      ([...stroke.key].length === 1 ? escapeInputText(stroke.key) : undefined);
+    if (keys !== undefined) this.send(keys);
   }
 
   redraw(batches: readonly unknown[]): void {

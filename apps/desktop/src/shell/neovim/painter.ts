@@ -735,6 +735,16 @@ export class GridPainter {
   }
 
   /**
+   * The element of stacking order `z`, for what its owner places in it and
+   * moves by transforms of its own — a Neovim drawn in a tmux pane, which
+   * is never moved from one parent to another (an iframe in it would load
+   * again) and stacks among the panes' motion groups by the same z.
+   */
+  levelElement(z: number): HTMLElement {
+    return this.level(z);
+  }
+
+  /**
    * `el` as part `part` of level `z`, moved there if it was elsewhere; a
    * part of `grid`'s while that grid's pane moves, in its motion group
    * (`motionGroup`) instead, in the same order.

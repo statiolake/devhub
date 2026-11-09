@@ -118,6 +118,7 @@ function isShellChrome(surfaceUrl: string): boolean {
 export function editingCommandFor(
 	surfaceUrl: string,
 	stroke: KeyStroke,
+	inNeovim = false,
 ): EditingCommand | undefined {
 	if (!isShellChrome(surfaceUrl)) return undefined;
 	if (!stroke.command || stroke.option || stroke.control) return undefined;
@@ -130,17 +131,13 @@ export function editingCommandFor(
 			one.key.toLowerCase() === stroke.key?.toLowerCase() &&
 			(one.shift ?? false) === stroke.shift,
 	);
-	// The Neovim editor is one of DevHub's pages, and a whole editor with
-	// its own keys: Cmd+C, Cmd+X, Cmd+A and Cmd+Z reach it as `<D-c>` and
+	// A Neovim drawn over a terminal pane, with the page's keys, is a whole
+	// editor with its own keys: Cmd+C, Cmd+X, Cmd+A and Cmd+Z reach it as `<D-c>` and
 	// friends, which Neovim maps (`neovimUi.ts`) — yank the selection, select
 	// all, undo. Paste stays a command: the page hands the pasted text to
 	// `nvim_paste`, which pastes it as one undoable change in any mode.
-	if (command && isNeovimEditor(surfaceUrl) && command.role !== "paste") {
+	if (command && inNeovim && command.role !== "paste") {
 		return undefined;
 	}
 	return command;
-}
-
-function isNeovimEditor(surfaceUrl: string): boolean {
-	return surfaceUrl.startsWith(`${SHELL_ORIGIN}/neovim.html`);
 }

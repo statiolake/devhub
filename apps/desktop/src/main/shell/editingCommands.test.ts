@@ -75,15 +75,17 @@ describe("the keys DevHub does not claim", () => {
 		expect(editingCommandFor(WORKBENCH, stroke("z"))).toBeUndefined();
 	});
 
-	it("leaves the Neovim editor its own keys, all but paste", () => {
-		const NEOVIM = "devhub-app://shell/neovim.html#ws-1";
+	it("leaves a Neovim with a terminal page's keys its own, all but paste", () => {
+		const PANE = "devhub-app://shell/pane.html#ws%3A1";
 		for (const key of ["a", "c", "x", "z"]) {
-			expect(editingCommandFor(NEOVIM, stroke(key))).toBeUndefined();
+			expect(editingCommandFor(PANE, stroke(key), true)).toBeUndefined();
 		}
 		expect(
-			editingCommandFor(NEOVIM, stroke("z", { shift: true })),
+			editingCommandFor(PANE, stroke("z", { shift: true }), true),
 		).toBeUndefined();
-		expect(editingCommandFor(NEOVIM, stroke("v"))?.role).toBe("paste");
+		expect(editingCommandFor(PANE, stroke("v"), true)?.role).toBe("paste");
+		// The terminal's own keys: DevHub's commands.
+		expect(editingCommandFor(PANE, stroke("c"))?.role).toBe("copy");
 	});
 
 	it("leaves a surface DevHub did not serve alone", () => {

@@ -701,10 +701,9 @@ export function plainBorders(
 /**
  * Where a boundary line in tmux's border cell `at` lies across, in CSS
  * pixels from the panes' first cell: centred on the cell's middle, `thick`
- * wide (a 1px hairline, a 2px outline). On whole CSS pixels, not only
- * device pixels: a Neovim over the pane beside it is a view, placed on
- * whole pixels, and reaches exactly to the line (`paneReach`). A half
- * pixel off the middle at most; the panes' grounds end under the line.
+ * wide (a 1px hairline, a 2px outline). On whole CSS pixels, a half
+ * pixel off the middle at most; the panes' grounds (a Neovim's in its pane
+ * among them) end under the line.
  */
 export function boundaryLine(
   at: number,
@@ -713,67 +712,4 @@ export function boundaryLine(
 ): readonly [number, number] {
   const from = Math.round((at + 0.5) * size - thick / 2);
   return [from, from + thick];
-}
-
-/** How far past its cells a pane may be covered, in CSS pixels per side. */
-export interface PaneReach {
-  readonly left: number;
-  readonly top: number;
-  readonly right: number;
-  readonly bottom: number;
-}
-
-/**
- * How far past its cells what is drawn over a pane (a Neovim, a view of
- * its own) may reach without covering the boundary beside it: to the near
- * edge of the line in tmux's border cell (`boundaryLine`), a 1px hairline
- * or, where an outline runs along that side (`paneOutlines`), a `thick`
- * one. Nothing on a side at the window's edge.
- */
-export function paneReach(
-  pane: PaneBox,
-  panes: readonly PaneBox[],
-  outlines: readonly BorderLine[],
-  cell: { readonly width: number; readonly height: number },
-  thick = 2,
-): PaneReach {
-  const cols = Math.max(...panes.map((p) => p.x + p.width));
-  const rows = Math.max(...panes.map((p) => p.y + p.height));
-  /** The line in border cell `at`, along cells `from`–`to`: its two edges. */
-  const line = (
-    vertical: boolean,
-    at: number,
-    from: number,
-    to: number,
-    size: number,
-  ): readonly [number, number] => {
-    const outlined = outlines.some((o) => {
-      if (o.vertical !== vertical || (vertical ? o.x : o.y) !== at)
-        return false;
-      const start = vertical ? o.y : o.x;
-      return start < to && start + o.length > from;
-    });
-    return boundaryLine(at, size, outlined ? thick : 1);
-  };
-  const { width: w, height: h } = cell;
-  const right = pane.x + pane.width;
-  const bottom = pane.y + pane.height;
-  return {
-    left:
-      pane.x > 0
-        ? Math.max(0, pane.x * w - line(true, pane.x - 1, pane.y, bottom, w)[1])
-        : 0,
-    right:
-      right < cols
-        ? Math.max(0, line(true, right, pane.y, bottom, w)[0] - right * w)
-        : 0,
-    top:
-      pane.y > 0
-        ? Math.max(0, pane.y * h - line(false, pane.y - 1, pane.x, right, h)[1])
-        : 0,
-    bottom:
-      bottom < rows
-        ? Math.max(0, line(false, bottom, pane.x, right, h)[0] - bottom * h)
-        : 0,
-  };
 }

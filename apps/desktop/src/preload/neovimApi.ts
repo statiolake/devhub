@@ -1,26 +1,25 @@
 /**
- * The Neovim editor's bridge — `neovim.html`.
- *
- * One view per Neovim drawn over a terminal pane. See `NeovimBridge` in
- * `ipc/contract.ts`, and `shell/neovim/NeovimApp.tsx`.
+ * The Neovim UIs' bridge, on the terminal page (`pane.html`) that draws each
+ * Neovim over its pane (`shell/neovim/NeovimApp.tsx`). Every UI on the page
+ * is named by its overlay's key (`tnv:<n>`, the `workspaceId` of each call
+ * and event); one page may hold several.
  *
  * A Neovim's UI runs in one of two places, and this is the only code that
  * knows which. Mostly in the Neovim host (`main/neovimHost/`): main hands the
- * page a port to it (`NEOVIM_CHANNELS.port`) and says so in the attach's
- * answer (`hosted`), and from then on the redraws and the GUI windows'
- * events arrive on that port and the calls and requests go back on it —
- * main is not on the path. One that runs in main (the host given up on, or
- * `DEVHUB_NEOVIM_IN_MAIN=1`) has its events as IPC and its calls as IPC,
- * as before. Attach is always main's, and so is `ended`.
+ * page a port to it (`NEOVIM_CHANNELS.port`, one per page per host) and says
+ * so in the attach's answer (`hosted`), and from then on the redraws and the
+ * GUI windows' events arrive on that port and the calls and requests go back
+ * on it — main is not on the path. One that runs in main (the host given up
+ * on, or `DEVHUB_NEOVIM_IN_MAIN=1`) has its events as IPC and its calls as
+ * IPC. Attach is always main's, and so is `ended`.
  *
  * **When the host ends.** Main says so (`NEOVIM_CHANNELS.restarted`): its
  * port is closed here and a request waiting on it is answered with a
- * failure; main then tells each page whose UI it ran that it ended, with
- * `reconnect`, and the page attaches again.
+ * failure; main then tells each UI it ran that it ended, with `reconnect`,
+ * and that UI attaches again.
  */
 
-import { contextBridge, ipcRenderer } from "electron";
-import type { NeovimBridge } from "../ipc/contract.js";
+import { ipcRenderer } from "electron";
 import {
 	NEOVIM_CHANNELS,
 	type DevhubNeovimApi,
@@ -31,17 +30,10 @@ import {
 	type NeovimGuiWindowWire,
 	type NeovimGuiWindowsWire,
 	type NeovimHostToPage,
-	type NeovimPlacement,
 	type NeovimPageEvent,
 	type NeovimRequestResult,
 	type PageToNeovimHost,
 } from "../ipc/neovim.js";
-import {
-	appearanceBridge,
-	openExternalUrl,
-	pageBridge,
-	projectionBridge,
-} from "./bridge.js";
 
 type Listeners = {
 	readonly [K in NeovimPageEvent["type"]]: Set<
@@ -97,14 +89,6 @@ ipcRenderer.on(NEOVIM_CHANNELS.guiSend, (_event, message: NeovimGuiMessage) => {
 });
 ipcRenderer.on(NEOVIM_CHANNELS.guiEvent, (_event, event: NeovimGuiEvent) => {
 	emit({ type: "gui-event", event });
-});
-
-// Kept from before the page listens: main says it as the view is placed.
-let placement: NeovimPlacement | undefined;
-const placedListeners = new Set<(placement: NeovimPlacement) => void>();
-ipcRenderer.on(NEOVIM_CHANNELS.placed, (_event, said: NeovimPlacement) => {
-	placement = said;
-	for (const listener of placedListeners) listener(said);
 });
 
 /** The port to the Neovim host, and which host it is. */
@@ -164,7 +148,7 @@ function toHost(port: MessagePort, message: PageToNeovimHost): void {
 	port.postMessage(message);
 }
 
-const neovim: DevhubNeovimApi = {
+export const neovimApi: DevhubNeovimApi = {
 	attach: async (request) => {
 		hosted.delete(request.workspaceId);
 		const reply = (await ipcRenderer.invoke(
@@ -231,13 +215,6 @@ const neovim: DevhubNeovimApi = {
 		on("gui-event", (event) => {
 			listener(event.event);
 		}),
-	onPlaced: (listener) => {
-		placedListeners.add(listener);
-		if (placement !== undefined) listener(placement);
-		return () => {
-			placedListeners.delete(listener);
-		};
-	},
 	guiMessage: (message) => {
 		const port = portFor(message.workspaceId);
 		if (port === undefined)
@@ -249,14 +226,3 @@ const neovim: DevhubNeovimApi = {
 			number | string
 		>,
 };
-
-const api: NeovimBridge = {
-	...pageBridge(),
-	...projectionBridge(),
-	...appearanceBridge(),
-
-	openExternalUrl,
-	neovim,
-};
-
-contextBridge.exposeInMainWorld("devhub", api);

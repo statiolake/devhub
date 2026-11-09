@@ -11,6 +11,7 @@ import { useColorScheme } from "../../appearance";
 import { Failure, Waiting } from "../../components/shell/SurfaceState";
 import {
   GridPainter,
+  PART_Z,
   cssColor,
   mixColors,
   rgbOfCss,
@@ -38,10 +39,9 @@ import {
   type TerminalReceipt,
 } from "../client";
 import { TERMINAL_PROTOCOL_VERSION } from "../../../ipc/terminal";
-import type {
-  TerminalOverlaidWire,
-  TerminalPanesWire,
-} from "../../../ipc/contract";
+import type { TerminalPanesWire } from "../../../ipc/contract";
+import { inNeovim, type PaneNeovim } from "../../pane/PaneNeovims";
+import type { MotionGroup } from "../../neovim/painter";
 import type {
   ControlToPage,
   PageToControl,
@@ -59,7 +59,6 @@ import {
   gridOf,
   POPUP_GRID,
   paneOutlines,
-  paneReach,
   plainBorders,
   newControlView,
   paneAt,
@@ -82,6 +81,7 @@ import {
   type Shown,
 } from "./controlMotion";
 import {
+  placeGroup,
   plan,
   reducedMotion,
   type Place,
@@ -213,7 +213,7 @@ export function ControlTerminalSurface({
   hidden = false,
   reattachOnExit = false,
   onControlPanes,
-  overlaid,
+  neovims,
 }: TerminalSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const boundClient = useMemo(() => client ?? createTerminalClient(), [client]);
@@ -237,7 +237,6 @@ export function ControlTerminalSurface({
     completePrompt(index: number): void;
     windowMenu(id: number, x: number): void;
     focus(): void;
-    overlaid(o: TerminalOverlaidWire | undefined): void;
   } | null>(null);
   const live = useRef({
     hidden,
@@ -245,7 +244,7 @@ export function ControlTerminalSurface({
     appearance,
     colors,
     onControlPanes,
-    overlaid,
+    neovims,
   });
   live.current = {
     hidden,
@@ -253,7 +252,7 @@ export function ControlTerminalSurface({
     appearance,
     colors,
     onControlPanes,
-    overlaid,
+    neovims,
   };
 
   useEffect(() => {
@@ -291,11 +290,6 @@ export function ControlTerminalSurface({
     const preedit = document.createElement("canvas");
     preedit.className = "control-preedit";
     preedit.hidden = true;
-    // The terminal's ground, drawn here rather than by the page's boxes so
-    // that it can leave a Neovim's pane clear (`drawHoles`).
-    const backdrop = document.createElement("div");
-    backdrop.className = "control-backdrop";
-    shell?.prepend(backdrop);
     const input = document.createElement("textarea");
     input.className = "control-input";
     input.setAttribute("aria-label", `${surfaceLabel} terminal input`);
@@ -369,36 +363,22 @@ export function ControlTerminalSurface({
     /** A boundary being dragged: steps follow the pointer at once. */
     let dragging = false;
 
-    // Where the panes are drawn and what each is, for a Neovim DevHub draws
-    // over one (`main/editor/terminalNeovims.ts`): said when it changes.
-    const reachOf = (pane: PaneBox) =>
-      paneReach(pane, view.panes, paneOutlines(view.panes), cell());
+    // What the panes are, for the Neovims DevHub draws in them
+    // (`main/editor/terminalNeovims.ts`): said when it changes.
     const report = () => {
       const tell = live.current.onControlPanes;
       if (tell === undefined) return;
-      const at = grids.getBoundingClientRect();
-      const { width, height } = cell();
       const connected = receipt !== undefined;
       const panes: TerminalPanesWire = {
-        x: at.x,
-        y: at.y,
-        cellWidth: width,
-        cellHeight: height,
-        cols: view.cols,
-        rows: view.rows,
         client: connected ? view.client : "",
         prefixes: view.prefixes,
-        // Each with how far past its cells a Neovim over it may reach:
-        // to the boundary beside it (`paneReach`), as its ground does.
         shown: connected
-          ? view.panes.map((p) => ({ ...p, reach: reachOf(p) }))
+          ? view.panes.map((p) => ({ pane: p.pane, active: p.active }))
           : [],
         panes: view.sessionPanes,
         // What DevHub draws over the panes (a popup, a prompt, a menu, the
-        // picker) is to be over a Neovim drawn over one too: main puts this
-        // page above the Neovims while it is open. Said once the frame
-        // that leaves their panes clear has been drawn (`paint`).
-        covered: connected && coverSaid,
+        // chooser) has the keys while it is open, over a Neovim too.
+        covered: connected && covered(),
       };
       const key = JSON.stringify(panes);
       if (key === reported) return;
@@ -407,66 +387,128 @@ export function ControlTerminalSurface({
     };
 
     let wasCovered = false;
-    let coverSaid = false;
-    let coverWaits = false;
     const covered = () =>
       view.popup !== undefined ||
       view.prompt !== undefined ||
       view.menu !== undefined ||
       view.chooser !== undefined ||
       view.numbers !== undefined;
-    /**
-     * The panes a Neovim is drawn over (main's word, `TerminalOverlaidWire`)
-     * that are left clear, so that it shows through this page while the page
-     * is above it: while something covers the panes, and until main has put
-     * the page back under the Neovims. Under them, a clear pane is never
-     * seen; a pane in a mode is tmux's to draw (copy mode), not Neovim's.
-     */
-    const holes = (): PaneBox[] => {
-      const o = live.current.overlaid;
-      if (o === undefined || o.panes.length === 0) return [];
-      if (!covered() && !o.raised) return [];
+
+    // The Neovims drawn in the panes (`PaneNeovims`): each in a group of
+    // its own among the panes' level, the shape of a pane's motion group
+    // (`GridPainter.motionGroup`) and moved by the same transforms, so it
+    // goes with its pane; at rest that group is its pane's ground (in
+    // Neovim's own colour, out to the boundary) with the Neovim on the
+    // pane's cells. Its element is never moved to another parent.
+    const neovimGroups = new Map<string, MotionGroup>();
+    const neovimGroup = (entry: PaneNeovim): MotionGroup => {
+      let group = neovimGroups.get(entry.key);
+      if (group === undefined) {
+        const make = (className: string) => {
+          const el = document.createElement("div");
+          el.className = className;
+          return el;
+        };
+        group = {
+          outer: make("nvim-motion control-neovim"),
+          clipA: make("nvim-motion-clip"),
+          clipB: make("nvim-motion-clip"),
+          content: make("nvim-motion-content"),
+          edges: make("nvim-motion-edges"),
+        };
+        group.clipB.append(group.content);
+        group.clipA.append(group.clipB);
+        group.outer.append(group.clipA, group.edges);
+        neovimGroups.set(entry.key, group);
+      }
+      const level = painter.levelElement(CONTROL_Z.panes);
+      if (group.outer.parentElement !== level) level.append(group.outer);
+      if (entry.element.parentElement !== group.content)
+        group.content.append(entry.element);
+      return group;
+    };
+    /** The Neovims shown in the window's panes, by tmux pane. */
+    const neovimPanes = (): Map<number, PaneNeovim> => {
+      const out = new Map<number, PaneNeovim>();
       const inMode = new Set(
         view.sessionPanes.filter((p) => p.inMode).map((p) => p.pane),
       );
-      return view.panes.filter(
-        (box) => o.panes.includes(box.pane) && !inMode.has(box.pane),
-      );
-    };
-    let holesDrawn = "";
-    /**
-     * The terminal's ground with the holes cut out, and the page's own
-     * boxes clear (`overlaid-holes` in `control.css`), in whole pixels inside
-     * the Neovim's view (main rounds its edges to the nearest pixel).
-     */
-    const drawHoles = (cut: readonly PaneBox[]) => {
-      const { width, height } = cell();
-      const at = grids.getBoundingClientRect();
-      const base = shell?.getBoundingClientRect() ?? at;
-      const rects = cut.map((box) => {
-        // The Neovim's view reaches the boundary, as the pane's ground.
-        const reach = reachOf(box);
-        const left = Math.ceil(at.x + box.x * width - reach.left - base.x);
-        const top = Math.ceil(at.y + box.y * height - reach.top - base.y);
-        const right = Math.floor(
-          at.x + (box.x + box.width) * width + reach.right - base.x,
-        );
-        const bottom = Math.floor(
-          at.y + (box.y + box.height) * height + reach.bottom - base.y,
-        );
-        return `M${String(left)} ${String(top)}H${String(right)}V${String(bottom)}H${String(left)}Z`;
-      });
-      const key = rects.join("");
-      if (key === holesDrawn) return;
-      holesDrawn = key;
-      if (rects.length === 0) {
-        backdrop.style.clipPath = "";
-        delete document.documentElement.dataset.overlaidHoles;
-        return;
+      for (const entry of live.current.neovims?.list() ?? []) {
+        if (inMode.has(entry.pane)) continue;
+        if (!view.panes.some((p) => p.pane === entry.pane)) continue;
+        out.set(entry.pane, entry);
       }
-      backdrop.style.clipPath = `path(evenodd, "M-99999 -99999H99999V99999H-99999Z${key}")`;
-      document.documentElement.dataset.overlaidHoles = "true";
+      return out;
     };
+    const neovimGround = (entry: PaneNeovim) =>
+      cssColor(entry.handle?.background() ?? view.state.defaults.background);
+    /** Each moving pane's Neovim group, for `applyMotion`. */
+    const neovimMotion = () => {
+      const out = new Map<number, { group: MotionGroup; ground: string }>();
+      for (const entry of live.current.neovims?.list() ?? []) {
+        if (motion?.moving.has(entry.pane) !== true) continue;
+        out.set(entry.pane, {
+          group: neovimGroup(entry),
+          ground: neovimGround(entry),
+        });
+      }
+      return out;
+    };
+    /**
+     * Every Neovim where its pane rests, or hidden (its pane in another
+     * window, zoomed away, in a mode) at the size it last had: its pane
+     * keeps its size in tmux, and Neovim its grid. One whose pane is moving
+     * is the transition's (`applyMotion`).
+     */
+    const placeNeovims = () => {
+      const registry = live.current.neovims;
+      const list = registry?.list() ?? [];
+      const keep = new Set(list.map((entry) => entry.key));
+      for (const [key, group] of neovimGroups) {
+        if (keep.has(key)) continue;
+        group.outer.remove();
+        neovimGroups.delete(key);
+      }
+      const shownNeovims = neovimPanes();
+      const { width, height } = cell();
+      const dpr = window.devicePixelRatio || 1;
+      const size = { width: grids.clientWidth, height: grids.clientHeight };
+      for (const entry of list) {
+        const group = neovimGroup(entry);
+        const moving =
+          motion?.moving.has(entry.pane) === true &&
+          motion.transition.tracks.has(entry.pane);
+        const box =
+          shownNeovims.get(entry.pane) === undefined
+            ? undefined
+            : view.panes.find((p) => p.pane === entry.pane);
+        if (box === undefined && !moving) {
+          group.outer.style.visibility = "hidden";
+          continue;
+        }
+        group.outer.style.visibility = "";
+        if (box === undefined) continue;
+        const el = entry.element;
+        el.style.position = "absolute";
+        el.style.left = `${String(box.x * width)}px`;
+        el.style.top = `${String(box.y * height)}px`;
+        el.style.width = `${String(box.width * width)}px`;
+        el.style.height = `${String(box.height * height)}px`;
+        if (!moving) {
+          placeGroup(
+            group,
+            restPlace(box, view.cols, view.rows, cell(), dpr),
+            PART_Z.grid,
+            { x: box.x * width, y: box.y * height },
+            size,
+            neovimGround(entry),
+          );
+          group.edges.replaceChildren();
+        }
+        registry?.setPlaced(entry.key, true);
+      }
+    };
+
     const cell = () => painter.cell();
     const measure = () => {
       const rect = host.getBoundingClientRect();
@@ -523,8 +565,10 @@ export function ControlTerminalSurface({
         return a;
       });
       const { width, height } = cell();
-      const cut = holes();
-      const clear = new Set(cut.map((box) => gridOf(box.pane)));
+      // A pane with a Neovim in it is the Neovim's (`placeNeovims`): its
+      // tty's grid, ground and cursor are not drawn.
+      const inNeovims = neovimPanes();
+      const clear = new Set([...inNeovims.keys()].map((pane) => gridOf(pane)));
       const gone = [...(motion?.moving.values() ?? [])]
         .filter((m) => motion?.transition.tracks.get(m.pane)?.role === "gone")
         .filter((m) => view.state.grids.has(gridOf(m.pane)));
@@ -542,7 +586,6 @@ export function ControlTerminalSurface({
         })),
       ];
       painter.paint(view.state, merged, boxes, merged.layout);
-      drawHoles(cut);
       // tmux's panes as panes with a boundary between them, as the Neovim
       // editor's windows are (docs/rendering-layers.md, "Panes and
       // boundaries"): each pane's ground reaches exactly half into the
@@ -705,7 +748,7 @@ export function ControlTerminalSurface({
         pane === undefined ||
         at === undefined ||
         !at.visible ||
-        cut.some((box) => box.pane === pane.pane) ||
+        inNeovims.has(pane.pane) ||
         view.prompt !== undefined ||
         view.menu !== undefined ||
         view.chooser !== undefined
@@ -749,7 +792,10 @@ export function ControlTerminalSurface({
       // While its pane moves the cursor is in the pane's content, which
       // carries it; at rest it is over the panes, as ever.
       const home =
-        motion !== undefined && popup === undefined && pane !== undefined
+        motion !== undefined &&
+        popup === undefined &&
+        pane !== undefined &&
+        !inNeovims.has(pane.pane)
           ? painter.motionGroup(gridOf(pane.pane), CONTROL_Z.panes).content
           : host;
       if (cursor.parentElement !== home) {
@@ -767,29 +813,18 @@ export function ControlTerminalSurface({
           motion.size,
           cssColor(view.state.defaults.background),
           { width: view.cols * width, height: view.rows * height },
+          neovimMotion(),
         );
         requestTick();
       }
+      placeNeovims();
       if (ime.preedit !== "") placePreedit();
       if (lastSeq > ackedSeq) {
         ackedSeq = lastSeq;
         send({ kind: "ack", seq: lastSeq });
       }
-      // What covers the panes is said when it changes: an opening once this
-      // frame, which leaves the Neovims' panes clear, has been drawn, so
-      // that main never puts the page above them before; a closing at once
-      // (the panes stay clear until main has put the page back under them).
+      // What covers the panes is said when it changes: it has the keys.
       const coveredNow = covered();
-      if (!coveredNow) coverSaid = false;
-      else if (!coverSaid && !coverWaits) {
-        coverWaits = true;
-        requestAnimationFrame(() => {
-          coverWaits = false;
-          if (disposed) return;
-          coverSaid = covered();
-          report();
-        });
-      }
       if (merged.layout || coveredNow !== wasCovered) report();
       wasCovered = coveredNow;
     };
@@ -798,7 +833,11 @@ export function ControlTerminalSurface({
     const shownNow = (next: readonly PaneBox[]): Shown => {
       const text = new Map<number, string[]>();
       const pictures = new Map<number, HTMLCanvasElement>();
+      const inNeovims = neovimPanes();
       for (const p of view.panes) {
+        // A Neovim's content is glued to its pane's first cell: its tty's
+        // text says nothing of it.
+        if (inNeovims.has(p.pane)) continue;
         const to = next.find((n) => n.pane === p.pane);
         if (
           to === undefined ||
@@ -833,12 +872,7 @@ export function ControlTerminalSurface({
       );
     };
     const motionAllowed = () =>
-      !reducedMotion() &&
-      !live.current.hidden &&
-      receipt !== undefined &&
-      // A Neovim over a pane is a view of its own, which this page cannot
-      // move: its window's layout is placed at once (docs/pane-motion.md).
-      (live.current.overlaid?.panes.length ?? 0) === 0;
+      !reducedMotion() && !live.current.hidden && receipt !== undefined;
     /** Panes at rest: the transition dropped, the resting path places them. */
     const stopMotion = () => {
       if (motion === undefined) return;
@@ -943,6 +977,7 @@ export function ControlTerminalSurface({
         motion.size,
         cssColor(view.state.defaults.background),
         { width: view.cols * cell().width, height: view.rows * cell().height },
+        neovimMotion(),
       );
       requestTick();
     };
@@ -1308,8 +1343,8 @@ export function ControlTerminalSurface({
       }
       if (gate !== undefined) {
         gate.messages.push(message);
-        if (waitingFor(view, gate.messages, gate.before.window).size === 0)
-          release();
+        if (message.kind === "layout") askNeovims(gate.messages);
+        if (gateOpen()) release();
         return;
       }
       if (
@@ -1326,8 +1361,8 @@ export function ControlTerminalSurface({
           before: shownNow(message.panes),
           timer: setTimeout(release, COMMIT_WAIT_MS),
         };
-        if (waitingFor(view, gate.messages, gate.before.window).size === 0)
-          release();
+        askNeovims(gate.messages);
+        if (gateOpen()) release();
         return;
       }
       apply(message);
@@ -1340,11 +1375,52 @@ export function ControlTerminalSurface({
       }
       schedule(applyControl(view, message));
     };
+    /**
+     * A Neovim in a pane the held layout resizes is asked for its new grid
+     * now (`NeovimHandle.resizeFor`), and the commit waits for it as for a
+     * tty's new picture: its content and its pane's edges start moving in
+     * the same frame. What each was asked, by its key.
+     */
+    const askedNeovims = new Map<string, { cols: number; rows: number }>();
+    const askNeovims = (messages: readonly ControlToPage[]) => {
+      let layout: Extract<ControlToPage, { kind: "layout" }> | undefined;
+      for (const m of messages) if (m.kind === "layout") layout = m;
+      if (layout === undefined) return;
+      const { width, height } = cell();
+      for (const p of layout.panes) {
+        const entry = live.current.neovims?.onPane(p.pane);
+        const asked = entry?.handle?.resizeFor(
+          p.width * width,
+          p.height * height,
+        );
+        if (entry !== undefined && asked !== undefined)
+          askedNeovims.set(entry.key, asked);
+      }
+    };
+    const neovimsWaiting = () => {
+      for (const [key, asked] of askedNeovims) {
+        const drawn = live.current.neovims
+          ?.list()
+          .find((entry) => entry.key === key)
+          ?.handle?.drawnSize();
+        if (
+          drawn !== undefined &&
+          (drawn.cols !== asked.cols || drawn.rows !== asked.rows)
+        )
+          return true;
+      }
+      return false;
+    };
+    const gateOpen = () =>
+      gate !== undefined &&
+      waitingFor(view, gate.messages, gate.before.window).size === 0 &&
+      !neovimsWaiting();
     /** The held layout and what came with it, drawn as one commit. */
     const release = () => {
       const held = gate;
       if (held === undefined) return;
       gate = undefined;
+      askedNeovims.clear();
       clearTimeout(held.timer);
       for (const message of held.messages) apply(message);
       commit = held.before;
@@ -1640,6 +1716,8 @@ export function ControlTerminalSurface({
       return true;
     };
     const onMouseDown = (event: MouseEvent) => {
+      // A Neovim in a pane takes its own presses (`editor.ts`).
+      if (inNeovim(event.target)) return;
       const hit = mouseFor(event);
       event.preventDefault();
       input.focus();
@@ -1671,6 +1749,7 @@ export function ControlTerminalSurface({
     // Bytes for a pane; the popup's (pane -1) go with none, which is its.
     const target = (pane: number) => (pane < 0 ? {} : { pane });
     const onMouseUp = (event: MouseEvent) => {
+      if (inNeovim(event.target)) return;
       const hit = mouseFor(event);
       if (hit?.reports)
         send({
@@ -1680,6 +1759,7 @@ export function ControlTerminalSurface({
         });
     };
     const onWheel = (event: WheelEvent) => {
+      if (inNeovim(event.target)) return;
       const hit = mouseFor(event);
       if (hit === undefined) return;
       event.preventDefault();
@@ -1719,9 +1799,42 @@ export function ControlTerminalSurface({
     grids.addEventListener("mousedown", onMouseDown);
     grids.addEventListener("mouseup", onMouseUp);
     grids.addEventListener("wheel", onWheel, { passive: false });
-    const focusInput = () => input.focus();
+    const focusInput = (event: MouseEvent) => {
+      if (!inNeovim(event.target)) input.focus();
+    };
     host.addEventListener("click", focusInput);
     const noContextMenu = (event: Event) => event.preventDefault();
+    // The Neovims in the panes: placed again as they come, go or draw at a
+    // new size or ground, and a held layout let go once they have drawn at
+    // its sizes. They borrow the terminal's keys for tmux's prefix.
+    const offNeovims = live.current.neovims?.subscribe(() => {
+      if (disposed) return;
+      if (gate !== undefined && gateOpen()) release();
+      schedule({ ...emptyChanges(), cursor: true });
+    });
+    live.current.neovims?.lendTerminal({
+      focus: () => {
+        input.focus();
+      },
+      typeKey: (stroke) => {
+        const setting =
+          live.current.appearance?.terminalMacOptionIsMeta ?? false;
+        const key = terminalKeys.keydown(
+          new KeyboardEvent("keydown", {
+            key: stroke.key,
+            code: stroke.code,
+            ctrlKey: stroke.control,
+            altKey: stroke.alt,
+            shiftKey: stroke.shift,
+            metaKey: stroke.meta,
+          }),
+          setting,
+        );
+        if (key === undefined) return;
+        markTyped();
+        send({ kind: "keys", keys: [key] });
+      },
+    });
     host.addEventListener("contextmenu", noContextMenu);
 
     const refit = () => {
@@ -1788,10 +1901,6 @@ export function ControlTerminalSurface({
       focus() {
         input.focus();
       },
-      overlaid() {
-        // Read through `live`; the panes are drawn again with it.
-        schedule({ ...emptyChanges(), layout: true, cursor: true });
-      },
     };
 
     void attach();
@@ -1804,6 +1913,10 @@ export function ControlTerminalSurface({
       if (gate !== undefined) clearTimeout(gate.timer);
       if (noticeTimer !== undefined) clearTimeout(noticeTimer);
       host.removeEventListener("click", focusInput);
+      offNeovims?.();
+      live.current.neovims?.lendTerminal(undefined);
+      for (const group of neovimGroups.values()) group.outer.remove();
+      neovimGroups.clear();
       host.removeEventListener("contextmenu", noContextMenu);
       host.removeEventListener("mousedown", onMenuMouseDown, true);
       host.removeEventListener("mousedown", onChooserMouseDown, true);
@@ -1817,8 +1930,6 @@ export function ControlTerminalSurface({
       live.current.onControlPanes?.(null);
       controllerRef.current = null;
       host.replaceChildren();
-      backdrop.remove();
-      delete document.documentElement.dataset.overlaidHoles;
     };
     // The surface key and the client are the mount's identity; the rest is
     // read through `live`.
@@ -1831,10 +1942,6 @@ export function ControlTerminalSurface({
   useEffect(() => {
     controllerRef.current?.colors(colors);
   }, [colors]);
-
-  useEffect(() => {
-    controllerRef.current?.overlaid(overlaid);
-  }, [overlaid]);
 
   const fontFamily = appearance?.terminalFontFamily;
   const fontSize = appearance?.terminalFontSize;

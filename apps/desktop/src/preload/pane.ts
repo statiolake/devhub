@@ -1,17 +1,20 @@
 /**
- * One Agent terminal pane's bridge — `pane.html`.
+ * One terminal pane's bridge — `pane.html`.
  *
- * A view per Agent terminal, each a terminal surface on that terminal's own
- * tmux session, with no chrome of its own. It reads the projection (its
- * Agent's name) and the appearance (its font) and asks for nothing else. See `PaneBridge` in `ipc/contract.ts`, and
- * `shell/pane/PaneApp.tsx`.
+ * A view per Agent terminal (and per Workspace's editor area), each a
+ * terminal surface on that terminal's own tmux session, with no chrome of
+ * its own, and every Neovim DevHub draws over one of its panes drawn in it
+ * (`neovim`, `preload/neovimApi.ts`). It reads the projection (its Agent's
+ * name) and the appearance (its font). See `PaneBridge` in
+ * `ipc/contract.ts`, and `shell/pane/PaneApp.tsx`.
  */
 
 import { contextBridge, ipcRenderer } from "electron";
 import {
 	CHANNELS,
 	type PaneBridge,
-	type TerminalOverlaidWire,
+	type TerminalNeovimKeyWire,
+	type TerminalNeovimsWire,
 } from "../ipc/contract.js";
 import {
 	appearanceBridge,
@@ -21,6 +24,7 @@ import {
 	projectionBridge,
 	writeClipboard,
 } from "./bridge.js";
+import { neovimApi } from "./neovimApi.js";
 import { terminalApi } from "./terminal.js";
 
 const api: PaneBridge = {
@@ -31,22 +35,20 @@ const api: PaneBridge = {
 	openExternalUrl,
 	writeClipboard,
 	terminal: terminalApi,
-	reportTerminalScreen(terminalId, screen) {
-		ipcRenderer.send(CHANNELS.reportTerminalScreen, terminalId, screen);
-	},
+	neovim: neovimApi,
 	reportTerminalPanes(terminalId, panes) {
 		ipcRenderer.send(CHANNELS.reportTerminalPanes, terminalId, panes);
 	},
-	onTerminalOverlaid(terminalId, listener) {
+	onTerminalNeovims(terminalId, listener) {
 		// The value as it stands, asked, then each push: main answers the ask
 		// in order with what it pushes.
 		let listening = true;
-		const stop = on<TerminalOverlaidWire>(CHANNELS.terminalOverlaid, listener);
+		const stop = on<TerminalNeovimsWire>(CHANNELS.terminalNeovims, listener);
 		void (
 			ipcRenderer.invoke(
-				CHANNELS.askTerminalOverlaid,
+				CHANNELS.askTerminalNeovims,
 				terminalId,
-			) as Promise<TerminalOverlaidWire>
+			) as Promise<TerminalNeovimsWire>
 		).then((value) => {
 			if (listening) listener(value);
 		});
@@ -54,6 +56,12 @@ const api: PaneBridge = {
 			listening = false;
 			stop();
 		};
+	},
+	onTerminalNeovimKey(listener) {
+		return on<TerminalNeovimKeyWire>(CHANNELS.terminalNeovimKey, listener);
+	},
+	reportNeovimPointer(terminalId, key) {
+		ipcRenderer.send(CHANNELS.reportNeovimPointer, terminalId, key);
 	},
 };
 

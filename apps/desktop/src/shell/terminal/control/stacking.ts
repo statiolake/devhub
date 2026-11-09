@@ -13,9 +13,10 @@
  *   which no popup or menu ever covers — so a prompt raised from a shell in
  *   a popup is over the popup — and its completion menu over it.
  *
- * Neovim's overlays over the panes are separate views (`ShellWindow`); this
- * page is raised over them while any of the layers from the chooser up is
- * open (`terminal-mode.md`, "Over a Neovim").
+ * A Neovim DevHub draws in a pane is in the panes' level, in its pane
+ * (`placeNeovims`, `shell/pane/PaneNeovims.tsx`): everything here from the
+ * notice up is over it, as over any pane (`terminal-mode.md`, "Over a
+ * Neovim").
  */
 export const CONTROL_Z = {
   panes: 1,

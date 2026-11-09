@@ -245,7 +245,8 @@ export interface Moving {
  * two clips to its rectangle, its content to its origin, the lines on its
  * edges along them. `size` is the surface's, the clips' own size; `ground`
  * the panes' ground colour; `extent` the window's cells' (a side on its
- * edge has no line).
+ * edge has no line). A pane with a group of its own in `own` (a Neovim
+ * drawn in it, `PaneNeovims`) is moved there instead, with that ground.
  */
 export function applyMotion(
   painter: GridPainter,
@@ -257,20 +258,26 @@ export function applyMotion(
   size: { readonly width: number; readonly height: number },
   ground: string,
   extent: { readonly width: number; readonly height: number },
+  own: ReadonlyMap<
+    number,
+    { readonly group: MotionGroup; readonly ground: string }
+  > = new Map(),
 ): Map<number, Place> {
   const at = transition.at(now, dpr);
   for (const [pane, place] of at) {
     const track = transition.tracks.get(pane);
     const m = moving.get(pane);
     if (track === undefined || m === undefined) continue;
-    const group = painter.motionGroup(gridOf(pane), CONTROL_Z.panes);
+    const mine = own.get(pane);
+    const group =
+      mine?.group ?? painter.motionGroup(gridOf(pane), CONTROL_Z.panes);
     placeGroup(
       group,
       place,
       track.layer,
       { x: m.box.x * cell.width, y: m.box.y * cell.height },
       size,
-      ground,
+      mine?.ground ?? ground,
     );
     edgesOf(group, place.rect, extent, m.active);
   }

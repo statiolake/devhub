@@ -5,10 +5,9 @@ import { Failure, Waiting } from "../components/shell/SurfaceState";
 import { openXtermSession, type XtermSession } from "../surfaces/xtermSession";
 import { ControlTerminalSurface } from "./control/ControlTerminalSurface";
 import { perfProbe } from "../perfProbe";
-import type {
-  TerminalOverlaidWire,
-  TerminalPanesWire,
-} from "../../ipc/contract";
+import type { TerminalPanesWire } from "../../ipc/contract";
+import type { PaneNeovims } from "../pane/PaneNeovims";
+import { PolledNeovims } from "./PolledNeovims";
 import {
   activePalette,
   terminalSurfaceStyle,
@@ -76,16 +75,16 @@ export interface TerminalSurfaceProps {
    */
   readonly hidden?: boolean;
   /**
-   * In tmux control mode, where the panes are drawn and what each is, as
-   * it changes; `null` when this surface goes. What a Neovim DevHub draws
-   * over a pane is placed by (`PaneBridge.reportTerminalPanes`).
+   * In tmux control mode, what each pane is, as it changes; `null` when
+   * this surface goes (`PaneBridge.reportTerminalPanes`): which panes have
+   * a Neovim DevHub draws, and where the keys go.
    */
   readonly onControlPanes?: (panes: TerminalPanesWire | null) => void;
   /**
-   * In tmux control mode, the panes a Neovim is drawn over and whether this
-   * page is above them (`PaneBridge.onTerminalOverlaid`).
+   * The Neovims DevHub draws over this terminal's panes: the surface puts
+   * each in its pane (`shell/pane/PaneNeovims.tsx`).
    */
-  readonly overlaid?: TerminalOverlaidWire;
+  readonly neovims?: PaneNeovims;
   /**
    * A session that ended (its last window closed, a detach) is attached
    * again at once — made again — instead of the pane saying it
@@ -215,7 +214,12 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   return props.appearance?.terminalTmuxControlMode === true ? (
     <ControlTerminalSurface key="control" {...props} />
   ) : (
-    <XtermTerminalSurface key="xterm" {...props} />
+    <>
+      <XtermTerminalSurface key="xterm" {...props} />
+      {props.neovims !== undefined && !props.hidden ? (
+        <PolledNeovims neovims={props.neovims} />
+      ) : null}
+    </>
   );
 }
 

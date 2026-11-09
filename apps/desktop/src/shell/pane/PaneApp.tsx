@@ -18,16 +18,23 @@
  *
  * - **reads**: the snapshot (its Agent's name, and that its terminal still
  *   exists), the appearance (the terminal's font and theme), the palette.
- * - **is pushed**: `snapshotChanged`, `appearanceChanged`, `themeChanged`.
- * - **asks**: the terminal channels only. Closing is main's: `Cmd+Q X`, the
+ * - **is pushed**: `snapshotChanged`, `appearanceChanged`, `themeChanged`,
+ *   the Neovims over its panes and keystrokes for them.
+ * - **asks**: the terminal channels, and the Neovims' (`neovim`). Closing is main's: `Cmd+Q X`, the
  *   shell exiting, `devhub --tell terminal close`.
  * - **draws no failure it raised**: what goes wrong here is handed to main.
  *
  * A person who wants a second shell splits inside it with tmux's own keys;
  * DevHub draws one terminal pane.
+ *
+ * # Neovim in it
+ *
+ * A Neovim DevHub draws over one of the terminal's panes is drawn here, in
+ * that pane (`PaneNeovims.tsx`): one page, one layer model, and the pane's
+ * motion moves it (docs/rendering-layers.md, docs/pane-motion.md).
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { devhub } from "./client";
 import {
   useAppearance,
@@ -45,12 +52,8 @@ import {
   workspaceOfTerminalPage,
   workspaceTerminalSurfaceKey,
 } from "../../ipc/terminal";
-import type {
-  TerminalOverlaidWire,
-  TerminalPanesWire,
-  TerminalScreenWire,
-} from "../../ipc/contract";
-import { useTerminalScreenReport } from "./screenReport";
+import type { TerminalPanesWire } from "../../ipc/contract";
+import { PaneNeovimViews, PaneNeovims } from "./PaneNeovims";
 
 export function PaneApp({ terminalId }: { readonly terminalId: string }) {
   const bridge = useMemo(() => devhub(), []);
@@ -59,25 +62,14 @@ export function PaneApp({ terminalId }: { readonly terminalId: string }) {
   // from a dispatch here, is the picker's to draw.
   const { state, attempt } = useProjection(bridge, reportFailure, () => {});
   const appearance = useAppearance(bridge, reportFailure, attempt);
-  useTerminalScreenReport(
-    useCallback(
-      (screen: TerminalScreenWire) => {
-        bridge.reportTerminalScreen(terminalId, screen);
-      },
-      [bridge, terminalId],
-    ),
-  );
   const reportPanes = useCallback(
     (panes: TerminalPanesWire | null) => {
       bridge.reportTerminalPanes(terminalId, panes);
     },
     [bridge, terminalId],
   );
-  const [overlaid, setOverlaid] = useState<TerminalOverlaidWire>();
-  useEffect(
-    () => bridge.onTerminalOverlaid(terminalId, setOverlaid),
-    [bridge, terminalId],
-  );
+  // The Neovims drawn over this terminal's panes, drawn in this page.
+  const neovims = useMemo(() => new PaneNeovims(), []);
   if (state.status !== "ready") return null;
   const workspaceId = workspaceOfTerminalPage(terminalId);
   const workspace =
@@ -108,7 +100,13 @@ export function PaneApp({ terminalId }: { readonly terminalId: string }) {
           hideTitle
           reattachOnExit={workspaceId !== undefined}
           onControlPanes={reportPanes}
-          overlaid={overlaid}
+          neovims={neovims}
+        />
+        <PaneNeovimViews
+          terminalId={terminalId}
+          bridge={bridge}
+          appearance={appearance}
+          neovims={neovims}
         />
       </div>
     </div>

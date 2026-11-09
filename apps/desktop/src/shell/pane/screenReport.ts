@@ -1,15 +1,22 @@
 /**
- * Tell main where this terminal's emulator draws its cells.
+ * Where this terminal's xterm.js emulator draws its cells, in the page.
  *
  * A Neovim started in one of the terminal's panes is drawn by DevHub over
- * exactly that pane (`main/editor/terminalNeovims.ts`): main knows the pane's
+ * exactly that pane (`terminal/PolledNeovims.tsx`): main knows the pane's
  * place in cells from tmux and the client's size in cells, and this is the
- * one fact only the page has — where xterm's screen is, and how large, in
- * the page. Said whenever it moves or changes size (a font, a resize).
+ * one fact only the page has — where xterm's screen is, and how large.
+ * Said whenever it moves or changes size (a font, a resize).
  */
 
 import { useEffect } from "react";
-import type { TerminalScreenWire } from "../../ipc/contract";
+
+/** The emulator's screen, in the page's CSS pixels. */
+export interface TerminalScreenWire {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
 
 export function useTerminalScreenReport(
   report: (screen: TerminalScreenWire) => void,

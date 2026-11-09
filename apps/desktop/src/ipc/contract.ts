@@ -1890,60 +1890,94 @@ export interface PaneBridge
 		AppearanceBridge,
 		TerminalSurfaceBridge {
 	/**
-	 * Where the terminal's emulator draws its cells, in the page's CSS
-	 * pixels: what a Neovim drawn over one of its panes is placed from
-	 * (`main/editor/terminalNeovims.ts`).
-	 */
-	reportTerminalScreen(terminalId: string, screen: TerminalScreenWire): void;
-	/**
-	 * In tmux control mode, where the terminal's panes are drawn and what
-	 * each is; `null` once the page is not a control-mode one
-	 * (`main/editor/terminalNeovims.ts`, "In tmux control mode").
+	 * In tmux control mode, what the terminal's panes are — the shown
+	 * window's, which is active, every pane's mode and `@devhub-nvim` — for
+	 * the Neovims drawn over them; `null` once the page is not a
+	 * control-mode one (`main/editor/terminalNeovims.ts`, "In tmux control
+	 * mode"). Where a pane is drawn is the page's own business.
 	 */
 	reportTerminalPanes(
 		terminalId: string,
 		panes: TerminalPanesWire | null,
 	): void;
 	/**
-	 * In tmux control mode, which of the terminal's panes have a Neovim drawn
-	 * over them, and whether this page is raised above those Neovims: as it
-	 * stands, then each change (`TerminalOverlaidWire`).
+	 * The Neovims drawn over the terminal's panes, and which has the keys:
+	 * as it stands, then each change (`TerminalNeovimsWire`).
 	 */
-	onTerminalOverlaid(
+	onTerminalNeovims(
 		terminalId: string,
-		listener: (overlaid: TerminalOverlaidWire) => void,
+		listener: (neovims: TerminalNeovimsWire) => void,
 	): () => void;
+	/**
+	 * A keystroke main took on its way into this page, to be typed where it
+	 * belongs: into an overlay's Neovim that takes the keys with it, or the
+	 * terminal (tmux's prefix, typed in a Neovim).
+	 */
+	onTerminalNeovimKey(
+		listener: (key: TerminalNeovimKeyWire) => void,
+	): () => void;
+	/**
+	 * A press in the page: into an overlay's Neovim (its key), or into the
+	 * terminal beside it (`null`). The keys go where the person put them.
+	 */
+	reportNeovimPointer(terminalId: string, key: string | null): void;
+	/** The UIs of the Neovims drawn over this terminal's panes. */
+	readonly neovim: DevhubNeovimApi;
 }
 
 /**
- * `PaneBridge.onTerminalOverlaid`. What DevHub draws over the panes (a popup,
- * a prompt, a menu, the picker) has to be over a Neovim drawn over one too,
- * and that Neovim is a view above the page: so while one is open main puts
- * the page above the Neovims (`raised`), and the page leaves those panes
- * clear for the Neovim under it to show through (`docs/terminal-mode.md`).
+ * `PaneBridge.onTerminalNeovims`: every Neovim DevHub draws over one of the
+ * terminal's panes (`main/editor/terminalNeovims.ts`). The page draws each
+ * in its pane, among the panes' own layers (docs/rendering-layers.md).
  */
-export interface TerminalOverlaidWire {
-	/** tmux pane numbers (`%N`'s N) whose Neovim is shown. */
-	readonly panes: readonly number[];
-	readonly raised: boolean;
+export interface TerminalNeovimsWire {
+	readonly overlays: readonly TerminalNeovimWire[];
+	/** The overlay whose Neovim has the terminal's keys; absent: the terminal's. */
+	readonly keys?: string;
 }
 
-/** `PaneBridge.reportTerminalPanes`: CSS pixels and cells. */
-export interface TerminalPanesWire {
-	readonly x: number;
-	readonly y: number;
-	readonly cellWidth: number;
-	readonly cellHeight: number;
-	readonly cols: number;
-	readonly rows: number;
-	readonly client: string;
-	readonly prefixes: readonly string[];
-	readonly shown: readonly {
-		readonly pane: number;
+export interface TerminalNeovimWire {
+	/** The id its UI attaches as (`tnv:<n>`). */
+	readonly key: string;
+	/** Its tmux pane's number (`%N`'s N). */
+	readonly pane: number;
+	/** tmux shows the pane: its window, not a zoomed sibling, not in a mode. */
+	readonly shown: boolean;
+	/**
+	 * Without control mode (tmux polled): the pane's cells in the client's
+	 * screen, whose size is `cols` by `rows`.
+	 */
+	readonly cells?: {
 		readonly x: number;
 		readonly y: number;
 		readonly width: number;
 		readonly height: number;
+		readonly cols: number;
+		readonly rows: number;
+	};
+}
+
+/** `PaneBridge.onTerminalNeovimKey`: a keystroke as `before-input-event` had it. */
+export interface TerminalNeovimKeyWire {
+	/** The overlay's key, or `""`: the terminal. */
+	readonly to: string;
+	readonly key: string;
+	readonly code: string;
+	readonly control: boolean;
+	readonly alt: boolean;
+	readonly shift: boolean;
+	readonly meta: boolean;
+	/** The left Option is held (`mac_option_is_meta = "left"`). */
+	readonly leftOption: boolean;
+}
+
+/** `PaneBridge.reportTerminalPanes`. */
+export interface TerminalPanesWire {
+	readonly client: string;
+	readonly prefixes: readonly string[];
+	/** The shown window's panes (a zoomed pane alone). */
+	readonly shown: readonly {
+		readonly pane: number;
 		readonly active: boolean;
 	}[];
 	readonly panes: readonly {
@@ -1953,37 +1987,9 @@ export interface TerminalPanesWire {
 	}[];
 	/**
 	 * Something DevHub draws over the panes is open (a popup, a prompt, a
-	 * menu, the picker, `display-panes`), and the page has left the
-	 * overlaid panes clear: it has the keys, and it is to be put above the
-	 * Neovims drawn over them.
+	 * menu, the chooser, `display-panes`): it has the keys.
 	 */
 	readonly covered: boolean;
-}
-
-/** `PaneBridge.reportTerminalScreen`'s rectangle. */
-export interface TerminalScreenWire {
-	readonly x: number;
-	readonly y: number;
-	readonly width: number;
-	readonly height: number;
-}
-
-/**
- * A Neovim DevHub draws — `neovim.html`, one view per Neovim over a terminal
- * pane (`general.editor = "neovim"`), named by the page's fragment
- * (`neovim.html#tnv:<n>`, `main/editor/terminalNeovims.ts`).
- *
- * It draws Neovim's UI protocol itself (`shell/neovim/`) and sends back what
- * the person did as Neovim API calls (`neovim`, `ipc/neovim.ts`). It reads
- * the projection and the appearance for the font and the Option key, and
- * opens a link a GUI layer was clicked on.
- */
-export interface NeovimBridge
-	extends PageBridge,
-		ProjectionBridge,
-		AppearanceBridge {
-	openExternalUrl(url: string): Promise<void>;
-	readonly neovim: DevhubNeovimApi;
 }
 
 /** `general.notice_seconds`, the one setting the notices page reads. */
@@ -2435,10 +2441,11 @@ export const CHANNELS = {
 	openSettings: "devhub:open-settings",
 	openMicrophoneSettings: "devhub:open-microphone-settings",
 	openExternalUrl: "devhub:open-external-url",
-	reportTerminalScreen: "devhub:report-terminal-screen",
 	reportTerminalPanes: "devhub:report-terminal-panes",
-	terminalOverlaid: "devhub:terminal-overlaid",
-	askTerminalOverlaid: "devhub:ask-terminal-overlaid",
+	terminalNeovims: "devhub:terminal-neovims",
+	askTerminalNeovims: "devhub:ask-terminal-neovims",
+	terminalNeovimKey: "devhub:terminal-neovim-key",
+	reportNeovimPointer: "devhub:report-neovim-pointer",
 	writeClipboard: "devhub:write-clipboard",
 	writeClipboardImage: "devhub:write-clipboard-image",
 	writeClipboardRich: "devhub:write-clipboard-rich",

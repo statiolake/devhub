@@ -5,12 +5,10 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
 	CLIENT_LINE_MARK,
-	forwardedKey,
 	LeftOption,
 	isTmuxKey,
-	overlayBounds,
-	overlayRect,
 	parseTerminalNeovimReading,
+	terminalIdOfPaneUrl,
 	TerminalNeovims,
 	parseControlPanes,
 	type ControlPanes,
@@ -70,147 +68,46 @@ describe("a terminal's reading", () => {
 	});
 });
 
-describe("where an overlay goes", () => {
-	const reading = parseTerminalNeovimReading(OUTPUT);
-	const client = reading.client!;
-	it("is the pane's cells, from the emulator's screen", () => {
-		// 80 cells over 640 px, 24 rows over 480 px: 8 × 20.
-		expect(
-			overlayRect(reading.panes[1]!, client, {
-				x: 4,
-				y: 4,
-				width: 640,
-				height: 480,
-				zoom: 1,
-			}),
-		).toEqual({ x: 4 + 41 * 8, y: 4, width: 39 * 8, height: 23 * 20 });
-	});
-
-	it("is pushed down by a status line on top, and scaled by the page's zoom", () => {
-		expect(
-			overlayRect(
-				reading.panes[0]!,
-				{ ...client, statusTop: 1 },
-				{ x: 0, y: 0, width: 640, height: 480, zoom: 1.5 },
-			),
-		).toEqual({ x: 0, y: 30, width: 480, height: 690 });
-	});
-});
-
-describe("an overlay on a pane with a boundary beside it", () => {
-	const reading = parseTerminalNeovimReading(OUTPUT);
-	const client = reading.client!;
-	it("reaches the boundary on whole pixels short of it, and says how far past the cells", () => {
-		const pane = {
-			...reading.panes[1]!,
-			reach: { left: 3.25, top: 0, right: 0, bottom: 7.5 },
-		};
-		const screen = { x: 4, y: 4, width: 640, height: 480, zoom: 1 };
-		const cells = overlayRect(reading.panes[1]!, client, screen)!;
-		expect(overlayRect(pane, client, screen)).toEqual({
-			x: cells.x - 3,
-			y: cells.y,
-			width: cells.width + 3,
-			height: cells.height + 7,
-			inset: { left: 3, top: 0, right: 0, bottom: 7 },
-		});
-	});
-
-	it("is the cells where it has no reach", () => {
-		const pane = {
-			...reading.panes[1]!,
-			reach: { left: 0, top: 0, right: 0, bottom: 0 },
-		};
-		const screen = { x: 4, y: 4, width: 640, height: 480, zoom: 1 };
-		expect(overlayRect(pane, client, screen)).toEqual(
-			overlayRect(reading.panes[1]!, client, screen),
-		);
-	});
-});
-
 describe("an overlay's grid", () => {
 	// The cell sizes a Mac gives Menlo 12 at line height 1.2 and nearby
 	// settings: on a Retina screen a cell is a half pixel (16.5), elsewhere
-	// whole; the panes' first cell where the page has it, fractional too.
+	// whole. The page puts a Neovim on its pane's cells (`placeNeovims`).
 	const cells = [
 		{ width: 7, height: 16 },
 		{ width: 7, height: 16.5 },
 		{ width: 7.5, height: 14.5 },
 		{ width: 8, height: 17.25 },
 	];
-	it("is its pane's cells wherever the pane is, after a split, a resize or a zoom", () => {
+	it("is its pane's cells, whatever the pane's size", () => {
 		const misses: string[] = [];
 		for (const cell of cells) {
-			const cols = 120;
-			const rows = 50;
-			const screen = {
-				x: 4.25,
-				y: 2.5,
-				width: cols * cell.width,
-				height: rows * cell.height,
-				zoom: 1,
-			};
-			const client = {
-				name: "c",
-				width: cols,
-				height: rows,
-				keyTable: "root",
-				statusTop: 0,
-				prefixes: [],
-			};
-			for (let top = 0; top < rows - 3; top += 1) {
-				for (let height = 3; top + height <= rows; height += 1) {
-					const left = top % 30;
-					const width = 10 + ((top * 7 + height) % (cols - left - 10));
-					const rect = overlayRect(
-						{
-							paneId: "%1",
-							windowActive: true,
-							paneActive: true,
-							zoomed: false,
-							left,
-							top,
-							width,
-							height,
-							inMode: false,
-							socket: "s",
-						},
-						client,
-						screen,
+			for (let width = 10; width <= 200; width += 1) {
+				for (let height = 3; height <= 80; height += 1) {
+					const grid = gridSizeFor(
+						width * cell.width,
+						height * cell.height,
+						cell,
 					);
-					const grid = gridSizeFor(rect!.width, rect!.height, cell);
-					if (grid.cols !== width || grid.rows !== height) {
+					if (grid.cols !== width || grid.rows !== height)
 						misses.push(
-							`${String(cell.width)}x${String(cell.height)} at ${String(left)},${String(top)} ${String(width)}x${String(height)}: ${String(grid.cols)}x${String(grid.rows)}`,
+							`${String(cell.width)}x${String(cell.height)} ${String(width)}x${String(height)}: ${String(grid.cols)}x${String(grid.rows)}`,
 						);
-					}
 				}
 			}
 		}
 		expect(misses.slice(0, 5)).toEqual([]);
 	});
-	it("keeps its pane's place while tmux does not show the pane", () => {
-		const terminal = { x: 300, y: 40, width: 900, height: 700 };
-		const pane = { x: 0, y: 352, width: 900, height: 348 };
-		expect(overlayBounds(terminal, pane, pane)).toEqual({
-			x: 300,
-			y: 392,
-			width: 900,
-			height: 348,
-		});
-		// Hidden (another window, a zoomed sibling): where it was, not the
-		// whole terminal, so its Neovim keeps the pane's size meanwhile.
-		expect(overlayBounds(terminal, undefined, pane)).toEqual({
-			x: 300,
-			y: 392,
-			width: 900,
-			height: 348,
-		});
-		expect(overlayBounds(terminal, undefined, undefined)).toEqual(terminal);
-		// Shown, never past its terminal's view.
-		expect(
-			overlayBounds({ ...terminal, width: 500 }, { ...pane, x: 100 }, pane),
-		).toMatchObject({ x: 400, width: 400 });
+});
+
+describe("a terminal page's URL", () => {
+	it("names its terminal", () => {
+		expect(terminalIdOfPaneUrl("devhub-app://shell/pane.html#ws%3A1")).toBe(
+			"ws:1",
+		);
+		expect(terminalIdOfPaneUrl("devhub-app://shell/pane.html#t-2")).toBe("t-2");
+		expect(terminalIdOfPaneUrl("devhub-app://shell/index.html")).toBe(
+			undefined,
+		);
 	});
 });
 
@@ -230,31 +127,8 @@ describe("tmux key names", () => {
 		expect(isTmuxKey("F12", key({ key: "F12" }))).toBe(true);
 	});
 
-	it("are forwarded as Electron input events", () => {
-		expect(forwardedKey(key({ key: "i" })).map((one) => one.type)).toEqual([
-			"keyDown",
-			"char",
-			"keyUp",
-		]);
-		expect(forwardedKey(key({ key: "ArrowUp" }))[0]).toMatchObject({
-			keyCode: "Up",
-		});
-		expect(forwardedKey(key({ key: "Unidentified" }))).toEqual([]);
-	});
-
-	it("forward an Option chord by its physical key, and the left Option first", () => {
-		// Option+X on a Mac: `key` is what Option made of it.
+	it("follow the left Option from its own key", () => {
 		const optionX = key({ key: "≈", code: "KeyX", alt: true });
-		expect(forwardedKey(optionX, true)).toEqual([
-			{ type: "keyDown", keyCode: "Alt", modifiers: ["alt", "left"] },
-			{ type: "keyDown", keyCode: "x", modifiers: ["alt"] },
-			{ type: "keyUp", keyCode: "x", modifiers: ["alt"] },
-		]);
-		// The right Option: no Alt said, so the overlay does not read Meta.
-		expect(forwardedKey(optionX, false).map((one) => one.keyCode)).toEqual([
-			"x",
-			"x",
-		]);
 		const held = new LeftOption();
 		expect(
 			held.note(
@@ -280,24 +154,35 @@ describe("TerminalNeovims", () => {
 			),
 		};
 		const changed = vi.fn();
-		const neovims = new TerminalNeovims({ ports, changed, settleMs: 0 });
+		const gone = vi.fn();
+		const neovims = new TerminalNeovims({
+			ports,
+			changed,
+			gone,
+			settleMs: 0,
+		});
 		neovims.setEnabled(true);
-		neovims.screen("t", { x: 0, y: 0, width: 640, height: 480, zoom: 1 });
 		neovims.setTerminals(
 			[{ terminalId: "t", machine: "local" }],
 			new Set(["t"]),
 		);
-		return { neovims, ports, changed };
+		const views = () => neovims.neovims("t").overlays;
+		return { neovims, ports, changed, gone, views };
 	}
 
 	it("finds a pane's Neovim, attaches it, and gives it the keys", async () => {
-		const { neovims, ports } = setup(parseTerminalNeovimReading(OUTPUT));
+		const { neovims, ports, views } = setup(parseTerminalNeovimReading(OUTPUT));
 		await vi.waitFor(() => {
-			expect(neovims.views()).toHaveLength(1);
+			expect(views()).toHaveLength(1);
 		});
-		const [view] = neovims.views();
-		expect(view).toMatchObject({ terminalId: "t", key: "tnv:1" });
-		expect(view?.rect).toEqual({ x: 328, y: 0, width: 312, height: 460 });
+		const [view] = views();
+		// Polled: the page is told the pane's cells in the client's screen.
+		expect(view).toEqual({
+			key: "tnv:1",
+			pane: 1,
+			shown: true,
+			cells: { x: 41, y: 0, width: 39, height: 23, cols: 80, rows: 24 },
+		});
 		await expect(neovims.connection("tnv:1")).resolves.toMatchObject({
 			socketPath: "/tmp/d/s.here",
 		});
@@ -308,6 +193,7 @@ describe("TerminalNeovims", () => {
 			"%1",
 		);
 		expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
+		expect(neovims.neovims("t").keys).toBe("tnv:1");
 		// The prefix is tmux's; the key after it too; then the keys come back.
 		expect(neovims.overlayKey("tnv:1", key({ key: "b", control: true }))).toBe(
 			"prefix",
@@ -325,14 +211,14 @@ describe("TerminalNeovims", () => {
 		expect(neovims.terminalKey("t", key({ key: "i" }))).toBe("redirect");
 		expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
 		neovims.ended("tnv:1");
-		expect(neovims.views()).toEqual([]);
+		expect(views()).toEqual([]);
 		neovims.dispose();
 	});
 
 	it("gives the keys back on a DevHub open, and tries a pane whose UI ended again", async () => {
-		const { neovims } = setup(parseTerminalNeovimReading(OUTPUT));
+		const { neovims, views } = setup(parseTerminalNeovimReading(OUTPUT));
 		await vi.waitFor(() => {
-			expect(neovims.views()).toHaveLength(1);
+			expect(views()).toHaveLength(1);
 		});
 		neovims.attached("tnv:1");
 		expect(neovims.shownOverlay("t")).toBe("tnv:1");
@@ -344,19 +230,19 @@ describe("TerminalNeovims", () => {
 		// still naming the socket: not drawn again by itself…
 		neovims.ended("tnv:1");
 		await new Promise((resolve) => setTimeout(resolve, 30));
-		expect(neovims.views()).toEqual([]);
+		expect(views()).toEqual([]);
 		// …until an open reaches that Neovim.
 		neovims.reclaim("t");
 		await vi.waitFor(() => {
-			expect(neovims.views()).toHaveLength(1);
+			expect(views()).toHaveLength(1);
 		});
 		neovims.dispose();
 	});
 
 	it("keeps the keys in the terminal for a prompt until it is answered", async () => {
-		const { neovims } = setup(parseTerminalNeovimReading(OUTPUT));
+		const { neovims, views } = setup(parseTerminalNeovimReading(OUTPUT));
 		await vi.waitFor(() => {
-			expect(neovims.views()).toHaveLength(1);
+			expect(views()).toHaveLength(1);
 		});
 		neovims.attached("tnv:1");
 		neovims.overlayKey("tnv:1", key({ key: "b", control: true }));
@@ -371,9 +257,9 @@ describe("TerminalNeovims", () => {
 	});
 
 	it("gives the keys back after the prefix twice (send-prefix)", async () => {
-		const { neovims } = setup(parseTerminalNeovimReading(OUTPUT));
+		const { neovims, views } = setup(parseTerminalNeovimReading(OUTPUT));
 		await vi.waitFor(() => {
-			expect(neovims.views()).toHaveLength(1);
+			expect(views()).toHaveLength(1);
 		});
 		neovims.attached("tnv:1");
 		neovims.overlayKey("tnv:1", key({ key: "b", control: true }));
@@ -386,29 +272,43 @@ describe("TerminalNeovims", () => {
 		neovims.dispose();
 	});
 
+	it("lets a UI go when its pane stops naming the socket", async () => {
+		const reading = parseTerminalNeovimReading(OUTPUT);
+		const { neovims, ports, gone, views } = setup(reading);
+		await vi.waitFor(() => {
+			expect(views()).toHaveLength(1);
+		});
+		neovims.attached("tnv:1");
+		// The pane's `nvim` exited, and took its socket back.
+		ports.read.mockImplementation(() =>
+			Promise.resolve({
+				...reading,
+				panes: reading.panes.map((one) => ({ ...one, socket: "" })),
+			}),
+		);
+		await vi.waitFor(() => {
+			expect(views()).toEqual([]);
+		});
+		expect(gone).toHaveBeenCalledWith("tnv:1");
+		neovims.dispose();
+	});
+
 	it("makes no overlay while the setting is off", async () => {
-		const { neovims, ports } = setup(parseTerminalNeovimReading(OUTPUT));
+		const { neovims, ports, views } = setup(parseTerminalNeovimReading(OUTPUT));
 		neovims.setEnabled(false);
 		await vi.waitFor(() => {
 			expect(ports.read).toHaveBeenCalledWith(expect.anything(), false);
 		});
-		expect(neovims.views()).toEqual([]);
+		expect(views()).toEqual([]);
 		neovims.dispose();
 	});
 	describe("in tmux control mode", () => {
 		const panes = (over: Partial<ControlPanes> = {}): ControlPanes => ({
-			x: 4,
-			y: 2,
-			cellWidth: 8,
-			cellHeight: 20,
-			cols: 80,
-			rows: 24,
-			zoom: 1,
 			client: "client-7",
 			prefixes: ["C-b"],
 			shown: [
-				{ pane: 0, x: 0, y: 0, width: 40, height: 24, active: false },
-				{ pane: 1, x: 41, y: 0, width: 39, height: 24, active: true },
+				{ pane: 0, active: false },
+				{ pane: 1, active: true },
 			],
 			panes: [
 				{ pane: 0, inMode: false, socket: "" },
@@ -419,41 +319,24 @@ describe("TerminalNeovims", () => {
 			...over,
 		});
 
-		it("places the overlay on the page's pane rectangle, without polling", async () => {
-			const { neovims, ports } = setup(parseTerminalNeovimReading(OUTPUT));
+		it("says which pane it is in and whether it is shown, without polling", async () => {
+			const { neovims, ports, views } = setup(
+				parseTerminalNeovimReading(OUTPUT),
+			);
 			neovims.controlPanes("t", panes());
 			await vi.waitFor(() => {
-				expect(neovims.views()).toHaveLength(1);
+				expect(views()).toHaveLength(1);
 			});
 			const reads = ports.read.mock.calls.length;
-			expect(neovims.views()[0]?.rect).toEqual({
-				x: 4 + 41 * 8,
-				y: 2,
-				width: 39 * 8,
-				height: 24 * 20,
-			});
-			// A zoom: the pane alone, at once.
-			neovims.controlPanes(
-				"t",
-				panes({
-					shown: [{ pane: 1, x: 0, y: 0, width: 80, height: 24, active: true }],
-				}),
-			);
-			expect(neovims.views()[0]?.rect).toEqual({
-				x: 4,
-				y: 2,
-				width: 640,
-				height: 480,
-			});
+			// Where it is drawn is the page's: no cells.
+			expect(views()).toEqual([{ key: "tnv:1", pane: 1, shown: true }]);
+			// A zoom: the pane alone.
+			neovims.controlPanes("t", panes({ shown: [{ pane: 1, active: true }] }));
+			expect(views()[0]?.shown).toBe(true);
 			// Another window shown: hidden, and kept.
-			neovims.controlPanes(
-				"t",
-				panes({
-					shown: [{ pane: 2, x: 0, y: 0, width: 80, height: 24, active: true }],
-				}),
-			);
-			expect(neovims.views()).toHaveLength(1);
-			expect(neovims.views()[0]?.rect).toBeUndefined();
+			neovims.controlPanes("t", panes({ shown: [{ pane: 2, active: true }] }));
+			expect(views()).toHaveLength(1);
+			expect(views()[0]?.shown).toBe(false);
 			// In copy mode: hidden.
 			neovims.controlPanes(
 				"t",
@@ -465,7 +348,7 @@ describe("TerminalNeovims", () => {
 					],
 				}),
 			);
-			expect(neovims.views()[0]?.rect).toBeUndefined();
+			expect(views()[0]?.shown).toBe(false);
 			await new Promise((resolve) => setTimeout(resolve, 200));
 			// Only the sockets changing is a reading of tmux: none here.
 			expect(ports.read.mock.calls.length).toBe(reads);
@@ -473,32 +356,34 @@ describe("TerminalNeovims", () => {
 		});
 
 		it("keeps a polled overlay when its page starts speaking for the terminal", async () => {
-			const { neovims } = setup(parseTerminalNeovimReading(OUTPUT));
+			const { neovims, views } = setup(parseTerminalNeovimReading(OUTPUT));
 			await vi.waitFor(() => {
-				expect(neovims.views()).toHaveLength(1);
+				expect(views()).toHaveLength(1);
 			});
 			// The page's first report, before tmux was read again: the same
 			// overlay, not a new one (a second page, a second UI on the Neovim).
 			neovims.controlPanes("t", panes());
-			expect(neovims.views().map((view) => view.key)).toEqual(["tnv:1"]);
+			expect(views().map((view) => view.key)).toEqual(["tnv:1"]);
 			await new Promise((resolve) => setTimeout(resolve, 20));
-			expect(neovims.views().map((view) => view.key)).toEqual(["tnv:1"]);
+			expect(views().map((view) => view.key)).toEqual(["tnv:1"]);
 			neovims.dispose();
 		});
 
 		it("attaches only to a socket tmux confirms", async () => {
-			const { neovims } = setup({ panes: [], client: undefined });
+			const { neovims, views } = setup({ panes: [], client: undefined });
 			neovims.controlPanes("t", panes());
 			await new Promise((resolve) => setTimeout(resolve, 20));
-			expect(neovims.views()).toEqual([]);
+			expect(views()).toEqual([]);
 			neovims.dispose();
 		});
 
-		it("hands the prefix to the terminal's page, and the keys come back", async () => {
-			const { neovims, ports } = setup(parseTerminalNeovimReading(OUTPUT));
+		it("hands the prefix to the terminal, and the keys come back", async () => {
+			const { neovims, ports, views } = setup(
+				parseTerminalNeovimReading(OUTPUT),
+			);
 			neovims.controlPanes("t", panes());
 			await vi.waitFor(() => {
-				expect(neovims.views()).toHaveLength(1);
+				expect(views()).toHaveLength(1);
 			});
 			neovims.attached("tnv:1");
 			expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
@@ -506,10 +391,8 @@ describe("TerminalNeovims", () => {
 				neovims.overlayKey("tnv:1", key({ key: "b", control: true })),
 			).toBe("hand");
 			expect(ports.enterPrefix).not.toHaveBeenCalled();
-			// The handed prefix arriving, then the prefix again: send-prefix.
-			expect(neovims.terminalKey("t", key({ key: "b", control: true }))).toBe(
-				"pass",
-			);
+			// The terminal is typed the prefix by its page; then the prefix
+			// again: send-prefix.
 			expect(neovims.keyboardOverlay("t")).toBeUndefined();
 			expect(neovims.terminalKey("t", key({ key: "b", control: true }))).toBe(
 				"pass",
@@ -519,7 +402,6 @@ describe("TerminalNeovims", () => {
 			});
 			// A prompt key is no wait here: the guard or DevHub has it.
 			neovims.overlayKey("tnv:1", key({ key: "b", control: true }));
-			neovims.terminalKey("t", key({ key: "b", control: true }));
 			neovims.terminalKey("t", key({ key: ":" }));
 			await vi.waitFor(() => {
 				expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
@@ -527,25 +409,26 @@ describe("TerminalNeovims", () => {
 			neovims.dispose();
 		});
 
-		it("keeps a covered overlay shown, the page above it and the keys tmux's", async () => {
-			const { neovims, changed } = setup(parseTerminalNeovimReading(OUTPUT));
+		it("keeps a covered overlay shown and the keys tmux's", async () => {
+			const { neovims, changed, views } = setup(
+				parseTerminalNeovimReading(OUTPUT),
+			);
 			neovims.controlPanes("t", panes());
 			await vi.waitFor(() => {
-				expect(neovims.views()).toHaveLength(1);
+				expect(views()).toHaveLength(1);
 			});
 			neovims.attached("tnv:1");
-			expect(neovims.overlaid("t")).toEqual({ panes: [1], raised: false });
+			expect(neovims.neovims("t").keys).toBe("tnv:1");
 			const before = changed.mock.calls.length;
 			// A prompt opened over the panes.
 			neovims.controlPanes("t", panes({ covered: true }));
-			expect(neovims.views()[0]?.rect).toBeDefined();
-			expect(neovims.overlaid("t")).toEqual({ panes: [1], raised: true });
+			expect(views()[0]?.shown).toBe(true);
+			expect(neovims.neovims("t").keys).toBeUndefined();
 			expect(neovims.keyboardOverlay("t")).toBeUndefined();
 			expect(neovims.terminalKey("t", key({ key: "x" }))).toBe("pass");
 			expect(changed.mock.calls.length).toBeGreaterThan(before);
-			// It closed: under the Neovim again, and the keys are its.
+			// It closed: the keys are the Neovim's again.
 			neovims.controlPanes("t", panes());
-			expect(neovims.overlaid("t")).toEqual({ panes: [1], raised: false });
 			expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
 			// Copy mode in that pane: tmux's view of it, the overlay hidden.
 			neovims.controlPanes(
@@ -559,36 +442,38 @@ describe("TerminalNeovims", () => {
 					],
 				}),
 			);
-			expect(neovims.overlaid("t")).toEqual({ panes: [], raised: false });
+			expect(views()[0]?.shown).toBe(false);
 			neovims.dispose();
 		});
 
 		it("tries a Neovim again once a control client attaches again", async () => {
-			const { neovims } = setup(parseTerminalNeovimReading(OUTPUT));
+			const { neovims, views } = setup(parseTerminalNeovimReading(OUTPUT));
 			neovims.controlPanes("t", panes());
 			await vi.waitFor(() => {
-				expect(neovims.views()).toHaveLength(1);
+				expect(views()).toHaveLength(1);
 			});
 			// The connection to the host dropped: the UI ended, the client went.
 			neovims.ended("tnv:1");
 			neovims.controlPanes("t", panes({ client: "" }));
-			expect(neovims.views()).toEqual([]);
+			expect(views()).toEqual([]);
 			neovims.controlPanes("t", panes({ client: "client-8" }));
 			await vi.waitFor(() => {
-				expect(neovims.views()).toHaveLength(1);
+				expect(views()).toHaveLength(1);
 			});
 			neovims.dispose();
 		});
 
 		it("checks a page's report", () => {
-			const wire = { ...panes(), zoom: undefined };
-			expect(parseControlPanes(wire, 2)?.zoom).toBe(2);
-			expect(parseControlPanes({ ...wire, cols: -1 }, 1)).toBeUndefined();
+			const wire = panes();
+			expect(parseControlPanes(wire)).toEqual(wire);
 			expect(
-				parseControlPanes({ ...wire, shown: [{ pane: "1" }] }, 1),
+				parseControlPanes({ ...wire, shown: [{ pane: -1, active: true }] }),
 			).toBeUndefined();
 			expect(
-				parseControlPanes({ ...wire, covered: undefined }, 1),
+				parseControlPanes({ ...wire, shown: [{ pane: "1" }] }),
+			).toBeUndefined();
+			expect(
+				parseControlPanes({ ...wire, covered: undefined }),
 			).toBeUndefined();
 		});
 	});

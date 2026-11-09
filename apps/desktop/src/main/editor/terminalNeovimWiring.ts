@@ -39,6 +39,8 @@ export interface TerminalNeovimWiringOptions {
 	) => void;
 	/** Told after the window is, whenever an overlay or the keys move. */
 	readonly changed?: () => void;
+	/** An overlay went: its UI is let go of (`TerminalNeovimsOptions.gone`). */
+	readonly gone?: (key: string) => void;
 }
 
 export function wireTerminalNeovims(
@@ -72,8 +74,15 @@ export function wireTerminalNeovims(
 		);
 	});
 	const neovims: TerminalNeovims = new TerminalNeovims({
+		gone: (key) => {
+			options.gone?.(key);
+		},
 		changed: () => {
-			options.shell()?.syncTerminalNeovims(neovims.views());
+			options
+				.shell()
+				?.syncTerminalNeovims(
+					new Map(neovims.terminals().map((id) => [id, neovims.neovims(id)])),
+				);
 			options.changed?.();
 		},
 		ports: {

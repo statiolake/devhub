@@ -39,6 +39,8 @@ import {
 import type { TitleBarMode } from "../../model/config.js";
 import {
 	CHANNELS,
+	type TerminalNeovimKeyWire,
+	type TerminalNeovimsWire,
 	type SidebarAreaWire,
 	type SidebarPointerWire,
 	type WorkbenchAreaWire,
@@ -51,25 +53,17 @@ import { ToastsView } from "./toastsView.js";
 import { TooltipView } from "./tooltipView.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
 import { scrimColor, type ShellPalette } from "../../ipc/palette.js";
-import { NEOVIM_CHANNELS, type NeovimPlacement } from "../../ipc/neovim.js";
 import {
-	forwardedKey,
 	LeftOption,
-	overlayBounds,
 	type KeyInput,
-	type OverlaidPanes,
-	type OverlayRect,
-	type OverlayView,
+	type TerminalOverlays,
 } from "../editor/terminalNeovims.js";
-import {
-	workspaceOfTerminalPage,
-	workspaceTerminalPageId,
-} from "../../ipc/terminal.js";
+import { workspaceTerminalPageId } from "../../ipc/terminal.js";
 
 /**
  * What the window asks of the Neovims drawn over terminal panes
- * (`editor/terminalNeovims.ts`): where the keys go, and what a key or a
- * focus in one of the two pages means.
+ * (`editor/terminalNeovims.ts`): where the keys go, what a key or a press
+ * in a terminal's page means, and what its page draws.
  */
 export interface TerminalNeovimHooks {
 	keyboardOverlay(terminalId: string): string | undefined;
@@ -77,7 +71,7 @@ export interface TerminalNeovimHooks {
 	terminalKey(terminalId: string, input: KeyInput): "pass" | "redirect";
 	overlayFocused(key: string): void;
 	terminalFocused(terminalId: string): void;
-	overlaid(terminalId: string): OverlaidPanes;
+	neovims(terminalId: string): TerminalOverlays;
 }
 
 /**
@@ -93,7 +87,7 @@ const NO_TERMINAL_NEOVIMS: TerminalNeovimHooks = {
 	terminalKey: () => "pass",
 	overlayFocused: () => undefined,
 	terminalFocused: () => undefined,
-	overlaid: () => ({ panes: [], raised: false }),
+	neovims: () => ({ overlays: [] }),
 };
 
 /**
@@ -276,31 +270,12 @@ export class ShellWindow {
 	 * so coming back finds it attached, with its scrollback.
 	 */
 	private readonly editorTerminals = new Map<string, ChromeView>();
-	/**
-	 * A Neovim started in a terminal pane, drawn over that pane: by its key
-	 * (`neovim.html#tnv:<n>`), with its terminal and its rectangle in the
-	 * terminal view. Made and ended by `syncTerminalNeovims`; placed right
-	 * above its terminal, shown only while that is and tmux shows its pane.
-	 */
-	private readonly overlayViews = new Map<
-		string,
-		{
-			readonly view: ChromeView;
-			readonly terminalId: string;
-			rect: OverlayRect | undefined;
-			/** Its pane's rectangle when it was last shown (`overlayBounds`). */
-			last: OverlayRect | undefined;
-			/** Where its view was last put in the window. */
-			bounds?: OverlayRect;
-		}
-	>();
 	private terminalNeovims: TerminalNeovimHooks = NO_TERMINAL_NEOVIMS;
 	/** Each editor terminal's page id (`ws:<workspace id>`), by the same editor key. */
 	private readonly editorTerminalIds = new Map<string, string>();
 	/** Where the pages are served from, for the terminal panes made later. */
 	private readonly pageBase: string;
 	private readonly panePreload: string;
-	private readonly neovimPreload: string;
 
 	/**
 	 * The App Shell page's URL, held until `openPage` runs it.
@@ -348,7 +323,6 @@ export class ShellWindow {
 		const pageBase = pageUrl.slice(0, pageUrl.lastIndexOf("/"));
 		this.pageBase = pageBase;
 		this.panePreload = preloadFor("pane");
-		this.neovimPreload = preloadFor("neovim");
 
 		// DevHub names this window, and only DevHub. Electron hands a page's
 		// `document.title` to its window by default, which would let the
@@ -518,7 +492,6 @@ export class ShellWindow {
 		this.tooltip.openPage();
 		this.picker.openPage();
 		for (const view of this.terminalViews.values()) view.openPage();
-		for (const entry of this.overlayViews.values()) entry.view.openPage();
 		for (const view of this.editorTerminals.values()) view.openPage();
 		// A sheet is modal: any other contents of this window taking the
 		// keyboard while one stands — a renderer focusing itself, which no
@@ -585,9 +558,12 @@ export class ShellWindow {
 
 	/**
 	 * A terminal page (`pane.html#<id>`): an Agent's terminal, or a
-	 * Workspace's (`ws:<id>`). A click into it is `focus` taking the
-	 * keyboard; a key tmux would only hand to a pane a Neovim is drawn over
-	 * goes to that Neovim's page instead.
+	 * Workspace's (`ws:<id>`), with every Neovim DevHub draws over one of
+	 * its panes drawn in it. A click into it is `focus` taking the keyboard
+	 * (which of the page's — a Neovim's or the terminal's — the page says,
+	 * `neovimPointer`). Its keys are read here on their way in: a key tmux
+	 * would only hand to a pane a Neovim is drawn over is typed into that
+	 * Neovim, and tmux's prefix typed in a Neovim is tmux's.
 	 */
 	private terminalPage(id: string, focus: ContentFocus): ChromeView {
 		// Which terminal the page shows is its fragment: one page, one
@@ -603,25 +579,46 @@ export class ShellWindow {
 		contents?.on("focus", () => {
 			this.picker.reclaimFrom(contents);
 			this.contentFocused(focus);
-			this.terminalNeovims.terminalFocused(id);
 		});
 		const leftOption = new LeftOption();
 		contents?.on("before-input-event", (event, input) => {
 			const leftHeld = leftOption.note(input);
-			if (this.terminalNeovims.terminalKey(id, input) !== "redirect") return;
-			// A key tmux would only hand to the pane under a Neovim drawn
-			// over it: the overlay takes the keys, this one first.
-			event.preventDefault();
-			this.focusSurface();
-			const overlay = this.overlayViews.get(
-				this.terminalNeovims.keyboardOverlay(id) ?? "",
-			);
-			const target = overlay?.view.contents();
-			if (target !== undefined) {
-				for (const forwarded of forwardedKey(input, leftHeld)) {
-					target.sendInputEvent(forwarded);
-				}
+			const hooks = this.terminalNeovims;
+			const typeInto = (to: string) => {
+				// Its keys first, so the page has them where this one goes.
+				this.sayNeovims(id, contents);
+				const key: TerminalNeovimKeyWire = {
+					to,
+					key: input.key,
+					code: input.code,
+					control: input.control,
+					alt: input.alt,
+					shift: input.shift,
+					meta: input.meta,
+					leftOption: leftHeld,
+				};
+				contents.send(CHANNELS.terminalNeovimKey, key);
+			};
+			const keyed = hooks.keyboardOverlay(id);
+			if (keyed !== undefined) {
+				const answer = hooks.overlayKey(keyed, input);
+				if (answer === "pass") return;
+				// tmux's prefix, typed in the Neovim: tmux's, as in any pane.
+				// Polled, the client is in its prefix table now and the
+				// terminal takes the next key; in control mode the terminal
+				// is typed the prefix itself, its control client keeping its
+				// own place in tmux's key tables.
+				event.preventDefault();
+				if (answer === "hand") typeInto("");
+				else this.sayNeovims(id, contents);
+				return;
 			}
+			if (hooks.terminalKey(id, input) !== "redirect") return;
+			// A key tmux would only hand to the pane under a Neovim drawn
+			// over it: that Neovim takes the keys, this one first.
+			event.preventDefault();
+			const target = hooks.keyboardOverlay(id);
+			if (target !== undefined) typeInto(target);
 		});
 		return view;
 	}
@@ -671,76 +668,16 @@ export class ShellWindow {
 	}
 
 	/**
-	 * Make a page for every Neovim drawn over a terminal pane, end the ones
-	 * whose Neovim has gone, and put each where its pane is. The keys move
-	 * with it: into an overlay that has just become its terminal's, back into
-	 * the terminal when it goes.
+	 * Tell each terminal's page the Neovims over its panes and which has the
+	 * keys, as they change (`TerminalNeovimsWire`); the page draws them. The
+	 * window's keyboard moves with them.
 	 */
-	syncTerminalNeovims(views: readonly OverlayView[]): void {
+	syncTerminalNeovims(terminals: ReadonlyMap<string, TerminalOverlays>): void {
 		if (this.window.isDestroyed()) return;
-		const wanted = new Map(views.map((view) => [view.key, view]));
-		for (const [key, entry] of [...this.overlayViews]) {
-			if (wanted.has(key)) continue;
-			this.overlayViews.delete(key);
-			this.placementSaid.delete(key);
-			entry.view.dispose(this.window);
+		for (const terminalId of terminals.keys()) {
+			const contents = this.terminalPageContents(terminalId);
+			if (contents !== undefined) this.sayNeovims(terminalId, contents);
 		}
-		for (const view of views) {
-			const known = this.overlayViews.get(view.key);
-			if (known !== undefined) {
-				known.rect = view.rect;
-				known.last = view.rect ?? known.last;
-				continue;
-			}
-			const page = new ChromeView(
-				this.neovimPreload,
-				`${this.pageBase}/neovim.html#${encodeURIComponent(view.key)}`,
-			);
-			page.adopt(this.window);
-			const contents = page.contents();
-			supervisePage(contents, `neovim:${view.key}`, isQuitting);
-			const key = view.key;
-			const terminalId = view.terminalId;
-			// Over a Workspace's terminal it is the editor half; over an
-			// Agent's, that terminal.
-			const focus: ContentFocus =
-				workspaceOfTerminalPage(terminalId) === undefined
-					? { kind: "terminal", terminalId }
-					: { kind: "editor" };
-			contents?.on("focus", () => {
-				this.picker.reclaimFrom(contents);
-				this.contentFocused(focus);
-				this.terminalNeovims.overlayFocused(key);
-			});
-			contents?.on("before-input-event", (event, input) => {
-				const answer = this.terminalNeovims.overlayKey(key, input);
-				if (answer === "pass") return;
-				// tmux's prefix: tmux's, as in any pane. The client is in its
-				// prefix table now, and the terminal takes the next key. In
-				// control mode the terminal's page is handed the prefix itself:
-				// its client keeps its own place in tmux's key tables.
-				event.preventDefault();
-				this.focusSurface();
-				if (answer !== "hand") return;
-				const target = this.terminalPageContents(terminalId);
-				for (const forwarded of forwardedKey(input)) {
-					target?.sendInputEvent(forwarded);
-				}
-			});
-			// A page that loads (again) has not heard where it is: say it.
-			contents?.on("did-finish-load", () => {
-				const entry = this.overlayViews.get(key);
-				if (entry !== undefined) this.sayPlacement(key, entry, true);
-			});
-			this.overlayViews.set(key, {
-				view: page,
-				terminalId,
-				rect: view.rect,
-				last: view.rect,
-			});
-			if (this.pageOpened) page.openPage();
-		}
-		this.layout();
 		const keys = JSON.stringify([
 			keyboardChild(this.layoutInput()),
 			this.keyboardOverlayNow(),
@@ -749,6 +686,35 @@ export class ShellWindow {
 			this.overlayKeyboardAnswer = keys;
 			this.focusSurface();
 		}
+	}
+
+	/** A terminal's page told its Neovims, when they changed since it was last. */
+	private sayNeovims(terminalId: string, contents: Electron.WebContents): void {
+		if (contents.isDestroyed()) return;
+		const wire: TerminalNeovimsWire = this.terminalNeovims.neovims(terminalId);
+		const said = JSON.stringify(wire);
+		if (this.neovimsSaid.get(terminalId) === said) return;
+		this.neovimsSaid.set(terminalId, said);
+		contents.send(CHANNELS.terminalNeovims, wire);
+	}
+
+	/** What each terminal's page was last told by `sayNeovims`. */
+	private readonly neovimsSaid = new Map<string, string>();
+
+	/**
+	 * A press in a terminal's page: into one of its Neovims (by key), or
+	 * into the terminal beside it. The keys go where it was.
+	 */
+	neovimPointer(terminalId: string, key: string | null): void {
+		if (key === null) this.terminalNeovims.terminalFocused(terminalId);
+		else this.terminalNeovims.overlayFocused(key);
+	}
+
+	/** A terminal page starting to listen asks for its Neovims as they stand. */
+	neovimsOf(terminalId: string): TerminalNeovimsWire {
+		const wire = this.terminalNeovims.neovims(terminalId);
+		this.neovimsSaid.set(terminalId, JSON.stringify(wire));
+		return wire;
 	}
 
 	private overlayKeyboardAnswer = "";
@@ -778,82 +744,12 @@ export class ShellWindow {
 			: this.terminalNeovims.keyboardOverlay(terminalId);
 	}
 
-	/**
-	 * Each overlay of a terminal, where the terminal's view is at `rect`;
-	 * then, while what the terminal's page draws over its panes is open (a
-	 * prompt, a menu, a popup, the picker), the page again, above them: it
-	 * draws that over the Neovims, and leaves their panes clear
-	 * (`TerminalOverlaidWire`). Told to the page once it is placed.
-	 */
-	private placeOverlays(
-		terminalId: string,
-		rect: Electron.Rectangle,
-		visible: boolean,
-		page?: ChromeView,
-	): void {
-		for (const [key, entry] of this.overlayViews) {
-			if (entry.terminalId !== terminalId) continue;
-			const bounds = overlayBounds(rect, entry.rect, entry.last);
-			entry.view.place(
-				this.window,
-				bounds,
-				visible && entry.rect !== undefined,
-			);
-			entry.bounds = bounds;
-			this.sayPlacement(key, entry);
-		}
-		if (page === undefined) return;
-		const overlaid = this.terminalNeovims.overlaid(terminalId);
-		if (visible && overlaid.raised) page.place(this.window, rect, true);
-		const said = JSON.stringify(overlaid);
-		if (this.overlaidSaid.get(terminalId) === said) return;
-		this.overlaidSaid.set(terminalId, said);
-		page.contents()?.send(CHANNELS.terminalOverlaid, overlaid);
-	}
-
-	/**
-	 * Tell an overlay's page its view is on its pane (`NeovimPlacement`):
-	 * shown there, or hidden where it was last shown — never while it is
-	 * not placed yet or over the whole terminal. With how much of the view
-	 * is past the pane's cells. Said when it changes, and again to a page
-	 * that loaded (`force`).
-	 */
-	private sayPlacement(
-		key: string,
-		entry: {
-			readonly view: ChromeView;
-			readonly rect: OverlayRect | undefined;
-			readonly last: OverlayRect | undefined;
-			readonly bounds?: OverlayRect;
-		},
-		force = false,
-	): void {
-		const rect = entry.rect ?? entry.last;
-		if (rect === undefined || entry.bounds === undefined) return;
-		const placement: NeovimPlacement = {
-			width: entry.bounds.width,
-			height: entry.bounds.height,
-			inset: rect.inset ?? { left: 0, top: 0, right: 0, bottom: 0 },
-		};
-		const said = JSON.stringify(placement);
-		if (!force && this.placementSaid.get(key) === said) return;
-		this.placementSaid.set(key, said);
-		entry.view.contents()?.send(NEOVIM_CHANNELS.placed, placement);
-	}
-
-	/** What each overlay's page was last told by `sayPlacement`. */
-	private readonly placementSaid = new Map<string, string>();
-
-	/** What each terminal's page was last told by `placeOverlays`. */
-	private readonly overlaidSaid = new Map<string, string>();
-
 	/** Every terminal pane's page, for the audiences that tell pages things. */
 	paneTerminalContents(): readonly Electron.WebContents[] {
 		const all: Electron.WebContents[] = [];
 		for (const view of [
 			...this.terminalViews.values(),
 			...this.editorTerminals.values(),
-			...[...this.overlayViews.values()].map((entry) => entry.view),
 		]) {
 			const contents = view.contents();
 			if (contents) all.push(contents);
@@ -1090,33 +986,18 @@ export class ShellWindow {
 						: this.conversations;
 				return view.contents() ?? this.window.webContents;
 			}
-			case "terminal": {
-				// A Neovim over the terminal's active pane takes its keys.
-				const overlay = this.overlayViews
-					.get(this.terminalNeovims.keyboardOverlay(identity.terminalId) ?? "")
-					?.view.contents();
+			// A Neovim over the terminal's active pane is in the terminal's
+			// page: which of the page's has the keys is the page's to say.
+			case "terminal":
 				return (
-					overlay ??
 					this.terminalViews.get(identity.terminalId)?.contents() ??
 					this.window.webContents
 				);
-			}
-			case "neovim": {
-				// A Neovim over the Workspace terminal's active pane takes its keys.
-				const terminalId = this.editorTerminalIds.get(identity.editorKey);
-				const overlay = this.overlayViews
-					.get(
-						terminalId === undefined
-							? ""
-							: (this.terminalNeovims.keyboardOverlay(terminalId) ?? ""),
-					)
-					?.view.contents();
+			case "neovim":
 				return (
-					overlay ??
 					this.editorTerminals.get(identity.editorKey)?.contents() ??
 					this.window.webContents
 				);
-			}
 			case "toasts":
 				return this.toasts.contents() ?? this.window.webContents;
 			case "picker":
@@ -1445,17 +1326,12 @@ export class ShellWindow {
 				this.terminalViews
 					.get(child.identity.terminalId)
 					?.place(this.window, child.rect, false);
-				this.placeOverlays(child.identity.terminalId, child.rect, false);
 				continue;
 			}
 			if (child.identity.kind === "neovim" && !child.visible) {
 				this.editorTerminals
 					.get(child.identity.editorKey)
 					?.place(this.window, child.rect, false);
-				const terminalId = this.editorTerminalIds.get(child.identity.editorKey);
-				if (terminalId !== undefined) {
-					this.placeOverlays(terminalId, child.rect, false);
-				}
 				continue;
 			}
 		}
@@ -1484,33 +1360,13 @@ export class ShellWindow {
 					this.terminalViews
 						.get(child.identity.terminalId)
 						?.place(this.window, child.rect, true);
-					// Right above it: under the notices and the questions.
-					this.placeOverlays(
-						child.identity.terminalId,
-						child.rect,
-						true,
-						this.terminalViews.get(child.identity.terminalId),
-					);
 					break;
-				case "neovim": {
+				case "neovim":
 					if (!child.visible) break;
 					this.editorTerminals
 						.get(child.identity.editorKey)
 						?.place(this.window, child.rect, true);
-					const terminalId = this.editorTerminalIds.get(
-						child.identity.editorKey,
-					);
-					// Right above it: under the notices and the questions.
-					if (terminalId !== undefined) {
-						this.placeOverlays(
-							terminalId,
-							child.rect,
-							true,
-							this.editorTerminals.get(child.identity.editorKey),
-						);
-					}
 					break;
-				}
 				case "toasts":
 					this.toasts.place(child.rect, child.visible);
 					break;
@@ -1520,24 +1376,6 @@ export class ShellWindow {
 				case "tooltip":
 					this.tooltip.place(child.rect, child.visible);
 					break;
-			}
-		}
-
-		// An overlay whose terminal was not drawn in this pass is not drawn.
-		const drawnTerminals = new Set(
-			children.flatMap((child) => {
-				if (!child.visible) return [];
-				if (child.identity.kind === "terminal") {
-					return [child.identity.terminalId];
-				}
-				if (child.identity.kind !== "neovim") return [];
-				const terminalId = this.editorTerminalIds.get(child.identity.editorKey);
-				return terminalId === undefined ? [] : [terminalId];
-			}),
-		);
-		for (const entry of this.overlayViews.values()) {
-			if (!drawnTerminals.has(entry.terminalId)) {
-				entry.view.place(this.window, entry.view.bounds(), false);
 			}
 		}
 
