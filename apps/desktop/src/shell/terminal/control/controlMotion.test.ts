@@ -156,6 +156,53 @@ describe("a split, frame by frame", () => {
     }
   });
 
+  it("moves a Neovim drawn in a pane with its pane, in its own group, to the same rest", () => {
+    const { painter, made } = groups();
+    const div = () => document.createElement("div");
+    const own: MotionGroup = {
+      outer: div(),
+      clipA: div(),
+      clipB: div(),
+      content: div(),
+      edges: div(),
+    };
+    const at = (t: number) => {
+      applyMotion(
+        painter,
+        transition,
+        moving,
+        t,
+        dpr,
+        cell,
+        size,
+        "#000",
+        size,
+      );
+      const tty = drawn(made.get(gridOf(1))!, size);
+      applyMotion(
+        painter,
+        transition,
+        moving,
+        t,
+        dpr,
+        cell,
+        size,
+        "#000",
+        size,
+        new Map([[1, { group: own, ground: "#ffe0e0" }]]),
+      );
+      return { tty, nvim: drawn(own, size) };
+    };
+    // Mid-way and at the last frame: the same rectangle and origin as the
+    // pane's own group would have, on Neovim's ground.
+    for (const t of [40, 100, PANE_MS.structural - 1]) {
+      const { tty, nvim } = at(t);
+      expect(nvim).toEqual(tty);
+    }
+    expect(own.clipB.style.background).not.toBe("");
+    expect(own.edges.childElementCount).toBe(4);
+  });
+
   it("moves only transforms and opacity", () => {
     const { painter, made } = groups();
     applyMotion(painter, transition, moving, 40, dpr, cell, size, "#000", size);
