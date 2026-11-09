@@ -27,7 +27,7 @@ import type {
 import type { UsageReport } from "../../shell/usageLimits.js";
 import { usageJson, usageText } from "./usage.js";
 import { ORCHESTRATOR_CANNOT_CLOSE } from "./windowActs.js";
-import { ISSUE_LINK_KEY } from "../../orchestrator/invariant.js";
+import { ISSUE_LINK_KEY, ISSUE_PENDING } from "../../orchestrator/invariant.js";
 import { breachWords, type Breach } from "../../orchestrator/events.js";
 import type {
 	StatusItem,
@@ -4726,6 +4726,7 @@ function subjectJson(
 		status: agent.status,
 		managed: agent.managed,
 		linked: agent.linked ?? null,
+		pendingIssue: agent.pendingIssue === true,
 		needsAction: agent.needsAction ?? null,
 		kept:
 			agent.kept === undefined
@@ -4800,7 +4801,7 @@ function subjectText(
 	const review = workspace;
 	return [
 		agentLine(found.agent),
-		`linked to ${found.agent.linked ?? "no item"}`,
+		`linked to ${found.agent.linked ?? (found.agent.pendingIssue === true ? "no item yet (issue=pending: its Issue is still to be filed)" : "no item")}`,
 		...(found.item === undefined ? [] : itemLines(found.item)),
 		...(review === undefined
 			? []
@@ -4831,20 +4832,22 @@ function needsActionLines(board: OrchestratorBoardWire, now: number): string[] {
 
 /**
  * The item linkage (`issue=`), set by hand as `issue assign` writes it: the
- * URL of an Issue or a pull request, which is what the invariant compares.
+ * URL of an Issue or a pull request, which is what the invariant compares —
+ * or `pending` (`ISSUE_PENDING`), work whose Issue is still to be filed.
  */
 function checkLinkMeta(
 	key: string | undefined,
 	value: string | undefined,
 ): void {
 	if (key !== ISSUE_LINK_KEY) return;
+	if (value === ISSUE_PENDING) return;
 	if (
 		!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+\/?$/u.test(
 			value?.trim() ?? "",
 		)
 	)
 		throw new Error(
-			`${ISSUE_LINK_KEY}= links the agent to an item: it takes the URL of an Issue or a pull request (https://github.com/OWNER/REPO/issues/N or …/pull/N), as 'issue assign' writes it; got ${JSON.stringify(value ?? "")}.`,
+			`${ISSUE_LINK_KEY}= links the agent to an item: it takes the URL of an Issue or a pull request (https://github.com/OWNER/REPO/issues/N or …/pull/N), as 'issue assign' writes it, or ${ISSUE_PENDING} for work whose Issue is still to be filed; got ${JSON.stringify(value ?? "")}.`,
 		);
 }
 

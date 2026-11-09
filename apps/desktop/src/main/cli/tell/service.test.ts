@@ -41,7 +41,7 @@ import {
 import { EscalationStore } from "../../orchestrator/escalationStore.js";
 import type { UsageReport } from "../../shell/usageLimits.js";
 import { OrchestratorService } from "../../orchestrator/orchestratorService.js";
-import type { ItemFacts } from "../../orchestrator/invariant.js";
+import { issueLinkOf, type ItemFacts } from "../../orchestrator/invariant.js";
 import { DEFAULT_ORCHESTRATOR } from "../../../model/orchestratorSettings.js";
 
 function agent(overrides: Partial<TellAgent> = {}): TellAgent {
@@ -232,9 +232,7 @@ class FakePorts implements TellPorts {
 					managed: one.managed,
 					status: one.status,
 					stopping: one.controlState !== "running",
-					...(one.meta["issue"] === undefined
-						? {}
-						: { issue: one.meta["issue"] }),
+					...issueLinkOf(one.meta["issue"]),
 				})),
 			),
 		}),
@@ -3666,13 +3664,19 @@ describe("agent rename and agent meta", () => {
 			],
 			coordinator,
 		);
+		// The one value that is not a URL: its Issue is still to be filed.
+		await viaSocket(
+			service,
+			["agent", "meta", "aaaa", "set", "issue", "pending"],
+			coordinator,
+		);
 		await viaSocket(
 			service,
 			["agent", "meta", "aaaa", "unset", "issue"],
 			coordinator,
 		);
 		expect(ports.calls.filter((call) => call.startsWith("meta "))).toHaveLength(
-			3,
+			4,
 		);
 		ports.calls.length = 0;
 		for (const line of [
@@ -4778,6 +4782,34 @@ describe("the Orchestrator row from the command line", () => {
 		});
 		expect(byAgent.message).toContain(
 			"pr=acme/app#9「設定画面」  open, assigned to me, in the population",
+		);
+		// Work whose Issue is still to be filed: no item, and none missing.
+		ports.spaces[0] = {
+			...ports.spaces[0]!,
+			agents: [
+				{
+					...worker,
+					status: "working",
+					managed: true,
+					meta: { issue: "pending" },
+				},
+			],
+		};
+		const pending = await viaSocket(
+			service,
+			["--json", "status", worker.id],
+			undefined,
+		);
+		expect(pending.data).toMatchObject({
+			subject: "agent",
+			agent: { linked: null, pendingIssue: true, needsAction: null },
+			item: null,
+			needsAction: null,
+		});
+		expect(
+			(await viaSocket(service, ["status", worker.id], undefined)).message,
+		).toContain(
+			"linked to no item yet (issue=pending: its Issue is still to be filed)",
 		);
 		await expect(
 			viaSocket(service, ["status", "acme/app#404"], undefined),

@@ -528,7 +528,11 @@ agents
                                    it under the orchestrator's management
                                    (its state is the orchestrator's to keep
                                    settled); --unmanaged leaves it out, as
-                                   the window's New Agent does
+                                   the window's New Agent does.
+                                   --meta issue=pending: its Issue is still
+                                   to be filed (an investigation): held to
+                                   its status only, not 'no_item', until
+                                   'agent meta <a> set issue <URL>' links it
   agent manage <a>                 put an agent under the orchestrator's
   agent unmanage <a>               management, or take it out (kept across
                                    restarts and resumes; shown in 'agents',

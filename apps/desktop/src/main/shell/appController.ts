@@ -295,6 +295,7 @@ import { GitHubItemSource } from "../orchestrator/githubItems.js";
 import { KeptFile } from "../orchestrator/keptFile.js";
 import {
 	ISSUE_LINK_KEY,
+	issueLinkOf,
 	type InvariantAgent,
 	type PullFacts,
 } from "../orchestrator/invariant.js";
@@ -8034,9 +8035,8 @@ export class AppController {
 				// A maintenance turn is read at the status before it (the service).
 				status: agent.status,
 				stopping: agent.controlState.kind !== "running",
-				...(agent.meta?.[ISSUE_LINK_KEY] === undefined
-					? {}
-					: { issue: agent.meta[ISSUE_LINK_KEY] }),
+				// `issue=pending` is no URL: no item to read or link, yet.
+				...issueLinkOf(agent.meta?.[ISSUE_LINK_KEY]),
 				...(pull === undefined ? {} : { pull }),
 			}));
 		});

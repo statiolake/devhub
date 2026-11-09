@@ -481,12 +481,15 @@ person's own and left out.
 managed agent linked to an item outside the population — closed or merged,
 not assigned to the viewer, on no registered Project — or to no item at all,
 **whatever it is doing**, for that reason alone: `outside_population
-(closed)`, `(unassigned)`, `(not_in_project)`, `(no_item)`. While the
+(closed)`, `(unassigned)`, `(not_in_project)`, `(no_item)` — except an
+agent whose Issue is still to be filed (`issue=pending`, "Work with no Issue
+yet" below), held to the status rule alone. While the
 population is not known — GitHub not polled, or its search not read in
 full yet — only the status rule applies to agents, and no item is said.
 
 **Linked**, the one rule: an agent is linked to the item its meta `issue=`
-names (by URL: an Issue's `/issues/N` or a pull request's `/pull/N`). DevHub
+names (by URL: an Issue's `/issues/N` or a pull request's `/pull/N`; the one
+other value, `pending`, links it to nothing yet). DevHub
 writes that pair itself when `issue assign` — or the window's Assign Issue —
 starts an agent on an Issue or a pull request (`ISSUE_LINK_KEY`). `agent
 meta`, `--meta` and `session meta` set it by hand too — to that URL only, so
@@ -521,6 +524,73 @@ What breaks it now is in `devhub --tell board` (`needs action (N):`,
 keeping), and each agent's standing in `agent status`
 (`invariant`: settled, or the clause it fails; the 待機中 escalation it is
 on; its keeping).
+
+### Work with no Issue yet
+
+Some work comes before its Issue: reading error logs to find out what to
+write in one. It gets a worktree and an agent like any other, and is linked
+to its Issue once there is one.
+
+```sh
+devhub --tell workspace open ~/src/app --worktree investigate-api-500s
+devhub --tell agent new --workspace ~/src/app_investigate-api-500s --profile claude --gui \
+    --managed --meta issue=pending --meta parent=<orchestrator> --prompt -
+# … the agent investigates, and files the Issue (gh issue create) …
+devhub --tell agent meta A set issue https://github.com/acme/app/issues/130
+```
+
+In the window, the Open Workspace picker (`Cmd+Q f`) offers what is typed as
+a **New Branch** row beside the repository's branches: the branch, started
+from the default, in a worktree of its own; `⌘↵` starts an agent there too,
+unmanaged like every agent the window starts.
+
+- **The branch is named by whoever starts the work**, whole, and DevHub
+  makes nothing up: `workspace open --worktree` takes any branch, as the
+  picker's branch rows always did. It is checked out if it exists (here or
+  on a remote) and otherwise started from `origin`'s default branch, as an
+  Issue's is. *Why*: the caller knows what the work is, and a name made from
+  it is what `git branch`, the Sidebar row and a later pull request show; a
+  generated `investigate-<date>-…` would be a second naming rule for the
+  window, the CLI and its Go port to share, and git refuses a duplicate
+  anyway. The `/devhub` skill suggests `investigate-<a-few-words>`.
+- **The folder is `<repo>_<branch>`** (`branchWorktreeDirectory`, `/` and
+  other awkward characters as `-`), beside the Issues' `<repo>_<N>`. A
+  branch whose name carries an Issue number (`feature/123-x`, `#123`) is
+  that Issue's work and goes in `<repo>_123`, as before. *Why*: the folder
+  rule already existed for the picker's branch rows; reusing it keeps one
+  rule, and a name with no number can never land in an Issue's folder.
+- **`issue=pending`** is the one value of the link key that is not a URL
+  (`ISSUE_PENDING`). A managed agent carrying it is held to the status rule
+  only — working, or one of the agents of a 要回答 or 待機中 escalation — and
+  never `outside_population (no_item)`: investigating is what it is for, so
+  it is not a stray to be closed. When it stops with nothing settling it, it
+  is `idle_no_escalation`, as any managed agent, and the orchestrator's next
+  step is the Issue: have the agent file it and link it, or raise an
+  escalation with the draft for the person. *Why a value of `issue=` and not
+  a new flag or key*: linking the Issue later is then the one call the
+  linkage rule already has (`agent meta A set issue <URL>` replaces it), so
+  "pending" and "linked" can never both be set or both be stale, and every
+  place that keeps metadata (restarts, resumes, `session meta`) keeps it
+  with no new code. DevHub reads it as no item — it is never fetched from
+  GitHub as a URL. *Why not unmanaged by default*: an agent the orchestrator
+  starts is the orchestrator's to watch; unmanaged it would leave no trace
+  when it stopped. An unmanaged agent (the window's) is left out anyway.
+- **Linked later**, it is an ordinary item's agent: the Issue just filed
+  and not on a registered Project yet is `outside_population
+  (not_in_project)` until it is put on one and assigned — which is the
+  person's workflow, said the usual way. Escalations about the agent become
+  about the item with it (they are "about" an item through its agents).
+- **The branch is not renamed when the Issue is linked.** *Why*: the agent
+  is working in it — its shell, its CLI session's folder, maybe a pushed
+  branch with a pull request — and the folder cannot follow a rename
+  without moving the agent; the Orchestrator links by `issue=`, never by
+  the branch, so nothing here needs it. If the team names branches by Issue,
+  the agent renames it itself (`git branch -m 130-api-500s`) before pushing:
+  the Sidebar then links the Workspace to #130 by the branch, and the folder
+  keeps its name, as `worktrees.ts` already has it for `feature/128-wip`.
+- **`status`** says it: `linked to no item yet (issue=pending: …)`, and in
+  `--json` `"linked": null, "pendingIssue": true`; `agent status` lists
+  `meta issue=pending`.
 
 ### `status`: one subject's whole state, in one call
 
@@ -899,13 +969,15 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
    reads its whole state with one `devhub --tell --json status <subject>`, then has the agent ask the person for a review, has it
    look deeper, raises an escalation, parks it with `escalation wait`, or
    stops it. A managed agent outside the population (its item closed or not
-   the person's) or with no item is **closed**, not kept
+   the person's) or with no item (unless `issue=pending`) is **closed**, not kept
    around: a subagent first asks that agent about unpushed work or an open
    pull request, then `agent stop` (and `workspace close` with its flags named)
    — unless the orchestrator decides it is still worth doing, and says why
    with `agent keep A --note`; never without a reason.
 5. **DevHub's conventions**: the item linkage rule (meta `issue=`, an
-   Issue's or a pull request's URL, by `issue assign`, never by hand), `--managed` (and `--meta parent=<its id>`) on
+   Issue's or a pull request's URL, by `issue assign`, never by hand; work
+   with no Issue yet: `workspace open --worktree` and `agent new --meta
+   issue=pending`, linked once the Issue is filed), `--managed` (and `--meta parent=<its id>`) on
    every agent it starts, never approving a permission prompt, never writing
    the person's answer, never taking the screen (`focus` only when asked),
    and holding back on new agents when a plan window runs high

@@ -208,6 +208,8 @@ export interface StatusAgent {
 	readonly managed: boolean;
 	/** The item URL its meta `issue=` links it to. */
 	readonly linked?: string;
+	/** Its meta `issue=pending`: no Issue yet, one to be filed and linked. */
+	readonly pendingIssue?: boolean;
 	/** The clause it fails, when it does. */
 	readonly needsAction?: string;
 	readonly kept?: { readonly note: string; readonly at: number };
@@ -925,6 +927,7 @@ export class OrchestratorService {
 			status: agent.stopping ? "stopping" : agent.status,
 			managed: agent.managed,
 			...(agent.issue === undefined ? {} : { linked: agent.issue }),
+			...(agent.issuePending === true ? { pendingIssue: true } : {}),
 			...(standing?.breach === undefined
 				? {}
 				: { needsAction: breachWords(standing.breach) }),

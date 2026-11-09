@@ -184,6 +184,8 @@ describe("the /devhub skill's examples", () => {
 		);
 		expect(starting.map((command) => command.verb).sort()).toEqual([
 			"agent-new",
+			// Work with no Issue yet: a worktree, then an agent in it.
+			"agent-new",
 			"issue-assign",
 		]);
 		for (const command of starting) {

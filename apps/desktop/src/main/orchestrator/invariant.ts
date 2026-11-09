@@ -23,7 +23,10 @@
  * needs action. So does one whose item is outside the population — closed,
  * not assigned to the viewer, on no registered Project — or that has no item
  * at all,
- * whatever it is doing: for that reason alone. While the population is not
+ * whatever it is doing: for that reason alone. One whose Issue is still to
+ * be written (meta `issue=pending`, `ISSUE_PENDING`: the investigation an
+ * Issue is filed from) has no item yet by its own account, and is held to
+ * the first rule only, until it is linked. While the population is not
  * known (GitHub is not read, or not in full yet), only the first rule is
  * applied to agents, and no item is said.
  *
@@ -75,6 +78,23 @@ import type { KeptStore } from "./keptFile.js";
  */
 export const ISSUE_LINK_KEY = "issue";
 
+/**
+ * The one value of `issue=` that is not an item's URL: the agent's work has
+ * no Issue yet — it is the investigation an Issue is to be written from —
+ * and one is to be filed and linked (`agent meta A set issue <URL>`, which
+ * replaces it). Such a managed agent is held to the status rule only, not
+ * `outside_population (no_item)`.
+ */
+export const ISSUE_PENDING = "pending";
+
+/** An agent's meta `issue=` as the invariant reads it: a URL, or pending. */
+export function issueLinkOf(
+	value: string | undefined,
+): Pick<InvariantAgent, "issue" | "issuePending"> {
+	if (value === undefined) return {};
+	return value === ISSUE_PENDING ? { issuePending: true } : { issue: value };
+}
+
 /** A pull request's state, as `status` gives it. */
 export interface PullFacts {
 	readonly number: number;
@@ -124,8 +144,10 @@ export interface InvariantAgent {
 	/** working, background, waiting, idle, error, unknown. */
 	readonly status: string;
 	readonly stopping: boolean;
-	/** The item it is linked to: its meta `issue=`. */
+	/** The item it is linked to: its meta `issue=`, an item's URL. */
 	readonly issue?: string;
+	/** Its meta `issue=pending`: no Issue yet, one to be filed (`ISSUE_PENDING`). */
+	readonly issuePending?: boolean;
 	/** Its Workspace's pull request, as the Sidebar has it. */
 	readonly pull?: PullFacts;
 }
@@ -442,7 +464,9 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 			items === undefined
 				? undefined
 				: agent.issue === undefined
-					? "no_item"
+					? agent.issuePending === true
+						? undefined
+						: "no_item"
 					: item === undefined
 						? "not_in_project"
 						: outsideReason(item);
@@ -454,7 +478,7 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 					: { clause: "idle_no_escalation" };
 		const keepFacts = [
 			`status=${agent.stopping ? "stopping" : agent.status}`,
-			`issue=${agent.issue ?? "none"}`,
+			`issue=${agent.issue ?? (agent.issuePending === true ? ISSUE_PENDING : "none")}`,
 			...(item === undefined ? [] : itemFacts(item)),
 			...escalationFacts(mine),
 		];

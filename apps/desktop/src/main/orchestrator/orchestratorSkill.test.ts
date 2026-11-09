@@ -99,6 +99,7 @@ describe("the /devhub-orchestrator skill", () => {
 			"agent keep",
 			"--managed",
 			"meta issue=",
+			"issue=pending",
 			"parent=",
 			"決して承認しない",
 			"回答を書かない",

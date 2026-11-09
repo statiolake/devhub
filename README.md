@@ -215,7 +215,7 @@ devhub --tell skill                                   # the /devhub SKILL.md, fo
 devhub --tell skill --orchestrator                    # the /devhub-orchestrator SKILL.md (writing make-progress), for an orchestrator DevHub did not start
 devhub --tell workspaces                              # open workspaces: id, folder, branch, worktree, Issue, PR, unresolved conversations, CI, agents
 devhub --tell workspace status W                      # one workspace's Issue (lanes), PR (draft, review decision), unresolved conversations, CI counts, as of when (--json: under "github", null when unknown)
-devhub --tell workspace open ~/src/app [--worktree 123-fix-login]   # Cmd+Q f
+devhub --tell workspace open ~/src/app [--worktree BRANCH]   # Cmd+Q f; --worktree: BRANCH's worktree, made from origin's default if need be (no Issue needed: docs/orchestrator.md, "Work with no Issue yet")
 devhub --tell workspace close W [--worktree keep|remove] [--agents stop] [--terminals close] [--discard-unsaved]   # Close Workspace; each question the window would ask is a required flag when it applies
 devhub --tell profiles                                # agent profiles: id, name, kind, --gui/--tui, the window's default, available (and why not)
 devhub --tell agents [--workspace W] [--meta K=V]...  # id, name, kind, status and for how long, open requests, unread, context, meta

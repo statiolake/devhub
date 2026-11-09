@@ -236,6 +236,21 @@ names an agent, yourself included.
 
 Then tell the person which agent took it (id, workspace, branch).
 
+## Work with no Issue yet (e.g. investigating logs to write one)
+
+    devhub --tell workspace open ~/src/REPO --worktree investigate-api-500s
+    devhub --tell agent new --workspace ~/src/REPO_investigate-api-500s --profile claude --gui --managed --meta issue=pending --name "API 500s" --prompt "..."
+
+- \`--worktree\` makes the branch (from origin's default) and its worktree,
+  \`<repo>_<branch>\`, when they are not there yet. Name it for the work,
+  with no Issue number in it: \`investigate-<a-few-words>\`.
+- \`--meta issue=pending\` says its Issue is still to be filed, so the
+  orchestrator does not take it for an agent with no item.
+- Once the Issue is filed (\`gh issue create\`), link it:
+  \`agent meta A set issue https://github.com/OWNER/REPO/issues/N\`. The
+  branch keeps its name; rename it yourself (\`git branch -m\`) before you
+  push, if the team names branches by Issue.
+
 ## Monitor other agents
 
     devhub --tell agent wait A --until any --timeout 300   # returns when A is idle or waiting

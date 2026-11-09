@@ -130,6 +130,56 @@ describe("the invariant", () => {
 		]);
 	});
 
+	it("holds an agent whose Issue is still to be filed to the status rule only", () => {
+		const pending = (overrides: Partial<InvariantAgent>) =>
+			agent({ issue: undefined, issuePending: true, ...overrides });
+		// Investigating: settled, not outside_population (no_item).
+		const working = readInvariant({
+			items: [],
+			agents: [pending({})],
+			escalations: [],
+		});
+		expect(keys(working)).toEqual([]);
+		expect(working.agents.get("a1b2c3d4-0000")?.settled).toBe(true);
+		// Stopped with nothing settling it: an ordinary idle agent, said once
+		// per delivery like any other, with its pending link among its facts.
+		const idle = readInvariant({
+			items: [],
+			agents: [pending({ status: "idle" })],
+			escalations: [],
+		});
+		expect(clauses(idle)).toEqual([
+			["agent a1b2c3d4-0000", { clause: "idle_no_escalation" }],
+		]);
+		expect(idle.needsAction[0]?.facts).toContain("issue=pending");
+		// On a 要回答 escalation (the draft Issue, for the person): settled.
+		expect(
+			keys(
+				readInvariant({
+					items: [],
+					agents: [pending({ status: "idle" })],
+					escalations: [escalation({ state: "needs_answer" })],
+				}),
+			),
+		).toEqual([]);
+		// Once linked, it is an ordinary item's agent: the Issue, filed and not
+		// on a registered Project yet, is outside the population.
+		expect(
+			clauses(
+				readInvariant({
+					items: [issue({ projects: [] })],
+					agents: [agent({ status: "working" })],
+					escalations: [],
+				}),
+			),
+		).toEqual([
+			[
+				"agent a1b2c3d4-0000",
+				{ clause: "outside_population", outside: "not_in_project" },
+			],
+		]);
+	});
+
 	it("says a managed agent whose item left the population, working or not, and why", () => {
 		for (const [facts, outside] of [
 			[{ state: "closed" }, "closed"],
