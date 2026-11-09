@@ -84,6 +84,8 @@ function page() {
   let chooser: Extract<ControlToPage, { kind: "chooser" }> | undefined;
   let copy: Extract<ControlToPage, { kind: "copy-mode" }> | undefined;
   const clipboard: string[] = [];
+  /** Pane frames since the last copy-mode state: its rows come in the next. */
+  let framesSinceCopy = 0;
   let numbers: Extract<ControlToPage, { kind: "display-panes" }> | undefined;
   const post = (message: ControlToPage) => {
     if (message.kind === "layout") layout = message;
@@ -92,7 +94,10 @@ function page() {
     else if (message.kind === "menu") menu = message;
     else if (message.kind === "menu-closed") menu = undefined;
     else if (message.kind === "chooser") chooser = message;
-    else if (message.kind === "copy-mode") copy = message;
+    else if (message.kind === "copy-mode") {
+      copy = message;
+      framesSinceCopy = 0;
+    }
     else if (message.kind === "copy-mode-closed") copy = undefined;
     else if (message.kind === "clipboard") clipboard.push(message.text);
     else if (message.kind === "chooser-closed") chooser = undefined;
@@ -101,6 +106,7 @@ function page() {
     else if (message.kind === "ended") ended = message.reason;
     else if (message.kind === "notice") notices.push(message.text);
     else if (message.kind === "pane") {
+      framesSinceCopy += 1;
       const rows = screens.get(message.pane) ?? [];
       for (const row of message.frame.dirty)
         rows[row.y] = row.cells.join("").trimEnd();
@@ -129,6 +135,9 @@ function page() {
     },
     get copy() {
       return copy;
+    },
+    get framesSinceCopy() {
+      return framesSinceCopy;
     },
     clipboard,
     get numbers() {
@@ -412,9 +421,12 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       /\[0\/\d+\]/,
     );
     // The person's copy-mode-vi table, as tmux runs it: up 30, select a line.
+    // The mode's state is posted at once, the rows it shows in the next frame.
     client.receive({ kind: "keys", keys: ["3", "0", "k", "V"] });
-    await until("the selection", () =>
-      view.copy?.selection.length === 1 && view.copy.scroll > 0
+    await until("the selection, drawn", () =>
+      view.copy?.selection.length === 1 &&
+      view.copy.scroll > 0 &&
+      view.framesSinceCopy > 0
         ? true
         : undefined,
     );
