@@ -52,19 +52,32 @@
   border-style: dashed;
 }
 
-/* The active pane's cursor. Its shape is the program's (`DECSCUSR`):
-   0 bar, 1 block, 2 underline, 3 hollow block. */
+/* The active pane's cursor, in the program's colour (OSC 12) or the
+   theme's `cursor`. Its shape is the program's (`DECSCUSR`): 0 bar, 1 block,
+   2 underline, 3 hollow block. A block holds its character painted as the
+   row paints it, in the theme's `cursor_text` (`paintCursorCell`), as Ghostty
+   and the old terminal draw it; not a colour blended over the text, which
+   showed neither colour (a dark cursor on a light ground came out light
+   grey). Without the keyboard any shape is a hollow block, as in Ghostty. */
 .control-cursor {
   position: absolute;
   /* Over the panes' canvases, which the painter stacks at their z. */
   z-index: 5;
   pointer-events: none;
   box-sizing: border-box;
+  overflow: hidden;
+}
+
+.control-cursor > canvas {
+  display: none;
 }
 
 .control-cursor[data-shape="1"] {
   background: var(--control-cursor);
-  mix-blend-mode: difference;
+}
+
+.control-cursor[data-shape="1"] > canvas {
+  display: block;
 }
 
 .control-cursor[data-shape="0"] {
@@ -78,8 +91,11 @@
 .control-cursor[data-shape="3"],
 .control-terminal:not(:focus-within) .control-cursor {
   background: none;
-  mix-blend-mode: normal;
   border: 1px solid var(--control-cursor);
+}
+
+.control-terminal:not(:focus-within) .control-cursor > canvas {
+  display: none;
 }
 
 /* An IME's preedit: a canvas the painter draws as it draws the panes, at

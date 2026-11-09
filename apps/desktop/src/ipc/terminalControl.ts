@@ -39,6 +39,11 @@ export interface VtCursor {
 	readonly blinking: boolean;
 	/** `GhosttyCursorVisualStyle`: 0 bar, 1 block, 2 underline, 3 hollow block. */
 	readonly shape: number;
+	/**
+	 * The colour the program set for the cursor (OSC 12, until OSC 112 resets
+	 * it), as 24-bit RGB; absent: the theme's `cursor`.
+	 */
+	readonly color?: number;
 }
 
 /** What changed since the last read. */

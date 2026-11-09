@@ -11,6 +11,7 @@ import { useColorScheme } from "../../appearance";
 import { Failure, Waiting } from "../../components/shell/SurfaceState";
 import {
   GridPainter,
+  cssColor,
   mixColors,
   rgbOfCss,
   type FontSpec,
@@ -54,6 +55,7 @@ import {
   applyControl,
   borders,
   gridOf,
+  POPUP_GRID,
   paneRings,
   newControlView,
   paneAt,
@@ -160,7 +162,10 @@ function colorsOf(palette: TerminalPalette | undefined) {
     selection:
       rgbOfCss(palette?.selectionBackground ?? "") ??
       mixColors(foreground, background, 25),
-    cursor: palette?.cursor ?? palette?.foreground ?? "#d0d0d0",
+    // The block cursor is the theme's `cursor`, the character in it its
+    // `cursor_text` (as Ghostty and the old terminal draw them).
+    cursor: rgbOfCss(palette?.cursor ?? "") ?? foreground,
+    cursorText: rgbOfCss(palette?.cursorText ?? "") ?? background,
     palette: ansi.length === 16 ? palette256(ansi) : undefined,
   };
 }
@@ -227,6 +232,10 @@ export function ControlTerminalSurface({
     lines.className = "control-borders";
     const cursor = document.createElement("div");
     cursor.className = "control-cursor";
+    // The character under a block cursor, painted as its row paints it
+    // (`paintCursorCell`, as the Neovim editor's cursor).
+    const cursorCell = document.createElement("canvas");
+    cursor.append(cursorCell);
     const popupFrame = document.createElement("div");
     popupFrame.className = "control-popup";
     popupFrame.hidden = true;
@@ -526,10 +535,35 @@ export function ControlTerminalSurface({
       } else {
         cursor.style.display = "";
         cursor.dataset.shape = String(at.shape);
+        const grid = view.state.grids.get(
+          popup !== undefined ? POPUP_GRID : gridOf(pane.pane),
+        );
+        const wide =
+          grid !== undefined &&
+          at.y < grid.height &&
+          grid.chars[at.y * grid.width + at.x + 1] === "";
+        // The program's colour (OSC 12) or the theme's; the character in a
+        // block in the theme's `cursor_text`.
+        const { cursor: themeCursor, cursorText } = live.current.colors;
+        const color = at.color ?? themeCursor;
+        cursor.style.setProperty("--control-cursor", cssColor(color));
         cursor.style.left = `${String((pane.x + at.x) * width)}px`;
         cursor.style.top = `${String((pane.y + at.y) * height)}px`;
-        cursor.style.width = `${String(width)}px`;
+        cursor.style.width = `${String(width * (wide ? 2 : 1))}px`;
         cursor.style.height = `${String(height)}px`;
+        if (at.shape === 1 && grid !== undefined) {
+          painter.paintCursorCell(
+            cursorCell,
+            view.state,
+            {
+              grid: popup !== undefined ? POPUP_GRID : gridOf(pane.pane),
+              row: at.y,
+              col: at.x,
+            },
+            cursorText,
+            color,
+          );
+        }
         input.style.left = cursor.style.left;
         input.style.top = cursor.style.top;
       }
@@ -1365,7 +1399,6 @@ export function ControlTerminalSurface({
       style={
         {
           ...terminalSurfaceStyle(palette, appearance?.terminalMargin),
-          "--control-cursor": colors.cursor,
           ...(palette
             ? {
                 "--terminal-foreground": palette.foreground,

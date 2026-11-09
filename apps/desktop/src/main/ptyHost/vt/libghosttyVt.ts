@@ -51,6 +51,8 @@ const enum TerminalData {
 const enum RenderData {
 	Dirty = 3,
 	RowIterator = 4,
+	ColorCursor = 7,
+	ColorCursorHasValue = 8,
 	CursorVisualStyle = 10,
 	CursorVisible = 11,
 	CursorBlinking = 12,
@@ -648,12 +650,28 @@ export class VtPane {
 					: dv.getUint32(s + S.u32, true);
 		};
 		if (get(RenderData.CursorViewportHasValue, 1) === 0) return undefined;
+		// No default cursor colour is given to the terminal (`setColors`
+		// leaves it to the page's theme), so a colour here is the program's
+		// own: OSC 12, until OSC 112.
+		const color =
+			get(RenderData.ColorCursorHasValue, 1) !== 0
+				? (() => {
+						lib.views().dv.setUint32(s + S.u32, 0, true);
+						ex.ghostty_render_state_get(
+							this.#render,
+							RenderData.ColorCursor,
+							s + S.u32,
+						);
+						return rgbAt(lib.views().u8, s + S.u32);
+					})()
+				: undefined;
 		return {
 			x: get(RenderData.CursorViewportX, 2),
 			y: get(RenderData.CursorViewportY, 2),
 			visible: get(RenderData.CursorVisible, 1) !== 0,
 			blinking: get(RenderData.CursorBlinking, 1) !== 0,
 			shape: get(RenderData.CursorVisualStyle, 4),
+			...(color === undefined ? {} : { color }),
 		};
 	}
 
