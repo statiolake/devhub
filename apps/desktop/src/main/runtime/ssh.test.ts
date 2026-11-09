@@ -21,12 +21,13 @@ import {
 	mkdir,
 	mkdtemp,
 	readFile,
+	readdir,
 	rm,
 	stat,
 	writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
 	afterAll,
 	afterEach,
@@ -216,16 +217,29 @@ const FAKE_TMUX: ToolDelivery = {
 	tarball: () => Promise.reject(new Error("no tmux is installed in this test")),
 };
 
-/** The Node a launcher test finds already on the host (see its `beforeEach`). */
-const FAKE_NODE: ToolDelivery = {
-	tool: "node",
-	version: "22.21.1",
-	directory: ".devhub-server/node",
-	tarball: () => Promise.reject(new Error("no node is installed in this test")),
+/**
+ * The app's own `devhub`, as a launcher test delivers it: one file, the
+ * binary format `BundledToolDelivery` hands over. A script standing in for
+ * the Go binary, answering `--help` as the binary does.
+ */
+const FAKE_DEVHUB_BYTES = new TextEncoder().encode(
+	'#!/bin/sh\n[ "$1" = --help ] && echo "devhub — drive the running DevHub"\n',
+);
+const FAKE_DEVHUB: ToolDelivery = {
+	tool: "devhub",
+	version: "0123456789ab",
+	directory: ".devhub-server/devhub",
+	tarball: () =>
+		Promise.resolve({
+			bytes: FAKE_DEVHUB_BYTES,
+			format: "binary",
+			topLevelDirectory: "",
+			verifiedSha256: undefined,
+		}),
 };
 
-function NODE_ON_HOST(home: string): string {
-	return `${home}/.devhub-server/node/22.21.1/bin/node`;
+function DEVHUB_ON_HOST(home: string): string {
+	return `${home}/.devhub-server/devhub/0123456789ab/bin/devhub`;
 }
 
 function fakeRuntime(): SshRuntime {
@@ -611,11 +625,6 @@ describe("the terminal launcher on the host", () => {
 	beforeEach(async () => {
 		remoteHome = await mkdtemp("/tmp/devhub-remote-home-");
 		log = join(remoteHome, "ssh.log");
-		// A Node already installed there, so the launcher's install finds it
-		// answering and fetches nothing.
-		const node = NODE_ON_HOST(remoteHome);
-		await mkdir(dirname(node), { recursive: true });
-		await writeFile(node, "#!/bin/sh\necho v22.21.1\n", { mode: 0o755 });
 	});
 	afterEach(async () => {
 		await rm(remoteHome, { recursive: true, force: true });
@@ -635,59 +644,60 @@ describe("the terminal launcher on the host", () => {
 				DEVHUB_FAKE_FORWARD: forward,
 			},
 			tmux: FAKE_TMUX,
-			node: FAKE_NODE,
+			devhub: FAKE_DEVHUB,
 		});
 	}
 
 	const spec: TerminalLauncherSpec = {
 		localLauncherPath: "/data/devhub/devhub/devhub-terminal",
 		controlSocketPath: "/data/devhub/devhub/control.sock",
-		entryText:
-			'import { connect } from "node:net";\nexport const e = connect;\n',
-		entryName: "devhub-terminal.bundle.js",
-		cliText: 'import { connect } from "node:net";\nexport const c = connect;\n',
-		cliEntryName: "devhub-cli.bundle.js",
 	};
 
-	it("writes the asking program, one file, and a launcher that names it", async () => {
+	async function shimOf(launcher: { binDirectory: string | undefined }) {
+		return readFile(`${launcher.binDirectory ?? ""}/devhub`, "utf8");
+	}
+
+	it("installs the app's own devhub there, and no Node, asking program or launcher", async () => {
 		const launcher = await runtimeWith().terminalLauncher(spec);
 		expect(launcher.unreachable).toBeUndefined();
-		const script = await readFile(launcher.path, "utf8");
-		// DevHub's own Node there, at the version this DevHub pins.
-		expect(script).toContain(NODE_ON_HOST(remoteHome));
-		expect(script).toContain(
-			`${remoteHome}/.devhub/terminal/js/devhub-terminal.bundle.js`,
+		expect(launcher.path).toBeUndefined();
+		const binary = DEVHUB_ON_HOST(remoteHome);
+		expect(await readFile(binary)).toEqual(Buffer.from(FAKE_DEVHUB_BYTES));
+		expect((await stat(binary)).mode & 0o777).toBe(0o755);
+		const terminal = join(remoteHome, ".devhub", "terminal");
+		expect((await readdir(terminal)).sort()).toEqual(
+			expect.arrayContaining([expect.stringMatching(/^bin-[0-9a-f]{12}$/)]),
 		);
-		// The machine, so that `/srv/app` here is not `/srv/app` there.
-		expect(script).toContain(
-			"DEVHUB_TERMINAL_MACHINE='ssh:build-box.example.com'",
-		);
-		expect((await stat(launcher.path)).mode & 0o777).toBe(0o755);
-		const entryRoot = join(remoteHome, ".devhub", "terminal", "js");
-		expect(
-			await readFile(join(entryRoot, "devhub-terminal.bundle.js"), "utf8"),
-		).toBe(spec.entryText);
-		// Without this Node reads the bundled ES module as CommonJS and the
-		// first `import` is a syntax error.
-		expect(
-			JSON.parse(await readFile(join(entryRoot, "package.json"), "utf8")),
-		).toEqual({ type: "module" });
+		for (const name of await readdir(terminal)) {
+			expect(name).not.toMatch(/^(js|devhub-terminal-)/);
+		}
+		await expect(
+			stat(join(remoteHome, ".devhub-server", "node")),
+		).rejects.toThrow();
+	});
+
+	it("installs it once: a second DevHub with the same build finds it answering", async () => {
+		await runtimeWith().terminalLauncher(spec);
+		const before = (await stat(DEVHUB_ON_HOST(remoteHome))).mtimeMs;
+		await runtimeWith().terminalLauncher(spec);
+		expect((await stat(DEVHUB_ON_HOST(remoteHome))).mtimeMs).toBe(before);
 	});
 
 	it("forwards DevHub's own control socket onto the host", async () => {
 		const launcher = await runtimeWith().terminalLauncher(spec);
-		const remoteSocket = `${remoteHome}/.devhub/terminal/${
-			launcher.path.split("/").pop()?.replace("devhub-terminal-", "control-") ??
-			""
-		}.sock`;
+		const remoteSocket =
+			/DEVHUB_CONTROL_SOCKET='([^']*)'/.exec(await shimOf(launcher))?.[1] ?? "";
+		expect(remoteSocket).toMatch(
+			new RegExp(
+				`^${remoteHome}/\\.devhub/terminal/control-[0-9a-f]{12}\\.sock$`,
+			),
+		);
 		const lines = (await readFile(log, "utf8")).split("\n");
 		const forward = lines.find((line) => line.includes("-O forward"));
 		expect(forward).toContain(
 			`-R ${remoteSocket}:/data/devhub/devhub/control.sock`,
 		);
 		expect(forward).toContain("build-box.example.com");
-		// The launcher talks to the forwarded socket, not to a path on this Mac.
-		expect(await readFile(launcher.path, "utf8")).toContain(remoteSocket);
 	});
 
 	it("puts a devhub on the host that says which machine it is on", async () => {
@@ -698,7 +708,7 @@ describe("the terminal launcher on the host", () => {
 		const shim = `${launcher.binDirectory ?? ""}/devhub`;
 		const script = await readFile(shim, "utf8");
 		expect(script).toContain("DEVHUB_MACHINE='ssh:build-box.example.com'");
-		expect(script).toContain(NODE_ON_HOST(remoteHome));
+		expect(script).toContain(`exec '${DEVHUB_ON_HOST(remoteHome)}' "$@"`);
 		expect(script).toMatch(
 			/DEVHUB_CONTROL_SOCKET='[^']*\/control-[0-9a-f]{12}\.sock'/,
 		);
@@ -784,7 +794,7 @@ describe("the terminal launcher on the host", () => {
 		expect(launcher.unreachable).toContain("cannot bind");
 		// Still written: run from the host it says the socket is not answering,
 		// which is the same fact where a person is actually looking.
-		expect(await readFile(launcher.path, "utf8")).toContain("devhub_argv");
+		expect(await shimOf(launcher)).toContain("DEVHUB_CONTROL_SOCKET=");
 	});
 
 	// `-O forward` can report success and leave nothing bound. A launcher

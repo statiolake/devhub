@@ -3,7 +3,6 @@ import {
 	DEFAULT_WAIT_SECONDS,
 	TELL_USAGE,
 	parseTellArguments,
-	tellCommandFrom,
 	type TellCommand,
 } from "./command.js";
 
@@ -81,20 +80,11 @@ describe("devhub --tell's arguments", () => {
 			terminals: "close",
 			discardUnsaved: true,
 		});
-		expect(tellCommandFrom(JSON.parse(JSON.stringify(close)))).toEqual(close);
 		expect(told("workspace", "close", "w1")).toEqual({
 			verb: "workspace-close",
 			workspace: "w1",
 			discardUnsaved: false,
 		});
-		expect(() =>
-			tellCommandFrom({
-				verb: "workspace-close",
-				workspace: "w1",
-				discardUnsaved: false,
-				worktree: "stash",
-			}),
-		).toThrow(/worktree must be keep or remove/);
 		expect(told("workspace", "status", "w1")).toEqual({
 			verb: "workspace-status",
 			workspace: "w1",
@@ -106,9 +96,6 @@ describe("devhub --tell's arguments", () => {
 		expect(told("agent", "new", "--profile", "claude")).toEqual({
 			verb: "agent-new",
 			profile: "claude",
-		});
-		expect(tellCommandFrom({ verb: "agent-new" })).toEqual({
-			verb: "agent-new",
 		});
 	});
 
@@ -162,9 +149,6 @@ describe("devhub --tell's arguments", () => {
 			agent: "A",
 			managed: false,
 		});
-		expect(
-			tellCommandFrom({ verb: "agent-manage", agent: "A", managed: false }),
-		).toEqual({ verb: "agent-manage", agent: "A", managed: false });
 	});
 
 	it("reads agent keep with a note or --clear, never both or neither", () => {
@@ -327,83 +311,6 @@ describe("devhub --tell's arguments", () => {
 	});
 });
 
-describe("a tell command off the socket", () => {
-	it("accepts what the parser produces", () => {
-		const commands: TellCommand[] = [
-			{ verb: "help" },
-			{ verb: "workspaces" },
-			{ verb: "workspace-open", path: "/src/app", worktree: "1-x" },
-			{ verb: "agents", workspace: "w" },
-			{ verb: "agent-new", workspace: "w", prompt: "p", presentation: "tui" },
-			{
-				verb: "issue-assign",
-				url: "u",
-				repo: "/r",
-				branch: "b",
-				place: "root",
-				editorOnly: false,
-			},
-			{
-				verb: "issue-assign",
-				url: "u",
-				repo: "/r",
-				branch: "b",
-				place: "worktree",
-				editorOnly: false,
-				name: "login fix",
-				offline: true,
-			},
-			{ verb: "agent-read", agent: "a", last: 3, since: "e" },
-			{ verb: "agent-send", agent: "a", text: "t" },
-			{ verb: "agent-interrupt", agent: "a" },
-			{ verb: "agent-requests", agent: "a" },
-			{
-				verb: "agent-answer",
-				agent: "a",
-				request: "r",
-				options: [1],
-				text: "t",
-			},
-			{ verb: "agent-wait", agent: "a", until: "waiting", timeoutSeconds: 10 },
-			{ verb: "commands" },
-			{ verb: "run", command: "next_agent" },
-			{ verb: "focus", target: "a" },
-			{ verb: "notify", text: "n" },
-		];
-		for (const command of commands)
-			expect(tellCommandFrom(JSON.parse(JSON.stringify(command)))).toEqual(
-				command,
-			);
-	});
-
-	it("refuses anything else", () => {
-		expect(() => tellCommandFrom(null)).toThrow();
-		expect(() => tellCommandFrom({ verb: "shell" })).toThrow(/unknown/);
-		expect(() =>
-			tellCommandFrom({ verb: "workspace-open", path: "relative" }),
-		).toThrow(/absolute/);
-		expect(() =>
-			tellCommandFrom({
-				verb: "agent-wait",
-				agent: "a",
-				until: "any",
-				timeoutSeconds: 100000,
-			}),
-		).toThrow(/timeoutSeconds/);
-		expect(() =>
-			tellCommandFrom({
-				verb: "agent-answer",
-				agent: "a",
-				request: "r",
-				options: ["1"],
-			}),
-		).toThrow(/option/);
-		expect(() =>
-			tellCommandFrom({ verb: "agent-new", workspace: "w", presentation: "x" }),
-		).toThrow(/presentation/);
-	});
-});
-
 describe("devhub --tell terminal", () => {
 	it("opens your own terminal, with a command and the keyboard if asked", () => {
 		expect(told("terminal", "open")).toEqual({
@@ -449,24 +356,6 @@ describe("devhub --tell terminal", () => {
 		});
 		expect(refusal("terminal", "bring")).toMatch(/<pane>/);
 		expect(refusal("terminal", "bring", "ws-1:0.1")).toMatch(/%7/);
-	});
-
-	it("takes back off the socket exactly what it parses", () => {
-		for (const command of [
-			told("terminal", "open", "--command", "make", "--focus"),
-			told("terminal", "open"),
-			told("terminal", "status"),
-			told("terminal", "close"),
-			told("terminal", "panes"),
-			told("terminal", "bring", "%3", "--focus"),
-		]) {
-			expect(tellCommandFrom(JSON.parse(JSON.stringify(command)))).toEqual(
-				command,
-			);
-		}
-		expect(() =>
-			tellCommandFrom({ verb: "terminal-open", focus: "yes" }),
-		).toThrow(/focus/);
 	});
 
 	it("is in the help", () => {
@@ -567,47 +456,6 @@ describe("devhub --tell's orchestration commands", () => {
 		expect(refusal("sessions", "--limit", "0")).toMatch(/from 1/);
 	});
 
-	it("takes them back off the socket exactly as parsed, and nothing else", () => {
-		for (const command of [
-			told("agent", "stop", "A1"),
-			told("agent", "restart", "A1"),
-			told("agent", "status", "A1"),
-			told("agent", "wait", "--any"),
-			told("agent", "wait", "--any", "A1", "B2", "--until", "waiting"),
-			told("agent", "wait", "--all", "--workspace", "/src/app"),
-			told("sessions", "--profile", "claude", "--limit", "3"),
-			told("agent", "resume", "abcd-1234", "--profile", "codex"),
-		]) {
-			expect(tellCommandFrom(JSON.parse(JSON.stringify(command)))).toEqual(
-				command,
-			);
-		}
-		expect(() =>
-			tellCommandFrom({
-				verb: "agent-wait-many",
-				mode: "some",
-				agents: [],
-				until: "any",
-				timeoutSeconds: 5,
-			}),
-		).toThrow(/mode/);
-		expect(() =>
-			tellCommandFrom({
-				verb: "agent-wait-many",
-				mode: "any",
-				agents: [3],
-				until: "any",
-				timeoutSeconds: 5,
-			}),
-		).toThrow(/agents/);
-		expect(() => tellCommandFrom({ verb: "sessions", limit: 0 })).toThrow(
-			/limit/,
-		);
-		expect(() =>
-			tellCommandFrom({ verb: "agent-resume", session: "" }),
-		).toThrow(/session/);
-	});
-
 	it("is in the help", () => {
 		for (const line of [
 			"agent status <a>",
@@ -654,22 +502,6 @@ describe("devhub --tell link", () => {
 		expect(refusal("link", "agent")).toMatch(/<agent>/u);
 		expect(refusal("link", "file", "a.ts:0")).toMatch(/start at 1/u);
 		expect(TELL_USAGE).toContain("link agent <a> | workspace <w> | file");
-	});
-
-	it("comes back off the socket as it went, a file's path absolute", () => {
-		const file: TellCommand = {
-			verb: "link",
-			kind: "file",
-			target: "/a/b.ts",
-			line: 2,
-		};
-		expect(tellCommandFrom(JSON.parse(JSON.stringify(file)))).toEqual(file);
-		expect(() =>
-			tellCommandFrom({ verb: "link", kind: "file", target: "b.ts" }),
-		).toThrow(/absolute/u);
-		expect(() => tellCommandFrom({ verb: "link", kind: "robot" })).toThrow(
-			/kind/u,
-		);
 	});
 
 	it("takes --link on escalation ask", () => {

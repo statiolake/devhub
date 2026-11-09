@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { COMMANDS } from "../../../model/commands.js";
 import { parseControlRequest } from "../protocol.js";
 import { parseTellArguments } from "./command.js";
+import { tellFromWords } from "./request.js";
 import type { OrchestratorBoardWire } from "../../../ipc/contract.js";
 import type {
 	EntryId,
@@ -1409,21 +1410,27 @@ describe("where a tmux pane is in its window", () => {
 // --- orchestrating other agents -----------------------------------------------
 
 /**
- * A command line, the way it reaches the app: parsed as the CLI parses it,
- * sent as a `tell` control request, and taken back off the socket.
+ * A command line, the way it reaches the app: the words as the `devhub`
+ * command sends them in a `tell` control request, taken off the socket and
+ * parsed there.
  */
 function viaSocket(
 	service: TellService,
 	argv: readonly string[],
 	caller: TellCaller | undefined,
 ) {
-	const parsed = parseTellArguments(argv);
-	if (parsed.kind !== "tell") throw new Error(parsed.message);
 	const request = parseControlRequest(
-		JSON.stringify({ kind: "tell", command: parsed.command }),
+		JSON.stringify({ kind: "tell", argv, cwd: "/", home: "/home/d" }),
 	);
 	if (request.kind !== "tell") throw new Error("not a tell request");
-	return service.run(request.command, caller);
+	const words = tellFromWords(
+		request.argv,
+		request.cwd,
+		request.home,
+		undefined,
+	);
+	if (words.kind !== "tell") throw new Error(JSON.stringify(words));
+	return service.run(words.command, caller);
 }
 
 function said(text: string): TranscriptEntry {
@@ -3915,24 +3922,25 @@ describe("callers DevHub did not start", () => {
 		expect(parseTellArguments(["--as", "has space", "agents"]).kind).toBe(
 			"invalid",
 		);
-		// And across the socket, checked again on the app's side.
+		// And across the socket: the words go as typed, and the app reads them.
 		const request = parseControlRequest(
 			JSON.stringify({
 				kind: "tell",
-				command: { verb: "agents" },
-				as: "claude-desktop",
+				argv: ["--as", "claude-desktop", "agents"],
+				cwd: "/",
+				home: "/h",
 			}),
 		);
-		expect(request).toMatchObject({ kind: "tell", as: "claude-desktop" });
-		expect(() =>
-			parseControlRequest(
-				JSON.stringify({
-					kind: "tell",
-					command: { verb: "agents" },
-					as: "a b",
-				}),
-			),
-		).toThrow(/--as takes a name/u);
+		if (request.kind !== "tell") throw new Error("not a tell");
+		expect(
+			tellFromWords(request.argv, request.cwd, request.home, undefined),
+		).toMatchObject({ kind: "tell", as: "claude-desktop" });
+		expect(
+			tellFromWords(["--as", "a b", "agents"], "/", "/h", undefined),
+		).toMatchObject({
+			kind: "invalid",
+			message: expect.stringMatching(/--as takes a name/u),
+		});
 	});
 });
 

@@ -266,8 +266,8 @@ export interface SshRuntimeOptions {
 	 * same reason as `tmux`.
 	 */
 	readonly bash?: ToolDelivery;
-	/** Where the Node DevHub installs on this host comes from, for its `devhub`. */
-	readonly node?: ToolDelivery;
+	/** Where the `devhub` command DevHub installs on this host comes from. */
+	readonly devhub?: ToolDelivery;
 	/** Where the Neovim DevHub installs on this host comes from. */
 	readonly nvim?: ToolDelivery;
 }
@@ -528,7 +528,7 @@ export class SshRuntime extends RemoteShellRuntime implements Runtime {
 		this.#deliveries = {
 			tmux: options.tmux,
 			bash: options.bash,
-			node: options.node,
+			devhub: options.devhub,
 			nvim: options.nvim,
 		};
 		if (!fitsControlPath(this.#controlDirectory)) {

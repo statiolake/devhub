@@ -82,12 +82,12 @@ export interface RuntimeProfile {
 	 */
 	readonly bash: ToolDelivery;
 	/**
-	 * Where the Node DevHub installs on a host comes from: what runs its
-	 * `devhub` command and its terminal launcher's asking program there
-	 * (`RemoteShellRuntime.terminalLauncher`). Beside `tmux` and for the same
-	 * reasons.
+	 * Where the `devhub` command DevHub installs on a host comes from: this
+	 * app's own build of it (`BundledToolDelivery`, `docs/devhub-cli.md`),
+	 * installed by `RemoteShellRuntime.terminalLauncher`. Beside `tmux` and
+	 * for the same reasons.
 	 */
-	readonly node: ToolDelivery;
+	readonly devhub: ToolDelivery;
 	/**
 	 * Where the Neovim DevHub installs on a host comes from: the one it draws
 	 * there (`RemoteShellRuntime.neovimProgram`). Beside `tmux` and for the
@@ -156,7 +156,7 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 				),
 				tmux: profile.tmux,
 				bash: profile.bash,
-				node: profile.node,
+				devhub: profile.devhub,
 				nvim: profile.nvim,
 			});
 			SSH.set(location.host, runtime);

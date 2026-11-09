@@ -298,37 +298,17 @@ export interface RuntimeReading {
 /**
  * What a machine needs in order to have a `devhub-terminal` on it.
  *
- * The integrated terminal of a workbench runs where the workbench's pty host
- * runs, and for an ssh window that is the far machine. So the launcher is not
- * one file on this Mac any more: it is one per machine, and this is everything
- * a machine that has none needs to be given in order to grow one — the script
- * DevHub already wrote for itself (which is the whole answer when the machine
- * *is* this one), the socket the answer comes back over, and the two facts a
- * far machine cannot discover: which files make up the asking program.
+ * On the machine DevHub runs on that is the script it already wrote for
+ * itself; on any other it is the `devhub` command and the `/devhub` skill
+ * (`RemoteShellRuntime.terminalLauncher`): the socket the command talks to,
+ * and the skill's text. The command itself is the runtime's `devhub`
+ * delivery.
  */
 export interface TerminalLauncherSpec {
 	/** The launcher DevHub wrote at startup, for the machine it is running on. */
 	readonly localLauncherPath: string;
 	/** DevHub's control socket, on the machine DevHub is running on. */
 	readonly controlSocketPath: string;
-	/**
-	 * The asking program: one self-contained file, as text.
-	 *
-	 * One file rather than a graph of compiled modules, because a graph has to
-	 * be discovered and the discovery is what broke — see
-	 * `readTerminalEntryBundle`. The build bundles it, so a machine that is to
-	 * run it needs this and a Node and nothing else.
-	 */
-	readonly entryText: string;
-	/** What to call it over there. */
-	readonly entryName: string;
-	/**
-	 * The `devhub` command itself, bundled the same way and for the same
-	 * reason, so that a pane on a host can open a file in the window it belongs
-	 * to. See `remoteCliScript`.
-	 */
-	readonly cliText: string;
-	readonly cliEntryName: string;
 	/**
 	 * The `/devhub` skill's SKILL.md, given the path of the `devhub` command
 	 * it should tell an Agent to run (`agent/devhubSkill.ts`). Written beside
@@ -411,8 +391,12 @@ export function userTmuxConfigDigest(text: string): string {
 
 /** A machine's `devhub-terminal`, and whether it can reach DevHub. */
 export interface TerminalLauncher {
-	/** The path a workbench on that machine names as its terminal profile. */
-	readonly path: string;
+	/**
+	 * The path a workbench on that machine names as its terminal profile —
+	 * `undefined` on a machine DevHub does not run on, where no workbench
+	 * runs and none is written.
+	 */
+	readonly path: string | undefined;
 	/**
 	 * `undefined` when the launcher can reach DevHub's control socket; the
 	 * sentence saying why it cannot, otherwise.

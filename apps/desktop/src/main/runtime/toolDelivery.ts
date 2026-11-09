@@ -1,7 +1,9 @@
 /**
  * The programs DevHub puts on a machine, fetched here and never there.
  *
- * Four of them, by one mechanism:
+ * By one mechanism, from two kinds of source — a pinned release
+ * (`ReleaseToolDelivery`, below) or the app itself (`BundledToolDelivery`,
+ * `bundledTool.ts`):
  *
  * - **tmux.** DevHub runs every terminal and every Agent inside tmux on the
  *   machine the Workspace lives on, and it runs *its own* tmux there — never
@@ -13,7 +15,9 @@
  *   is not accepted — and the host this exists for, a Synology NAS with no
  *   package manager and no sudo, has neither (`scripts/build_bash.py`,
  *   `agentShell.ts`).
- * - **node**, for the host's `devhub` command: nodejs.org's own Linux build.
+ * - **devhub**, the `devhub` command a host's panes and Agents run (`cli/`,
+ *   Go, `docs/devhub-cli.md`): from inside the app, built with it, so a
+ *   host holds the command of the DevHub that connects to it.
  * - **nvim**, the Neovim DevHub draws (`docs/neovim-editor.md`, "Which
  *   Neovim"): Neovim's own release archive, the same version this Mac runs
  *   from inside the app.
@@ -42,7 +46,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /** What DevHub delivers. The name is the binary's and the tarball's. */
-export type HostTool = "tmux" | "bash" | "node" | "nvim";
+export type HostTool = "tmux" | "bash" | "nvim" | "devhub";
 
 /** Where one tool comes from, as far as a `Runtime` is concerned. */
 export interface ToolDelivery {
@@ -64,6 +68,12 @@ export interface ToolDelivery {
 
 export interface ToolTarball {
 	readonly bytes: Uint8Array;
+	/**
+	 * Absent: a `.tar.gz` holding `topLevelDirectory`. `"binary"`: the
+	 * program itself, one static file, which the install writes to
+	 * `bin/<tool>` (the app's own `devhub`, `bundledTool.ts`).
+	 */
+	readonly format?: "binary";
 	/**
 	 * The single directory inside the archive.
 	 *
@@ -153,16 +163,14 @@ export function toolInstallDirectory(
 
 /**
  * The single directory inside a tool's tarball for one platform: DevHub's
- * own builds name it after the tool and the platform; Node's is nodejs.org's
- * own tarball, which names it after the version too, and Neovim's names it
+ * own builds name it after the tool and the platform, and Neovim's names it
  * after its own spelling of the platform.
  */
 export function toolTopLevelDirectory(
 	tool: HostTool,
 	platform: string,
-	version: string,
+	_version: string,
 ): string {
-	if (tool === "node") return `node-v${version}-${platform}`;
 	if (tool === "nvim") return `nvim-${neovimReleasePlatform(platform)}`;
 	return `devhub-${tool}-${platform}`;
 }
@@ -183,7 +191,16 @@ export function toolTarballName(
  * one (no answer means what came out cannot run there).
  */
 export function toolVersionArgument(tool: HostTool): string {
-	return tool === "tmux" ? "-V" : "--version";
+	switch (tool) {
+		case "tmux":
+			return "-V";
+		// `devhub --version` asks the running DevHub over its socket, which a
+		// host may not have yet; `--help` answers from the binary alone.
+		case "devhub":
+			return "--help";
+		default:
+			return "--version";
+	}
 }
 
 export class ReleaseToolDelivery implements ToolDelivery {

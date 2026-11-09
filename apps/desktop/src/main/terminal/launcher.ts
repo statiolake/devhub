@@ -71,7 +71,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import type { ShellMachineId } from "../runtime/runtime.js";
 import { shellQuote, shellQuoteArgv } from "../runtime/quote.js";
@@ -193,53 +193,22 @@ export function installTerminalLauncher(
 }
 
 /**
- * The `devhub` command DevHub puts on a host, as opposed to upstream's.
- *
- * The REH tarball does ship `bin/remote-cli/devhub` — upstream's script, built
- * from `gulpfile.reh.ts` under DevHub's `applicationName` — and it can never
- * work here. It is a client for `VSCODE_IPC_HOOK_CLI`, a variable the REH's own
- * terminal channel makes per terminal, and a DevHub pane is not made by the
- * REH's terminal channel: a pane inherits the tmux *server's* environment plus
- * explicit `new-session -e` entries, and DevHub strips the whole `VSCODE_*`
- * family from terminal environments on purpose (`../shell/loginEnvironment.ts`).
- *
- * So DevHub ships its own, speaking DevHub's own control protocol over the
- * socket that is already reverse-forwarded onto the host. One front door and
- * one protocol, which is the thing `../cli/protocol.ts` opens by saying.
- * Upstream's script stays in the tarball because removing it would be a build
- * patch for no gain; it simply is not the way in.
+ * The `devhub` command DevHub puts on a host: a shim on the pane's PATH that
+ * runs the app's own Go binary installed there (`ToolDelivery` `devhub`,
+ * `docs/devhub-cli.md`), speaking DevHub's control protocol over the socket
+ * that is reverse-forwarded onto the host. One front door and one protocol,
+ * which is the thing `../cli/protocol.ts` opens by saying.
  */
 export const REMOTE_CLI_NAME = "devhub";
 
 /** Where the shim goes, under the tagged directory this DevHub owns there. */
 export const REMOTE_CLI_DIRECTORY_PREFIX = "bin";
 
-/** The CLI's bundle, in `out/main/cli` and over there. */
-export const CLI_ENTRY_BUNDLE = "devhub-cli.bundle.js";
-
-/** Where the build leaves it. */
-export function cliEntryBundlePath(appRoot: string): string {
-	return join(appRoot, "out", "main", "cli", CLI_ENTRY_BUNDLE);
-}
-
-/** Its text, with the sentence that names the build step when it is missing. */
-export function readCliEntryBundle(appRoot: string): string {
-	const path = cliEntryBundlePath(appRoot);
-	try {
-		return readFileSync(path, "utf8");
-	} catch {
-		throw new Error(
-			`${path} is not there, so no machine can be given a 'devhub' command. It is produced by \`pnpm --filter @devhub/desktop build\` (the build:cli step).`,
-		);
-	}
-}
-
 /**
  * The `devhub` a pane on another machine runs.
  *
- * Generated for the same reason the terminal launcher and the local PATH
- * launcher are: it records the absolute facts a CLI cannot discover on its own
- * — the REH's `node`, its copy of the bundle, and the socket DevHub is
+ * Generated because it records the absolute facts the binary cannot discover
+ * on its own — which install of it is this DevHub's, and the socket DevHub is
  * answering on over there. Written rather than exported through the
  * environment, because `DEVHUB_*` is a family a terminal is not supposed to
  * inherit.
@@ -252,8 +221,8 @@ export function readCliEntryBundle(appRoot: string): string {
  * on, and nothing over here can start it.
  */
 export function remoteCliScript(request: {
+	/** The installed `devhub` binary on that machine. */
 	readonly execPath: string;
-	readonly cliScript: string;
 	readonly socketPath: string;
 	readonly machine: ShellMachineId;
 }): string {
@@ -270,7 +239,7 @@ export function remoteCliScript(request: {
 		"fi",
 		`DEVHUB_CONTROL_SOCKET=${shellQuote(request.socketPath)} \\`,
 		`DEVHUB_MACHINE=${shellQuote(request.machine)} \\`,
-		`exec ${shellQuote(request.execPath)} ${shellQuote(request.cliScript)} "$@"`,
+		`exec ${shellQuote(request.execPath)} "$@"`,
 		"",
 	].join("\n");
 }
@@ -288,47 +257,6 @@ export function terminalLauncherPath(userDataPath: string): string {
  * own remote CLI and extensions and is rewritten by them.
  */
 export const REMOTE_DEVHUB_DIRECTORY = ".devhub/terminal";
-
-/** Where the asking program goes on such a machine. */
-export const REMOTE_ENTRY_DIRECTORY = "js";
-
-/** The asking program's file name, in `out/main/terminal` and over there. */
-export const TERMINAL_ENTRY_BUNDLE = "devhub-terminal.bundle.js";
-
-/**
- * The one file the asking program is.
- *
- * It used to be several: the compiled `devhubTerminal.js` plus every compiled
- * file it imported, discovered by reading the output and following the
- * relative specifiers. That walker read `.js` as text and could not tell an
- * import from the word "import" in a doc comment, so `launcher.js`'s own
- * comment about import specifiers made it refuse to ship the program at all —
- * "launcher.js imports …, which is not a file DevHub can ship". Every window
- * in the packaged app opened with no terminal launcher, on this Mac and on
- * every host.
- *
- * The answer is not a better parser. A program that is one self-contained file
- * has no graph to walk, no order to get right, and no `package.json` to ship
- * beside it: `pnpm --filter @devhub/desktop build` bundles it with esbuild
- * (`build:terminal`), and this is where it lands. If it is not there the build
- * did not run, and that is a startup failure rather than a terminal-less
- * window nobody can explain.
- */
-export function terminalEntryBundlePath(appRoot: string): string {
-	return join(appRoot, "out", "main", "terminal", TERMINAL_ENTRY_BUNDLE);
-}
-
-/** Its text, with the sentence that names the build step when it is missing. */
-export function readTerminalEntryBundle(appRoot: string): string {
-	const path = terminalEntryBundlePath(appRoot);
-	try {
-		return readFileSync(path, "utf8");
-	} catch {
-		throw new Error(
-			`${path} is not there, so no machine can be given a terminal launcher. It is produced by \`pnpm --filter @devhub/desktop build\` (the build:terminal step).`,
-		);
-	}
-}
 
 /**
  * What the far machine's copy of the program is filed under.
@@ -348,24 +276,14 @@ export function remoteProfileTag(controlSocketPath: string): string {
 
 /** Every path DevHub writes on a machine it is not running on. */
 export interface RemoteTerminalPaths {
-	/** `~/.devhub` — the one directory DevHub owns there. */
+	/** `~/.devhub/terminal` — the one directory DevHub owns there. */
 	readonly directory: string;
-	/** The launcher script a workbench's terminal profile names. */
-	readonly launcher: string;
-	/** The root of the asking program's files. */
-	readonly entryRoot: string;
-	/** The one of them to run. */
-	readonly entry: string;
 	/** Where DevHub's control socket is forwarded to. */
 	readonly socket: string;
 	/** The directory the `devhub` shim is in, and the one added to the pane PATH. */
 	readonly cliBinDirectory: string;
 	/** The shim itself. */
 	readonly cli: string;
-	/** The CLI's bundle, beside the asking program's. */
-	readonly cliEntry: string;
-	/** DevHub's own `node` on that machine (`ToolDelivery`'s `node`). */
-	readonly node: string;
 	/**
 	 * The `/devhub` skill's root for Agents on that machine — the directory
 	 * Claude's `--add-dir=` names; the SKILL.md is under
@@ -377,39 +295,25 @@ export interface RemoteTerminalPaths {
 	readonly skillFile: string;
 }
 
-/**
- * Where all of it goes on the far machine, from its `$HOME`, the `node`
- * DevHub installed there, and the control socket's tag.
- */
+/** Where all of it goes on the far machine, from its `$HOME` and the control socket's tag. */
 export function remoteTerminalPaths(request: {
 	readonly home: string;
-	readonly node: string;
 	readonly controlSocketPath: string;
-	readonly entryName: string;
-	readonly cliEntryName: string;
 }): RemoteTerminalPaths {
 	const directory = posix.join(request.home, REMOTE_DEVHUB_DIRECTORY);
-	const entryRoot = posix.join(directory, REMOTE_ENTRY_DIRECTORY);
 	const tag = remoteProfileTag(request.controlSocketPath);
 	const skillRoot = posix.join(directory, `skill-${tag}`);
+	const cliBinDirectory = remoteCliBinDirectory(
+		request.home,
+		request.controlSocketPath,
+	);
 	return {
 		directory,
 		skillRoot,
 		skillFile: posix.join(skillRoot, ".claude", "skills", "devhub", "SKILL.md"),
-		launcher: posix.join(directory, `${TERMINAL_LAUNCHER_NAME}-${tag}`),
-		entryRoot,
-		entry: posix.join(entryRoot, request.entryName),
 		socket: posix.join(directory, `control-${tag}.sock`),
-		cliBinDirectory: remoteCliBinDirectory(
-			request.home,
-			request.controlSocketPath,
-		),
-		cli: posix.join(
-			remoteCliBinDirectory(request.home, request.controlSocketPath),
-			REMOTE_CLI_NAME,
-		),
-		cliEntry: posix.join(entryRoot, request.cliEntryName),
-		node: request.node,
+		cliBinDirectory,
+		cli: posix.join(cliBinDirectory, REMOTE_CLI_NAME),
 	};
 }
 

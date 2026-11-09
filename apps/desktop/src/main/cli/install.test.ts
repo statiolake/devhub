@@ -3,7 +3,13 @@ import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
-import { installLauncher, launcherScript, shellQuote } from "./install.js";
+import {
+	cliBinaryPath,
+	installLauncher,
+	launchCommandFor,
+	launcherScript,
+	shellQuote,
+} from "./install.js";
 
 describe("installing the devhub launcher", () => {
 	let scratch: string;
@@ -12,8 +18,7 @@ describe("installing the devhub launcher", () => {
 	beforeEach(() => {
 		scratch = makeScratchDir("cli-install");
 		request = {
-			execPath: join(scratch, "Code - OSS"),
-			cliScript: join(scratch, "out", "main", "cli", "devhubCli.js"),
+			cliBinary: join(scratch, "out", "cli", "darwin-arm64", "devhub"),
 			socketPath: join(scratch, "user-data", "devhub", "control.sock"),
 			commandName: "devhub",
 			profile: "default",
@@ -36,9 +41,12 @@ describe("installing the devhub launcher", () => {
 		});
 		expect(result.launcherPath).toBe(join(first, "devhub"));
 		expect(statSync(result.launcherPath).mode & 0o777).toBe(0o755);
-		expect(readFileSync(result.launcherPath, "utf8")).toContain(
-			"ELECTRON_RUN_AS_NODE=1",
+		const script = readFileSync(result.launcherPath, "utf8");
+		// The app's own Go binary, run directly: no Node, no Electron.
+		expect(script).toContain(
+			`exec '${join(scratch, "out", "cli", "darwin-arm64", "devhub")}' "$@"`,
 		);
+		expect(script).not.toContain("ELECTRON_RUN_AS_NODE");
 	});
 
 	/**
@@ -109,10 +117,10 @@ describe("installing the devhub launcher", () => {
 	it("quotes every path it bakes in, so a space cannot split a word", () => {
 		const script = launcherScript({
 			...request,
-			execPath: "/Apps/Code - OSS",
+			cliBinary: "/Apps/My DevHub.app/devhub",
 			socketPath: "/a b/control.sock",
 		});
-		expect(script).toContain("exec '/Apps/Code - OSS'");
+		expect(script).toContain("exec '/Apps/My DevHub.app/devhub'");
 		expect(script).toContain("DEVHUB_CONTROL_SOCKET='/a b/control.sock'");
 		expect(shellQuote("it's")).toBe(`'it'\\''s'`);
 	});
@@ -141,3 +149,39 @@ function launcherLine(script: string): string {
 	if (line === undefined) throw new Error("the launcher records no command");
 	return line.replace(/\\$/, "");
 }
+
+describe("the command that starts this DevHub", () => {
+	it("runs dev.sh for a DevHub running from a checkout", () => {
+		expect(
+			launchCommandFor(
+				"/repo/apps/desktop",
+				(path) => path === "/repo/apps/desktop/scripts/dev.sh",
+			),
+		).toEqual(["/repo/apps/desktop/scripts/dev.sh"]);
+	});
+
+	it("opens the running bundle, in the background, for a packaged DevHub", () => {
+		expect(
+			launchCommandFor(
+				"/Applications/DevHub.app/Contents/Resources/app",
+				() => false,
+			),
+		).toEqual([
+			"/usr/bin/open",
+			"-a",
+			"/Applications/DevHub.app",
+			"--background",
+		]);
+	});
+});
+
+describe("the devhub binary the build leaves", () => {
+	it("is under out/cli, by platform", () => {
+		expect(cliBinaryPath("/app", "darwin-arm64")).toBe(
+			"/app/out/cli/darwin-arm64/devhub",
+		);
+		expect(cliBinaryPath("/app")).toBe(
+			`/app/out/cli/${process.platform}-${process.arch}/devhub`,
+		);
+	});
+});

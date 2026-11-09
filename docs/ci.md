@@ -71,12 +71,15 @@ Decide: bash ──> Build: bash linux-x64, linux-arm64 ──> Publish: bash re
   summary in the form `apps/desktop/product.json` takes them
   (`tmuxDownloadSha256`, `bashDownloadSha256`).
 
-The Node DevHub installs on a host for its `devhub` command is nodejs.org's
-own release, pinned by version and digest in `apps/desktop/product.json`
-(`nodeVersion`, `nodeDownloadSha256`); nothing builds it. So is the Neovim
-DevHub runs (`nvimVersion`, `nvimDownloadSha256`): Neovim's own release
-archives, fetched into `out/nvim` by `build:nvim` for the app and the tests,
-and delivered to a Linux host like tmux.
+The `devhub` command a host is given is not a release: it is built from
+`cli/` (Go) by the app build and carried inside the app
+(`docs/devhub-cli.md`). Every job that builds the app gets Go from
+`cli/go.mod` through `setup-node-pnpm`; `checks` runs `pnpm run test:cli`.
+
+The Neovim DevHub runs is Neovim's own release, pinned in
+`apps/desktop/product.json` (`nvimVersion`, `nvimDownloadSha256`): fetched
+into `out/nvim` by `build:nvim` for the app and the tests, and delivered to a
+Linux host like tmux.
 
 ## Shared setup
 

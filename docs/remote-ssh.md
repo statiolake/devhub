@@ -11,19 +11,15 @@ DevHub used to open a VS Code window on the host instead, with VS Code's
 remote extension host copied there; that went with VS Code
 (`docs/without-vscode.md`).
 
-## The Node DevHub puts on a host
+## The `devhub` command DevHub puts on a host
 
-DevHub's own programs on a host — the `devhub` command and the asking program
-behind it — run on a Node DevHub installs there, the same way it installs tmux
-and bash: nodejs.org's Linux build at the version `apps/desktop/product.json`
-pins (`nodeVersion`), checked against the pinned digest
-(`nodeDownloadSha256`), fetched on this Mac, cached under DevHub's own data and
-unpacked over the connection into `~/.devhub-server/node/<version>`
-(`RemoteShellRuntime.terminalLauncher`, `runtime/toolDelivery.ts`). It is
-glibc's, so a musl (Alpine) host is refused by name; a `command -v node`
-would find whatever a login shell happened to have on its PATH, which is a
-different Node on every host and none at all on some.
-
+The `devhub` command on a host is the app's own static Go binary for that
+platform (`cli/`, `docs/devhub-cli.md`), carried inside the app in
+`out/cli/<os>-<arch>/devhub` and installed the same way as tmux and bash —
+the same `ToolDelivery`, unpacked over the connection, here from the app
+rather than from a release (`BundledToolDelivery`, `runtime/bundledTool.ts`)
+into `~/.devhub-server/devhub/<build>`. It needs no Node and no particular
+libc, so a musl host gets it too. Nothing has to be published for it.
 
 ## Everything DevHub sends a host is POSIX `sh`
 
@@ -310,13 +306,10 @@ The first is empty. The second is DevHub's shim.
 So DevHub ships its own, speaking DevHub's own control protocol over the socket
 that is **already** reverse-forwarded onto the host. Nothing new is opened:
 
-- the CLI is bundled the way the asking program is —
-  `out/main/cli/devhub-cli.bundle.js`, from the `build:cli` step of
-  `pnpm --filter @devhub/desktop build` — and written to
-  `~/.devhub/terminal/js/` beside it
-- the shim is generated like the launcher, with the host's own three absolute
-  facts in it: the REH's `node`, that bundle, and
-  `~/.devhub/terminal/control-<tag>.sock`
+- the command is the app's own Go binary, installed under
+  `~/.devhub-server/devhub/<build>/bin/devhub` (above)
+- the shim is generated, with the host's own absolute facts in it: that
+  binary, the machine, and `~/.devhub/terminal/control-<tag>.sock`
 - it goes at `~/.devhub/terminal/bin-<tag>/devhub`, and that **directory** is
   what is put in front of every pane's PATH. A tagged directory rather than a
   tagged file, because two DevHub profiles reaching one host would otherwise
@@ -732,25 +725,14 @@ require.
 
 ## What a machine gets, and what stays here
 
-Three things a host is given, one thing it is not, and one thing it must be
-told about itself. Each of these was a live failure before it was a rule.
+What a host is given, what it is not, and what it must be told about
+itself. Each of these was a live failure before it was a rule.
 
-### The asking program is one file
+### No asking program on a host
 
-`devhub-terminal` runs a compiled program that asks DevHub for an argv, and
-that program is **one self-contained file**:
-`out/main/terminal/devhub-terminal.bundle.js`, produced by the `build:terminal`
-step of `pnpm --filter @devhub/desktop build` (esbuild, `platform: node`,
-nothing external but `node:*`). `Runtime.terminalLauncher` is given its text
-and writes exactly that file, plus a `package.json` saying `{"type":"module"}`
-so Node reads it as an ES module, plus the launcher script.
-
-It used to be a *closure*: the compiled entry and every compiled file it
-imported, discovered by reading each `.js` as text and following the relative
-specifiers. A text scan cannot tell an `import` from the word in a doc comment,
-and `launcher.ts` documents its own matcher — so the packaged app refused to
-ship the program at all, on this Mac and on every host, and said so once per
-window in a log. One file has no graph to walk.
+`devhub-terminal`'s asking program answered VS Code's integrated terminal,
+and no workbench runs on a host, so none is written there: a host's entry
+below has `path: null` once its `devhub` is installed.
 
 ### Whether it got there is in `devhub --metrics`
 

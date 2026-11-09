@@ -1,5 +1,6 @@
 /**
- * The bundles run when they are run, including through a symlink.
+ * The terminal launcher's asking program runs when it is run, including
+ * through a symlink.
  *
  * This is defect (A), and it is a test with a real Node in it because nothing
  * smaller reproduces it: the fault was in how Node's ESM loader names a module
@@ -110,13 +111,5 @@ describe("the bundled entry points", () => {
     });
     expect(direct.code).toBe(1);
     expect(direct.stderr).toBe(answer.stderr);
-  }, 30_000);
-
-  it("gives the CLI's usage through a symlinked directory too", async () => {
-    await bundle("cli/devhubCliEntry.ts", "devhub-cli.bundle.js");
-    const viaLink = join(scratch, "linked", "devhub-cli.bundle.js");
-    const answer = await run(viaLink, ["--help"], {});
-    expect(answer.code).toBe(0);
-    expect(answer.stdout).toContain("devhub — drive the running DevHub");
   }, 30_000);
 });

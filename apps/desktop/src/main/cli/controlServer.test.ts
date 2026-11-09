@@ -327,43 +327,81 @@ describe("the DevHub control socket", () => {
 		expect(calls).toEqual(["metrics"]);
 	});
 
+	const tell = (argv: string[], extra: Record<string, unknown> = {}) =>
+		`${JSON.stringify({ kind: "tell", argv, cwd: "/work", home: "/home/d", ...extra })}\n`;
+
 	it("answers a tell request with its sentence and its data", async () => {
+		expect(
+			await ask(socketPath, tell(["agents"], { origin: "local\tscratch\tA1" })),
+		).toEqual({
+			ok: true,
+			message: "2 agents",
+			data: { agents: ["a", "b"] },
+			json: false,
+		});
+		expect(calls).toEqual(["tell agents from=local\tscratch\tA1"]);
+	});
+
+	it("says when --json was asked for, on success and on failure", async () => {
+		expect(await ask(socketPath, tell(["--json", "agents"]))).toMatchObject({
+			ok: true,
+			json: true,
+		});
 		expect(
 			await ask(
 				socketPath,
-				`${JSON.stringify({ kind: "tell", command: { verb: "agents" }, origin: "local\tscratch\tA1" })}\n`,
+				tell(["--json", "agent", "answer", "a", "r", "--option", "1"]),
 			),
-		).toEqual({ ok: true, message: "2 agents", data: { agents: ["a", "b"] } });
-		expect(calls).toEqual(["tell agents from=local\tscratch\tA1"]);
+		).toEqual({ ok: false, message: "only questions", json: true });
 	});
 
 	it("reports a tell the app refused, as a failure", async () => {
 		const answer = await ask(
 			socketPath,
-			`${JSON.stringify({ kind: "tell", command: { verb: "agent-answer", agent: "a", request: "r", options: [1] } })}\n`,
+			tell(["agent", "answer", "a", "r", "--option", "1"]),
 		);
 		expect(answer.ok).toBe(false);
 		expect(answer.message).toContain("only questions");
+		expect(answer.usage).toBeUndefined();
+	});
+
+	it("refuses words that are not a command as a command line, and runs nothing", async () => {
+		const answer = await ask(socketPath, tell(["rm", "-rf"]));
+		expect(answer).toMatchObject({ ok: false, usage: true });
+		expect(calls).toEqual([]);
+	});
+
+	it("answers help with the usage, and runs nothing", async () => {
+		const answer = await ask(socketPath, tell(["help"]));
+		expect(answer.ok).toBe(true);
+		expect(answer.message).toContain("devhub --tell");
+		expect(calls).toEqual([]);
+	});
+
+	it("asks for what is piped in when a '-' is text, then uses it", async () => {
+		expect(
+			await ask(socketPath, tell(["agent", "send", "a", "-"])),
+		).toMatchObject({ ok: false, stdin: true });
+		expect(calls).toEqual([]);
+		expect(
+			await ask(
+				socketPath,
+				tell(["agent", "send", "a", "-"], { stdin: "hi\n" }),
+			),
+		).toMatchObject({ ok: true });
+		expect(calls).toEqual(["tell agent-send"]);
 	});
 
 	it("carries the orchestration commands to the app", async () => {
-		for (const command of [
-			{ verb: "agent-stop", agent: "a" },
-			{ verb: "agent-restart", agent: "a" },
-			{ verb: "agent-status", agent: "a" },
-			{
-				verb: "agent-wait-many",
-				mode: "any",
-				agents: [],
-				until: "any",
-				timeoutSeconds: 5,
-			},
-			{ verb: "sessions", limit: 20 },
-			{ verb: "agent-resume", session: "abcd" },
+		for (const argv of [
+			["agent", "stop", "a"],
+			["agent", "restart", "a"],
+			["agent", "status", "a"],
+			["agent", "wait", "--any"],
+			["sessions"],
+			["agent", "resume", "abcd"],
 		])
-			expect(
-				await ask(socketPath, `${JSON.stringify({ kind: "tell", command })}\n`),
-			).toMatchObject({ ok: true });
+			expect(await ask(socketPath, tell(argv))).toMatchObject({ ok: true });
 		expect(calls).toEqual([
 			"tell agent-stop",
 			"tell agent-restart",
@@ -374,10 +412,10 @@ describe("the DevHub control socket", () => {
 		]);
 	});
 
-	it("refuses a tell command that is not one", async () => {
+	it("refuses a tell without the directory its paths were typed in", async () => {
 		const answer = await ask(
 			socketPath,
-			`${JSON.stringify({ kind: "tell", command: { verb: "rm -rf" } })}\n`,
+			`${JSON.stringify({ kind: "tell", argv: ["agents"] })}\n`,
 		);
 		expect(answer.ok).toBe(false);
 		expect(calls).toEqual([]);

@@ -27,11 +27,10 @@ class Product(unittest.TestCase):
 		for key in ("extensionsGallery", "serverApplicationName", "serverCommit", "serverIdentity"):
 			self.assertNotIn(key, PRODUCT)
 
-	def test_pins_the_node_it_installs_on_a_host(self) -> None:
-		self.assertRegex(PRODUCT["nodeVersion"], r"^\d+\.\d+\.\d+$")
-		self.assertIn("${nodeVersion}", PRODUCT["nodeDownloadUrlTemplate"])
-		for platform in ("linux-x64", "linux-arm64"):
-			self.assertRegex(PRODUCT["nodeDownloadSha256"][platform], r"^[0-9a-f]{64}$")
+	def test_puts_no_node_on_a_host(self) -> None:
+		# The devhub command is a Go binary carried in the app (docs/devhub-cli.md).
+		for key in ("nodeVersion", "nodeDownloadUrlTemplate", "nodeDownloadSha256"):
+			self.assertNotIn(key, PRODUCT)
 
 
 class PackagedProduct(unittest.TestCase):

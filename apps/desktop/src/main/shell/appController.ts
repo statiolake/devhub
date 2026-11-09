@@ -250,12 +250,8 @@ import {
 } from "../terminal/ports.js";
 import {
 	enclosingRoot,
-	readCliEntryBundle,
-	readTerminalEntryBundle,
 	remoteProfileTag,
-	CLI_ENTRY_BUNDLE,
 	terminalLauncherPath,
-	TERMINAL_ENTRY_BUNDLE,
 } from "../terminal/launcher.js";
 import { controlSocketPath } from "../cli/protocol.js";
 import { OperationDeadline } from "../terminal/command.js";
@@ -343,6 +339,7 @@ import {
 	toolInstallDirectory,
 	type HostTool,
 } from "../runtime/toolDelivery.js";
+import { bundledToolDelivery } from "../runtime/bundledTool.js";
 import type {
 	Runtime,
 	RuntimeId,
@@ -483,11 +480,12 @@ import {
 	type OrchestratorSkill,
 } from "../orchestrator/orchestratorSkill.js";
 import {
+	cliBinaryPath,
 	installLauncher,
+	launchCommandFor,
 	launcherScript,
 	type InstallRequest,
 } from "../cli/install.js";
-import { launchCommandFor } from "../cli/launch.js";
 import type { TellCommand } from "../cli/tell/command.js";
 import {
 	callerKey,
@@ -599,15 +597,15 @@ const PAGE_NAMES: Readonly<Record<string, string>> = {
  * The `devhub` launcher this DevHub writes (`cli/install.ts`): the one the
  * install command puts on the PATH and the one the `/devhub` skill names.
  *
- * The binary running this process is the app's own Electron, in a checkout and
- * in a bundle alike, and it is what the launcher runs the CLI with as Node. How
- * this DevHub is started is written down by the DevHub that is running: a
- * bundle the Finder can open, or the checkout's own dev.sh (`cli/launch.ts`).
+ * It execs the `devhub` binary this app's build left for this machine
+ * (`out/cli/<os>-<arch>/devhub`, Go, `docs/devhub-cli.md`), in a checkout and
+ * in a bundle alike. How this DevHub is started is written down by the DevHub
+ * that is running: a bundle the Finder can open, or the checkout's own dev.sh
+ * (`launchCommandFor`).
  */
 function launcherRequest(userDataPath: string): InstallRequest {
 	return {
-		execPath: process.execPath,
-		cliScript: join(APP_ROOT, "out", "main", "cli", "devhubCliEntry.js"),
+		cliBinary: cliBinaryPath(APP_ROOT),
 		socketPath: controlSocketPath(userDataPath),
 		commandName: activeProfile().cliCommandName,
 		profile: activeProfile().profile,
@@ -6598,10 +6596,6 @@ export class AppController {
 		return runtime.terminalLauncher({
 			localLauncherPath: terminalLauncherPath(userDataPath),
 			controlSocketPath: controlSocketPath(userDataPath),
-			entryText: readTerminalEntryBundle(APP_ROOT),
-			entryName: TERMINAL_ENTRY_BUNDLE,
-			cliText: readCliEntryBundle(APP_ROOT),
-			cliEntryName: CLI_ENTRY_BUNDLE,
 			skillText: devhubSkillText,
 		});
 	}
@@ -10465,18 +10459,22 @@ export async function createAppController(
 	setRuntimeProfile({
 		userDataDirectory: userDataPath,
 		home: homedir(),
-		// Where the tmux, the bash and the Node DevHub puts on a host come
-		// from. Stated in `product.json`, because the release the app installs
-		// from is a fact about the build and not a thing a person configures —
-		// and read here for the same reason the profile is passed in at all.
+		// Where the tmux, the bash and the `devhub` DevHub puts on a host come
+		// from: `product.json`'s pinned releases, and this app's own build.
+		// Facts about the build, not things a person configures — and read
+		// here for the same reason the profile is passed in at all.
 		tmux: hostToolDelivery("tmux", userDataPath),
 		// The bash a host with neither bash nor zsh is given for Claude Code.
 		bash: hostToolDelivery("bash", userDataPath),
-		// The Node DevHub's own programs run on there (its `devhub` command).
-		node: hostToolDelivery("node", userDataPath),
 		// The Neovim DevHub draws there: the release this Mac runs from inside
 		// the app (`editor/bundledNeovim.ts`), for that host's platform.
 		nvim: hostToolDelivery("nvim", userDataPath),
+		// The `devhub` command, from this app's own build of it.
+		devhub: bundledToolDelivery(
+			"devhub",
+			toolInstallDirectory(devhubProduct().serverDataFolderName, "devhub"),
+			join(APP_ROOT, "out", "cli"),
+		),
 	});
 
 	const config = settings.config;

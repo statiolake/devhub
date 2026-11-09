@@ -37,10 +37,10 @@ const NO_BASH: ToolDelivery = {
 	directory: toolInstallDirectory(".devhub-server", "bash"),
 };
 
-const NO_NODE: ToolDelivery = {
+const NO_DEVHUB: ToolDelivery = {
 	...NO_TMUX,
-	tool: "node",
-	directory: toolInstallDirectory(".devhub-server", "node"),
+	tool: "devhub",
+	directory: toolInstallDirectory(".devhub-server", "devhub"),
 };
 
 const NO_NVIM: ToolDelivery = {
@@ -63,7 +63,7 @@ beforeAll(async () => {
 		home: homedir(),
 		tmux: NO_TMUX,
 		bash: NO_BASH,
-		node: NO_NODE,
+		devhub: NO_DEVHUB,
 		nvim: NO_NVIM,
 	});
 });
@@ -116,7 +116,7 @@ describe("runtimeFor", () => {
 			home: homedir(),
 			tmux: NO_TMUX,
 			bash: NO_BASH,
-			node: NO_NODE,
+			devhub: NO_DEVHUB,
 			nvim: NO_NVIM,
 		});
 	});
@@ -128,7 +128,7 @@ describe("runtimeFor", () => {
 				home: homedir(),
 				tmux: NO_TMUX,
 				bash: NO_BASH,
-				node: NO_NODE,
+				devhub: NO_DEVHUB,
 				nvim: NO_NVIM,
 			}),
 		).toThrow(/already been set/u);

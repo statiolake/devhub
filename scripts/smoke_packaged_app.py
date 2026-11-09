@@ -43,6 +43,7 @@ apps/desktop/src/model/profile.ts.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -90,29 +91,6 @@ def probe(socket_path: Path, deadline: float) -> dict:
 	raise TimeoutError(last_error)
 
 
-def ask_to_open(socket_path: Path, path: Path, deadline: float) -> dict:
-	"""Open `path` the way `devhub <file>` does, and wait for the answer.
-
-	On a fresh profile the file is routed to Scratch, whose Neovim is started
-	and handed the file over RPC; the answer comes once it is there."""
-	path.write_text("DevHub smoke test\n")
-	client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-	client.settimeout(max(deadline - time.monotonic(), 1.0))
-	try:
-		client.connect(str(socket_path))
-		request = {"kind": "open", "path": str(path), "cwd": str(path.parent)}
-		client.sendall(json.dumps(request).encode() + b"\n")
-		buffered = b""
-		while b"\n" not in buffered:
-			chunk = client.recv(4096)
-			if not chunk:
-				raise ConnectionError("the app closed the connection without replying")
-			buffered += chunk
-		return json.loads(buffered.split(b"\n", 1)[0])
-	finally:
-		client.close()
-
-
 def outlives(process: subprocess.Popen, settle: float) -> str | None:
 	"""None once the app has kept running `settle` seconds; otherwise why not."""
 	until = time.monotonic() + settle
@@ -144,9 +122,10 @@ def check_app_layout(app_dir: Path, platform_name: str) -> list[str]:
 	main = app_dir / json.loads(manifest.read_text()).get("main", "")
 	if not main.is_file():
 		faults.append(f"package.json's main, {main}, is missing")
-	for required in ("out/vt/ghostty-vt.wasm", "out/main/cli/devhubCliEntry.js", "dist/shell/index.html"):
+	for required in ("out/vt/ghostty-vt.wasm", "dist/shell/index.html"):
 		if not (app_dir / required).is_file():
 			faults.append(f"{required} is missing")
+	faults.extend(cli_faults(app_dir))
 	prebuild = app_dir / "node_modules" / "node-pty" / "prebuilds" / platform_name
 	if not (prebuild / "pty.node").is_file():
 		faults.append(f"node-pty has no prebuild for {platform_name}: no terminal can start")
@@ -167,6 +146,51 @@ def check_app_layout(app_dir: Path, platform_name: str) -> list[str]:
 	if not product.get("commit"):
 		faults.append("product.json states no commit: the app cannot say which DevHub it is")
 	return faults
+
+
+# The `devhub` command (cli/, Go, docs/devhub-cli.md): this Mac's, and the
+# ones a host is given from the app (BundledToolDelivery).
+CLI_PLATFORMS = ("darwin-arm64", "linux-x64", "linux-arm64")
+
+
+def cli_binary(app_dir: Path, platform_name: str) -> Path:
+	return app_dir / "out" / "cli" / platform_name / "devhub"
+
+
+def cli_faults(app_dir: Path) -> list[str]:
+	"""Every platform's `devhub` there, executable, and matching SHA256SUMS."""
+	sums_file = app_dir / "out" / "cli" / "SHA256SUMS"
+	if not sums_file.is_file():
+		return ["out/cli/SHA256SUMS is missing: no host can be given a devhub command"]
+	sums = {}
+	for line in sums_file.read_text().splitlines():
+		digest, _, name = line.partition("  ")
+		sums[name] = digest
+	faults = []
+	for name in CLI_PLATFORMS:
+		binary = cli_binary(app_dir, name)
+		if not os.access(binary, os.X_OK):
+			faults.append(f"out/cli/{name}/devhub is missing or not executable")
+		elif sums.get(f"{name}/devhub") != hashlib.sha256(binary.read_bytes()).hexdigest():
+			faults.append(f"out/cli/{name}/devhub does not match SHA256SUMS")
+	return faults
+
+
+def run_cli(cli: Path, socket_path: Path, args: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess:
+	"""The packed `devhub`, the way the installed launcher runs it."""
+	return subprocess.run(
+		[str(cli), *args],
+		env={
+			"PATH": "/usr/bin:/bin",
+			"HOME": str(cwd),
+			"DEVHUB_CONTROL_SOCKET": str(socket_path),
+			"DEVHUB_LAUNCH_COMMAND": '["/bin/false"]',
+		},
+		cwd=cwd,
+		capture_output=True,
+		text=True,
+		timeout=timeout,
+	)
 
 
 # What `check_app_layout` cannot see: whether the packed node-pty loads and
@@ -346,7 +370,14 @@ def smoke_source(repo: Path, timeout: float, settle: float, electron_args: list[
 		Path(environment[directory]).mkdir(parents=True, exist_ok=True)
 	user_data = source_user_data_directory(repo, environment)
 	print(f"    a source run (apps/desktop/scripts/dev.sh) under the {SMOKE_PROFILE} profile")
-	return run_and_probe(argv, environment, state, user_data, timeout, settle)
+	cli = cli_binary(repo / "apps" / "desktop", host_platform())
+	return run_and_probe(cli, argv, environment, state, user_data, timeout, settle)
+
+
+def host_platform() -> str:
+	"""This machine as DevHub names a platform: `darwin-arm64`, `linux-x64`."""
+	arch = "arm64" if platform.machine() in ("arm64", "aarch64") else "x64"
+	return f"{sys.platform}-{arch}"
 
 
 def smoke(app: Path, timeout: float, settle: float = 5.0) -> int:
@@ -367,7 +398,8 @@ def smoke(app: Path, timeout: float, settle: float = 5.0) -> int:
 		return 1
 	state = Path(tempfile.mkdtemp(prefix="devhub-smoke-"))
 	argv, environment = launch_command(executable, state)
-	return run_and_probe(argv, environment, state, user_data_directory(state), timeout, settle)
+	cli = cli_binary(app / "Contents" / "Resources" / "app", host_platform())
+	return run_and_probe(cli, argv, environment, state, user_data_directory(state), timeout, settle)
 
 
 def smoke_layout(repo: Path, app_dir: Path, timeout: float, settle: float, electron_args: list[str]) -> int:
@@ -397,10 +429,12 @@ def smoke_layout(repo: Path, app_dir: Path, timeout: float, settle: float, elect
 	for directory in ("HOME", "XDG_CONFIG_HOME", "TMUX_TMPDIR"):
 		Path(environment[directory]).mkdir(parents=True, exist_ok=True)
 	print(f"    {app_dir} under npm's Electron, the {SMOKE_PROFILE} profile")
-	return run_and_probe(argv, environment, state, user_data_directory(state), timeout, settle)
+	cli = cli_binary(app_dir, host_platform())
+	return run_and_probe(cli, argv, environment, state, user_data_directory(state), timeout, settle)
 
 
 def run_and_probe(
+	cli: Path,
 	argv: list[str],
 	environment: dict[str, str],
 	state: Path,
@@ -442,19 +476,20 @@ def run_and_probe(
 		first_line = str(reply.get("message", "")).splitlines()[0:1]
 		print(f"    the control socket answered: {first_line[0] if first_line else reply}")
 
-		try:
-			opened = ask_to_open(
-				user_data / "devhub" / "control.sock", state / "smoke.txt", started + timeout
-			)
-		except (OSError, ConnectionError, json.JSONDecodeError) as error:
-			print(f"    opening a file got no answer ({error})", file=sys.stderr)
+		socket_path = user_data / "devhub" / "control.sock"
+		remaining = max(started + timeout - time.monotonic(), 10.0)
+		version = run_cli(cli, socket_path, ["--version"], state, remaining)
+		if version.returncode != 0 or version.stdout.strip() != str(reply.get("message", "")).strip():
+			print(f"    devhub --version: status {version.returncode}, {version.stdout!r} {version.stderr!r}", file=sys.stderr)
+			return 1
+		print(f"    {cli.relative_to(cli.parents[3])} --version answered the same")
+		(state / "smoke.txt").write_text("DevHub smoke test\n")
+		opened = run_cli(cli, socket_path, ["smoke.txt"], state, max(started + timeout - time.monotonic(), 10.0))
+		if opened.returncode != 0:
+			print(f"    devhub smoke.txt failed ({opened.returncode}): {opened.stderr.strip()}", file=sys.stderr)
 			print(log_tail(log_path), file=sys.stderr)
 			return 1
-		if not opened.get("ok"):
-			print(f"    opening a file failed: {opened.get('message')}", file=sys.stderr)
-			print(log_tail(log_path), file=sys.stderr)
-			return 1
-		print(f"    a file opened in the editor: {opened.get('message')}")
+		print(f"    devhub smoke.txt opened it: {opened.stdout.strip()}")
 		problem = outlives(process, settle)
 		if problem is not None:
 			print(f"    {problem}", file=sys.stderr)

@@ -1,12 +1,16 @@
 /**
  * DevHub's own front door, and the only one.
  *
- * The `devhub` CLI and the workbench command that installs it both speak this
- * protocol over one unix socket in the running app's user-data directory.
- * VS Code's `--new-window` path through `openInBrowserWindow` still exists and
- * still works — it is how VS Code's own flows reach DevHub — but nothing in
- * this file goes through it. Two protocols would be two truths about what
+ * The `devhub` command (`cli/`, a Go binary — `docs/devhub-cli.md`) speaks
+ * this protocol over one unix socket in the running app's user-data
+ * directory, and so does everything else that asks the running DevHub for
+ * something from outside it. Two protocols would be two truths about what
  * "open this" means, and the second one would be the one nobody tested.
+ *
+ * The command is built with the app and carried inside it, so the two ends
+ * are always one build: a request shape changes on both sides in one commit.
+ * `cli/testdata/requests.jsonl` is what the command sends, and both suites
+ * read it.
  *
  * The framing is one JSON object per line, request then response, then the
  * connection closes. There is no token: the socket lives under the user's own
@@ -16,11 +20,6 @@
  */
 
 import { join } from "node:path";
-import {
-	callerLabelProblem,
-	tellCommandFrom,
-	type TellCommand,
-} from "./tell/command.js";
 
 /** Where the running app listens. One per user-data directory, so a scratch
  * run and a real one never meet. */
@@ -172,13 +171,23 @@ export type ControlRequest =
 	  }
 	| {
 			/**
-			 * `devhub --tell`: one of DevHub's own operations, by name. See
-			 * `tell/command.ts` for the vocabulary and `tell/service.ts` for
-			 * what each one does. `origin` is the asking pane's, as for `open`:
-			 * it is how an answer is credited to the Agent that gave it.
+			 * `devhub --tell`: one of DevHub's own operations, by name, as the
+			 * words typed after `--tell`. The app parses them (`tell/request.ts`,
+			 * `tell/command.ts` for the vocabulary, `tell/service.ts` for what
+			 * each one does), with paths made absolute against `cwd` and `home`,
+			 * which are the asking machine's. `origin` is the asking pane's, as
+			 * for `open`: it is how an answer is credited to the Agent that
+			 * gave it.
 			 */
 			readonly kind: "tell";
-			readonly command: TellCommand;
+			readonly argv: readonly string[];
+			readonly cwd: string;
+			readonly home: string;
+			/**
+			 * What was piped in, sent only after an answer with `stdin: true`
+			 * said a `-` in the words stands for text.
+			 */
+			readonly stdin?: string;
 			readonly origin?: string;
 			/**
 			 * Which computer the asking `devhub` runs on (`DEVHUB_MACHINE`, set
@@ -187,8 +196,6 @@ export type ControlRequest =
 			 * origin says so: an Agent's own shell, a script on the host.
 			 */
 			readonly machine?: string;
-			/** `--as NAME`: what a caller DevHub did not start is called. */
-			readonly as?: string;
 	  }
 	| {
 			/** An Agent for the workspace the current directory belongs to. */
@@ -264,6 +271,18 @@ export interface ControlResponse {
 	readonly profile?: TerminalProfileAnswer;
 	/** A `tell` answer, as data: what `devhub --tell --json` prints. */
 	readonly data?: unknown;
+	/** A `tell` answer: `--json` was asked for, so the command prints `data`. */
+	readonly json?: boolean;
+	/**
+	 * A `tell` refused as a command line, not as an operation: the command
+	 * prints it with its hint and exits 2, as for its own options.
+	 */
+	readonly usage?: true;
+	/**
+	 * A `tell` whose words have a `-` standing for text: the command reads
+	 * what is piped in and sends the request again with `stdin`.
+	 */
+	readonly stdin?: true;
 }
 
 /** Reject anything that is not a request this server understands. */
@@ -316,16 +335,18 @@ export function parseControlRequest(line: string): ControlRequest {
 		case "tell":
 			return {
 				kind: "tell",
-				command: tellCommandFrom(record["command"]),
+				argv: requireStrings(record["argv"], "argv"),
+				cwd: requireAbsolute(record["cwd"], "cwd"),
+				home: requireAbsolute(record["home"], "home"),
+				...(record["stdin"] === undefined
+					? {}
+					: { stdin: requireText(record["stdin"], "stdin") }),
 				...(record["origin"] === undefined
 					? {}
 					: { origin: requireString(record["origin"], "origin") }),
 				...(record["machine"] === undefined
 					? {}
 					: { machine: requireString(record["machine"], "machine") }),
-				...(record["as"] === undefined
-					? {}
-					: { as: requireCallerLabel(record["as"]) }),
 			};
 		case "add-agent":
 			return {
@@ -358,11 +379,10 @@ function requireString(value: unknown, field: string): string {
 	return value;
 }
 
-function requireCallerLabel(value: unknown): string {
-	const label = requireString(value, "as");
-	const problem = callerLabelProblem(label);
-	if (problem !== undefined) throw new Error(problem);
-	return label;
+/** Any string, the empty one included: piped text can be nothing. */
+function requireText(value: unknown, field: string): string {
+	if (typeof value !== "string") throw new Error(`${field} must be a string`);
+	return value;
 }
 
 function requireAbsolute(value: unknown, field: string): string {

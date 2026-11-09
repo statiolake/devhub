@@ -1,0 +1,11 @@
+{"kind":"activate"}
+{"kind":"open","path":"/work/src/a.ts","cwd":"/work","position":{"line":3,"column":7}}
+{"kind":"add-agent","cwd":"/work","profileId":"claude","args":["--model","x"]}
+{"kind":"add-agent","cwd":"/work","profileId":"claude","args":[]}
+{"kind":"version"}
+{"kind":"metrics"}
+{"kind":"tell","cwd":"/work","home":"/home/u","argv":["--json","agents"]}
+{"kind":"open","path":"/home/u/notes.md","cwd":"/work","machine":"ssh:box","origin":"ssh:box\tw1\tA1","waitMarkerPath":"/tmp/devhub-wait-0a/marker"}
+{"kind":"tell","cwd":"/srv/app","home":"/home/u","machine":"ssh:box","origin":"ssh:box\tw1\tA1","argv":["agent","send","A1","-"],"stdin":"text\n"}
+{"kind":"wait-ended","waitMarkerPath":"/tmp/devhub-wait-0a/marker"}
+{"kind":"ping"}

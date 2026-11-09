@@ -1,11 +1,8 @@
 /**
- * Running a program that DevHub writes onto a machine and then executes.
- *
- * Two of DevHub's own programs are shipped as one bundled file and run by a
- * generated `/bin/sh` script: the terminal launcher's asking program
- * (`terminal/devhubTerminal.ts`) and the `devhub` command
- * (`cli/devhubCli.ts`). Both used to decide for themselves whether they were
- * the entry point:
+ * Running a program DevHub runs as Node from a generated `/bin/sh` script:
+ * the terminal launcher's asking program (`terminal/devhubTerminal.ts`). The
+ * `devhub` command was one too, and is a Go binary now (`cli/`). Both used
+ * to decide for themselves whether they were the entry point:
  *
  *     fileURLToPath(import.meta.url) === resolve(process.argv[1])
  *
@@ -21,14 +18,13 @@
  *
  * A guard that can be wrong about this cannot be made right by comparing
  * better names. The entry point of a bundle is a fact about how the bundle was
- * built, so it is stated where that fact lives: `devhubCliEntry.ts` and
- * `devhubTerminalEntry.ts` exist only to call `runEntry`, they are what the
- * build points esbuild at and what the generated scripts name, and they have
- * no condition in them at all. A module that is imported — by its tests, or by
+ * built, so it is stated where that fact lives: `devhubTerminalEntry.ts`
+ * exists only to call `runEntry`, it is what the generated script names, and
+ * it has no condition in it at all. A module that is imported — by its tests, or by
  * the app — is not one of those files and runs nothing, which is the same
  * guarantee the guard was reaching for, without a guess in it.
  *
- * What is left here is the reporting, once, for both: a failure is one line on
+ * What is left here is the reporting: a failure is one line on
  * stderr naming the program, and a non-zero status. Nothing about this may
  * exit 0 having done nothing — that is the shape of the bug above, and the
  * shape every silent failure takes.

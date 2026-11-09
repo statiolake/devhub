@@ -15,6 +15,8 @@ mechanism, so each is asserted separately.
 
 from __future__ import annotations
 
+import hashlib
+
 import subprocess
 import sys
 import tempfile
@@ -132,7 +134,6 @@ class AppLayout(unittest.TestCase):
 		for relative in (
 			"out/main/main.js",
 			"out/vt/ghostty-vt.wasm",
-			"out/main/cli/devhubCliEntry.js",
 			"dist/shell/index.html",
 			"node_modules/node-pty/prebuilds/linux-x64/pty.node",
 			"out/nvim/share/nvim/runtime/filetype.lua",
@@ -140,10 +141,25 @@ class AppLayout(unittest.TestCase):
 			self.write(relative)
 		self.write("out/nvim/bin/nvim", "#!/bin/sh\n")
 		(self.app / "out/nvim/bin/nvim").chmod(0o755)
+		sums = []
+		for name in ("darwin-arm64", "linux-x64", "linux-arm64"):
+			binary = self.app / "out" / "cli" / name / "devhub"
+			self.write(f"out/cli/{name}/devhub", f"devhub for {name}")
+			binary.chmod(0o755)
+			sums.append(f"{hashlib.sha256(binary.read_bytes()).hexdigest()}  {name}/devhub")
+		self.write("out/cli/SHA256SUMS", "\n".join(sums) + "\n")
 
 	def test_a_whole_layout_passes(self) -> None:
 		self.lay_out()
 		self.assertEqual(check_app_layout(self.app, "linux-x64"), [])
+
+	def test_names_a_devhub_that_is_missing_or_not_the_build_s(self) -> None:
+		self.lay_out()
+		(self.app / "out/cli/linux-arm64/devhub").unlink()
+		(self.app / "out/cli/linux-x64/devhub").write_text("changed")
+		faults = check_app_layout(self.app, "linux-x64")
+		self.assertTrue(any("linux-arm64/devhub is missing" in fault for fault in faults))
+		self.assertTrue(any("linux-x64/devhub does not match" in fault for fault in faults))
 
 	def test_names_a_missing_wasm_and_a_missing_prebuild(self) -> None:
 		self.lay_out()

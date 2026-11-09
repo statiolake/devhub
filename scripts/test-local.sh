@@ -14,7 +14,8 @@
 #   provision   system packages (Linux: Xvfb, Electron's libraries, tmux), the
 #               unprivileged test user (under root), `pnpm install`, npm's
 #               Electron (scripts/electron-path.sh) and the desktop build,
-#               which fetches the Neovim DevHub bundles into out/nvim.
+#               which fetches the Neovim DevHub bundles into out/nvim and
+#               needs Go, for the devhub command in cli/.
 #               Idempotent: a second run is seconds. Not the app bundle:
 #               packaging (scripts/build-app.sh) is macOS-only.
 #   fmt         pnpm run fmt                                       checks
@@ -25,6 +26,7 @@
 #               Both run their real-Neovim tests on the bundled Neovim
 #               (out/nvim, `build:nvim`), never the machine's own.
 #   scripts     pnpm run test:scripts                              checks
+#   cli         pnpm run test:cli (gofmt, go vet, go test in cli/) checks
 #   app         the app smoke test (scripts/smoke_packaged_app.py). On macOS
 #               against dist/DevHub.app when one is built; on Linux against
 #               the packaged layout (package-nightly.py --layout-only) under
@@ -42,7 +44,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 OS="$(uname -s)"
-ALL_STAGES=(provision fmt lint typecheck vitest pty scripts app)
+ALL_STAGES=(provision fmt lint typecheck vitest pty scripts cli app)
 
 STOP=0
 NO_PROVISION=0
@@ -313,6 +315,10 @@ provision() {
 	provision_tmux
 	pnpm install --frozen-lockfile
 	echo "electron: $(apps/desktop/scripts/electron-path.sh)"
+	# The build compiles the devhub command (cli/, Go); go.mod states the
+	# version, and GOTOOLCHAIN fetches it when the installed Go is older.
+	command -v go >/dev/null || { echo "Go is not installed: the build needs it for cli/ (https://go.dev/dl/)" >&2; return 1; }
+	echo "go: $(go version)"
 	pnpm --filter @devhub/desktop build
 	set +e
 }
@@ -320,7 +326,7 @@ provision() {
 # --- the stages -------------------------------------------------------------
 stage_vitest() {
 	prepare_test_user || return 1
-	(cd apps/desktop && pnpm run build:terminal && pnpm run build:nvim) || return 1
+	(cd apps/desktop && pnpm run build:nvim) || return 1
 	(cd apps/desktop && as_test_user node_modules/.bin/vitest run)
 }
 
@@ -333,6 +339,15 @@ stage_pty() {
 stage_scripts() {
 	prepare_test_user || return 1
 	as_test_user python3 -m unittest discover -s scripts -p '*_test.py'
+}
+
+# The `devhub` command (cli/, Go): gofmt, vet and its tests, as the test
+# user, with a Go cache of that user's own.
+stage_cli() {
+	prepare_test_user || return 1
+	(cd cli && test -z "$(gofmt -l .)") || { (cd cli && gofmt -l .); return 1; }
+	(cd cli && as_test_user env GOCACHE="${TEST_HOME:-$HOME}/.cache/go-build" GOPATH="${TEST_HOME:-$HOME}/go" go vet ./...) || return 1
+	(cd cli && as_test_user env GOCACHE="${TEST_HOME:-$HOME}/.cache/go-build" GOPATH="${TEST_HOME:-$HOME}/go" go test -count=1 ./...)
 }
 
 stage_app() {
@@ -374,6 +389,7 @@ for stage in "${STAGES[@]}"; do
 		vitest) run_stage vitest stage_vitest ;;
 		pty) run_stage pty stage_pty ;;
 		scripts) run_stage scripts stage_scripts ;;
+		cli) run_stage cli stage_cli ;;
 		app) run_stage app stage_app ;;
 	esac
 done

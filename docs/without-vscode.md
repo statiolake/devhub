@@ -32,7 +32,7 @@ VS Code deleted"; the submodule entry went in "Remove the vscode submodule".
 | Packaging | VS Code's Electron renamed, `code-oss-dev/` (bundled workbench, built-ins, asar), four REH tarballs | npm's `Electron.app` renamed (`darwin_bundle.py`), `Resources/app/{package.json,product.json,out,dist,node_modules}`, `whisper/`, `licenses/` (`package-nightly.py`) |
 | Signing | ad hoc, designated requirement on the bundle id | the same `sign()`; not notarized, as before |
 | Document types | read from VS Code's staged bundle | `DOCUMENT_EXTENSIONS` in `darwin_bundle.py` |
-| Node on an SSH host | the REH's `node`, for the `devhub` command and the launcher | nodejs.org's Linux build, pinned (`nodeVersion`, `nodeDownloadSha256`), delivered like tmux and bash; a musl host is refused by name |
+| Node on an SSH host | the REH's `node`, for the `devhub` command and the launcher | none: the `devhub` command is a Go binary carried in the app and delivered like tmux and bash (`docs/devhub-cli.md`) |
 | `editor` setting | `"vscode"` (default) or `"neovim"` | **retired** (below) |
 | `workbench_freeze`, `workbench_discard_minutes`, `stop_editor` (`Cmd+Q Shift+E`), the Task Manager's Sleep | VS Code workbenches only | retired / deleted |
 | Dev containers | a Workspace's editor attached to a container (VS Code's Reopen in Container) | deleted. A saved attachment reopens on the Workspace's own machine; `devhub <file>` inside a container is refused |

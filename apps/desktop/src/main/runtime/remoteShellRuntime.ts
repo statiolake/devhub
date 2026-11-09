@@ -57,7 +57,6 @@ import type { Pty } from "../terminal/pty.js";
 import {
 	remoteTerminalPaths,
 	remoteCliScript,
-	terminalLauncherScript,
 	type RemoteTerminalPaths,
 } from "../terminal/launcher.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
@@ -903,6 +902,23 @@ export abstract class RemoteShellRuntime {
 			);
 		}
 		const staging = `${directory}.unpacking`;
+		if (tarball.format === "binary") {
+			await this.#installBinary(
+				tool,
+				version,
+				tarball.bytes,
+				staging,
+				directory,
+			);
+			if (!(await answers())) {
+				throw new Error(
+					`DevHub wrote ${program} on ${this.machineName}, but ` +
+						`${program} ${toolVersionArgument(tool)} did not answer — ` +
+						`the binary cannot run on that machine (${target})`,
+				);
+			}
+			return { directory, program };
+		}
 		const unpacked = posix.join(staging, tarball.topLevelDirectory);
 		// `tar` reading a stream from stdin, into a directory of its own, and a
 		// rename at the end. Not `--strip-components`, which is GNU's and
@@ -935,6 +951,39 @@ export abstract class RemoteShellRuntime {
 			);
 		}
 		return { directory, program };
+	}
+
+	/**
+	 * A tool that is one static file (the app's own `devhub`): written to
+	 * `bin/<tool>` from a stream on stdin, through the same staging directory
+	 * and rename as an unpack, so a dropped connection never leaves half a
+	 * binary behind the name that means "installed".
+	 */
+	async #installBinary(
+		tool: HostTool,
+		version: string,
+		bytes: Uint8Array,
+		staging: string,
+		directory: string,
+	): Promise<void> {
+		const binary = posix.join(staging, "bin", tool);
+		const written = await this.sh(
+			[
+				`rm -rf -- ${shellQuote(staging)} ${shellQuote(directory)}`,
+				`mkdir -p -- ${shellQuote(posix.dirname(binary))} || exit 1`,
+				`cat > ${shellQuote(binary)} || exit 1`,
+				`chmod 755 ${shellQuote(binary)} || exit 1`,
+				`mkdir -p -- ${shellQuote(posix.dirname(directory))} || exit 1`,
+				`exec mv -- ${shellQuote(staging)} ${shellQuote(directory)}`,
+			].join("\n"),
+			{ stdin: bytes, timeoutMs: INSTALL_TIMEOUT_MS },
+		);
+		if (written.code !== 0) {
+			throw new Error(
+				`DevHub could not write ${tool} ${version} into ${directory} ` +
+					`on ${this.machineName}: ${lastLine(written.stderr.toString("utf8"))}`,
+			);
+		}
 	}
 
 	#libcAnswer: Promise<Libc> | undefined;
@@ -1212,22 +1261,22 @@ export abstract class RemoteShellRuntime {
 	}
 
 	/**
-	 * DevHub's own programs on that machine — the `devhub` command, the
-	 * terminal launcher's asking program and the `/devhub` skill naming them —
-	 * installed once, with the socket they talk to made answerable over there
-	 * by `publishControlSocket`. So there is one protocol and one answering
-	 * side.
+	 * DevHub's own programs on that machine — the `devhub` command and the
+	 * `/devhub` skill naming it — installed once, with the socket the command
+	 * talks to made answerable over there by `publishControlSocket`. So there
+	 * is one protocol and one answering side.
 	 *
-	 * The Node that runs them is DevHub's own, delivered like tmux and bash
-	 * (`ToolDelivery`, nodejs.org's Linux build at the version `product.json`
-	 * pins, under `~/<serverDataFolderName>/node/<version>`): a `command -v
-	 * node` would find whatever a login shell happened to have on its PATH,
-	 * which is a different Node on every machine and none at all on some. It
-	 * is glibc's, so a musl machine is refused by name.
+	 * The command is this app's own static Go binary for that platform
+	 * (`ToolDelivery` `devhub`, from `out/cli`, under
+	 * `~/<serverDataFolderName>/devhub/<version>`), so nothing over there
+	 * needs a Node, glibc or anything else to run it (`docs/devhub-cli.md`).
+	 * What goes on a pane's PATH is a shim beside it that names the socket
+	 * and the machine and `exec`s it: two facts the binary cannot discover,
+	 * written into a file rather than exported, because `DEVHUB_*` is a
+	 * family a terminal is not supposed to inherit.
 	 *
-	 * The programs are one bundled file each, written as files rather than
-	 * inlined into a remote shell command because that would put their text
-	 * into the remote shell's argv where `ps` reads it.
+	 * No terminal launcher is written here any more: its asking program
+	 * answered VS Code's integrated terminal, and no workbench runs on a host.
 	 */
 	async terminalLauncher(
 		spec: TerminalLauncherSpec,
@@ -1239,56 +1288,21 @@ export abstract class RemoteShellRuntime {
 	async #installLauncher(
 		spec: TerminalLauncherSpec,
 	): Promise<TerminalLauncher> {
-		const { platform } = await this.describeRemote();
-		if (platform === "Linux" && (await this.#libc()) === "musl") {
-			throw new Error(
-				`${this.machineName} runs on musl (Alpine), and the Node DevHub installs there for its \`devhub\` command is glibc's`,
-			);
-		}
-		const { program: node } = await this.#installTool(this.delivery("node"));
+		const { program } = await this.#installTool(this.delivery("devhub"));
 		const paths = remoteTerminalPaths({
 			home: await this.home(),
-			node,
 			controlSocketPath: spec.controlSocketPath,
-			entryName: spec.entryName,
-			cliEntryName: spec.cliEntryName,
 		});
 		// 0700, like the control directory on this Mac and for the same reason:
 		// what is under it is a path to a socket that runs commands as this user.
 		const made = await this.sh(
-			`mkdir -p -- ${shellQuote(paths.entryRoot)} ${shellQuote(paths.cliBinDirectory)} && chmod 700 ${shellQuote(paths.directory)} ${shellQuote(paths.entryRoot)} ${shellQuote(paths.cliBinDirectory)}`,
+			`mkdir -p -- ${shellQuote(paths.cliBinDirectory)} && chmod 700 ${shellQuote(paths.directory)} ${shellQuote(paths.cliBinDirectory)}`,
 		);
 		if (made.code !== 0) throw this.fileError(paths.directory, made);
-		await this.writeTextFile(paths.entry, spec.entryText, 0o600);
-		// The bundle is an ES module and none of DevHub's `package.json`
-		// travels with it, so without this Node reads it as CommonJS and the
-		// first `import` is a syntax error.
-		await this.writeTextFile(
-			`${paths.entryRoot}/package.json`,
-			`${JSON.stringify({ type: "module" }, null, "\t")}\n`,
-			0o600,
-		);
-		await this.writeTextFile(
-			paths.launcher,
-			terminalLauncherScript({
-				execPath: paths.node,
-				entryScript: paths.entry,
-				socketPath: paths.socket,
-				machine: this.id,
-			}),
-			0o755,
-		);
-		// The `devhub` command, beside the asking program and run by the same
-		// Node, over the same socket. Two files rather than one because they
-		// are two programs — the launcher prints an argv and exits, `devhub`
-		// opens a file and may wait for it — and bundling them together would
-		// be one program with two entry points and a flag to choose.
-		await this.writeTextFile(paths.cliEntry, spec.cliText, 0o600);
 		await this.writeTextFile(
 			paths.cli,
 			remoteCliScript({
-				execPath: paths.node,
-				cliScript: paths.cliEntry,
+				execPath: program,
 				socketPath: paths.socket,
 				machine: this.id,
 			}),
@@ -1296,7 +1310,7 @@ export abstract class RemoteShellRuntime {
 		);
 		const skill = await this.#installSkill(paths, spec);
 		return {
-			path: paths.launcher,
+			path: undefined,
 			unreachable: await this.publishControlSocket(
 				paths.socket,
 				spec.controlSocketPath,

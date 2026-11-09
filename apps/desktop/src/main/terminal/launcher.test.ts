@@ -1,16 +1,13 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
 import {
 	installTerminalLauncher,
-	readTerminalEntryBundle,
 	remoteTerminalPaths,
 	remoteCliBinDirectory,
 	remoteCliScript,
-	terminalEntryBundlePath,
 	terminalLauncherPath,
 	terminalCommandLine,
 	terminalLauncherScript,
@@ -201,81 +198,27 @@ describe("the DevHub terminal launcher", () => {
 		expect(script).not.toContain(request.execPath);
 	});
 
-	// A machine that has no DevHub on it needs the asking program itself. It
-	// used to be shipped as a closure — the compiled entry plus every compiled
-	// file it imported, discovered by reading the `.js` as text. That walker
-	// could not tell an `import` from the word in a doc comment, and
-	// `launcher.js`'s own comment about import specifiers made the packaged app
-	// refuse to ship the program at all: every window opened with no terminal
-	// launcher, here and on every host. One bundled file has no graph to walk.
-	describe("the one file the asking program is", () => {
-		// APP_ROOT as `appController.ts` computes it: src/main/terminal -> the
-		// package. The bundle is a build output, so this is the built one.
-		const appRoot = join(
-			dirname(fileURLToPath(import.meta.url)),
-			"..",
-			"..",
-			"..",
-		);
-
-		it("is produced by the build, beside the compiled main process", () => {
-			expect(statSync(terminalEntryBundlePath(appRoot)).isFile()).toBe(true);
-		});
-
-		it("imports no file, so there is nothing else to ship", () => {
-			const text = readTerminalEntryBundle(appRoot);
-			// Everything the program needs is inside it; `node:` is on every
-			// machine that has a Node at all.
-			for (const match of text.matchAll(
-				/^\s*(?:import|export)\s[^\n]*?from\s*["']([^"']+)["']/gmu,
-			)) {
-				expect(match[1]).toMatch(/^node:/u);
-			}
-			expect(text).not.toMatch(/\bfrom\s*["']\.{1,2}\//u);
-		});
-
-		// The one failure that is worth a sentence: a checkout where the build
-		// step has not run has no terminals anywhere, and "…is not there" with
-		// no cause named is a morning spent looking at ssh.
-		it("says which build step makes it when it is not there", () => {
-			expect(() => readTerminalEntryBundle(scratch)).toThrow(/build:terminal/u);
-		});
-	});
-
 	describe("where all of it goes on another machine", () => {
 		const paths = {
 			home: "/home/dev",
-			node: "/home/dev/.devhub-server/node/22.21.1/bin/node",
 			controlSocketPath: "/data/devhub/devhub/control.sock",
-			entryName: "devhub-terminal.bundle.js",
-			cliEntryName: "devhub-cli.bundle.js",
 		};
-
-		it("runs on the Node DevHub installed there", () => {
-			expect(remoteTerminalPaths(paths).node).toBe(
-				"/home/dev/.devhub-server/node/22.21.1/bin/node",
-			);
-		});
 
 		it("keeps DevHub's files in one directory of its own", () => {
 			const remote = remoteTerminalPaths(paths);
 			expect(remote.directory).toBe("/home/dev/.devhub/terminal");
-			expect(remote.launcher.startsWith(`${remote.directory}/`)).toBe(true);
-			expect(remote.entry).toBe(
-				"/home/dev/.devhub/terminal/js/devhub-terminal.bundle.js",
-			);
+			expect(remote.socket.startsWith(`${remote.directory}/`)).toBe(true);
 		});
 
 		// Two DevHub profiles on one Mac reaching one host must not adopt each
 		// other's socket, and the socket path is the one thing that tells them
 		// apart before anything has been written.
-		it("gives each DevHub its own socket and launcher on the host", () => {
+		it("gives each DevHub its own socket on the host", () => {
 			const other = remoteTerminalPaths({
 				...paths,
 				controlSocketPath: "/data/devhub-second/devhub/control.sock",
 			});
 			expect(other.socket).not.toBe(remoteTerminalPaths(paths).socket);
-			expect(other.launcher).not.toBe(remoteTerminalPaths(paths).launcher);
 		});
 
 		it("puts the `devhub` command in a directory of its own, beside the rest", () => {
@@ -284,9 +227,6 @@ describe("the DevHub terminal launcher", () => {
 				true,
 			);
 			expect(remote.cli).toBe(`${remote.cliBinDirectory}/devhub`);
-			expect(remote.cliEntry).toBe(
-				"/home/dev/.devhub/terminal/js/devhub-cli.bundle.js",
-			);
 		});
 
 		/**
@@ -314,23 +254,19 @@ describe("the DevHub terminal launcher", () => {
 	/**
 	 * The `devhub` a pane on a host runs.
 	 *
-	 * Upstream's `bin/remote-cli/devhub` ships in the REH tarball and can never
-	 * work here: it is a client for `VSCODE_IPC_HOOK_CLI`, which the REH's own
-	 * terminal channel sets per terminal, and a DevHub pane inherits the tmux
-	 * server's environment instead. This is DevHub's own, over DevHub's own
-	 * socket.
+	 * A shim that execs the app's own `devhub` binary installed there, over
+	 * DevHub's own forwarded socket.
 	 */
 	describe("the `devhub` command written on another machine", () => {
 		const script = remoteCliScript({
-			execPath: "/home/dev/.devhub-server/bin/abc123/node",
-			cliScript: "/home/dev/.devhub/terminal/js/devhub-cli.bundle.js",
+			execPath: "/home/dev/.devhub-server/devhub/0123456789ab/bin/devhub",
 			socketPath: "/home/dev/.devhub/terminal/control-abcdef.sock",
 			machine: "ssh:build-host",
 		});
 
-		it("runs the REH's own Node on the forwarded socket", () => {
+		it("runs the installed binary on the forwarded socket", () => {
 			expect(script).toContain(
-				"exec '/home/dev/.devhub-server/bin/abc123/node' '/home/dev/.devhub/terminal/js/devhub-cli.bundle.js' \"$@\"",
+				"exec '/home/dev/.devhub-server/devhub/0123456789ab/bin/devhub' \"$@\"",
 			);
 			expect(script).toContain(
 				"DEVHUB_CONTROL_SOCKET='/home/dev/.devhub/terminal/control-abcdef.sock'",
@@ -353,10 +289,10 @@ describe("the DevHub terminal launcher", () => {
 			expect(script).not.toContain("DEVHUB_LAUNCH_COMMAND");
 		});
 
-		/** A missing REH Node says which file, rather than `exec: not found`. */
-		it("names the Node it cannot find rather than failing as a shell", () => {
+		/** A missing binary says which file, rather than `exec: not found`. */
+		it("names the binary it cannot find rather than failing as a shell", () => {
 			expect(script).toContain(
-				"if [ ! -x '/home/dev/.devhub-server/bin/abc123/node' ]; then",
+				"if [ ! -x '/home/dev/.devhub-server/devhub/0123456789ab/bin/devhub' ]; then",
 			);
 		});
 

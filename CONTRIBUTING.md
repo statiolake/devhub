@@ -13,7 +13,8 @@ cross into product-domain types.
 
 ## Local checks
 
-Use the pinned pnpm version from `package.json` and run:
+Use the pinned pnpm version from `package.json`, and Go (`cli/go.mod`; the
+app build compiles the `devhub` command, `docs/devhub-cli.md`), and run:
 
 ```sh
 CI=true pnpm install --frozen-lockfile

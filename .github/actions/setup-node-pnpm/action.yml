@@ -1,8 +1,9 @@
 name: Set up Node.js and pnpm
 description: >-
   The workspace's Node (.nvmrc) and pnpm (package.json `packageManager`), with
-  the pnpm store cached, and optionally `pnpm install --frozen-lockfile`.
-  Neither version is written here: each is stated once in the repository and
+  the pnpm store cached, Go (cli/go.mod) for the `devhub` command the app
+  build compiles, and optionally `pnpm install --frozen-lockfile`. No version
+  is written here: each is stated once in the repository and
   read from there.
 
 inputs:
@@ -28,6 +29,15 @@ runs:
         node-version-file: .nvmrc
         cache: pnpm
         cache-dependency-path: pnpm-lock.yaml
+
+    # The `devhub` command is Go (cli/, docs/devhub-cli.md), built from source
+    # by `pnpm --filter @devhub/desktop build`, so every job that builds the
+    # app needs it.
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: cli/go.mod
+        cache-dependency-path: cli/go.mod
 
     - name: Install JavaScript dependencies
       if: inputs.install == 'true'

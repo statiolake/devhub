@@ -23,6 +23,7 @@ import {
 	type TerminalProfileAnswer,
 } from "./protocol.js";
 import type { TellCommand } from "./tell/command.js";
+import { tellFromWords } from "./tell/request.js";
 
 /** Longer than any request DevHub sends; short enough that nothing accumulates. */
 const MAX_REQUEST_BYTES = 64 * 1024;
@@ -223,15 +224,8 @@ export async function answerControlRequest(
 				return { ok: true, message: await handlers.version() };
 			case "metrics":
 				return { ok: true, message: await handlers.metrics() };
-			case "tell": {
-				const answer = await handlers.tell(
-					request.command,
-					request.origin,
-					request.machine,
-					request.as,
-				);
-				return { ok: true, message: answer.message, data: answer.data };
-			}
+			case "tell":
+				return await answerTell(request, handlers);
 			case "terminal-profile": {
 				const profile = await handlers.terminalProfile(
 					request.machine,
@@ -249,6 +243,56 @@ export async function answerControlRequest(
 		}
 	} catch (error) {
 		return { ok: false, message: failureText(error) };
+	}
+}
+
+/**
+ * `devhub --tell`'s words, parsed here and run.
+ *
+ * What the command does with each answer is in the answer: `usage` is a
+ * refusal of the command line (exit 2), `stdin` asks for what is piped in,
+ * and `json` says which of `message` and `data` to print — including for a
+ * failure of the operation itself, which is why that is caught here rather
+ * than by the caller's catch.
+ */
+async function answerTell(
+	request: Extract<ControlRequest, { kind: "tell" }>,
+	handlers: ControlHandlers,
+): Promise<ControlResponse> {
+	const words = tellFromWords(
+		request.argv,
+		request.cwd,
+		request.home,
+		request.stdin,
+	);
+	switch (words.kind) {
+		case "invalid":
+			return { ok: false, message: words.message, usage: true };
+		case "help":
+			return { ok: true, message: words.usage };
+		case "needs-stdin":
+			return {
+				ok: false,
+				message: "'-' reads the text from what is piped in.",
+				stdin: true,
+			};
+		case "tell":
+			try {
+				const answer = await handlers.tell(
+					words.command,
+					request.origin,
+					request.machine,
+					words.as,
+				);
+				return {
+					ok: true,
+					message: answer.message,
+					data: answer.data,
+					json: words.json,
+				};
+			} catch (error) {
+				return { ok: false, message: failureText(error), json: words.json };
+			}
 	}
 }
 

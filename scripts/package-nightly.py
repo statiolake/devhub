@@ -110,10 +110,16 @@ def check_inputs() -> None:
 		DESKTOP_DIR / "out" / "preload" / "shell.js",
 		DESKTOP_DIR / "out" / "vt" / "ghostty-vt.wasm",
 		DESKTOP_DIR / "out" / "nvim" / "bin" / "nvim",
+		DESKTOP_DIR / "out" / "cli" / "SHA256SUMS",
 		DESKTOP_DIR / "dist" / "shell" / "index.html",
 	):
 		if not required.exists():
 			fail(f"missing {required}\n       produce it with: pnpm run build:packages")
+	if _newest_mtime(REPO_ROOT / "cli") > _newest_mtime(DESKTOP_DIR / "out" / "cli"):
+		fail(
+			f"{DESKTOP_DIR / 'out' / 'cli'} is older than {REPO_ROOT / 'cli'}\n"
+			"       it would ship the previous devhub command — rebuild with: pnpm run build:packages"
+		)
 	for built in (DESKTOP_DIR / "out", DESKTOP_DIR / "dist"):
 		if _newest_mtime(DESKTOP_DIR / "src") > _newest_mtime(built):
 			fail(
