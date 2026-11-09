@@ -187,7 +187,9 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
 
 ### The page
 
-`shell/neovim/`:
+`shell/neovim/`. What every layer of it is held to — its own element, clip,
+z-order and opaque canvas — and where the code still falls short:
+`docs/rendering-layers.md`.
 
 - `redraw.ts` — the pure reducer: `grid_resize/line/clear/destroy/scroll`,
   `grid_cursor_goto`, `win_pos/win_float_pos/win_hide/win_close`,
