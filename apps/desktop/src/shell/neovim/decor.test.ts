@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { decorOf, matchAt, placeDecor, wordsOf, type RowCells } from "./decor";
+import {
+  decorOf,
+  foldLineOf,
+  matchAt,
+  placeDecor,
+  wordsOf,
+  type RowCells,
+} from "./decor";
 
 /** A grid row from text: a wide character takes its cell and an empty one. */
 function rowOf(text: string, width = 40): RowCells {
@@ -92,5 +99,44 @@ describe("a decoration in a grid row", () => {
       { row: 1, col: 2, text: "x", kind: "eol" },
     ]);
     expect(decorOf(undefined).size).toBe(0);
+  });
+});
+
+describe("a closed fold's line", () => {
+  const row = (text: string) => ({
+    chars: [...text],
+    base: 0,
+    width: text.length,
+  });
+
+  it("is found from its marker, its chevron a level's two cells in", () => {
+    const text = "+---  21 lines: Options·········";
+    const fold = foldLineOf(row(text), [
+      {
+        row: 0,
+        col: 0,
+        text: "+---  21 lines: Options",
+        kind: "fold",
+        level: 2,
+        count: 21,
+        words: "Options",
+      },
+    ]);
+    expect(fold).toEqual({ start: 0, chevron: 2, words: "Options", count: 21 });
+  });
+
+  it("keeps a person's foldtext as their words, with no count", () => {
+    const fold = foldLineOf(row("  my fold ···"), [
+      { row: 0, col: 0, text: "  my fold", kind: "fold", level: 1 },
+    ]);
+    expect(fold).toMatchObject({ words: "my fold", count: undefined });
+  });
+
+  it("is not drawn where the row no longer holds it", () => {
+    expect(
+      foldLineOf(row("let x = 1"), [
+        { row: 0, col: 0, text: "+-- 3 lines: x", kind: "fold" },
+      ]),
+    ).toBeUndefined();
   });
 });

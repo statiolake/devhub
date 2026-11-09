@@ -24,6 +24,15 @@ export interface DecorSpan {
   readonly col: number;
   readonly text: string;
   readonly kind: DecorKind;
+  /**
+   * A closed fold (`kind: "fold"`; `text` is all of its line from the
+   * marker): its level, and — with Neovim's own `foldtext` — how many lines
+   * it holds and its words without the `+--  N lines:` lead and the fold
+   * marker. A person's `foldtext` has neither: its text is their words.
+   */
+  readonly level?: number;
+  readonly count?: number;
+  readonly words?: string;
 }
 
 /** Decorations by window, as the last `decor` event said. */
@@ -54,6 +63,9 @@ export function decorOf(payload: unknown): Decor {
           col: s["col"],
           text: s["text"],
           kind: s["kind"] as DecorKind,
+          ...(typeof s["level"] === "number" ? { level: s["level"] } : {}),
+          ...(typeof s["count"] === "number" ? { count: s["count"] } : {}),
+          ...(typeof s["words"] === "string" ? { words: s["words"] } : {}),
         });
       }
     }
@@ -221,4 +233,35 @@ export function wordsOf(
   )
     end += 1;
   return end > start ? { start, end } : undefined;
+}
+
+/**
+ * A closed fold on a row (mock 3): where its line starts (the marker's
+ * first cell) and what is drawn there, when the row holds its text there
+ * now. Everything from `start` to the window's edge is the fold's: the
+ * marker, the words and the fill.
+ */
+export interface FoldLine {
+  readonly start: number;
+  /** The chevron's cell: a level's two cells in from the marker's. */
+  readonly chevron: number;
+  readonly words: string;
+  readonly count: number | undefined;
+}
+
+export function foldLineOf(
+  row: RowCells,
+  spans: readonly DecorSpan[],
+): FoldLine | undefined {
+  const span = spans.find((s) => s.kind === "fold");
+  if (!span || matchAt(row, span.col, span.text, true) === undefined)
+    return undefined;
+  const level = Math.max(1, span.level ?? 1);
+  const chevron = Math.min(row.width - 1, span.col + (level - 1) * 2);
+  return {
+    start: span.col,
+    chevron,
+    words: (span.words ?? span.text).trim(),
+    count: span.count,
+  };
 }

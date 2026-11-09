@@ -58,7 +58,8 @@ end
 --- A window's decorations: { row, col, text, kind } in its grid's cells.
 --- kind: "eol" (col is where the line's text ends: the text is at or after
 --- it), "right" (ends at the window's edge), "inline", "lines" (a virtual
---- line), "fold" (a closed fold's text after its +-- marker).
+--- line), "fold" (a closed fold's line from its marker, with its level, and
+--- its count and words when foldtext is Neovim's own).
 local function spans_of(win)
   local info = vim.fn.getwininfo(win)[1]
   if not info or info.height == 0 then return {} end
@@ -72,8 +73,12 @@ local function spans_of(win)
   end
   local folding = vim.wo[win].foldenable
   local foldtext = vim.wo[win].foldtext
-  -- The closed folds' text: the +-- marker stays on cells (the cursor sits
-  -- on its first cell, its dashes count the level); the words after it.
+  -- The closed folds: the line from the marker's first cell (the cursor's
+  -- cell on a closed fold), its level, and with Neovim's own foldtext its
+  -- line count and words, the "+--  N lines: " lead and the fold marker
+  -- left out (the marker is folding's mechanism, not words to read).
+  local default_text = foldtext == "foldtext()"
+  local marker_open = vim.pesc((vim.wo[win].foldmarker or "{{{,}}}"):match("^[^,]*") or "{{{")
   local lnum = info.topline
   while lnum <= info.botline do
     local closed = folding and vim.api.nvim_win_call(win, function() return vim.fn.foldclosed(lnum) end) or -1
@@ -82,12 +87,19 @@ local function spans_of(win)
       if foldtext ~= "" then
         local p = pos(lnum, 1)
         local text = vim.api.nvim_win_call(win, function() return vim.fn.foldtextresult(lnum) end)
-        local marker = text:match("^%+%-*") or ""
-        local lead = math.max(1, #marker)
-        local rest = text:sub(lead + 1)
-        if p and rest:match("%S") then
-          table.insert(out, { row = p.row - top, col = info.textoff + lead, text = rest, kind = "fold" })
+        -- "+-" and a dash a level: the closed fold's own level.
+        local dashes = text:match("^%+%-(%-*)")
+        local level = dashes and math.max(1, #dashes)
+          or vim.api.nvim_win_call(win, function() return vim.fn.foldlevel(lnum) end)
+        local span = { row = p and p.row - top, col = info.textoff, text = text, kind = "fold", level = level }
+        if default_text then
+          local lead = text:match("^%+%-+%s*%d+[^:]*:%s?")
+          if lead then
+            span.count = last - lnum + 1
+            span.words = text:sub(#lead + 1):gsub("%s*" .. marker_open .. "%d*%s*$", "")
+          end
         end
+        if p and text:match("%S") then table.insert(out, span) end
       end
       lnum = math.max(last, lnum) + 1
     else
