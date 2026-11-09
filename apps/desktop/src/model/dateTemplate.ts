@@ -162,33 +162,55 @@ function isWordCharacter(character: string): boolean {
 export function dateTemplateAmbiguity(
   template: string,
 ): DateTemplateAmbiguity | undefined {
-  for (const segment of template.split("/")) {
-    let token: string | undefined;
-    let word = false;
-    let index = 0;
-    while (index < segment.length) {
-      if (segment[index] === "[") {
-        const end = segment.indexOf("]", index + 1);
-        // An unclosed bracket is a different mistake, reported on its own by
-        // `dateTemplateBracketsBalance`. Nothing past it is a token.
-        if (end === -1) break;
-        index = end + 1;
-        continue;
+  // Segments end at a `/` outside brackets only: a bracket is literal text
+  // to its `]`, a `/` in it included, as `expandDateTemplate` reads it. Split
+  // on every `/` first and a bracket that spans one (a whole literal
+  // directory, `/[home/me/tmp-ss1]/YYYYMMDD`) would leave its middle read as
+  // tokens hiding in words.
+  let start = 0;
+  let token: string | undefined;
+  let word = false;
+  let index = 0;
+  const ended = (): DateTemplateAmbiguity | undefined => {
+    const segment = template.slice(start, index);
+    const found =
+      token !== undefined && word
+        ? { segment, token, escaped: `[${segment}]` }
+        : undefined;
+    token = undefined;
+    word = false;
+    start = index + 1;
+    return found;
+  };
+  while (index < template.length) {
+    const character = template[index] ?? "";
+    if (character === "[") {
+      const end = template.indexOf("]", index + 1);
+      // An unclosed bracket is a different mistake, reported on its own by
+      // `dateTemplateBracketsBalance`. Nothing past it is a token.
+      if (end === -1) {
+        index = template.length;
+        break;
       }
-      const matched = TOKEN_NAMES.find((name) =>
-        segment.startsWith(name, index),
-      );
-      if (matched) {
-        token ??= matched;
-        index += matched.length;
-        continue;
-      }
-      if (isWordCharacter(segment[index] ?? "")) word = true;
+      index = end + 1;
+      continue;
+    }
+    if (character === "/") {
+      const found = ended();
+      if (found) return found;
       index += 1;
+      continue;
     }
-    if (token !== undefined && word) {
-      return { segment, token, escaped: `[${segment}]` };
+    const matched = TOKEN_NAMES.find((name) =>
+      template.startsWith(name, index),
+    );
+    if (matched) {
+      token ??= matched;
+      index += matched.length;
+      continue;
     }
+    if (isWordCharacter(character)) word = true;
+    index += 1;
   }
-  return undefined;
+  return ended();
 }

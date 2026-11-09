@@ -66,6 +66,21 @@ describe("a folder name with a token hiding in it", () => {
     ).toBeUndefined();
   });
 
+  // A whole literal directory in one bracket, as a scratch folder's random
+  // name is written: `ss` in `tmp-M6ssla` is inside it, not a token.
+  it("takes a bracket that spans several segments at its word", () => {
+    const template = "/[home/me/tmp-M6ssla/summaries]/YYYYMMDD";
+    expect(dateTemplateAmbiguity(template)).toBeUndefined();
+    expect(expandDateTemplate(template, new Date(2026, 8, 23))).toBe(
+      "/home/me/tmp-M6ssla/summaries/20260923",
+    );
+    expect(dateTemplateAmbiguity("/[home/me]/summaries/YYYY")).toEqual({
+      segment: "summaries",
+      token: "mm",
+      escaped: "[summaries]",
+    });
+  });
+
   it("leaves a segment that is only a date alone", () => {
     // Punctuation between tokens is how a date is written, not a word.
     expect(dateTemplateAmbiguity("~/YYYY-MM-DD")).toBeUndefined();
