@@ -48,7 +48,7 @@ because the mechanism has to handle them when they come back.
 | Plain Lua/Vimscript plugins | 36 of 41 | nothing arch-specific |
 | `saghen/blink.cmp` (`version = '*'`, v1.10.2) | Rust fuzzy matcher, downloaded at first load into `target/release/libblink_cmp_fuzzy.{so,dylib}` | the Linux `.so` for the host's triple; otherwise its Lua matcher, with a warning |
 | `statiolake/vscode-review-relay` (`cond = DEVHUB_NEOVIM_GUI`) | `build.lua` runs `go build` into `bin/<os>-<arch>/review-relay` | the `linux-<arch>` binary |
-| `statiolake/vscode-incremental-diff` | a committed `server/incremental-diff-server.js` | `node` on the PATH ("incremental-diff needs Node.js") |
+| `statiolake/vscode-incremental-diff` | a Go binary `bin/<os>-<arch>/incremental-diff`, built by its `build.lua` (Go, like review-relay) | a Linux build per host arch, carried like review-relay's |
 | `github/copilot.vim` | `copilot-language-server/` (53 MB) ships `compiled/{darwin,linux,win32}/{x64,arm64}/*.node` | `node`, network and its own sign-in; off by default (`copilot_enabled = false`) |
 | `statiolake/devhub.nvim` | Lua only; reads `DEVHUB_THEME_FILE`, `DEVHUB_NEOVIM_GUI` | nothing |
 | `mason.nvim` | `ensure_installed`: tree-sitter-cli, lua-language-server, stylua, rust-analyzer, gopls, goimports, tsgo, prettier, biome, pyright, ruff, clangd, shfmt | network to api.github.com and the registries, npm, Go (goimports) — on the host |
@@ -358,8 +358,7 @@ person is told once, per host, in DevHub's notice and in Neovim
 
 > Your Neovim config is on build-1 (41 plugins, 17 MB). Not available
 > there: lua-language-server, rust-analyzer, clangd, pyright (LSP off for
-> Lua, Rust, C, Python); fd (pickers use rg); node (incremental-diff,
-> copilot). Mason cannot install them: build-1 has no route to github.com.
+> Lua, Rust, C, Python); fd (pickers use rg); node (copilot). Mason cannot install them: build-1 has no route to github.com.
 
 `devhub --metrics` gets a `neovimConfig` entry per machine, shaped like
 `terminalLauncher`'s: `carried`, `digest`, `bytes`, `missing[]`,
@@ -554,9 +553,9 @@ as a decision because it is a heuristic.
    delivered by DevHub: 573 MB per host for today's `ensure_installed`
    (227 MB sent), a pin list to maintain, and Node on the host for pyright
    and prettier.
-3. **`node` on hosts**: incremental-diff and copilot need it, and Node
+3. **`node` on hosts**: copilot needs it (incremental-diff is Go now), and Node
    delivery is going away with the Go `devhub` command. Carry a pinned Node
-   as an opt-in tool (about 30 MB gzipped), or let those two degrade.
+   as an opt-in tool (about 30 MB gzipped), or let copilot degrade.
 4. **review-relay's binary**: cross-build with this Mac's Go (works today,
    26 s cold), or publish `linux-<arch>` binaries from that repository's
    releases so no Go is needed here. The second is better and is a change
