@@ -67,6 +67,26 @@ describe("the cell font", () => {
     expect(neovimCellFont(TERMINAL, {})).toEqual(TERMINAL);
   });
 
+  it("is the terminal's for a Neovim whose guifont is Neovim 0.12's own default", () => {
+    // `nvim --clean` on macOS, Linux and Windows: not the person's choice.
+    for (const guifont of [
+      "SF Mono,Menlo,Monaco,Courier New,monospace",
+      "Source Code Pro,DejaVu Sans Mono,Courier New,monospace",
+      "Cascadia Code,Cascadia Mono,Consolas,Courier New,monospace",
+      "DejaVu Sans Mono,Courier New,monospace",
+    ]) {
+      expect(neovimCellFont(TERMINAL, { guifont, linespace: 0 })).toEqual(
+        TERMINAL,
+      );
+    }
+    // The same faces with a size are the person's.
+    expect(
+      neovimCellFont(TERMINAL, {
+        guifont: "SF Mono,Menlo,Monaco,Courier New,monospace:h13",
+      }).size,
+    ).toBe(13);
+  });
+
   it("takes a set guifont's faces and size, keeping the line height", () => {
     expect(
       neovimCellFont(TERMINAL, { guifont: "Fira Code:h14", linespace: 0 }),

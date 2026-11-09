@@ -50,7 +50,13 @@ import {
 } from "./redraw";
 import { cmdlineLayout, cmdlineLead, textCells } from "./cmdline";
 import { routeMessages } from "./messages";
-import { ICON_FAMILY, cssColor, fontOf, resolveColors } from "./painter";
+import {
+  ICON_FAMILY,
+  cssColor,
+  fontOf,
+  resolveColors,
+  uiTypeScale,
+} from "./painter";
 import { CompletionMenu } from "../completion/CompletionMenu";
 import { TabStrip } from "./TabStrip";
 import { InlineImages, Toasts } from "./DecorationViews";
@@ -578,6 +584,7 @@ function NeovimSurface({
   const showTabs = tabs !== undefined && tabs.tabs.length > 1;
   const boxes = editor?.gridBoxes() ?? [];
   const fontFamily = editor?.font().family;
+  const fontSize = editor?.font().size;
   const ride = useCallback(() => {
     editorRef.current?.placeRiders();
   }, []);
@@ -611,6 +618,10 @@ function NeovimSurface({
               ["--nvim-editor-ground" as string]: cssColor(
                 nvim.defaults.background,
               ),
+              // The type scale of everything DevHub sets in the UI face
+              // (`neovim.css`): from the grid's size, so a larger terminal
+              // font makes the hovers, toasts, labels and code larger too.
+              ...(fontSize !== undefined ? uiTypeScale(fontSize) : {}),
             }
           : undefined
       }

@@ -239,8 +239,11 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   `terminal_line_height` (Settings > Agent panes), one source for the
   panes and every Neovim DevHub draws (`cellFont.ts`) — so a Neovim's cells
   are its pane's and its rows line up with the terminal's around it.
-  A config's own wins for its Neovim: a `guifont` that is not empty
-  (Neovim's default is empty) gives the faces and the size, and a
+  A config's own wins for its Neovim: a `guifont` that is neither empty
+  nor Neovim's own default gives the faces and the size (since 0.12 the
+  default is a list per platform, `SF Mono,Menlo,…` on macOS; taken for the
+  person's, it put every Neovim in SF Mono or Menlo beside panes in the
+  terminal font — `NEOVIM_DEFAULT_GUIFONTS`), and a
   `linespace` above 0 (the default) is the pixels between rows in place
   of the line height, the font's line box plus that many. Both are
   followed as Neovim sends them, so `:set guifont=…` or a font-size
@@ -250,6 +253,14 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   - The row is the terminal's (`cellMetrics`, `terminal-mode.md`, "The
     font, once"): the line box on device pixels times the line height,
     floored, the extra shared above and below it.
+  - What DevHub sets in the UI face (hovers, views, toasts, the tab strip,
+    badges, pills, keys, decorations' words) takes one type scale from the
+    grid's size (`uiTypeScale`): text at it, labels a step under, small
+    capitals and key caps two under, code in the grid's face at the grid's
+    size; one family list (`--nvim-ui-font`, the painter's `UI_FAMILY`).
+  - A window's grid is an opaque canvas, so its text is set with subpixel
+    antialiasing (CoreText's font smoothing on macOS), which Chromium does
+    only on an opaque canvas; floats keep their alpha for `winblend`.
   - The cell is measured on whole device pixels (crisp at
     `devicePixelRatio` 2; the text of a run is spread to the cell with
     `letterSpacing`), and measured again when the window moves to a screen of

@@ -5,8 +5,9 @@
  * cells exactly and its rows line up with the terminal's around it.
  *
  * A Neovim whose config says otherwise wins for that Neovim: a `guifont`
- * that is not empty (Neovim's default is empty, so a value is the person's)
- * gives its faces and its size, and a `linespace` above 0 (the default) is
+ * that is neither empty nor Neovim's own default (`NEOVIM_DEFAULT_GUIFONTS`:
+ * since 0.12 Neovim's default is a font list per platform, not empty, so a
+ * value is the person's only when it is another) gives its faces and size, and a `linespace` above 0 (the default) is
  * the pixels between its rows instead of the line height. Both are read
  * again whenever Neovim sends them (`option_set`), so a `:set guifont=` at
  * run time, or a font-size key binding, takes effect at once and an emptied
@@ -38,12 +39,29 @@ export function terminalCellFont(
   };
 }
 
+/**
+ * `guifont`'s built-in defaults (`:h 'guifont'`, Neovim 0.12): what Neovim
+ * says before a config sets it. Taken for its own, the macOS one put every
+ * DevHub Neovim in SF Mono or Menlo beside panes in the terminal font.
+ */
+export const NEOVIM_DEFAULT_GUIFONTS: ReadonlySet<string> = new Set([
+  "",
+  "DejaVu Sans Mono,Courier New,monospace",
+  "SF Mono,Menlo,Monaco,Courier New,monospace",
+  "Source Code Pro,DejaVu Sans Mono,Courier New,monospace",
+  "Cascadia Code,Cascadia Mono,Consolas,Courier New,monospace",
+]);
+
 /** A Neovim's font: the terminal's, unless its `guifont`/`linespace` say. */
 export function neovimCellFont(
   terminal: FontSpec,
   options: { readonly guifont?: unknown; readonly linespace?: unknown },
 ): FontSpec {
-  const guifont = parseGuifont(options.guifont);
+  const guifont =
+    typeof options.guifont === "string" &&
+    !NEOVIM_DEFAULT_GUIFONTS.has(options.guifont.trim())
+      ? parseGuifont(options.guifont)
+      : undefined;
   const linespace =
     typeof options.linespace === "number" && options.linespace > 0
       ? options.linespace

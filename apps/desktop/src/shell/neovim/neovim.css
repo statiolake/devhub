@@ -19,16 +19,17 @@
 }
 
 .neovim-page {
+  /* The UI face: what DevHub sets in proportional type (hovers, toasts,
+     labels, decorations' words, which the painter sets in the same list),
+     icons first. Its sizes are `uiTypeScale`'s, from the grid's size. */
+  --nvim-ui-font:
+    "DevHub Nerd Symbols", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    system-ui, sans-serif;
+
   width: 100%;
   height: 100%;
   background: var(--surface);
-  /* The tab strip and anything else in the page's own face: icons first. */
-  font-family:
-    "DevHub Nerd Symbols",
-    -apple-system,
-    BlinkMacSystemFont,
-    "SF Pro Text",
-    sans-serif;
+  font-family: var(--nvim-ui-font);
 }
 
 .neovim-surface {
@@ -245,7 +246,7 @@
   background: transparent;
   color: var(--secondary);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--nvim-ui-size, 12px);
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -365,8 +366,8 @@
   right: 12px;
   top: 50%;
   transform: translateY(-50%);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-  font-size: var(--nvim-label-size, 12px);
+  font-family: var(--nvim-ui-font);
+  font-size: var(--nvim-label-size, 11px);
   color: var(--secondary, var(--primary));
   opacity: 0.8;
   white-space: pre;
@@ -401,8 +402,8 @@
   padding: 0 12px;
   background: var(--raised, var(--surface));
   border-bottom: 1px solid var(--line);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-  font-size: var(--nvim-label-size, 12px);
+  font-family: var(--nvim-ui-font);
+  font-size: var(--nvim-label-size, 11px);
   color: var(--secondary, var(--primary));
 }
 
@@ -477,7 +478,7 @@
   align-items: center;
   justify-content: center;
   color: var(--tertiary);
-  font-size: 12px;
+  font-size: var(--nvim-ui-size, 12px);
 }
 
 .nvim-gui-elsewhere > span {
@@ -560,7 +561,7 @@
   max-width: min(520px, calc(100% - 24px));
   pointer-events: none;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--nvim-ui-size, 12px);
   line-height: var(--nvim-line, 18px);
   font-weight: 400;
 }
@@ -812,10 +813,7 @@
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--primary) 12%, transparent),
     0 8px 24px rgb(0 0 0 / 24%);
-  font:
-    13px/1.45 "DevHub Nerd Symbols",
-    system-ui,
-    sans-serif;
+  font: var(--nvim-ui-size, 12px) / 1.45 var(--nvim-ui-font);
 }
 
 /* It has the keys: j/k scroll it, q closes it. */
@@ -868,7 +866,7 @@
 .nvim-popup .nvc-markdown h3,
 .nvim-popup .nvc-markdown h4 {
   margin: 8px 0 3px;
-  font-size: 13px;
+  font-size: var(--nvim-ui-size, 12px);
   font-weight: 600;
 }
 
@@ -898,7 +896,7 @@
 .nvim-popup .nvim-rich-code {
   padding: 5px 8px;
   border-radius: 5px;
-  font-size: 12px;
+  font-size: var(--nvim-font-size, 12px);
 }
 
 .nvim-popup .nvim-rich-code code {

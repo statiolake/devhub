@@ -191,6 +191,24 @@ export function resolveColors(
   return { fg, bg, sp: attr?.special ?? fg };
 }
 
+/**
+ * The UI face's sizes, as CSS custom properties, from the grid's size `size`:
+ * text at the grid's size (hovers, toasts, the tab strip, buttons), labels a
+ * step under (badges, pills, keys, decorations' words, which `wordsFont`
+ * paints at the same size), small capitals and key caps two under, and code
+ * in the grid's face at the grid's size. One scale, so that no surface is
+ * set a size of its own beside the grid.
+ */
+export function uiTypeScale(size: number): Record<string, string> {
+  const px = (n: number) => `${String(Math.max(1, n))}px`;
+  return {
+    "--nvim-font-size": px(size),
+    "--nvim-ui-size": px(size),
+    "--nvim-label-size": px(size - 1),
+    "--nvim-small-size": px(size - 2),
+  };
+}
+
 export function fontOf(spec: FontSpec, attr?: HlAttr): string {
   return `${attr?.italic === true ? "italic " : ""}${attr?.bold === true ? "bold " : ""}${String(spec.size)}px ${ICON_FAMILY}, ${spec.family ? `${spec.family}, ${FALLBACK_FAMILY}` : FALLBACK_FAMILY}`;
 }
