@@ -59,6 +59,12 @@ describe("control-mode requests", () => {
 			cols: 120,
 			rows: 40,
 		});
+		expect(
+			validateControlRequest({
+				...identity,
+				message: { kind: "resize-pane", pane: 3, vertical: true, cells: 30 },
+			}).message,
+		).toEqual({ kind: "resize-pane", pane: 3, vertical: true, cells: 30 });
 	});
 
 	it("refuses what it does not know, and keys that would end a command line", () => {
@@ -68,6 +74,8 @@ describe("control-mode requests", () => {
 			{ kind: "keys", keys: "C-b" },
 			{ kind: "bytes", bytes: [1, 2] },
 			{ kind: "resize", cols: -1, rows: 2 },
+			{ kind: "resize-pane", pane: 3, vertical: "yes", cells: 3 },
+			{ kind: "resize-pane", pane: 3, vertical: true, cells: 1.5 },
 		]) {
 			expect(() => validateControlRequest({ ...identity, message })).toThrow();
 		}

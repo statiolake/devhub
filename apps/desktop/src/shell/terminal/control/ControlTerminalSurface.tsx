@@ -67,6 +67,26 @@ import {
   type ControlView,
 } from "./paneGrids";
 import { CONTROL_Z, controlZStyle } from "./stacking";
+import {
+  anchorOf,
+  applyMotion,
+  leaving,
+  shiftsOf,
+  changeOf,
+  gridText,
+  paneUnder,
+  restPlace,
+  waitingFor,
+  zoomedOf,
+  type Moving,
+  type Shown,
+} from "./controlMotion";
+import {
+  plan,
+  reducedMotion,
+  type Place,
+  type Transition,
+} from "../../neovim/paneMotion";
 import type { TerminalSurfaceProps } from "../TerminalSurface";
 import { WindowStrip } from "./WindowStrip";
 import { CompletionMenu } from "../../completion/CompletionMenu";
@@ -92,6 +112,13 @@ import type { Kind } from "../../neovim/kinds";
  */
 
 const REATTACH_ON_EXIT_MS = 3_000;
+/**
+ * How long a committed layout waits at most for its panes' new pictures
+ * (`waitingFor`) before it is drawn with what has come.
+ */
+const COMMIT_WAIT_MS = 100;
+/** Resize steps closer than this are a held key's: placed at once. */
+const STEP_REPEAT_MS = 250;
 const NOTICE_MS = 4_000;
 
 type Connection = "connecting" | "connected" | "disconnected";
@@ -314,6 +341,30 @@ export function ControlTerminalSurface({
     let noticeTimer: ReturnType<typeof setTimeout> | undefined;
     let size = { cols: 0, rows: 0 };
     let reported = "";
+    // Pane motion (docs/pane-motion.md, `controlMotion.ts`). A layout tmux
+    // commits is held with the messages after it until its panes' new
+    // pictures are there (`gate`), then drawn as one commit (`commit`), from
+    // which a transition runs (`motion`) from what was on screen.
+    let gate:
+      | {
+          readonly messages: ControlToPage[];
+          readonly before: Shown;
+          readonly timer: ReturnType<typeof setTimeout>;
+        }
+      | undefined;
+    let commit: Shown | undefined;
+    let motion:
+      | {
+          readonly transition: Transition<number>;
+          readonly moving: ReadonlyMap<number, Moving>;
+          readonly size: { readonly width: number; readonly height: number };
+          last: Map<number, Place>;
+        }
+      | undefined;
+    let tickRequested = false;
+    let lastStep = -Infinity;
+    /** A boundary being dragged: steps follow the pointer at once. */
+    let dragging = false;
 
     // Where the panes are drawn and what each is, for a Neovim DevHub draws
     // over one (`main/editor/terminalNeovims.ts`): said when it changes.
@@ -450,11 +501,18 @@ export function ControlTerminalSurface({
     const activePane = (): PaneBox | undefined =>
       view.panes.find((p) => p.active);
 
-    const paint = () => {
+    const paint = (stamp?: number) => {
       frameRequested = false;
       if (disposed) return;
       const changes = pendingChanges;
       pendingChanges = [];
+      if (changes.length === 0) return;
+      const now = stamp ?? performance.now();
+      if (commit !== undefined) {
+        const before = commit;
+        commit = undefined;
+        startMotion(before, now);
+      }
       const merged = changes.reduce((a, b) => {
         for (const g of b.grids) a.grids.add(g);
         a.layout ||= b.layout;
@@ -464,7 +522,22 @@ export function ControlTerminalSurface({
       const { width, height } = cell();
       const cut = holes();
       const clear = new Set(cut.map((box) => gridOf(box.pane)));
-      const boxes = paneBoxes(view).filter((box) => !clear.has(box.grid));
+      const gone = [...(motion?.moving.values() ?? [])]
+        .filter((m) => motion?.transition.tracks.get(m.pane)?.role === "gone")
+        .filter((m) => view.state.grids.has(gridOf(m.pane)));
+      const boxes = [
+        ...paneBoxes(view).filter((box) => !clear.has(box.grid)),
+        ...gone.map((m) => ({
+          grid: gridOf(m.pane),
+          row: m.box.y,
+          col: m.box.x,
+          width: m.box.width,
+          height: m.box.height,
+          z: CONTROL_Z.panes,
+          float: false,
+          win: undefined,
+        })),
+      ];
       painter.paint(view.state, merged, boxes, merged.layout);
       drawHoles(cut);
       // tmux's panes as panes with a boundary between them, as the Neovim
@@ -477,41 +550,40 @@ export function ControlTerminalSurface({
       const snap = (v: number) => Math.round(v * dpr) / dpr;
       const totalWidth = view.cols * width;
       const totalHeight = view.rows * height;
-      painter.placeGrounds(
-        view.panes
+      const ground = (p: PaneBox, cols: number, rows: number) => {
+        const r = restPlace(p, cols, rows, cell(), dpr).rect;
+        return {
+          key: p.pane,
+          grid: gridOf(p.pane),
+          z: CONTROL_Z.panes,
+          x: r.left,
+          y: r.top,
+          w: r.right - r.left,
+          h: r.bottom - r.top,
+          colour: view.state.defaults.background,
+        };
+      };
+      painter.placeGrounds([
+        ...view.panes
           .filter((p) => !clear.has(gridOf(p.pane)))
-          .map((p) => {
-            const x0 = p.x > 0 ? snap((p.x - 0.5) * width) : p.x * width;
-            const x1 =
-              p.x + p.width < view.cols
-                ? snap((p.x + p.width + 0.5) * width)
-                : (p.x + p.width) * width;
-            const y0 = p.y > 0 ? snap((p.y - 0.5) * height) : p.y * height;
-            const y1 =
-              p.y + p.height < view.rows
-                ? snap((p.y + p.height + 0.5) * height)
-                : (p.y + p.height) * height;
-            return {
-              key: p.pane,
-              z: CONTROL_Z.panes,
-              x: x0,
-              y: y0,
-              w: x1 - x0,
-              h: y1 - y0,
-              colour: view.state.defaults.background,
-            };
-          }),
-      );
+          .map((p) => ground(p, view.cols, view.rows)),
+        ...gone.map((m) => ground(m.box, m.cols, m.rows)),
+      ]);
       // The boundaries, and the active (and synchronized) panes' outlines
       // as stretches of them, recoloured and thicker (`paneOutlines`): a
       // 1px hairline and a 2px outline, each centred on the shared edge;
       // each outline piece runs on over the corner it shares with the
       // next, so the corners are square and filled.
-      const outlines = paneOutlines(view.panes);
+      const outlines = motion === undefined ? paneOutlines(view.panes) : [];
       const thick = 2;
       const edge = (cells: number, size: number) => snap(cells * size);
+      // While panes move, each draws the lines on its own edges, in its
+      // group (`applyMotion`); the shared boundaries are placed again after.
       lines.replaceChildren(
-        ...plainBorders(borders(view.panes), outlines).map((line) => {
+        ...plainBorders(
+          motion === undefined ? borders(view.panes) : [],
+          outlines,
+        ).map((line) => {
           const el = document.createElement("div");
           el.className = line.vertical
             ? "control-border-v"
@@ -656,6 +728,30 @@ export function ControlTerminalSurface({
         input.style.left = cursor.style.left;
         input.style.top = cursor.style.top;
       }
+      // While its pane moves the cursor is in the pane's content, which
+      // carries it; at rest it is over the panes, as ever.
+      const home =
+        motion !== undefined && popup === undefined && pane !== undefined
+          ? painter.motionGroup(gridOf(pane.pane), CONTROL_Z.panes).content
+          : host;
+      if (cursor.parentElement !== home) {
+        if (home === host) host.insertBefore(cursor, preedit);
+        else home.append(cursor);
+      }
+      if (motion !== undefined) {
+        motion.last = applyMotion(
+          painter,
+          motion.transition,
+          motion.moving,
+          now,
+          dpr,
+          cell(),
+          motion.size,
+          cssColor(view.state.defaults.background),
+          { width: view.cols * width, height: view.rows * height },
+        );
+        requestTick();
+      }
       if (ime.preedit !== "") placePreedit();
       if (lastSeq > ackedSeq) {
         ackedSeq = lastSeq;
@@ -665,8 +761,8 @@ export function ControlTerminalSurface({
       // frame, which leaves the Neovims' panes clear, has been drawn, so
       // that main never puts the page above them before; a closing at once
       // (the panes stay clear until main has put the page back under them).
-      const now = covered();
-      if (!now) coverSaid = false;
+      const coveredNow = covered();
+      if (!coveredNow) coverSaid = false;
       else if (!coverSaid && !coverWaits) {
         coverWaits = true;
         requestAnimationFrame(() => {
@@ -676,8 +772,160 @@ export function ControlTerminalSurface({
           report();
         });
       }
-      if (merged.layout || now !== wasCovered) report();
-      wasCovered = now;
+      if (merged.layout || coveredNow !== wasCovered) report();
+      wasCovered = coveredNow;
+    };
+
+    /** What is on screen now, before a layout is committed. */
+    const shownNow = (next: readonly PaneBox[]): Shown => {
+      const text = new Map<number, string[]>();
+      const pictures = new Map<number, HTMLCanvasElement>();
+      for (const p of view.panes) {
+        const to = next.find((n) => n.pane === p.pane);
+        if (
+          to === undefined ||
+          (to.width === p.width && to.height === p.height)
+        )
+          continue;
+        text.set(p.pane, gridText(view, p.pane));
+        const picture = painter.picture(gridOf(p.pane));
+        if (picture !== undefined) pictures.set(p.pane, picture);
+      }
+      return {
+        pictures,
+        cols: view.cols,
+        rows: view.rows,
+        window: view.window,
+        zoomed: zoomedOf(view),
+        panes: view.panes,
+        text,
+      };
+    };
+    /** The panes' places in the last frame drawn. */
+    const placesOf = (before: Shown, now: number): Map<number, Place> => {
+      if (motion !== undefined) {
+        return motion.transition.at(now, window.devicePixelRatio || 1);
+      }
+      const dpr = window.devicePixelRatio || 1;
+      return new Map(
+        before.panes.map((p) => [
+          p.pane,
+          restPlace(p, before.cols, before.rows, cell(), dpr),
+        ]),
+      );
+    };
+    const motionAllowed = () =>
+      !reducedMotion() &&
+      !live.current.hidden &&
+      receipt !== undefined &&
+      // A Neovim over a pane is a view of its own, which this page cannot
+      // move: its window's layout is placed at once (docs/pane-motion.md).
+      (live.current.overlaid?.panes.length ?? 0) === 0;
+    /** Panes at rest: the transition dropped, the resting path places them. */
+    const stopMotion = () => {
+      if (motion === undefined) return;
+      motion = undefined;
+      painter.endMotion();
+      if (cursor.parentElement !== host) host.insertBefore(cursor, preedit);
+    };
+    /** A transition from what was shown before the commit to the view now. */
+    const startMotion = (before: Shown, now: number) => {
+      const { width, height } = cell();
+      const change =
+        before.cols === view.cols && before.rows === view.rows
+          ? changeOf(before, view)
+          : undefined;
+      // A boundary dragged, or a resize key held: at once, under the hand.
+      const repeated =
+        change?.kind === "step" &&
+        (dragging || now - lastStep < STEP_REPEAT_MS);
+      if (change?.kind === "step") lastStep = now;
+      if (change === undefined || repeated || !motionAllowed()) {
+        stopMotion();
+        return;
+      }
+      const shown = placesOf(before, now);
+      const dpr = window.devicePixelRatio || 1;
+      const next = view.panes
+        .filter((p) => view.state.grids.has(gridOf(p.pane)))
+        .map((p) => ({
+          key: p.pane,
+          rest: restPlace(p, view.cols, view.rows, { width, height }, dpr),
+          top: p.active,
+        }));
+      const shifts = shiftsOf(before, view);
+      const transition = plan({
+        now,
+        change,
+        shown,
+        next,
+        anchor: anchorOf(shifts, height),
+        ...(change.kind === "zoom" ? { zoomed: change.pane } : {}),
+      });
+      const moving = new Map<number, Moving>();
+      for (const track of transition.tracks.values()) {
+        const box =
+          view.panes.find((p) => p.pane === track.key) ??
+          motion?.moving.get(track.key)?.box ??
+          before.panes.find((p) => p.pane === track.key);
+        if (box === undefined) continue;
+        const old = motion?.moving.get(track.key);
+        const inView = view.panes.some((p) => p.pane === track.key);
+        moving.set(track.key, {
+          pane: track.key,
+          box,
+          cols: inView ? view.cols : (old?.cols ?? before.cols),
+          rows: inView ? view.rows : (old?.rows ?? before.rows),
+          active: box.active && track.role !== "gone",
+        });
+      }
+      // Groups again from this commit's panes, in this same frame.
+      painter.endMotion();
+      for (const [pane, picture] of before.pictures) {
+        const box = view.panes.find((p) => p.pane === pane);
+        const shift = shifts.get(pane) ?? 0;
+        if (box === undefined || transition.tracks.get(pane)?.role !== "keep")
+          continue;
+        const rows = leaving(picture, box, shift, { width, height });
+        if (rows !== undefined)
+          painter
+            .motionGroup(gridOf(pane), CONTROL_Z.panes)
+            .content.append(rows);
+      }
+      motion = {
+        transition,
+        moving,
+        size: { width: grids.clientWidth, height: grids.clientHeight },
+        last: shown,
+      };
+    };
+    const requestTick = () => {
+      if (tickRequested) return;
+      tickRequested = true;
+      requestAnimationFrame(tick);
+    };
+    const tick = (stamp: number) => {
+      tickRequested = false;
+      if (disposed || motion === undefined) return;
+      if (motion.transition.done(stamp)) {
+        // The last frame is the resting one, drawn by the resting path.
+        stopMotion();
+        pendingChanges.push({ ...emptyChanges(), cursor: true });
+        paint(stamp);
+        return;
+      }
+      motion.last = applyMotion(
+        painter,
+        motion.transition,
+        motion.moving,
+        stamp,
+        window.devicePixelRatio || 1,
+        cell(),
+        motion.size,
+        cssColor(view.state.defaults.background),
+        { width: view.cols * cell().width, height: view.rows * cell().height },
+      );
+      requestTick();
     };
 
     // The prompt's line (`prompt.css`): the panes' last row, in their font.
@@ -1051,6 +1299,10 @@ export function ControlTerminalSurface({
         return;
       }
       if (message.kind === "ended") {
+        if (gate !== undefined) {
+          clearTimeout(gate.timer);
+          gate = undefined;
+        }
         const ended = receipt;
         receipt = undefined;
         const lived = typed || Date.now() - connectedAt >= REATTACH_ON_EXIT_MS;
@@ -1068,12 +1320,48 @@ export function ControlTerminalSurface({
         setConnection("disconnected");
         return;
       }
+      if (gate !== undefined) {
+        gate.messages.push(message);
+        if (waitingFor(view, gate.messages, gate.before.window).size === 0)
+          release();
+        return;
+      }
+      if (
+        message.kind === "layout" &&
+        view.panes.length > 0 &&
+        message.cols === view.cols &&
+        message.rows === view.rows &&
+        // A boundary under the hand waits for nothing.
+        !dragging &&
+        motionAllowed()
+      ) {
+        gate = {
+          messages: [message],
+          before: shownNow(message.panes),
+          timer: setTimeout(release, COMMIT_WAIT_MS),
+        };
+        if (waitingFor(view, gate.messages, gate.before.window).size === 0)
+          release();
+        return;
+      }
+      apply(message);
+    };
+    const apply = (message: ControlToPage) => {
       if (message.kind === "pane") lastSeq = Math.max(lastSeq, message.seq);
       if (message.kind === "layout") {
         setTabs(message.windows);
         setStatus(message.status);
       }
       schedule(applyControl(view, message));
+    };
+    /** The held layout and what came with it, drawn as one commit. */
+    const release = () => {
+      const held = gate;
+      if (held === undefined) return;
+      gate = undefined;
+      clearTimeout(held.timer);
+      for (const message of held.messages) apply(message);
+      commit = held.before;
     };
 
     const detach = async (r: TerminalReceipt) => {
@@ -1293,18 +1581,86 @@ export function ControlTerminalSurface({
           reports,
         };
       }
-      const pane = paneAt(view, col, row);
+      // While panes move, the cell under the pointer is the one drawn there.
+      const drawn =
+        motion === undefined
+          ? undefined
+          : (() => {
+              const rect = grids.getBoundingClientRect();
+              return paneUnder(
+                motion.transition,
+                motion.last,
+                view.panes,
+                event.clientX - rect.left,
+                event.clientY - rect.top,
+                cell(),
+              );
+            })();
+      const pane = drawn?.pane ?? paneAt(view, col, row);
       if (pane === undefined) return undefined;
       const modes = view.modes.get(pane.pane);
       const reports =
         modes !== undefined && modes.mouse >= 1000 && modes.sgrMouse;
-      return { pane, x: col - pane.x, y: row - pane.y, reports };
+      return {
+        pane,
+        x: drawn?.x ?? col - pane.x,
+        y: drawn?.y ?? row - pane.y,
+        reports,
+      };
+    };
+    // A boundary dragged with the first button: the pane before it (left
+    // of a vertical one, above a horizontal one) resized to the pointer's
+    // cell, each cell as the pointer reaches it; placed at once, no motion
+    // (`dragging`), so the boundary stays under the hand.
+    const onBoundaryDrag = (event: MouseEvent): boolean => {
+      if (event.button !== 0 || view.popup !== undefined) return false;
+      const { col, row } = cellAt(event);
+      const left = paneAt(view, col - 1, row);
+      const above = paneAt(view, col, row - 1);
+      const vertical =
+        left !== undefined &&
+        left.x + left.width === col &&
+        paneAt(view, col + 1, row) !== undefined;
+      const before = vertical
+        ? left
+        : above !== undefined &&
+            above.y + above.height === row &&
+            paneAt(view, col, row + 1) !== undefined
+          ? above
+          : undefined;
+      if (before === undefined) return false;
+      const id = before.pane;
+      let last = vertical ? before.width : before.height;
+      dragging = true;
+      const onMove = (e: MouseEvent) => {
+        const at = cellAt(e);
+        const box = view.panes.find((p) => p.pane === id);
+        if (box === undefined) return;
+        const cells = Math.max(1, vertical ? at.col - box.x : at.row - box.y);
+        if (cells === last) return;
+        last = cells;
+        send({ kind: "resize-pane", pane: id, vertical, cells });
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        // The last step's layout may still be on its way.
+        setTimeout(() => {
+          dragging = false;
+        }, STEP_REPEAT_MS);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+      return true;
     };
     const onMouseDown = (event: MouseEvent) => {
       const hit = mouseFor(event);
       event.preventDefault();
       input.focus();
-      if (hit === undefined) return;
+      if (hit === undefined) {
+        onBoundaryDrag(event);
+        return;
+      }
       // A right-click the program does not take is tmux's MouseDown3Pane.
       if (event.button === 2 && !hit.reports) {
         if (hit.pane.pane < 0) return;
@@ -1459,6 +1815,7 @@ export function ControlTerminalSurface({
       disposed = true;
       serial += 1;
       observer.disconnect();
+      if (gate !== undefined) clearTimeout(gate.timer);
       if (noticeTimer !== undefined) clearTimeout(noticeTimer);
       host.removeEventListener("click", focusInput);
       host.removeEventListener("contextmenu", noContextMenu);

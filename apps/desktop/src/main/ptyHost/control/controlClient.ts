@@ -386,6 +386,16 @@ export class ControlClient {
 			case "select-pane":
 				void this.#command(["select-pane", "-t", `%${String(message.pane)}`]);
 				return;
+			case "resize-pane":
+				// A vertical boundary sets the width of the pane left of it.
+				void this.#command([
+					"resize-pane",
+					"-t",
+					`%${String(message.pane)}`,
+					message.vertical ? "-x" : "-y",
+					String(message.cells),
+				]);
+				return;
 			case "select-window":
 				void this.#command([
 					"select-window",

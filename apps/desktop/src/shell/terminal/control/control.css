@@ -17,8 +17,9 @@
 
 /* The hairlines and outlines are opaque mixes on the terminal's ground, not
    translucent ink: where two cross (a +, an outline's corner) a translucent
-   colour would be laid twice and show a darker dot. */
-.control-borders {
+   colour would be laid twice and show a darker dot. On the surface, so
+   that a moving pane's own edges (`.control-motion-edge`) have them too. */
+.control-terminal {
   --control-hairline: color-mix(
     in srgb,
     var(--terminal-foreground, var(--text)) 22%,
@@ -39,6 +40,16 @@
 
 .control-border-v {
   width: 1px;
+}
+
+/* A moving pane's own edges (docs/pane-motion.md): the hairline, the active
+   pane's outline, as the resting boundaries draw them. */
+.control-motion-edge {
+  background: var(--control-hairline);
+}
+
+.control-motion-edge[data-active="true"] {
+  background: var(--control-outline);
 }
 
 .control-border-h {

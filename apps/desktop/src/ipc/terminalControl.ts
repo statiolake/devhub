@@ -362,6 +362,13 @@ export type PageToControl =
 	  }
 	| { readonly kind: "resize"; readonly cols: number; readonly rows: number }
 	| { readonly kind: "select-pane"; readonly pane: number }
+	/** A boundary dragged: the pane before it, to this many cells across or down. */
+	| {
+			readonly kind: "resize-pane";
+			readonly pane: number;
+			readonly vertical: boolean;
+			readonly cells: number;
+	  }
 	/** The open menu: an item clicked, or a click outside it. */
 	| {
 			readonly kind: "menu";
@@ -483,6 +490,16 @@ export function validateControlRequest(value: unknown): ControlRequest {
 			break;
 		case "select-pane":
 			message = { kind: "select-pane", pane: count(m.pane) };
+			break;
+		case "resize-pane":
+			if (typeof m.vertical !== "boolean")
+				throw new TerminalFailure("invalid_request");
+			message = {
+				kind: "resize-pane",
+				pane: count(m.pane),
+				vertical: m.vertical,
+				cells: Math.max(1, count(m.cells, 10_000)),
+			};
 			break;
 		case "menu":
 			if (m.action !== "choose" && m.action !== "close")
