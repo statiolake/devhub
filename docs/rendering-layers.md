@@ -57,7 +57,9 @@ What follows the rule in code:
   DevHub surface in a band of its own (below), not a decoration of
   Neovim's grid.
 - `GridPainter.over(grid, part)`: what the page lays over a grid — riders,
-  the cursor, covers — is in a clip of that grid's own in its level
+  the cursor, covers — is in a clip of that grid's own in its level (and
+  `shadow`, under the grid and not cut by it: a page's line and shadow
+  round a bare float it frames itself, a framed view's)
   (`overflow: hidden` at the grid's text area: a window's without its
   winbar, a float's without its border; a cover's, the whole grid). React
   renders into it by a portal; its content keeps the editor's coordinates

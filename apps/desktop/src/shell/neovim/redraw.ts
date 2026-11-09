@@ -1044,10 +1044,29 @@ export interface GridBox {
   /** Its border holds text its known `title` / `footer` do not explain. */
   readonly wantsLabels?: boolean;
   /**
-   * A float its page frames itself (a tmux popup, the chooser's preview):
-   * drawn as its cells, with no panel of DevHub's round it.
+   * A float its page frames itself (a tmux popup, the chooser's preview, a
+   * framed view's windows: `claimFloats`): drawn as its cells, with no
+   * panel of DevHub's round it.
    */
   readonly bare?: boolean;
+}
+
+/**
+ * The boxes, with the floats whose windows `claimed` names bare: a page
+ * draws their chrome (a framed `gui.view`'s frame, query, list and
+ * preview windows), so the painter draws their cells and no frame,
+ * padding or shadow of its own, as for a tmux popup.
+ */
+export function claimFloats(
+  boxes: readonly GridBox[],
+  claimed: ReadonlySet<number>,
+): GridBox[] {
+  if (claimed.size === 0) return [...boxes];
+  return boxes.map((b) =>
+    b.float && b.win !== undefined && claimed.has(b.win)
+      ? { ...b, bare: true }
+      : b,
+  );
 }
 
 /**

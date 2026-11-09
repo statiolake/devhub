@@ -21,6 +21,7 @@ describe("frameParts", () => {
   const place: FramePlace = {
     id: 1,
     win: 1002,
+    wins: [1002, 1004, 1003, 1005],
     frame: rect,
     query: {
       ...rect,

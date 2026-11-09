@@ -1028,6 +1028,11 @@
   pointer-events: auto;
 }
 
+/* Under a grid and not cut by it: a page's shadow round a bare float. */
+.nvim-clip-shadow {
+  overflow: visible;
+}
+
 /* A window's pane and the boundary between panes (`placePanes`): a GUI's
    panes with an edge between them, not a TUI's separator column. */
 .nvim-pane,

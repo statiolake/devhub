@@ -11,6 +11,7 @@
 
 import {
   applyRedraw,
+  claimFloats,
   currentModeInfo,
   emptyChanges,
   gridRowText,
@@ -436,6 +437,28 @@ export class NeovimEditor {
     return this.boxes;
   }
 
+  /** The windows a page draws the chrome of (`claimFloats`). */
+  private claimed: ReadonlySet<number> = new Set();
+
+  /**
+   * Claim the floats of these windows for the page (a framed view's): the
+   * painter draws them bare, as their cells, from the next paint.
+   */
+  claimWindows(wins: ReadonlySet<number>): void {
+    const same =
+      wins.size === this.claimed.size &&
+      [...wins].every((w) => this.claimed.has(w));
+    if (same) return;
+    this.claimed = new Set(wins);
+    this.pending.layout = true;
+    if (this.frame === 0) {
+      this.frame = requestAnimationFrame(() => {
+        this.frame = 0;
+        this.paint();
+      });
+    }
+  }
+
   /** What the colorscheme says beyond the grid (`chrome.ts`). */
   paintTheme(): PaintTheme {
     return this.painter.paintTheme();
@@ -523,7 +546,7 @@ export class NeovimEditor {
     // A panel next to the cursor's row is moved half a row off it, so a
     // borderless float's padding never covers what is typed
     // (`clearCursorRow`).
-    const laid = layoutGrids(this.state);
+    const laid = claimFloats(layoutGrids(this.state), this.claimed);
     const at = laid.find((b) => b.grid === this.state.cursor.grid);
     this.boxes = clearCursorRow(
       laid,

@@ -14,6 +14,18 @@
   font: var(--nvim-ui-size, 12px) / 1.45 var(--nvim-ui-font);
 }
 
+/* Its line and shadow, round the frame float (bare: the painter draws
+   none), outside its cells: the 1px line of every floating surface. */
+.nvim-view-frame-edge {
+  position: absolute;
+  border-radius: var(--float-radius, 4px);
+  box-shadow:
+    0 0 0 1px
+      var(--float-line, color-mix(in srgb, currentcolor 18%, transparent)),
+    var(--float-shadow, 0 2px 6px rgb(0 0 0 / 20%));
+  pointer-events: none;
+}
+
 .nvim-view-frame-header {
   position: absolute;
   inset: 0 0 auto;

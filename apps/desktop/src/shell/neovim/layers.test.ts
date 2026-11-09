@@ -159,6 +159,7 @@ describe("buffer-backed GUI layers on the page", () => {
         {
           id: 6,
           win: 1001,
+          wins: [1001, 1002, "x", 1003],
           frame: rect,
           list: { ...rect, row: 4, width: 25, height: 17, cursor: 3 },
           query,
@@ -171,6 +172,7 @@ describe("buffer-backed GUI layers on the page", () => {
       {
         id: 6,
         win: 1001,
+        wins: [1001, 1002, 1003],
         frame: rect,
         list: {
           ...rect,

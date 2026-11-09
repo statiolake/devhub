@@ -719,7 +719,9 @@ local function place_frame(view, current)
     if vim.api.nvim_win_get_buf(win) == view.buf and win ~= f.win then list_win = win break end
   end
   if not list_win then return nil end
-  local entry = { id = view.id, win = f.win, frame = outer_rect(f.win) }
+  -- Its windows: the page draws their chrome, the painter only their cells.
+  local entry = { id = view.id, win = f.win, frame = outer_rect(f.win),
+    wins = vim.tbl_filter(function(w) return w ~= nil end, { f.win, list_win, f.query_win, f.preview_win }) }
   local list = outer_rect(list_win)
   list.cursor = vim.api.nvim_win_get_cursor(list_win)[1]
   list.current = current == list_win

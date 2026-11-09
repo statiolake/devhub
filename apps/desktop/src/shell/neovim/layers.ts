@@ -132,6 +132,8 @@ export interface FrameRect {
 
 export interface FramePlace {
   readonly id: number;
+  /** Its windows (the frame, query, list, preview): their chrome is the page's. */
+  readonly wins: readonly number[];
   /** The view's id. */
   readonly win: number;
   readonly frame: FrameRect;
@@ -294,9 +296,13 @@ function framePlace(value: unknown): FramePlace[] {
   const pv = rec(r["preview"]);
   const pvRect = pv ? frameRect(pv) : undefined;
   const pvWin = pv ? int(pv, "win") : undefined;
+  const wins = luaList(r["wins"]).filter(
+    (w): w is number => typeof w === "number" && Number.isInteger(w),
+  );
   return [
     {
       ...n,
+      wins,
       frame,
       list: { ...list, cursor, current: listRec["current"] === true },
       query:

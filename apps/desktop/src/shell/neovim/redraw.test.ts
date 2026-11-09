@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyRedraw,
   charOffsetOfByte,
+  claimFloats,
   floatBorder,
   gridRowText,
   initialUiState,
@@ -458,5 +459,28 @@ describe("the redraw reducer", () => {
     expect(charOffsetOfByte("e 日本", 2)).toBe(2);
     expect(charOffsetOfByte("e 日本", 5)).toBe(3);
     expect(charOffsetOfByte("e 日本", 8)).toBe(4);
+  });
+});
+
+describe("claimFloats", () => {
+  const box = (grid: number, win: number, float: boolean) => ({
+    grid,
+    row: 0,
+    col: 0,
+    width: 10,
+    height: 5,
+    z: float ? 150 : 1,
+    float,
+    win,
+  });
+
+  it("makes the floats of claimed windows bare, and nothing else", () => {
+    const boxes = [box(2, 1000, false), box(3, 1001, true), box(4, 1002, true)];
+    const out = claimFloats(boxes, new Set([1000, 1001]));
+    // A window that is not a float is never bare: its pane is Neovim's.
+    expect(out.map((b) => b.bare === true)).toEqual([false, true, false]);
+    // Unclaimed floats keep their frame, padding and shadow.
+    expect(out[2]).toBe(boxes[2]);
+    expect(claimFloats(boxes, new Set())).toEqual(boxes);
   });
 });

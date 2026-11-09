@@ -428,6 +428,13 @@ function NeovimSurface({
     release();
   }, [settings, appearance, release]);
 
+  // A framed view's windows are drawn bare: the frame is the view's chrome.
+  useEffect(() => {
+    editorRef.current?.claimWindows(
+      new Set(layers.placedFrames.flatMap((frame) => frame.wins)),
+    );
+  }, [layers.placedFrames]);
+
   // An SSH drop: attach again by itself, a few times, further apart.
   const autoReconnect =
     connection.kind === "failed" && connection.reconnect === true;

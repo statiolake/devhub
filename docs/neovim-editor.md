@@ -958,7 +958,12 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   leaves the keys where they are, the wheel `on_scroll(rows)`, and
   `on_rows(rows)` says how many items fit (the plugin's page size). Every
   key is still a buffer-local map in the query or the list. A hidden float
-  is never drawn, so Lua works its place out from its config. snacks is
+  is never drawn, so Lua works its place out from its config. The frame's
+  windows are claimed for the page (`claimFloats`): the painter draws
+  their cells bare, with none of a float's frame, padding or shadow, and
+  the frame draws its own line and shadow round the frame float (a
+  `shadow` part under its grid, not cut by it), so the preview's cells
+  never cover the title above them or the hint row. snacks is
   drawn this way by
   [snacks-ui.devhub](https://github.com/statiolake/snacks-ui.devhub),
   outside devhub.nvim (`native-picker.md`).

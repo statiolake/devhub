@@ -304,10 +304,33 @@ function FrameParts({
       ) : null}
     </div>
   );
-  return createPortal(
-    panel,
-    host.over(frameGrid, "covers"),
-    `frame:${String(place.id)}`,
+  // The frame's windows are bare (`claimFloats`): its line and shadow are
+  // the page's, under the grids round the frame float, so the preview's
+  // cells over the frame never hide them.
+  const edge = (
+    <div
+      className="nvim-view-frame-edge"
+      style={{
+        left: frameAt.col * cell.width,
+        top: frameAt.row * cell.height,
+        width: frame.width * cell.width,
+        height: frame.height * cell.height,
+      }}
+    />
+  );
+  return (
+    <>
+      {createPortal(
+        edge,
+        host.over(frameGrid, "shadow"),
+        `frame-edge:${String(place.id)}`,
+      )}
+      {createPortal(
+        panel,
+        host.over(frameGrid, "covers"),
+        `frame:${String(place.id)}`,
+      )}
+    </>
   );
 }
 

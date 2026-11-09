@@ -452,7 +452,11 @@ export interface MotionGroup {
 }
 
 /** What the page lays over a grid, in that grid's clip (`GridPainter.over`). */
-export type OverPart = "riders" | "cursor" | "covers";
+/**
+ * `shadow` is under the grid and not cut by it: what a page draws round a
+ * bare float it frames itself (a framed view's shadow).
+ */
+export type OverPart = "shadow" | "riders" | "cursor" | "covers";
 
 /** A grid's clip for one `OverPart`, and the element its content goes in. */
 interface OverClip {
@@ -891,7 +895,7 @@ export class GridPainter {
     let bottom = box.height;
     let left = 0;
     let right = box.width;
-    if (entry.part !== "covers") {
+    if (entry.part !== "covers" && entry.part !== "shadow") {
       // The text area: a window's without its winbar, a float's without
       // its border (Neovim's margins count it) or blank border.
       const crop = cropOf(box);

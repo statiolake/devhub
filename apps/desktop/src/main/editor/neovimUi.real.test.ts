@@ -979,6 +979,8 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			"the query in Insert mode",
 		);
 		const placed = frames()[0] as Record<string, Record<string, unknown>>;
+		// Its windows, claimed for the page: frame, list, query, preview.
+		expect((frames()[0] as { wins: number[] }).wins).toHaveLength(4);
 		expect(placed["frame"]).toMatchObject({
 			row: 2,
 			col: 4,
