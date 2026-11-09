@@ -59,6 +59,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import { flushSync } from "react-dom";
 import type { AgentWire } from "../../ipc/appShell";
 import type {
   AgentActionTriggerWire,
@@ -793,7 +794,11 @@ function useMetrics(
       });
     };
     measure();
-    const observer = new ResizeObserver(measure);
+    // A resize is answered in the frame it is laid out in: set as an
+    // ordinary update, the box was placed a frame after the composer moved,
+    // and while a window was dragged wider it trailed the composer's edge by
+    // up to 8px, frame after frame (docs/motion.md).
+    const observer = new ResizeObserver(() => flushSync(measure));
     for (const each of [pane, box, anchor]) {
       if (each) observer.observe(each);
     }
