@@ -29,7 +29,7 @@
   border-radius: 3px;
   background: var(--copy-badge-ground);
   color: var(--copy-badge-ink);
-  font: 11px/18px var(--terminal-font, monospace);
+  font: 11px/18px var(--font-mono);
   pointer-events: none;
   white-space: pre;
 }

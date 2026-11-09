@@ -67,7 +67,6 @@
 .control-chooser-row {
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: default;
 }
 
 .control-chooser-row[aria-selected="true"] {
