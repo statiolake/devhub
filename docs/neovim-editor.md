@@ -968,6 +968,10 @@ the client's size in cells divides it, so the overlay is the pane's exact
 rectangle in the terminal view, a `neovim.html#tnv:<n>` view placed right
 above it (`ShellWindow.syncTerminalNeovims`). It is hidden while tmux does
 not show the pane: another window, a zoomed sibling, copy mode or a chooser.
+In control mode what DevHub draws over the panes (a popup, a prompt, a menu,
+the picker) is drawn over the Neovim, which stays shown under it
+(`docs/terminal-mode.md`, "Over a Neovim"), and copy mode hides only the
+Neovim of the pane in it.
 A terminal not on screen is not read; its overlays keep their pages, hidden.
 
 In tmux control mode (`[terminal] tmux_control_mode`, `docs/terminal-mode.md`)
@@ -1027,8 +1031,8 @@ the Neovim exits the shim ends the reader and gives the tty and tmux's modes
 back before it exits with the Neovim's status.
 
 Limits: DevHub's terminals only (an Agent's own pane, `ag-`, gets the TUI);
-nothing drawn by tmux over a pane (`display-popup`, `display-menu`) shows
-over an overlay; a binding of the person's own that opens a prompt is not
+without tmux control mode nothing drawn by tmux over a pane
+(`display-popup`, `display-menu`) shows over an overlay; a binding of the person's own that opens a prompt is not
 known as one; in bash or fish, a startup file that puts another `nvim`'s
 directory in front of the PATH shadows the shim.
 

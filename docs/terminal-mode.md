@@ -617,16 +617,15 @@ and while it is open every key is its, the prefix too. Checked in the app:
 the person's `bind m` (fzf over `tmux list-windows`, then `tmux move-pane
 -t :N`) listed the opener's windows and moved the opener; on an SSH host the
 popup ran on the host with the opener as `TMUX_PANE`. A Neovim drawn over a
-pane is hidden while a popup is open (the overlay is a view above the page).
+pane stays drawn under a popup (below, "Over a Neovim").
 `-e NAME=value` is put in the command's environment as tmux does (unexpanded;
 sent as `printf` escapes of `export` lines, so a value holds anything);
 `-b none` is no border, as `-B`; tmux's other border line styles and the
 `-s`/`-S` colours describe tmux's border characters, and DevHub's frame is
 `popup.css`'s, so they change nothing. While a popup is open the mouse is its
 as the keys are: a press, release or wheel inside it is reported to its
-program when the program asked (SGR), and nothing reaches the panes. A Neovim
-drawn over a pane stays hidden under a popup: the overlay is a view above the
-page, so shown it would cover the popup. Seen on the way:
+program when the program asked (SGR), and nothing reaches the panes. Seen on
+the way:
 a host's pane finds the host's own `tmux` on its PATH, not DevHub's (on the
 test host a 3.4, which cannot talk to the 3.7c server), in a popup and in a
 pane alike.
@@ -756,6 +755,30 @@ selection (tmux reads the mouse's position from the mouse event, which a
 command from a control client has not got), line numbers
 (`copy-mode-line-numbers`), the 0.4 s flash the mock shows on a prompt-mark
 copy.
+
+**Over a Neovim.** A Neovim drawn over a pane (`docs/neovim-editor.md`,
+"Neovim in a terminal") is a view of its own above the terminal's page, so
+whatever the page draws over the panes would be under it. While a popup, a
+prompt (`:`, `,`, a `confirm-before`), a menu, the picker or `display-panes`
+is open, the page says so (`covered` in its panes' report) and main puts the
+page above that terminal's Neovims (`ShellWindow.placeOverlays`), which stay
+shown and live under it: the page leaves their panes clear — no canvas, and
+its ground (`.control-backdrop`) with a hole there — so each Neovim shows
+through, under the prompt line, a menu, the popup's scrim. Main tells the
+page which panes have a Neovim shown and whether it is above them
+(`PaneBridge.onTerminalOverlaid`); the page says it is covered only once the
+frame with the holes is drawn, and keeps them after it closes until main
+has put it back under, so neither way is there a frame of the bare pane.
+While covered the keys are the page's (tmux's prompt, menu, popup), not the
+Neovim's; when it closes they go back to the Neovim if its pane is the
+active one. Copy mode is not a cover: a pane in copy mode shows tmux's
+copy-mode view of that pane and its Neovim is hidden (only that pane; one in
+copy mode beside it changes nothing), since what copy mode copies is tmux's
+— the pane's history, the shell's output before `nvim` — and the Neovim's
+text is copied in Neovim. Checked in the app with the person's tmux.conf and
+Neovim config: `C-q :`, `C-q ,`, `C-q W`, `C-q <`, `C-q w`, `bind m`, copy
+mode in the Neovim's pane and beside it; recorded at 60 fps while each opened
+and closed, no frame without the Neovim.
 
 What DevHub does not draw yet is not let do that
 (`main/ptyHost/control/keyGuard.ts`):

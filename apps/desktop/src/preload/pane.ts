@@ -8,9 +8,14 @@
  */
 
 import { contextBridge, ipcRenderer } from "electron";
-import { CHANNELS, type PaneBridge } from "../ipc/contract.js";
+import {
+	CHANNELS,
+	type PaneBridge,
+	type TerminalOverlaidWire,
+} from "../ipc/contract.js";
 import {
 	appearanceBridge,
+	on,
 	openExternalUrl,
 	pageBridge,
 	projectionBridge,
@@ -31,6 +36,24 @@ const api: PaneBridge = {
 	},
 	reportTerminalPanes(terminalId, panes) {
 		ipcRenderer.send(CHANNELS.reportTerminalPanes, terminalId, panes);
+	},
+	onTerminalOverlaid(terminalId, listener) {
+		// The value as it stands, asked, then each push: main answers the ask
+		// in order with what it pushes.
+		let listening = true;
+		const stop = on<TerminalOverlaidWire>(CHANNELS.terminalOverlaid, listener);
+		void (
+			ipcRenderer.invoke(
+				CHANNELS.askTerminalOverlaid,
+				terminalId,
+			) as Promise<TerminalOverlaidWire>
+		).then((value) => {
+			if (listening) listener(value);
+		});
+		return () => {
+			listening = false;
+			stop();
+		};
 	},
 };
 

@@ -34,10 +34,11 @@ import {
 	type LayoutState,
 } from "./windowLayout.js";
 import type { TitleBarMode } from "../../model/config.js";
-import type {
-	SidebarAreaWire,
-	SidebarPointerWire,
-	WorkbenchAreaWire,
+import {
+	CHANNELS,
+	type SidebarAreaWire,
+	type SidebarPointerWire,
+	type WorkbenchAreaWire,
 } from "../../ipc/contract.js";
 import { WINDOW_TITLES, type ShellWindowKind } from "../../ipc/windowTitles.js";
 import { ChromeView } from "./chromeView.js";
@@ -50,6 +51,7 @@ import { scrimColor, type ShellPalette } from "../../ipc/palette.js";
 import {
 	forwardedKey,
 	type KeyInput,
+	type OverlaidPanes,
 	type OverlayRect,
 	type OverlayView,
 } from "../editor/terminalNeovims.js";
@@ -69,6 +71,7 @@ export interface TerminalNeovimHooks {
 	terminalKey(terminalId: string, input: KeyInput): "pass" | "redirect";
 	overlayFocused(key: string): void;
 	terminalFocused(terminalId: string): void;
+	overlaid(terminalId: string): OverlaidPanes;
 }
 
 const NO_TERMINAL_NEOVIMS: TerminalNeovimHooks = {
@@ -77,6 +80,7 @@ const NO_TERMINAL_NEOVIMS: TerminalNeovimHooks = {
 	terminalKey: () => "pass",
 	overlayFocused: () => undefined,
 	terminalFocused: () => undefined,
+	overlaid: () => ({ panes: [], raised: false }),
 };
 
 /**
@@ -725,11 +729,18 @@ export class ShellWindow {
 			: this.terminalNeovims.keyboardOverlay(terminalId);
 	}
 
-	/** Each overlay of a terminal, where the terminal's view is at `rect`. */
+	/**
+	 * Each overlay of a terminal, where the terminal's view is at `rect`;
+	 * then, while what the terminal's page draws over its panes is open (a
+	 * prompt, a menu, a popup, the picker), the page again, above them: it
+	 * draws that over the Neovims, and leaves their panes clear
+	 * (`TerminalOverlaidWire`). Told to the page once it is placed.
+	 */
 	private placeOverlays(
 		terminalId: string,
 		rect: Electron.Rectangle,
 		visible: boolean,
+		page?: ChromeView,
 	): void {
 		for (const entry of this.overlayViews.values()) {
 			if (entry.terminalId !== terminalId) continue;
@@ -748,7 +759,17 @@ export class ShellWindow {
 				shown,
 			);
 		}
+		if (page === undefined) return;
+		const overlaid = this.terminalNeovims.overlaid(terminalId);
+		if (visible && overlaid.raised) page.place(this.window, rect, true);
+		const said = JSON.stringify(overlaid);
+		if (this.overlaidSaid.get(terminalId) === said) return;
+		this.overlaidSaid.set(terminalId, said);
+		page.contents()?.send(CHANNELS.terminalOverlaid, overlaid);
 	}
+
+	/** What each terminal's page was last told by `placeOverlays`. */
+	private readonly overlaidSaid = new Map<string, string>();
 
 	/** Every terminal pane's page, for the audiences that tell pages things. */
 	paneTerminalContents(): readonly Electron.WebContents[] {
@@ -1280,7 +1301,12 @@ export class ShellWindow {
 						.get(child.identity.terminalId)
 						?.place(this.window, child.rect, true);
 					// Right above it: under the notices and the questions.
-					this.placeOverlays(child.identity.terminalId, child.rect, true);
+					this.placeOverlays(
+						child.identity.terminalId,
+						child.rect,
+						true,
+						this.terminalViews.get(child.identity.terminalId),
+					);
 					break;
 				case "neovim": {
 					if (!child.visible) break;
@@ -1292,7 +1318,12 @@ export class ShellWindow {
 					);
 					// Right above it: under the notices and the questions.
 					if (terminalId !== undefined) {
-						this.placeOverlays(terminalId, child.rect, true);
+						this.placeOverlays(
+							terminalId,
+							child.rect,
+							true,
+							this.editorTerminals.get(child.identity.editorKey),
+						);
 					}
 					break;
 				}

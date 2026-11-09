@@ -271,6 +271,11 @@ export interface ControlPanes {
 		readonly inMode: boolean;
 		readonly socket: string;
 	}[];
+	/**
+	 * What DevHub draws over the panes is open (a popup, a prompt, a menu,
+	 * the picker): the page has the keys, and is put above the overlays.
+	 */
+	readonly covered: boolean;
 }
 
 const MAX_PANES = 1024;
@@ -298,6 +303,7 @@ export function parseControlPanes(
 		!v.prefixes.every((p) => typeof p === "string" && p.length < 64) ||
 		!Array.isArray(v.shown) ||
 		!Array.isArray(v.panes) ||
+		typeof v.covered !== "boolean" ||
 		v.shown.length > MAX_PANES ||
 		v.panes.length > MAX_PANES
 	)
@@ -346,6 +352,7 @@ export function parseControlPanes(
 		prefixes: v.prefixes as string[],
 		shown,
 		panes,
+		covered: v.covered,
 	};
 }
 
@@ -554,6 +561,15 @@ export interface TerminalNeovimsOptions {
 	readonly settleMs?: number;
 }
 
+/**
+ * A control-mode terminal's overlaid panes (tmux pane numbers) and whether
+ * its page is above them: `TerminalOverlaidWire` in `ipc/contract.ts`.
+ */
+export interface OverlaidPanes {
+	readonly panes: readonly number[];
+	readonly raised: boolean;
+}
+
 /** One overlay, as the window draws it. */
 export interface OverlayView {
 	/** `neovim.html#<key>`: the page attaches as this id. */
@@ -600,6 +616,8 @@ interface Watch {
 	lend: Lend | undefined;
 	/** The overlay's pane was active and shown at the last reading. */
 	activeShown: boolean;
+	/** `overlaid` as last said to the window. */
+	overlaid: string;
 	/**
 	 * In control mode: the page's panes, and the sockets the last reading of
 	 * tmux confirmed. Absent: the page is xterm.js, and tmux is polled.
@@ -680,6 +698,7 @@ export class TerminalNeovims {
 					reading$: false,
 					lend: undefined,
 					activeShown: false,
+					overlaid: "",
 					control: undefined,
 					overlays: new Map(),
 				};
@@ -774,10 +793,33 @@ export class TerminalNeovims {
 		return views;
 	}
 
+	/**
+	 * In control mode, the panes whose overlay is shown, and whether the
+	 * terminal's page is to be above them: while what DevHub draws over the
+	 * panes is open, it is drawn over the Neovims too, and the page leaves
+	 * those panes clear (`TerminalOverlaidWire`).
+	 */
+	overlaid(terminalId: string): OverlaidPanes {
+		const watch = this.watches.get(terminalId);
+		if (watch?.control === undefined) return { panes: [], raised: false };
+		const panes: number[] = [];
+		for (const overlay of watch.overlays.values()) {
+			if (this.rectOf(watch, overlay) === undefined) continue;
+			panes.push(Number(overlay.paneId.slice(1)));
+		}
+		panes.sort((a, b) => a - b);
+		return {
+			panes,
+			raised: watch.control.panes.covered && panes.length > 0,
+		};
+	}
+
 	/** The overlay the terminal's keys go to now, if any. */
 	keyboardOverlay(terminalId: string): string | undefined {
 		const watch = this.watches.get(terminalId);
 		if (watch === undefined || watch.lend !== undefined) return undefined;
+		// A prompt, a menu, a popup or the picker has them: tmux's.
+		if (watch.control?.panes.covered === true) return undefined;
 		const overlay = this.activeOverlay(watch);
 		return overlay?.attached === true ? overlay.key : undefined;
 	}
@@ -934,6 +976,8 @@ export class TerminalNeovims {
 		if (["Shift", "Control", "Alt", "Meta"].includes(input.key)) return "pass";
 		const watch = this.watches.get(terminalId);
 		if (watch === undefined) return "pass";
+		// What is drawn over the panes takes every key while it is open.
+		if (watch.control?.panes.covered === true) return "pass";
 		const overlay = this.activeOverlay(watch);
 		const client = watch.reading?.client;
 		if (overlay?.attached !== true || client === undefined) return "pass";
@@ -1146,6 +1190,9 @@ export class TerminalNeovims {
 			watch.lend = undefined;
 		}
 		watch.activeShown = activeShown;
+		// Said apart from the views: the page's `covered` comes with the
+		// reading that is applied here, after the panes were stored.
+		const overlaid = JSON.stringify(this.overlaid(watch.terminal.terminalId));
 		const after = JSON.stringify(
 			this.views().filter(
 				(view) => view.terminalId === watch.terminal.terminalId,
@@ -1154,9 +1201,11 @@ export class TerminalNeovims {
 		if (
 			changed ||
 			before !== after ||
-			keysBefore !== this.keyboardOverlay(watch.terminal.terminalId)
+			keysBefore !== this.keyboardOverlay(watch.terminal.terminalId) ||
+			overlaid !== watch.overlaid
 		) {
 			this.options.changed();
 		}
+		watch.overlaid = overlaid;
 	}
 }

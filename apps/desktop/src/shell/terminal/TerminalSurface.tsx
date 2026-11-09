@@ -5,7 +5,10 @@ import { Failure, Waiting } from "../components/shell/SurfaceState";
 import { openXtermSession, type XtermSession } from "../surfaces/xtermSession";
 import { ControlTerminalSurface } from "./control/ControlTerminalSurface";
 import { perfProbe } from "../perfProbe";
-import type { TerminalPanesWire } from "../../ipc/contract";
+import type {
+  TerminalOverlaidWire,
+  TerminalPanesWire,
+} from "../../ipc/contract";
 import {
   activePalette,
   terminalSurfaceStyle,
@@ -78,6 +81,11 @@ export interface TerminalSurfaceProps {
    * over a pane is placed by (`PaneBridge.reportTerminalPanes`).
    */
   readonly onControlPanes?: (panes: TerminalPanesWire | null) => void;
+  /**
+   * In tmux control mode, the panes a Neovim is drawn over and whether this
+   * page is above them (`PaneBridge.onTerminalOverlaid`).
+   */
+  readonly overlaid?: TerminalOverlaidWire;
   /**
    * A session that ended (its last window closed, a detach) is attached
    * again at once — made again — instead of the pane saying it

@@ -27,7 +27,7 @@
  * DevHub draws one terminal pane.
  */
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { devhub } from "./client";
 import {
   useAppearance,
@@ -45,7 +45,11 @@ import {
   workspaceOfTerminalPage,
   workspaceTerminalSurfaceKey,
 } from "../../ipc/terminal";
-import type { TerminalPanesWire, TerminalScreenWire } from "../../ipc/contract";
+import type {
+  TerminalOverlaidWire,
+  TerminalPanesWire,
+  TerminalScreenWire,
+} from "../../ipc/contract";
 import { useTerminalScreenReport } from "./screenReport";
 
 export function PaneApp({ terminalId }: { readonly terminalId: string }) {
@@ -67,6 +71,11 @@ export function PaneApp({ terminalId }: { readonly terminalId: string }) {
     (panes: TerminalPanesWire | null) => {
       bridge.reportTerminalPanes(terminalId, panes);
     },
+    [bridge, terminalId],
+  );
+  const [overlaid, setOverlaid] = useState<TerminalOverlaidWire>();
+  useEffect(
+    () => bridge.onTerminalOverlaid(terminalId, setOverlaid),
     [bridge, terminalId],
   );
   if (state.status !== "ready") return null;
@@ -99,6 +108,7 @@ export function PaneApp({ terminalId }: { readonly terminalId: string }) {
           hideTitle
           reattachOnExit={workspaceId !== undefined}
           onControlPanes={reportPanes}
+          overlaid={overlaid}
         />
       </div>
     </div>

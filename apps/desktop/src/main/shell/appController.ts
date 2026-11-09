@@ -9260,6 +9260,14 @@ export class AppController {
 				this.terminalNeovims?.controlPanes(terminalId, parsed);
 			},
 		);
+		// The same page, asking which of its panes have a Neovim over them
+		// as it starts listening (`PaneBridge.onTerminalOverlaid`); each
+		// change is pushed by the window as it places the page.
+		handle(CHANNELS.askTerminalOverlaid, (_event, terminalId: unknown) =>
+			typeof terminalId === "string" && this.terminalNeovims !== undefined
+				? this.terminalNeovims.overlaid(terminalId)
+				: { panes: [], raised: false },
+		);
 		handle(
 			NEOVIM_CHANNELS.request,
 			(_event, call: NeovimCall) =>

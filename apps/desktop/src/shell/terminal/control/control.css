@@ -122,3 +122,23 @@
   font: 12px var(--font-ui, system-ui, sans-serif);
   pointer-events: none;
 }
+
+/* The terminal's ground (`ControlTerminalSurface.tsx`, `drawHoles`). While a
+   Neovim drawn over a pane is under this page (DevHub's prompt, menu, popup
+   or picker is open over it), the ground leaves that pane clear and the
+   boxes around it are let through, so the Neovim shows under what is drawn
+   over the panes. Behind every box, the ground is the shell's own colour. */
+.control-backdrop {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  background: var(--terminal-background, var(--surface));
+}
+
+:root[data-overlaid-holes] .pane-page,
+:root[data-overlaid-holes] .pane-body,
+:root[data-overlaid-holes] .control-terminal-shell,
+:root[data-overlaid-holes] .control-terminal {
+  background: transparent;
+}

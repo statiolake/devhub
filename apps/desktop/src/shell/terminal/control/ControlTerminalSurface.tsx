@@ -36,7 +36,10 @@ import {
   type TerminalReceipt,
 } from "../client";
 import { TERMINAL_PROTOCOL_VERSION } from "../../../ipc/terminal";
-import type { TerminalPanesWire } from "../../../ipc/contract";
+import type {
+  TerminalOverlaidWire,
+  TerminalPanesWire,
+} from "../../../ipc/contract";
 import type {
   ControlToPage,
   PageToControl,
@@ -50,6 +53,7 @@ import "./copyMode.css";
 import {
   applyControl,
   borders,
+  gridOf,
   paneRings,
   newControlView,
   paneAt,
@@ -170,6 +174,7 @@ export function ControlTerminalSurface({
   hidden = false,
   reattachOnExit = false,
   onControlPanes,
+  overlaid,
 }: TerminalSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const boundClient = useMemo(() => client ?? createTerminalClient(), [client]);
@@ -193,6 +198,7 @@ export function ControlTerminalSurface({
     completePrompt(index: number): void;
     windowMenu(id: number, x: number): void;
     focus(): void;
+    overlaid(o: TerminalOverlaidWire | undefined): void;
   } | null>(null);
   const live = useRef({
     hidden,
@@ -200,8 +206,16 @@ export function ControlTerminalSurface({
     appearance,
     colors,
     onControlPanes,
+    overlaid,
   });
-  live.current = { hidden, reattachOnExit, appearance, colors, onControlPanes };
+  live.current = {
+    hidden,
+    reattachOnExit,
+    appearance,
+    colors,
+    onControlPanes,
+    overlaid,
+  };
 
   useEffect(() => {
     const host = hostRef.current;
@@ -233,6 +247,11 @@ export function ControlTerminalSurface({
     const preedit = document.createElement("canvas");
     preedit.className = "control-preedit";
     preedit.hidden = true;
+    // The terminal's ground, drawn here rather than by the page's boxes so
+    // that it can leave a Neovim's pane clear (`drawHoles`).
+    const backdrop = document.createElement("div");
+    backdrop.className = "control-backdrop";
+    shell?.prepend(backdrop);
     const input = document.createElement("textarea");
     input.className = "control-input";
     input.setAttribute("aria-label", `${surfaceLabel} terminal input`);
@@ -296,11 +315,13 @@ export function ControlTerminalSurface({
         rows: view.rows,
         client: connected ? view.client : "",
         prefixes: view.prefixes,
-        // Under what DevHub draws over the panes (a popup, a prompt, a
-        // menu, the picker) a Neovim drawn over a pane would cover it: no
-        // pane is said to be shown until it closes.
-        shown: connected && !covered() ? view.panes : [],
+        shown: connected ? view.panes : [],
         panes: view.sessionPanes,
+        // What DevHub draws over the panes (a popup, a prompt, a menu, the
+        // picker) is to be over a Neovim drawn over one too: main puts this
+        // page above the Neovims while it is open. Said once the frame
+        // that leaves their panes clear has been drawn (`paint`).
+        covered: connected && coverSaid,
       };
       const key = JSON.stringify(panes);
       if (key === reported) return;
@@ -309,11 +330,62 @@ export function ControlTerminalSurface({
     };
 
     let wasCovered = false;
+    let coverSaid = false;
+    let coverWaits = false;
     const covered = () =>
       view.popup !== undefined ||
       view.prompt !== undefined ||
       view.menu !== undefined ||
-      view.chooser !== undefined;
+      view.chooser !== undefined ||
+      view.numbers !== undefined;
+    /**
+     * The panes a Neovim is drawn over (main's word, `TerminalOverlaidWire`)
+     * that are left clear, so that it shows through this page while the page
+     * is above it: while something covers the panes, and until main has put
+     * the page back under the Neovims. Under them, a clear pane is never
+     * seen; a pane in a mode is tmux's to draw (copy mode), not Neovim's.
+     */
+    const holes = (): PaneBox[] => {
+      const o = live.current.overlaid;
+      if (o === undefined || o.panes.length === 0) return [];
+      if (!covered() && !o.raised) return [];
+      const inMode = new Set(
+        view.sessionPanes.filter((p) => p.inMode).map((p) => p.pane),
+      );
+      return view.panes.filter(
+        (box) => o.panes.includes(box.pane) && !inMode.has(box.pane),
+      );
+    };
+    let holesDrawn = "";
+    /**
+     * The terminal's ground with the holes cut out, and the page's own
+     * boxes clear (`overlaid-holes` in `control.css`), in whole pixels inside
+     * the Neovim's view (main rounds its edges to the nearest pixel).
+     */
+    const drawHoles = (cut: readonly PaneBox[]) => {
+      const { width, height } = cell();
+      const at = grids.getBoundingClientRect();
+      const base = shell?.getBoundingClientRect() ?? at;
+      const rects = cut.map((box) => {
+        const left = Math.ceil(at.x + box.x * width - base.x);
+        const top = Math.ceil(at.y + box.y * height - base.y);
+        const right = Math.floor(at.x + (box.x + box.width) * width - base.x);
+        const bottom = Math.floor(
+          at.y + (box.y + box.height) * height - base.y,
+        );
+        return `M${String(left)} ${String(top)}H${String(right)}V${String(bottom)}H${String(left)}Z`;
+      });
+      const key = rects.join("");
+      if (key === holesDrawn) return;
+      holesDrawn = key;
+      if (rects.length === 0) {
+        backdrop.style.clipPath = "";
+        delete document.documentElement.dataset.overlaidHoles;
+        return;
+      }
+      backdrop.style.clipPath = `path(evenodd, "M-99999 -99999H99999V99999H-99999Z${key}")`;
+      document.documentElement.dataset.overlaidHoles = "true";
+    };
     const cell = () => painter.cell();
     const measure = () => {
       const rect = host.getBoundingClientRect();
@@ -363,8 +435,11 @@ export function ControlTerminalSurface({
         return a;
       });
       const { width, height } = cell();
-      const boxes = paneBoxes(view);
+      const cut = holes();
+      const clear = new Set(cut.map((box) => gridOf(box.pane)));
+      const boxes = paneBoxes(view).filter((box) => !clear.has(box.grid));
       painter.paint(view.state, merged, boxes, merged.layout);
+      drawHoles(cut);
       lines.replaceChildren(
         ...borders(view.panes).map((line) => {
           const el = document.createElement("div");
@@ -442,6 +517,7 @@ export function ControlTerminalSurface({
         pane === undefined ||
         at === undefined ||
         !at.visible ||
+        cut.some((box) => box.pane === pane.pane) ||
         view.prompt !== undefined ||
         view.menu !== undefined ||
         view.chooser !== undefined
@@ -462,9 +538,23 @@ export function ControlTerminalSurface({
         ackedSeq = lastSeq;
         send({ kind: "ack", seq: lastSeq });
       }
-      // What covers the panes hides a Neovim over them: said when it changes.
-      if (merged.layout || covered() !== wasCovered) report();
-      wasCovered = covered();
+      // What covers the panes is said when it changes: an opening once this
+      // frame, which leaves the Neovims' panes clear, has been drawn, so
+      // that main never puts the page above them before; a closing at once
+      // (the panes stay clear until main has put the page back under them).
+      const now = covered();
+      if (!now) coverSaid = false;
+      else if (!coverSaid && !coverWaits) {
+        coverWaits = true;
+        requestAnimationFrame(() => {
+          coverWaits = false;
+          if (disposed) return;
+          coverSaid = covered();
+          report();
+        });
+      }
+      if (merged.layout || now !== wasCovered) report();
+      wasCovered = now;
     };
 
     // The prompt's line (`prompt.css`): the panes' last row, in their font.
@@ -1209,6 +1299,10 @@ export function ControlTerminalSurface({
       focus() {
         input.focus();
       },
+      overlaid() {
+        // Read through `live`; the panes are drawn again with it.
+        schedule({ ...emptyChanges(), layout: true, cursor: true });
+      },
     };
 
     void attach();
@@ -1229,6 +1323,8 @@ export function ControlTerminalSurface({
       live.current.onControlPanes?.(null);
       controllerRef.current = null;
       host.replaceChildren();
+      backdrop.remove();
+      delete document.documentElement.dataset.overlaidHoles;
     };
     // The surface key and the client are the mount's identity; the rest is
     // read through `live`.
@@ -1241,6 +1337,10 @@ export function ControlTerminalSurface({
   useEffect(() => {
     controllerRef.current?.colors(colors);
   }, [colors]);
+
+  useEffect(() => {
+    controllerRef.current?.overlaid(overlaid);
+  }, [overlaid]);
 
   const fontFamily = appearance?.terminalFontFamily;
   const fontSize = appearance?.terminalFontSize;

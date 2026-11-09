@@ -1897,6 +1897,28 @@ export interface PaneBridge
 		terminalId: string,
 		panes: TerminalPanesWire | null,
 	): void;
+	/**
+	 * In tmux control mode, which of the terminal's panes have a Neovim drawn
+	 * over them, and whether this page is raised above those Neovims: as it
+	 * stands, then each change (`TerminalOverlaidWire`).
+	 */
+	onTerminalOverlaid(
+		terminalId: string,
+		listener: (overlaid: TerminalOverlaidWire) => void,
+	): () => void;
+}
+
+/**
+ * `PaneBridge.onTerminalOverlaid`. What DevHub draws over the panes (a popup,
+ * a prompt, a menu, the picker) has to be over a Neovim drawn over one too,
+ * and that Neovim is a view above the page: so while one is open main puts
+ * the page above the Neovims (`raised`), and the page leaves those panes
+ * clear for the Neovim under it to show through (`docs/terminal-mode.md`).
+ */
+export interface TerminalOverlaidWire {
+	/** tmux pane numbers (`%N`'s N) whose Neovim is shown. */
+	readonly panes: readonly number[];
+	readonly raised: boolean;
 }
 
 /** `PaneBridge.reportTerminalPanes`: CSS pixels and cells. */
@@ -1922,6 +1944,13 @@ export interface TerminalPanesWire {
 		readonly inMode: boolean;
 		readonly socket: string;
 	}[];
+	/**
+	 * Something DevHub draws over the panes is open (a popup, a prompt, a
+	 * menu, the picker, `display-panes`), and the page has left the
+	 * overlaid panes clear: it has the keys, and it is to be put above the
+	 * Neovims drawn over them.
+	 */
+	readonly covered: boolean;
 }
 
 /** `PaneBridge.reportTerminalScreen`'s rectangle. */
@@ -2401,6 +2430,8 @@ export const CHANNELS = {
 	openExternalUrl: "devhub:open-external-url",
 	reportTerminalScreen: "devhub:report-terminal-screen",
 	reportTerminalPanes: "devhub:report-terminal-panes",
+	terminalOverlaid: "devhub:terminal-overlaid",
+	askTerminalOverlaid: "devhub:ask-terminal-overlaid",
 	writeClipboard: "devhub:write-clipboard",
 	writeClipboardImage: "devhub:write-clipboard-image",
 	writeClipboardRich: "devhub:write-clipboard-rich",

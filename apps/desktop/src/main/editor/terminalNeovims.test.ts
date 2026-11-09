@@ -270,6 +270,7 @@ describe("TerminalNeovims", () => {
 				{ pane: 1, inMode: false, socket: "/tmp/d/s" },
 				{ pane: 2, inMode: false, socket: "" },
 			],
+			covered: false,
 			...over,
 		});
 
@@ -367,6 +368,42 @@ describe("TerminalNeovims", () => {
 			neovims.dispose();
 		});
 
+		it("keeps a covered overlay shown, the page above it and the keys tmux's", async () => {
+			const { neovims, changed } = setup(parseTerminalNeovimReading(OUTPUT));
+			neovims.controlPanes("t", panes());
+			await vi.waitFor(() => {
+				expect(neovims.views()).toHaveLength(1);
+			});
+			neovims.attached("tnv:1");
+			expect(neovims.overlaid("t")).toEqual({ panes: [1], raised: false });
+			const before = changed.mock.calls.length;
+			// A prompt opened over the panes.
+			neovims.controlPanes("t", panes({ covered: true }));
+			expect(neovims.views()[0]?.rect).toBeDefined();
+			expect(neovims.overlaid("t")).toEqual({ panes: [1], raised: true });
+			expect(neovims.keyboardOverlay("t")).toBeUndefined();
+			expect(neovims.terminalKey("t", key({ key: "x" }))).toBe("pass");
+			expect(changed.mock.calls.length).toBeGreaterThan(before);
+			// It closed: under the Neovim again, and the keys are its.
+			neovims.controlPanes("t", panes());
+			expect(neovims.overlaid("t")).toEqual({ panes: [1], raised: false });
+			expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
+			// Copy mode in that pane: tmux's view of it, the overlay hidden.
+			neovims.controlPanes(
+				"t",
+				panes({
+					covered: true,
+					panes: [
+						{ pane: 0, inMode: false, socket: "" },
+						{ pane: 1, inMode: true, socket: "/tmp/d/s" },
+						{ pane: 2, inMode: false, socket: "" },
+					],
+				}),
+			);
+			expect(neovims.overlaid("t")).toEqual({ panes: [], raised: false });
+			neovims.dispose();
+		});
+
 		it("tries a Neovim again once a control client attaches again", async () => {
 			const { neovims } = setup(parseTerminalNeovimReading(OUTPUT));
 			neovims.controlPanes("t", panes());
@@ -390,6 +427,9 @@ describe("TerminalNeovims", () => {
 			expect(parseControlPanes({ ...wire, cols: -1 }, 1)).toBeUndefined();
 			expect(
 				parseControlPanes({ ...wire, shown: [{ pane: "1" }] }, 1),
+			).toBeUndefined();
+			expect(
+				parseControlPanes({ ...wire, covered: undefined }, 1),
 			).toBeUndefined();
 		});
 	});
