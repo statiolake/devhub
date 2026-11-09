@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isOwnGround, mixColors, parseGuifont } from "./painter";
+import { gridBlends, isOwnGround, mixColors, parseGuifont } from "./painter";
 
 describe("guifont", () => {
   it("is a CSS family list and a size", () => {
@@ -40,5 +40,21 @@ describe("a window's own ground", () => {
     ).toBe(false);
     expect(isOwnGround({ background: 1, groups: ["Visual"] })).toBe(false);
     expect(isOwnGround({ reverse: true })).toBe(false);
+  });
+});
+
+describe("a leaf canvas's alpha", () => {
+  const hl = new Map([
+    [1, { background: 0xffffff }],
+    [2, { background: 0x000000, blend: 30 }],
+    [3, { background: 0x000000, blend: 0 }],
+  ]);
+
+  it("is opaque for a float, a popup or a pane that blends nowhere", () => {
+    expect(gridBlends({ hls: Int32Array.from([0, 1, 1, 3]) }, hl)).toBe(false);
+  });
+
+  it("has alpha only while a cell blends (`winblend`)", () => {
+    expect(gridBlends({ hls: Int32Array.from([1, 1, 2, 1]) }, hl)).toBe(true);
   });
 });

@@ -39,6 +39,12 @@ computation was off by one something else broke:
 5. **A layer's colours come from its own data**, never from sampling its
    neighbours.
 
+What follows the rule in code:
+
+- `gridBlends` (`painter.ts`): a leaf canvas has alpha only while one of its
+  cells blends (`winblend`); every other grid, floats and tmux popups
+  included, is opaque.
+
 ## Audit
 
 Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
@@ -51,7 +57,10 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   mason's windows, and through `paneGrids.ts:427,443` (`float: true`) every
   tmux `display-popup` and the chooser's preview. Bug: their text was set in
   grayscale, thinner and lighter than the window beside it on macOS.
-  **Open.**
+  **Fixed** ("Leaf canvases: opaque unless a cell blends"): alpha only for a
+  grid with a `winblend` cell (`gridBlends`); checked in the app with a
+  probe of `getContextAttributes().alpha` per canvas (floats and the popup
+  `false`; `winblend=40` set live gives `true`, unset gives `false` again).
 - `painter.ts:795-806, 930` the scroll ghost and the winbar pin are canvases
   with alpha. They hold copies of an opaque canvas's pixels, already
   rasterised, so no text is set on them: no bug, kept.
@@ -148,7 +157,6 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 
 ## Remaining, in order of impact
 
-1. Opaque leaf canvases for floats and tmux popups.
 1. Painter levels: parts stacked by declaration, not DOM order.
 1. Declared overlay tiers in Neovim's zindex space (floats vs DevHub's
    command line, popups and toasts).

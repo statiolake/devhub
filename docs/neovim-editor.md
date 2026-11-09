@@ -260,9 +260,11 @@ z-order and opaque canvas — and where the code still falls short:
     grid's size (`uiTypeScale`): text at it, labels a step under, small
     capitals and key caps two under, code in the grid's face at the grid's
     size; one family list (`--nvim-ui-font`, the painter's `UI_FAMILY`).
-  - A window's grid is an opaque canvas, so its text is set with subpixel
-    antialiasing (CoreText's font smoothing on macOS), which Chromium does
-    only on an opaque canvas; floats keep their alpha for `winblend`.
+  - Every grid, floats included, is an opaque canvas, so its text is set
+    with subpixel antialiasing (CoreText's font smoothing on macOS), which
+    Chromium does only on an opaque canvas; only a float with a `winblend`
+    cell has alpha (`gridBlends`). Floats had alpha whether they blended or
+    not, and every hover, menu and picker was set in grayscale.
   - The cell is measured on whole device pixels (crisp at
     `devicePixelRatio` 2; the text of a run is spread to the cell with
     `letterSpacing`), and measured again when the window moves to a screen of
