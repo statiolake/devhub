@@ -12,13 +12,13 @@ import {
   type Box,
   type Layout,
   type Schedule,
+  SLICE_MS,
   TranscriptSearch,
 } from "./transcriptSearch";
 
-/** Slices run by hand, each timed. */
-function slices() {
+/** Slices run by hand; `after` is told when each one has run. */
+function slices(after: () => void = () => {}) {
   const queue: (() => void)[] = [];
-  const took: number[] = [];
   return {
     schedule: (run: () => void) => {
       queue.push(run);
@@ -33,14 +33,12 @@ function slices() {
       let ran = 0;
       while (queue.length > 0) {
         const run = queue.shift()!;
-        const start = performance.now();
         run();
-        took.push(performance.now() - start);
+        after();
         ran += 1;
       }
       return ran;
     },
-    longest: () => Math.max(0, ...took),
   };
 }
 
@@ -72,8 +70,12 @@ function atOnce(run: () => void): () => void {
   return () => {};
 }
 
-function searchIn(root: Element, schedule: Schedule = atOnce) {
-  const search = new TranscriptSearch(root, () => {}, schedule);
+function searchIn(
+  root: Element,
+  schedule: Schedule = atOnce,
+  now?: () => number,
+) {
+  const search = new TranscriptSearch(root, () => {}, schedule, now);
   searches.push(search);
   return search;
 }
@@ -85,29 +87,49 @@ afterEach(() => {
 });
 
 describe("a search over a long transcript", () => {
-  it("counts every match exactly, a slice of a few milliseconds at a time", () => {
-    // 2,000 entries of 1,000 letters: two million one-letter matches.
-    const root = transcript(2_000, () => "a".repeat(1_000));
-    const run = slices();
-    const search = searchIn(root, run.schedule);
-    search.setQuery("a", false);
-    expect(search.status().complete).toBe(false);
-    // The last match is current from the first slice on, the count growing
-    // above it.
-    const first = search.status();
-    expect(first.total).toBeGreaterThan(0);
-    expect(first.current).toBe(first.total - 1);
-    expect(entryOf(search.currentRange()!)).toBe("e1999");
-    expect(run.drain()).toBeGreaterThan(5);
-    expect(search.status()).toMatchObject({
-      total: 2_000_000,
-      complete: true,
-      current: 1_999_999,
-    });
-    // jsdom is slower than the page and a timer check is not free, so
-    // generous; a slice that did not stop would take hundreds.
-    expect(run.longest()).toBeLessThan(60);
-  });
+  // Two million matches are a lot of work for jsdom, and a loaded machine
+  // (the whole suite at once) takes several times as long over them.
+  it(
+    "counts every match exactly, a slice of a few milliseconds at a time",
+    {
+      timeout: 30_000,
+    },
+    () => {
+      // 2,000 entries of 1,000 letters: two million one-letter matches.
+      const root = transcript(2_000, () => "a".repeat(1_000));
+      // The slices' clock: a millisecond each time it is read, so a slice
+      // gets the same few readings of it however fast this machine is, or
+      // however loaded. Between two readings it finds at most 1,024 matches.
+      let clock = 0;
+      const perSlice: number[] = [];
+      let counted = 0;
+      const run = slices(() => {
+        const total = search.status().total;
+        perSlice.push(total - counted);
+        counted = total;
+      });
+      const search = searchIn(root, run.schedule, () => (clock += 1));
+      search.setQuery("a", false);
+      expect(search.status().complete).toBe(false);
+      // The last match is current from the first slice on, the count growing
+      // above it.
+      const first = search.status();
+      expect(first.total).toBeGreaterThan(0);
+      expect(first.current).toBe(first.total - 1);
+      expect(entryOf(search.currentRange()!)).toBe("e1999");
+      counted = first.total;
+      expect(run.drain()).toBeGreaterThan(5);
+      expect(search.status()).toMatchObject({
+        total: 2_000_000,
+        complete: true,
+        current: 1_999_999,
+      });
+      // Each slice stopped once its budget was read as spent: no more than a
+      // budget's worth of readings, 1,024 matches apart. A slice that did not
+      // stop would have found all two million.
+      expect(Math.max(...perSlice)).toBeLessThanOrEqual((SLICE_MS + 1) * 1_024);
+    },
+  );
 
   it("drops the old query's search when a new one starts", () => {
     const root = transcript(500, (index) => `${"a".repeat(1_000)} b${index}`);
@@ -202,27 +224,34 @@ describe("the matches on view", () => {
     },
   };
 
-  it("are all that become ranges, however many there are in all", () => {
-    const root = transcript(20_000, () => "a".repeat(100));
-    const run = slices();
-    const search = searchIn(root, run.schedule);
-    search.setQuery("a", false);
-    run.drain();
-    expect(search.status().total).toBe(2_000_000);
-    // Rows 50 to 60 (their tops 1000–1200).
-    const ranges = search.rangesWithin(1_005, 1_200, rows);
-    expect(ranges).toHaveLength(11 * 100);
-    const entries = new Set(
-      ranges.map((range) =>
-        range.startContainer
-          .parentElement!.closest("[data-entry-id]")!
-          .getAttribute("data-entry-id"),
-      ),
-    );
-    expect([...entries]).toEqual(
-      Array.from({ length: 11 }, (_, at) => `e${50 + at}`),
-    );
-  });
+  // Two million matches, as above: generous for a loaded machine.
+  it(
+    "are all that become ranges, however many there are in all",
+    {
+      timeout: 30_000,
+    },
+    () => {
+      const root = transcript(20_000, () => "a".repeat(100));
+      const run = slices();
+      const search = searchIn(root, run.schedule);
+      search.setQuery("a", false);
+      run.drain();
+      expect(search.status().total).toBe(2_000_000);
+      // Rows 50 to 60 (their tops 1000–1200).
+      const ranges = search.rangesWithin(1_005, 1_200, rows);
+      expect(ranges).toHaveLength(11 * 100);
+      const entries = new Set(
+        ranges.map((range) =>
+          range.startContainer
+            .parentElement!.closest("[data-entry-id]")!
+            .getAttribute("data-entry-id"),
+        ),
+      );
+      expect([...entries]).toEqual(
+        Array.from({ length: 11 }, (_, at) => `e${50 + at}`),
+      );
+    },
+  );
 
   it("leave out what a fold hides", () => {
     const root = transcript(3, (index) =>
