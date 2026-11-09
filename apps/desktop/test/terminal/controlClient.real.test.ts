@@ -12,7 +12,12 @@ import {
   type ControlToPage,
 } from "../../src/main/ptyHost/control/controlClient";
 import { TEST_NVIM } from "../../src/main/editor/testNeovim";
-import { neovimShimScript } from "../../src/main/editor/terminalNeovimShim";
+import {
+  neovimShimScript,
+  paneTmuxScript,
+} from "../../src/main/editor/terminalNeovimShim";
+import type { PopupPty } from "../../src/main/ptyHost/control/popup";
+import { printfEscaped } from "../../src/main/ptyHost/control/tmuxCommand";
 
 const WASM = fileURLToPath(
   new URL("../../vendor/libghostty-vt/ghostty-vt.wasm", import.meta.url),
@@ -97,8 +102,7 @@ function page() {
     else if (message.kind === "copy-mode") {
       copy = message;
       framesSinceCopy = 0;
-    }
-    else if (message.kind === "copy-mode-closed") copy = undefined;
+    } else if (message.kind === "copy-mode-closed") copy = undefined;
     else if (message.kind === "clipboard") clipboard.push(message.text);
     else if (message.kind === "chooser-closed") chooser = undefined;
     else if (message.kind === "display-panes") numbers = message;
@@ -293,6 +297,105 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     expect(tmux(socket, "list-sessions", "-F", "#{session_name}").trim()).toBe(
       "p",
     );
+    client.stop();
+    await until("the end", () => view.ended);
+  }, 20000);
+
+  it("draws a popup and a prompt a pane's shell asks for, and the shell waits as tmux would", async () => {
+    const socket = `devhub-shell-${String(process.pid)}`;
+    sockets.push(socket);
+    tmux(socket, "new-session", "-d", "-s", "h", "-x", "80", "-y", "24", "sh");
+    tmux(socket, "rename-window", "-t", "h", "before");
+    // A popup's pty, which the test ends.
+    const ptys: { input: string; exit: (code?: number) => void }[] = [];
+    const popup = (): PopupPty => {
+      const pty = { input: "", exit: (_code?: number) => {} };
+      ptys.push(pty);
+      return {
+        write: (bytes) => {
+          pty.input += new TextDecoder().decode(bytes);
+        },
+        onData: () => {},
+        onExit: (listener) => {
+          pty.exit = listener;
+        },
+        kill: () => pty.exit(0),
+      };
+    };
+    const view = page();
+    const client = new ControlClient({
+      process: controlProcess(socket, "h"),
+      vt: lib,
+      cols: 80,
+      rows: 24,
+      post: view.post,
+      ended: () => undefined,
+      popup,
+    });
+    const first = await until("the pane", () => view.layout?.panes[0]?.pane);
+    // A pane's `tmux` (`paneTmuxScript`), run as the pane's shell runs it.
+    const bin = mkdtempSync(join(tmpdir(), "devhub-pane-tmux-"));
+    const shim = join(bin, "tmux");
+    writeFileSync(shim, paneTmuxScript(TMUX ?? "tmux"), { mode: 0o755 });
+    const socketPath = tmux(socket, "display", "-p", "#{socket_path}").trim();
+    const run = (...args: string[]) => {
+      const child = spawn("/bin/sh", [shim, ...args], {
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          LANG: "C.UTF-8",
+          TMUX: `${socketPath},0,0`,
+          TMUX_PANE: `%${String(first)}`,
+        },
+      });
+      let code: number | null | undefined;
+      child.on("exit", (status) => {
+        code = status;
+      });
+      return { exited: () => code };
+    };
+
+    // A popup: opened on the pane it was asked from, with its words as
+    // they were; the shell waits until it has closed.
+    const opened = run("display-popup", "-E", "echo 'it''s'; printf %s 50%");
+    const pty = await until("the popup's pty", () => ptys[0]);
+    expect(pty.input).toContain(printfEscaped("echo 'it''s'; printf %s 50%"));
+    expect(pty.input).toContain(`%${String(first)}`);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(opened.exited()).toBeUndefined();
+    pty.exit(0);
+    expect(
+      await until("the shell going on", () => opened.exited() ?? false),
+    ).toBe(0);
+
+    // A prompt: drawn, and what is typed is tmux's to run.
+    const asked = run("command-prompt", "-p", "name:", "rename-window '%%'");
+    expect((await until("the prompt", () => view.prompt)).prompt).toBe(
+      "name: ",
+    );
+    await until("the shell going on", () => asked.exited() ?? false);
+    client.receive({
+      kind: "bytes",
+      bytes: new TextEncoder().encode("from the shell"),
+    });
+    client.receive({ kind: "keys", keys: ["Enter"] });
+    await until("the rename", () =>
+      view.layout?.windows[0]?.name === "from the shell" ? true : undefined,
+    );
+
+    // Anything else is tmux's own.
+    expect(
+      await until("list-windows", () => {
+        try {
+          return execFileSync("/bin/sh", [shim, "list-windows", "-F", "#W"], {
+            encoding: "utf8",
+            env: { ...process.env, TMUX: `${socketPath},0,0` },
+          }).trim();
+        } catch {
+          return undefined;
+        }
+      }),
+    ).toBe("from the shell");
     client.stop();
     await until("the end", () => view.ended);
   }, 20000);

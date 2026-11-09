@@ -711,6 +711,28 @@ a host's pane found the host's own `tmux` on its PATH, not DevHub's (on the
 test host a 3.4, which cannot talk to the 3.7c server), in a popup and in a
 pane alike; a pane's `tmux` is now DevHub's ("DevHub's tmux", above).
 
+**Asked from a shell.** A command typed in a pane (`tmux display-popup
+-E htop`), a popup's (`tmux command-prompt`), a `run-shell` job's or a
+program's (`fzf --tmux` opens its list with `display-popup`) is not a key:
+tmux drew it for its current client, which is DevHub's control client,
+for nobody, and the shell waited on it for ever (a `command-prompt` from a
+popup's shell also left an invisible prompt taking the client's keys). So
+the pane's `tmux` (`paneTmuxScript`) hands DevHub what tmux would draw and
+wait on — a popup, a prompt, a menu, a chooser, `display-panes` — when the
+client it would draw on is a control client: a `display-message` to it of
+the words in hex and the pane it was asked from (`TMUX_RUN_MARK`; tmux
+expands a message with `strftime` too, so nothing in it may hold a `%`),
+which the client opens as it opens a binding's, a popup on the asking
+pane unless `-t` names one. It signals `wait-for -S devhub-ack-<id>` at
+once, and `devhub-done-<id>` once a popup has closed or anything else is
+open; the shell waits on that as tmux would have it wait on the popup. A
+command no DevHub takes within three seconds is tmux's own after all.
+Checked in the app with the person's tmux.conf: `tmux display-popup -E
+zsh` typed in a pane opens DevHub's popup over the Neovim beside it, and
+`tmux command-prompt` typed in that popup's shell opens the prompt line
+over the popup (a popup 100% tall, the prompt drawn across its bottom
+edge), typing into the prompt and renaming the window.
+
 **`command-prompt` and `confirm-before` are DevHub's too**
 (`main/ptyHost/control/prompt.ts`), a binding that is one of them and
 nothing else. tmux keeps a prompt's buffer on the client and says nothing of

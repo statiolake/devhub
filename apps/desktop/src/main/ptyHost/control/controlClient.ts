@@ -45,6 +45,8 @@ import { KeyRouter, parseBindings, waitingCommand } from "./keyGuard.js";
 import { PopupJob, popupInput, type PopupPty } from "./popup.js";
 import {
 	NVIM_SHIM_VARIABLE,
+	SHELL_ROUTED_COMMANDS,
+	TMUX_RUN_MARK,
 	USER_ZDOTDIR_VARIABLE,
 } from "../../editor/terminalNeovimShim.js";
 
@@ -605,6 +607,10 @@ export class ControlClient {
 			// What tmux would show in the client's status line: a
 			// `display-message`, an error from a command a prompt ran.
 			case "message":
+				if (event.text.startsWith(TMUX_RUN_MARK)) {
+					void this.#runFromShell(event.text.slice(TMUX_RUN_MARK.length));
+					return;
+				}
 				if (event.text !== "")
 					this.#o.post({ kind: "notice", text: event.text });
 				return;
@@ -802,7 +808,26 @@ export class ControlClient {
 	 * its size and place worked out against the client's size as tmux does.
 	 * `rest`: keys typed after the binding's, which are the popup's.
 	 */
-	async #openPopup(args: PopupArgs, rest: readonly string[]): Promise<void> {
+	async #openPopup(
+		args: PopupArgs,
+		rest: readonly string[],
+		/** Once it has closed, or did not open. */
+		done?: () => void,
+	): Promise<void> {
+		let opened = false;
+		try {
+			opened = await this.#startPopup(args, rest, done);
+		} finally {
+			if (!opened) done?.();
+		}
+	}
+
+	/** `#openPopup`'s work: whether a popup job was started. */
+	async #startPopup(
+		args: PopupArgs,
+		rest: readonly string[],
+		done: (() => void) | undefined,
+	): Promise<boolean> {
 		const spawn = this.#o.popup;
 		if (spawn === undefined) {
 			this.#o.post({
@@ -810,7 +835,7 @@ export class ControlClient {
 				text: "display-popup is not available here.",
 			});
 			this.#keys(rest);
-			return;
+			return false;
 		}
 		this.#popupOpening = [...rest];
 		const active = this.#activePane();
@@ -854,7 +879,7 @@ export class ControlClient {
 			.split(FIELD);
 		if (!facts.ok || pane === undefined || this.#ended) {
 			this.#keys(waiting);
-			return;
+			return false;
 		}
 		const cols = this.#cols;
 		const rows = this.#rows;
@@ -880,7 +905,7 @@ export class ControlClient {
 				kind: "notice",
 				text: `display-popup could not start: ${failure instanceof Error ? failure.message : String(failure)}`,
 			});
-			return;
+			return false;
 		}
 		const vt = this.#o.vt.open(inner.cols, inner.rows, 0);
 		if (this.#colors !== undefined) vt.setColors(this.#colors);
@@ -908,11 +933,63 @@ export class ControlClient {
 			closed: () => {
 				if (this.#popup === job) this.#popup = undefined;
 				if (!this.#ended) this.#o.post({ kind: "popup-closed", id });
+				done?.();
 			},
 		});
 		this.#popup = job;
 		for (const key of waiting) job.key(key);
 		this.#schedule();
+		return true;
+	}
+
+	/**
+	 * A command a pane's `tmux` handed DevHub (`paneTmuxScript`): one tmux
+	 * would draw on this client's screen and wait on — a popup, a prompt, a
+	 * menu, a chooser — asked from a shell (a pane's, a popup's, a
+	 * `run-shell` job's: `fzf --tmux`, a script's `tmux display-popup`).
+	 * tmux would draw it for nobody, and the shell would wait on it for
+	 * ever. `<id> <pane> x<hex>…`: its words, and the pane it was asked from,
+	 * which a popup opens on unless it names one. Said taken at once
+	 * (`devhub-ack-<id>`) and done (`devhub-done-<id>`) once a popup has
+	 * closed, or once anything else is open.
+	 */
+	async #runFromShell(text: string): Promise<void> {
+		const [id = "", pane = "", ...encoded] = text.split(" ");
+		if (!/^[\w.-]+$/.test(id)) return;
+		const words = encoded.map((word) =>
+			new TextDecoder().decode(
+				Uint8Array.from(word.slice(1).match(/[0-9a-f]{2}/g) ?? [], (byte) =>
+					parseInt(byte, 16),
+				),
+			),
+		);
+		const name = words[0] ?? "";
+		if (!(SHELL_ROUTED_COMMANDS as readonly string[]).includes(name)) return;
+		await this.#command(["wait-for", "-S", `devhub-ack-${id}`]);
+		const done = () => {
+			void this.#command(["wait-for", "-S", `devhub-done-${id}`]);
+		};
+		// Each word single-quoted as tmux reads it (`parseCommands`).
+		const command = words
+			.map((word) => `'${word.replace(/'/g, "'\\''")}'`)
+			.join(" ");
+		const from = /^\d+$/.test(pane) ? `%${pane}` : undefined;
+		const popup = popupOf(command);
+		if (popup !== undefined) {
+			await this.#openPopup(
+				popup.target === undefined && from !== undefined
+					? { ...popup, target: from }
+					: popup,
+				[],
+				done,
+			);
+			return;
+		}
+		try {
+			await this.#dispatch(command);
+		} finally {
+			done();
+		}
 	}
 
 	/**
