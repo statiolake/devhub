@@ -1063,11 +1063,26 @@
   max-height: 220px;
 }
 
+/* One row of quick replies' room, there with or without them: a question
+   with options arriving fills it rather than lifting the composer's top
+   edge. Each reply rises in as it arrives, in its place. */
 .orchestrator-options {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  min-height: 24px;
   margin-bottom: var(--space-2);
+}
+
+.orchestrator-option {
+  animation: orchestrator-option-in var(--motion-base) var(--ease-enter);
+}
+
+@keyframes orchestrator-option-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-rise));
+  }
 }
 
 .orchestrator-option {

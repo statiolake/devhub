@@ -1196,23 +1196,28 @@ function AnswerComposer({
         pressFocusesField(event, input.current);
       }}
     >
-      {options.length > 0 ? (
-        <div className="orchestrator-options" aria-label="Quick replies">
-          {options.map((option) => (
-            <button
-              key={option}
-              type="button"
-              className="orchestrator-option"
-              disabled={sending}
-              onClick={() => {
-                send(option);
-              }}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      {/* The quick replies' row keeps its room while there are none, so a
+          question with options arriving fills it instead of lifting the
+          composer's top edge (docs/motion.md). */}
+      <div
+        className="orchestrator-options"
+        aria-label={options.length > 0 ? "Quick replies" : undefined}
+        data-empty={options.length === 0 || undefined}
+      >
+        {options.map((option) => (
+          <button
+            key={option}
+            type="button"
+            className="orchestrator-option"
+            disabled={sending}
+            onClick={() => {
+              send(option);
+            }}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
       {failed === undefined ? null : (
         <p className="orchestrator-composer-error" role="alert">
           The answer did not go out: {failed}

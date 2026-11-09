@@ -143,6 +143,11 @@ What will appear later has its room already, at its final size:
   and a decode changes nothing. Measured with an answer embedding a 4:3
   PNG and a portrait screenshot in a table: what followed them jumped 488
   and 706px in one frame before; after, nothing below them moves.
+- **An escalation's composer keeps its quick replies' row** while its
+  question has none, so a question with options arriving fills the row
+  (each reply rising in, in its place) instead of lifting the composer's
+  top edge 32px in one frame; measured, its layout shift went from 0.0027
+  to 0.
 - **Skippable content is born visible.** `content-visibility: auto` lays a
   new element out at its placeholder size (`contain-intrinsic-size`) for a
   frame; the last chunk and the transcript's last lines are never skipped.
@@ -197,6 +202,8 @@ because a followed transcript moves by every pixel of it.
   `windowLayout.test.ts`: a view moved and resized by a change of
   arrangement waits off the window at its new size until its page has
   drawn, then lands at that size; a drag is followed at once.
+- `apps/desktop/src/shell/agents/orchestratorScreen.test.tsx`: the answer
+  composer keeps its quick replies' row while there are none.
 - `apps/desktop/src/shell/conversation/stability.test.tsx`: the "sending"
   bubble has its echo's structure (so its height), an answer's Copy row is
   there from its first block, the activity line's room is kept, and Copy
@@ -210,5 +217,11 @@ above the end moving after it has landed.
 
 ## Known, not yet fixed
 
-- **An escalation's composer** grows by its options' row when a question
-  with options arrives, lifting its top edge in one frame.
+- **A divider being dragged, and a split's Agent half through a window
+  resize,** move a view and resize it at every step, and each step can show
+  the view's previous picture at its new place for a frame — off by that
+  step's distance, a few pixels. Holding the view back at every step would
+  blank it for the whole drag (see "Views main moves").
+- **Quick replies that wrap.** An escalation's composer keeps one row of
+  room for its question's options; options that need a second row still
+  lift its top edge by that row when they arrive.

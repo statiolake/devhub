@@ -743,6 +743,32 @@ describe("the answer composer", () => {
     });
   }
 
+  /**
+   * A question with options arriving used to lift the composer's top edge
+   * by the replies' row in one frame (docs/motion.md): the row is there,
+   * empty and nameless, while there are no replies to put in it.
+   */
+  it("keeps the quick replies' row while there are none", () => {
+    motion(true);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
+    const row = document.querySelector(
+      ".orchestrator-composer > .orchestrator-options",
+    );
+    expect(row).not.toBeNull();
+    expect(row).toBeEmptyDOMElement();
+    expect(row).not.toHaveAttribute("aria-label");
+    expect(row).toHaveAttribute("data-empty");
+  });
+
+  it("puts the replies in that row, before the field", () => {
+    open();
+    const row = screen.getByLabelText("Quick replies");
+    expect(row.parentElement?.firstElementChild).toBe(row);
+    expect(row).not.toHaveAttribute("data-empty");
+    expect(row.children).toHaveLength(2);
+  });
+
   it("draws no hint line, only the field, the quick replies and Send", () => {
     open();
     const composer = document.querySelector(".orchestrator-composer")!;
