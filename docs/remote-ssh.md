@@ -197,7 +197,8 @@ or delivers (`docs/bundled-binaries.md`), so when it starts a Claude Agent on a
 host — a terminal one or a GUI one, and when a terminal one is restarted — it
 installs this bash there (once per version) whatever bash or zsh the host has
 of its own, and that Agent's process — and only it — gets `CLAUDE_CODE_SHELL`
-and `SHELL` pointing at it (`main/runtime/agentShell.ts`). The login shell,
+pointing at it (`main/runtime/agentShell.ts`; not `SHELL`, which tmux sets
+to a pane's `default-shell` whatever the session says). The login shell,
 tmux's `default-shell` and every terminal stay the person's. A profile that
 sets either variable itself keeps its own. On this Mac the same rule holds
 with the bash inside the app (`out/bash`, `build:bash`).
@@ -449,7 +450,7 @@ source run started by `apps/desktop/scripts/dev.sh` will do. In order:
 10. Any host, a Synology NAS with busybox alone among them: a Claude Agent
     starts, `~/.devhub-server/bash/<version>/bin/bash --version` answers there,
     and `tr '\0' '\n' < /proc/<pid>/environ | grep SHELL` for the CLI shows
-    both `SHELL` and `CLAUDE_CODE_SHELL` pointing at it — while a terminal on
+    `CLAUDE_CODE_SHELL` pointing at it — while a terminal on
     the same host still runs the person's own shell.
 
 ## Two facts about running one by hand

@@ -12,16 +12,15 @@ import {
 const DELIVERED = "/home/me/.devhub-server/bash/5.3.20/bin/bash";
 
 describe("the shell a Claude Agent runs with", () => {
-	// Both the variable Claude Code reads for it and `SHELL` — for that
-	// process only, which is the caller's business.
-	it("is DevHub's bash, as CLAUDE_CODE_SHELL and SHELL", () => {
+	// The variable Claude Code reads first — for that process only, which is
+	// the caller's business.
+	it("is DevHub's bash, as CLAUDE_CODE_SHELL", () => {
 		expect(claudeShellEnvironment(DELIVERED)).toEqual({
 			CLAUDE_CODE_SHELL: DELIVERED,
-			SHELL: DELIVERED,
 		});
 		expect(
 			deliveredClaudeShell("nas", { kind: "installed", path: DELIVERED }),
-		).toEqual({ CLAUDE_CODE_SHELL: DELIVERED, SHELL: DELIVERED });
+		).toEqual({ CLAUDE_CODE_SHELL: DELIVERED });
 	});
 
 	it("refuses, naming the machine and the reason, when the delivery failed", () => {

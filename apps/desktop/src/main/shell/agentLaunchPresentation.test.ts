@@ -49,7 +49,6 @@ const HOME = "/home/testuser";
 const DELIVERED_BASH = `${HOME}/.devhub-server/bash/5.3.20/bin/bash`;
 const ON_DELIVERED_BASH = {
 	CLAUDE_CODE_SHELL: DELIVERED_BASH,
-	SHELL: DELIVERED_BASH,
 };
 
 function wired(
@@ -375,7 +374,7 @@ describe("a Claude Agent runs on DevHub's bash", () => {
 		expect(launchAgent).toHaveBeenCalledWith(
 			expect.anything(),
 			expect.objectContaining({
-				env: { CLAUDE_CODE_SHELL: "/opt/bin/bash", SHELL: DELIVERED_BASH },
+				env: { CLAUDE_CODE_SHELL: "/opt/bin/bash" },
 			}),
 			expect.anything(),
 		);

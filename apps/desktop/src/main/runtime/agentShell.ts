@@ -5,8 +5,10 @@
  * bash or a zsh), else `$SHELL`, else whichever zsh or bash it finds on
  * `PATH`. DevHub runs only the binaries it carries or delivers, never whatever
  * happens to be installed (`docs/bundled-binaries.md`), so a Claude Agent is
- * given DevHub's bash as `CLAUDE_CODE_SHELL` and `SHELL`, **for that Agent's
- * process only**:
+ * given DevHub's bash as `CLAUDE_CODE_SHELL`, **for that Agent's process
+ * only** (not `SHELL`: tmux sets a pane's `SHELL` to its `default-shell`
+ * whatever the session's environment says, and `CLAUDE_CODE_SHELL` is what
+ * Claude Code reads first):
  *
  * - **this Mac**: the bash inside the app (`out/bash`, `bundledBash.ts`);
  * - **an SSH host**: the static bash DevHub publishes
@@ -28,7 +30,7 @@ export type DeliveredBash =
 export function claudeShellEnvironment(
 	bash: string,
 ): Readonly<Record<string, string>> {
-	return { CLAUDE_CODE_SHELL: bash, SHELL: bash };
+	return { CLAUDE_CODE_SHELL: bash };
 }
 
 /**

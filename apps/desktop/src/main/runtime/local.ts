@@ -204,8 +204,8 @@ export class LocalRuntime implements Runtime {
 	}
 
 	/**
-	 * DevHub's own bash (`out/bash`, `bundledBash.ts`) as `CLAUDE_CODE_SHELL`
-	 * and `SHELL`, for the Agent's process alone: Claude Code runs its Bash
+	 * DevHub's own bash (`out/bash`, `bundledBash.ts`) as `CLAUDE_CODE_SHELL`,
+	 * for the Agent's process alone (`agentShell.ts`): Claude Code runs its Bash
 	 * tool in the bash DevHub carries, never in whatever bash or zsh the PATH
 	 * happens to have (`docs/bundled-binaries.md`). The person's own login
 	 * shell, tmux's `default-shell` and every terminal keep theirs.

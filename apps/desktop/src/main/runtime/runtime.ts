@@ -525,7 +525,7 @@ export interface Runtime {
 	/**
 	 * What a Claude Agent started on this machine adds to its environment for
 	 * the shell Claude Code runs its Bash tool in: DevHub's own bash as
-	 * `CLAUDE_CODE_SHELL` and `SHELL`, for that Agent's process alone — the
+	 * `CLAUDE_CODE_SHELL`, for that Agent's process alone — the
 	 * one in the app here (`bundledBash.ts`), the delivered one on a host
 	 * (`agentShell.ts`). Never a bash or zsh found on the machine
 	 * (`docs/bundled-binaries.md`). Rejects, with a sentence naming the

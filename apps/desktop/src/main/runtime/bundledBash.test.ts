@@ -31,11 +31,10 @@ describe("the bundled bash", () => {
 		);
 	});
 
-	it("is what a local Claude Agent gets as CLAUDE_CODE_SHELL and SHELL", async () => {
+	it("is what a local Claude Agent gets as CLAUDE_CODE_SHELL", async () => {
 		const bash = bundledBashPath();
 		expect(await new LocalRuntime().claudeShell()).toEqual({
 			CLAUDE_CODE_SHELL: bash,
-			SHELL: bash,
 		});
 	});
 

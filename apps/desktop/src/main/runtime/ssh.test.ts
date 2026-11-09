@@ -1284,7 +1284,6 @@ describe("the bash DevHub installs for Claude Code on a host", () => {
 		const runtime = bareHost(bashDelivery((p) => bashTarball(p)));
 		expect(await runtime.claudeShell()).toEqual({
 			CLAUDE_CODE_SHELL: installed(),
-			SHELL: installed(),
 		});
 		expect((await stat(installed())).mode & 0o111).toBeGreaterThan(0);
 		// Once per machine: a second Agent downloads nothing.
@@ -1330,7 +1329,6 @@ describe("the bash DevHub installs for Claude Code on a host", () => {
 		broken = false;
 		expect(await runtime.claudeShell()).toEqual({
 			CLAUDE_CODE_SHELL: installed(),
-			SHELL: installed(),
 		});
 	});
 

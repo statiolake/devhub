@@ -732,7 +732,7 @@ export abstract class RemoteShellRuntime {
 	/**
 	 * The environment a Claude Agent on this machine adds to its own: DevHub's
 	 * own bash — delivered like tmux, under `~/.devhub-server/bash/<version>`
-	 * — as `CLAUDE_CODE_SHELL` and `SHELL`, for that Agent's process only,
+	 * — as `CLAUDE_CODE_SHELL`, for that Agent's process only,
 	 * whatever shells the host has (`agentShell.ts`). When that bash cannot
 	 * be had, a throw whose sentence names the machine and the reason.
 	 */

@@ -11,8 +11,7 @@ directory, on a Claude Agent's first start on that host:
 
     ~/.devhub-server/bash/<version>/bin/bash
 
-DevHub sets `CLAUDE_CODE_SHELL` and `SHELL` to it for that Agent's process
-only. The login shell, tmux's `default-shell` and every terminal stay the
+DevHub sets `CLAUDE_CODE_SHELL` to it for that Agent's process only. The login shell, tmux's `default-shell` and every terminal stay the
 person's. The app carries the same bash as `out/bash` (`build:bash`,
 `apps/desktop/scripts/fetch-bash.mjs`): on Linux the published tarball, on
 macOS this script's `darwin-arm64` build, which links only libSystem. See
