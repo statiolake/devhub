@@ -839,6 +839,13 @@ a {
   text-underline-offset: 2px;
 }
 
+/* A theme changing: the new colours land in one frame (`applyPalette`). */
+:root[data-recoloring] *,
+:root[data-recoloring] *::before,
+:root[data-recoloring] *::after {
+  transition: none !important;
+}
+
 :focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;

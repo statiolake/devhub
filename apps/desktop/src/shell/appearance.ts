@@ -29,11 +29,27 @@ export function applyPalette(
   palette: ShellPalette | undefined,
 ): void {
   if (!palette) return;
+  // The new colours land in one frame, everywhere. An element with a colour
+  // transition (the composer, a button) otherwise eased from the old theme
+  // while the ground under it had already changed — a white box on a dark
+  // pane for a fifth of a second. So transitions are off while the
+  // variables change and the page is styled with them (`data-recoloring`,
+  // `tokens.css`), and back on the frame after, when nothing differs.
+  root.dataset.recoloring = "";
   // A theme means the window has no material to show through the chrome; the
   // rules keyed on this in `tokens.css` and `shell.css` paint it instead.
   root.dataset.windowMaterial = "none";
   for (const [name, value] of paletteVariables(palette)) {
     root.style.setProperty(name, value);
+  }
+  void root.ownerDocument.body?.offsetHeight;
+  const view = root.ownerDocument.defaultView;
+  if (view && typeof view.requestAnimationFrame === "function") {
+    view.requestAnimationFrame(() => {
+      delete root.dataset.recoloring;
+    });
+  } else {
+    delete root.dataset.recoloring;
   }
 }
 
