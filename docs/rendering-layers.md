@@ -161,7 +161,13 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   chooser and its preview, `display-panes`), a popup (frame, grid, its
   cursor), a menu, then the prompt — tmux's status line, which no popup or
   menu covers — and its completion menu. A guard test holds the order and
-  fails on a numeric z-index in the surface's CSS.
+  fails on a numeric z-index in the surface's CSS. Checked on screen since
+  ("Control surface: a popup or a prompt a shell asks for is DevHub's"):
+  a prompt raised from a popup's shell is drawn over the popup and typed
+  into while the popup stays open. Before, it could not be raised at all:
+  a `display-popup` or `command-prompt` asked from a shell was drawn by
+  tmux for the control client, that is for nobody (`terminal-mode.md`,
+  "Asked from a shell").
 
 ### Hide-to-make-room
 
