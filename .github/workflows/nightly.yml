@@ -138,6 +138,16 @@ jobs:
           key: whisper-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_whisper.py') }}
           restore-keys: whisper-${{ runner.os }}-${{ runner.arch }}-
 
+      # The tmux inside the app (out/tmux): on a Mac, scripts/build_tmux.py
+      # darwin-arm64, built by `build:tmux` (apps/desktop/scripts/fetch-tmux.mjs)
+      # and kept where a developer's Mac keeps it. A miss is a few minutes of
+      # compiling; the key is the script, which pins every source by hash.
+      - name: Restore the tmux build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/devhub/tmux
+          key: tmux-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_tmux.py', 'apps/desktop/product.json') }}
+
       # The same entry point a developer runs on their own Mac, so there is one
       # build to keep working rather than a local one and a CI one. It repeats
       # the install above, which is idempotent and costs seconds once done,

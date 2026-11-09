@@ -24,6 +24,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from build_tmux import (
 	LIBEVENT,
@@ -34,6 +35,7 @@ from build_tmux import (
 	TERMINFO_ENTRIES,
 	TMUX,
 	check_layout,
+	check_system_only,
 	pack,
 	release_tag,
 	tarball_name,
@@ -138,8 +140,8 @@ class Names(unittest.TestCase):
 
 	def test_darwin_is_not_published(self) -> None:
 		# macOS has no static libc, so what this script builds there links
-		# against the machine that built it. It stays in TARGETS as a self-test
-		# and out of PUBLISHED_TARGETS so nothing uploads it.
+		# against libSystem. It stays in TARGETS for the app bundle
+		# (fetch-tmux.mjs) and out of PUBLISHED_TARGETS so nothing uploads it.
 		self.assertIn("darwin-arm64", TARGETS)
 		self.assertNotIn("darwin-arm64", PUBLISHED_TARGETS)
 		self.assertEqual(set(PUBLISHED_TARGETS), {"linux-x64", "linux-arm64"})
@@ -255,8 +257,29 @@ class Workflow(unittest.TestCase):
 			with self.subTest(target=target):
 				self.assertIn(f"target: {target}", self.workflow)
 
-	def test_never_publishes_the_darwin_self_test(self) -> None:
+	def test_never_publishes_the_darwin_build(self) -> None:
 		self.assertNotIn("build_tmux.py darwin", self.workflow)
+
+
+class DarwinLinkage(unittest.TestCase):
+	"""The app's macOS tmux may load libSystem and nothing from outside the OS."""
+
+	def otool(self, *libraries: str):
+		listing = "tmux:\n" + "".join(f"\t{line} (compatibility version 1.0.0)\n" for line in libraries)
+		return mock.patch(
+			"build_tmux.subprocess.run",
+			return_value=mock.Mock(stdout=listing),
+		)
+
+	def test_accepts_the_system_libraries(self) -> None:
+		with self.otool("/usr/lib/libSystem.B.dylib", "/usr/lib/libresolv.9.dylib"):
+			check_system_only(Path("tmux"))
+
+	def test_refuses_a_homebrew_library(self) -> None:
+		with self.otool("/opt/homebrew/opt/libevent/lib/libevent-2.1.7.dylib", "/usr/lib/libSystem.B.dylib"):
+			with self.assertRaises(SystemExit) as raised:
+				check_system_only(Path("tmux"))
+		self.assertIn("libevent", str(raised.exception))
 
 
 class Overrides(unittest.TestCase):

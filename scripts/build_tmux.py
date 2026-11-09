@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the tmux DevHub installs on a machine it works on.
+"""Build the tmux DevHub runs: the one it installs on a host, and the one in the app.
 
 DevHub runs every terminal and every Agent inside tmux on the machine the
 Workspace lives on — see docs/remote-ssh.md, "Agents and terminals on the
@@ -52,11 +52,14 @@ There is no cross-building: each target is built on a runner of its own
 architecture, as the REH is, and this script refuses a target that is not the
 machine it is running on rather than emit something it cannot execute.
 
-`darwin-arm64` is a self-test of this script's logic and nothing more. macOS
-has no static libc and Apple does not ship crt0.o, so the binary that comes out
-links dynamically against libSystem and must not be published. It exists so
-that someone on a Mac can find out that the tarball layout, the terminfo step
-and the version pins are right without waiting for a runner.
+`darwin-arm64` is the tmux inside DevHub.app, and is never published: hosts
+are Linux. macOS has no static libc and Apple does not ship crt0.o, so it links
+dynamically against libSystem — and against nothing else: libevent and ncurses
+are linked in as on Linux, and `verify` refuses a binary that loads any library
+from outside the OS. `apps/desktop/scripts/fetch-tmux.mjs` builds it on the Mac
+that builds the app, and unpacks it into `out/tmux` as it unpacks the published
+Linux tarball there for a Linux run: one build, one set of pins, for every tmux
+DevHub runs (`apps/desktop/src/main/terminal/bundledTmux.ts`).
 
 ## Terminfo travels with it
 
@@ -88,9 +91,9 @@ from typing import Protocol
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# What DevHub publishes, and the one target that is only ever a self-test. The
-# two Linux pairs are what people SSH into; see the module docstring for why
-# darwin-arm64 cannot be published from here.
+# What DevHub publishes, and the one target only the app carries. The two
+# Linux pairs are what people SSH into (and what a Linux run of the app
+# bundles); see the module docstring for why darwin-arm64 is not published.
 TARGETS = ("linux-x64", "linux-arm64", "darwin-arm64")
 PUBLISHED_TARGETS = ("linux-x64", "linux-arm64")
 
@@ -203,6 +206,10 @@ TERMINFO_ENTRIES = (
 	"ansi",
 	"dumb",
 )
+
+
+# The macOS the darwin-arm64 tmux is built for: Electron's own minimum.
+MACOSX_DEPLOYMENT_TARGET = "12.0"
 
 
 def tarball_name(os_name: str, arch: str, version: str) -> str:
@@ -328,6 +335,11 @@ def build_env(os_name: str, prefix: Path) -> dict[str, str]:
 	env["PKG_CONFIG_LIBDIR"] = str(prefix / "lib" / "pkgconfig")
 	env["CPPFLAGS"] = f"-I{prefix / 'include'}"
 	env["LDFLAGS"] = f"-L{prefix / 'lib'}"
+	if os_name == "darwin":
+		# The oldest macOS the app runs on (Electron's floor), not the build
+		# machine's: a binary built on this year's macOS otherwise refuses an
+		# older one.
+		env["MACOSX_DEPLOYMENT_TARGET"] = MACOSX_DEPLOYMENT_TARGET
 	return env
 
 
@@ -404,7 +416,7 @@ def build_tmux(tree: Path, prefix: Path, env: dict[str, str], static: bool) -> P
 
 	`--enable-static` is tmux's own flag for `-static`, and it is passed only
 	where a static libc exists. On macOS it is absent and the result is a
-	dynamic binary — a self-test, never a release; see `verify`.
+	dynamic binary — the app's, never a release; see `verify`.
 	"""
 	# `--disable-jemalloc` is not optional in the sense of being a preference:
 	# tmux's configure refuses to continue without one of the two, and a
@@ -524,10 +536,34 @@ def check_static(binary: Path, os_name: str) -> None:
 				"on, which is the one thing this build exists to avoid."
 			)
 	else:
+		check_system_only(binary)
 		print(
 			f"  NOT PUBLISHABLE: a {os_name} build links dynamically against the "
-			f"system libraries. This tarball is a self-test of {binary.name}'s "
-			"build script and must not be uploaded to a release."
+			"system libraries. It is for the app bundle (fetch-tmux.mjs) and must "
+			"not be uploaded to a release, which is for hosts."
+		)
+
+
+def check_system_only(binary: Path) -> None:
+	"""Refuse a macOS binary that loads a library from outside the OS.
+
+	libevent and ncurses are linked in; a Homebrew `libevent` found by a
+	configure would make a tmux that works on the Mac that built it and on no
+	other.
+	"""
+	listed = subprocess.run(
+		["otool", "-L", str(binary)], capture_output=True, text=True, check=True
+	).stdout.splitlines()[1:]
+	foreign = [
+		line.strip()
+		for line in listed
+		if line.strip() and not line.strip().startswith(("/usr/lib/", "/System/"))
+	]
+	if foreign:
+		raise SystemExit(
+			f"{binary} loads libraries from outside macOS:\n  "
+			+ "\n  ".join(foreign)
+			+ "\nIt would run only on the Mac that built it."
 		)
 
 

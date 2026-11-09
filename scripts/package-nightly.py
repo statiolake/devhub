@@ -28,8 +28,9 @@ about and Node's own resolver finds every dependency in every process.
 
 `out/vt/ghostty-vt.wasm` (libghostty-vt, the control-mode terminal's engine),
 `out/native/` (DevHub's helpers), `out/nvim/` (the Neovim DevHub runs,
-Neovim's own release, fetched by `build:nvim`) and `out/bash/` (the bash
-Claude Agents run in, `build:bash`) travel inside `out/`.
+Neovim's own release, fetched by `build:nvim`), `out/bash/` (the bash
+Claude Agents run in, `build:bash`) and `out/tmux/` (the tmux DevHub runs,
+`scripts/build_tmux.py`'s, by `build:tmux`) travel inside `out/`.
 
 Usage:
     scripts/package-nightly.py [--out-dir DIR] [--zip] [--zip-name NAME]
@@ -112,11 +113,25 @@ def check_inputs() -> None:
 		DESKTOP_DIR / "out" / "vt" / "ghostty-vt.wasm",
 		DESKTOP_DIR / "out" / "nvim" / "bin" / "nvim",
 		DESKTOP_DIR / "out" / "bash" / "bin" / "bash",
+		DESKTOP_DIR / "out" / "tmux" / "bin" / "tmux",
 		DESKTOP_DIR / "out" / "cli" / "SHA256SUMS",
 		DESKTOP_DIR / "dist" / "shell" / "index.html",
 	):
 		if not required.exists():
 			fail(f"missing {required}\n       produce it with: pnpm run build:packages")
+	# This machine's tmux and the pinned one: a tree fetched for another
+	# platform does not run, and one from before a bump says another version.
+	pinned = json.loads((DESKTOP_DIR / "product.json").read_text())["tmuxVersion"]
+	tmux = DESKTOP_DIR / "out" / "tmux" / "bin" / "tmux"
+	try:
+		reported = subprocess.run([str(tmux), "-V"], capture_output=True, text=True, timeout=30).stdout.strip()
+	except OSError as error:
+		reported = str(error)
+	if reported != f"tmux {pinned}":
+		fail(
+			f"{tmux} answers {reported!r}, not tmux {pinned}\n"
+			"       fetch this machine's with: pnpm --filter @devhub/desktop build:tmux"
+		)
 	if _newest_mtime(REPO_ROOT / "cli") > _newest_mtime(DESKTOP_DIR / "out" / "cli"):
 		fail(
 			f"{DESKTOP_DIR / 'out' / 'cli'} is older than {REPO_ROOT / 'cli'}\n"
@@ -375,6 +390,14 @@ def sign_bash(app: Path) -> None:
 	print(f"    signed, {program.stat().st_size / 1e6:.1f} MB")
 
 
+def sign_tmux(app: Path) -> None:
+	"""Sign the tmux in `out/tmux` the way Neovim is signed: a Mach-O under
+	Resources, sealed by the bundle's signature and not signed as code."""
+	program = app / "Contents" / "Resources" / "app" / "out" / "tmux" / "bin" / "tmux"
+	run(["codesign", "--force", "--sign", "-", str(program)])
+	print(f"    {directory_size(program.parent.parent) / 1e6:.1f} MB")
+
+
 def node_platform() -> str:
 	machine = os.uname().machine
 	arch = "arm64" if machine in ("arm64", "aarch64") else "x64"
@@ -466,6 +489,8 @@ def main() -> int:
 
 	step("bash")
 	sign_bash(app)
+	step("tmux")
+	sign_tmux(app)
 
 	step("ad-hoc signature")
 	# Ad hoc is not notarisation: the first launch of a downloaded zip still
