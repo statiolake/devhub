@@ -807,7 +807,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="Line height"
-          help="Multiplies the row height above the font's own line box. The extra space is shared around the font's bounding box, which already carries its slack above the capitals and none below the descenders, so raising this adds far more room above a line than below it."
+          help="Multiplies the row height above the font's own line box, in the panes and in every Neovim DevHub draws over them (unless its config sets linespace). The extra space is shared above and below the line."
         >
           <NumberField
             label="Agent pane line height"

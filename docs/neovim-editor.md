@@ -235,8 +235,22 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   for cell, as Neovim drew it. Any other border (ASCII, block elements, a
   side with text) is drawn as Neovim says, with only a shadow: never two
   frames (`floatBorder`). With `winblend`, the ring between the lines and
-  the text is blended and the panel has no shadow. Ligatures off. The font is `guifont` if set, else DevHub's
-  terminal font (Settings > Terminal); `linespace` is honoured.
+  the text is blended and the panel has no shadow. Ligatures off. The font is the terminal's —
+  `[appearance] terminal_font_family`, `terminal_font_size` and
+  `terminal_line_height` (Settings > Agent panes), one source for the
+  panes and every Neovim DevHub draws (`cellFont.ts`) — so a Neovim's cells
+  are its pane's and its rows line up with the terminal's around it.
+  A config's own wins for its Neovim: a `guifont` that is not empty
+  (Neovim's default is empty) gives the faces and the size, and a
+  `linespace` above 0 (the default) is the pixels between rows in place
+  of the line height, the font's line box plus that many. Both are
+  followed as Neovim sends them, so `:set guifont=…` or a font-size
+  mapping applies at once and `:set guifont=` hands the grid back to the
+  terminal's font. A config that sets them only for other GUIs keeps them
+  out of DevHub with `$DEVHUB_NEOVIM_GUI`.
+  - The row is the terminal's (`cellMetrics`, `terminal-mode.md`, "The
+    font, once"): the line box on device pixels times the line height,
+    floored, the extra shared above and below it.
   - The cell is measured on whole device pixels (crisp at
     `devicePixelRatio` 2; the text of a run is spread to the cell with
     `letterSpacing`), and measured again when the window moves to a screen of

@@ -72,17 +72,25 @@ import {
 export interface FontSpec {
   readonly family: string;
   readonly size: number;
-  /** Extra pixels between rows (`linespace`). */
-  readonly linespace: number;
+  /**
+   * The row as a multiple of the font's line box (`terminal_line_height`),
+   * worked out on device pixels as xterm.js does (`cellMetrics`).
+   */
+  readonly lineHeight: number;
+  /**
+   * Extra pixels between rows instead (Neovim's `linespace`), when the
+   * person's config sets one; `lineHeight` is then not used.
+   */
+  readonly linespace?: number;
 }
 
 export interface Metrics extends CellMetrics {
   readonly baseline: number;
   /** The font's own advance; `width` is it on whole device pixels. */
   readonly advance: number;
-  /** The font's ascent plus descent: the cell's height less `linespace`. */
+  /** The font's ascent plus descent: the cell's height less the leading. */
   readonly textHeight: number;
-  /** Where that text box starts in the cell (half the `linespace`). */
+  /** Where that text box starts in the cell (half the leading). */
   readonly textTop: number;
 }
 
@@ -184,36 +192,72 @@ function textFontOf(spec: FontSpec): string {
 }
 
 /**
- * The cell, on whole device pixels: a cell that starts between two device
- * pixels is a cell whose text the compositor resamples, which is blur on a
- * Retina screen. `advance` is the font's own, which the painter spreads to
- * the cell's width with `letterSpacing`.
+ * The cell, on whole device pixels, from the font's line box (`ascent` and
+ * `descent`, as the canvas reports them) and `advance`. A cell that starts
+ * between two device pixels is a cell whose text the compositor resamples,
+ * which is blur on a Retina screen. `advance` is the font's own, which the
+ * painter spreads to the cell's width with `letterSpacing`.
+ *
+ * The row is xterm.js' (`WebglRenderer`): the line box on whole device
+ * pixels, times `lineHeight`, floored — Source Code Pro 12 at 1.1 and
+ * `devicePixelRatio` 2 is 30 × 1.1 = 33 device pixels, 16.5 px. (Rounding the
+ * extra to whole css pixels first, as a `linespace` of `round(12 × 0.1)` = 1
+ * did, made the same row 32 — every line half a pixel closer than the
+ * terminal it replaced.) The leading is shared above and below the line box,
+ * its top rounded to a device pixel, so the text is centred in the row as
+ * xterm.js centres it. xterm.js then draws on the `ideographic` baseline at
+ * the box's bottom, which for Source Code Pro is 2 px under where the font
+ * puts its own (`alphabetic`) baseline: that, not the leading, is why text
+ * in the old terminal sat low, and here sits where the font says.
+ *
+ * A Neovim `linespace` is added to the line box instead, whole, in css
+ * pixels, as Neovim's GUIs do.
  */
+export function cellMetrics(
+  spec: FontSpec,
+  font: { ascent: number; descent: number; advance: number },
+  dpr = 1,
+): Metrics {
+  const box = Math.ceil((font.ascent + font.descent) * dpr);
+  const height =
+    spec.linespace !== undefined
+      ? box + Math.max(0, Math.round(spec.linespace * dpr))
+      : Math.max(box, Math.floor(box * Math.max(1, spec.lineHeight)));
+  const top = Math.round((height - box) / 2);
+  return {
+    width: Math.max(1, Math.round(font.advance * dpr)) / dpr,
+    height: height / dpr,
+    baseline: Math.round(top + font.ascent * dpr) / dpr,
+    advance: font.advance,
+    textHeight: font.ascent + font.descent,
+    textTop: top / dpr,
+  };
+}
+
 export function measureFont(spec: FontSpec, dpr = 1): Metrics {
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  if (!ctx)
-    return {
-      width: spec.size * 0.6,
-      height: spec.size * 1.3,
-      baseline: spec.size,
-      advance: spec.size * 0.6,
-      textHeight: spec.size * 1.05,
-      textTop: spec.linespace / 2,
-    };
+  const ctx = document.createElement("canvas").getContext("2d");
+  if (!ctx) {
+    return cellMetrics(
+      spec,
+      {
+        ascent: spec.size * 0.8,
+        descent: spec.size * 0.25,
+        advance: spec.size * 0.6,
+      },
+      dpr,
+    );
+  }
   ctx.font = textFontOf(spec);
   const m = ctx.measureText("M");
-  const ascent = m.fontBoundingBoxAscent || spec.size * 0.8;
-  const descent = m.fontBoundingBoxDescent || spec.size * 0.25;
-  const snap = (value: number) => Math.max(1, Math.round(value * dpr)) / dpr;
-  return {
-    width: snap(m.width),
-    height: snap(Math.ceil(ascent + descent) + spec.linespace),
-    baseline: snap(spec.linespace / 2 + ascent),
-    advance: m.width,
-    textHeight: ascent + descent,
-    textTop: spec.linespace / 2,
-  };
+  return cellMetrics(
+    spec,
+    {
+      ascent: m.fontBoundingBoxAscent || spec.size * 0.8,
+      descent: m.fontBoundingBoxDescent || spec.size * 0.25,
+      advance: m.width,
+    },
+    dpr,
+  );
 }
 
 interface GridCanvas {
@@ -422,6 +466,7 @@ export class GridPainter {
     if (
       font.family === this.font.family &&
       font.size === this.font.size &&
+      font.lineHeight === this.font.lineHeight &&
       font.linespace === this.font.linespace
     ) {
       return false;

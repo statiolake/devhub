@@ -29,10 +29,10 @@ import {
   cssColor,
   fontOf,
   rgbOfCss,
-  parseGuifont,
   resolveColors,
   type FontSpec,
 } from "./painter";
+import { neovimCellFont } from "./cellFont";
 import { escapeInputText, keyToNeovim } from "./keys";
 import { floatLabelsOf } from "./frame";
 import {
@@ -89,9 +89,11 @@ export interface NeovimPort {
 }
 
 export interface EditorSettings {
-  /** DevHub's own monospace, used unless `guifont` says otherwise. */
-  readonly monoFamily: string;
-  readonly fontSize: number;
+  /**
+   * The terminal panes' font (`cellFont.ts`), used unless `guifont` or
+   * `linespace` say otherwise.
+   */
+  readonly font: FontSpec;
   readonly macOptionIsMeta: MacOptionIsMeta;
 }
 
@@ -431,13 +433,10 @@ export class NeovimEditor {
   }
 
   private fontSpec(): FontSpec {
-    const guifont = parseGuifont(this.state?.options.get("guifont"));
-    const linespace = this.state?.options.get("linespace");
-    return {
-      family: guifont?.family ?? this.settings.monoFamily,
-      size: guifont?.size ?? this.settings.fontSize,
-      linespace: typeof linespace === "number" ? linespace : 2,
-    };
+    return neovimCellFont(this.settings.font, {
+      guifont: this.state?.options.get("guifont"),
+      linespace: this.state?.options.get("linespace"),
+    });
   }
 
   private applyFont(): void {

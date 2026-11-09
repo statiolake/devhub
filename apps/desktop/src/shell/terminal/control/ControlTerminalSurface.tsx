@@ -9,7 +9,14 @@ import "./menu.css";
 import "./chooser.css";
 import { useColorScheme } from "../../appearance";
 import { Failure, Waiting } from "../../components/shell/SurfaceState";
-import { GridPainter, mixColors, rgbOfCss } from "../../neovim/painter";
+import {
+  GridPainter,
+  mixColors,
+  rgbOfCss,
+  type FontSpec,
+} from "../../neovim/painter";
+import { terminalCellFont } from "../../neovim/cellFont";
+import { emptyChanges } from "../../neovim/redraw";
 import {
   IDLE,
   imeStep,
@@ -20,7 +27,6 @@ import {
 import { OptionKeys } from "../../surfaces/optionKey";
 import {
   activePalette,
-  terminalFontStack,
   terminalSurfaceStyle,
   type TerminalPalette,
 } from "../theme";
@@ -182,6 +188,7 @@ export function ControlTerminalSurface({
     retry(): void;
     visible(on: boolean): void;
     colors(c: ReturnType<typeof colorsOf>): void;
+    font(spec: FontSpec): void;
     selectWindow(id: number): void;
     completePrompt(index: number): void;
     windowMenu(id: number, x: number): void;
@@ -245,14 +252,13 @@ export function ControlTerminalSurface({
       input,
     );
 
-    const appearanceNow = live.current.appearance;
-    const fontSize = appearanceNow?.terminalFontSize ?? 13;
-    const lineHeight = appearanceNow?.terminalLineHeight ?? 1.2;
-    const painter = new GridPainter(grids, {
-      family: terminalFontStack(appearanceNow?.terminalFontFamily),
-      size: fontSize,
-      linespace: Math.max(0, Math.round(fontSize * (lineHeight - 1))),
-    });
+    // The cell is the Neovim editor's (`cellFont.ts`), so a Neovim drawn
+    // over a pane lines up with it.
+    const painter = new GridPainter(
+      grids,
+      terminalCellFont(live.current.appearance),
+    );
+    const font = () => painter.fontSpec();
     const view = newControlView(live.current.colors);
     view.selection = live.current.colors.selection;
     const optionKeys = new OptionKeys();
@@ -483,7 +489,7 @@ export function ControlTerminalSurface({
       promptLine.style.height = `${String(height)}px`;
       promptLine.style.width = `${String(Math.max(1, box.width) * width)}px`;
       promptLine.style.right = "auto";
-      promptLine.style.font = `${String(fontSize)}px/${String(height)}px ${terminalFontStack(appearanceNow?.terminalFontFamily)}`;
+      promptLine.style.font = `${String(font().size)}px/${String(height)}px ${font().family}`;
       const key = JSON.stringify(prompt);
       if (key === promptShown) return;
       promptShown = key;
@@ -559,8 +565,8 @@ export function ControlTerminalSurface({
             (host.offsetTop + promptLine.offsetTop),
           cell: width,
           row: height,
-          fontSize,
-          font: terminalFontStack(appearanceNow?.terminalFontFamily),
+          fontSize: font().size,
+          font: font().family,
         });
       }
     };
@@ -678,7 +684,7 @@ export function ControlTerminalSurface({
       const treeTop = 2 * height;
       tree.style.top = `${String(treeTop)}px`;
       tree.style.width = `${String((chooser.preview.x - chooser.x) * width)}px`;
-      tree.style.font = `${String(fontSize)}px/${String(height)}px ${terminalFontStack(appearanceNow?.terminalFontFamily)}`;
+      tree.style.font = `${String(font().size)}px/${String(height)}px ${font().family}`;
       const visible = Math.max(1, chooser.height - 2);
       const first = Math.max(
         0,
@@ -1139,14 +1145,15 @@ export function ControlTerminalSurface({
     const noContextMenu = (event: Event) => event.preventDefault();
     host.addEventListener("contextmenu", noContextMenu);
 
-    const observer = new ResizeObserver(() => {
+    const refit = () => {
       if (live.current.hidden) return;
       report();
       const next = measure();
       if (next.cols === size.cols && next.rows === size.rows) return;
       size = next;
       send({ kind: "resize", cols: next.cols, rows: next.rows });
-    });
+    };
+    const observer = new ResizeObserver(refit);
     observer.observe(host);
 
     controllerRef.current = {
@@ -1168,6 +1175,17 @@ export function ControlTerminalSurface({
           background: c.background,
           ...(c.palette ? { palette: c.palette } : {}),
         });
+      },
+      font(spec) {
+        // An edited setting or a zoom: every pane again at the new cell.
+        if (!painter.setFont(spec)) return;
+        schedule({
+          ...emptyChanges(),
+          grids: new Set(view.state.grids.keys()),
+          layout: true,
+          cursor: true,
+        });
+        refit();
       },
       selectWindow(id) {
         send({ kind: "select-window", window: id });
@@ -1223,6 +1241,22 @@ export function ControlTerminalSurface({
   useEffect(() => {
     controllerRef.current?.colors(colors);
   }, [colors]);
+
+  const fontFamily = appearance?.terminalFontFamily;
+  const fontSize = appearance?.terminalFontSize;
+  const lineHeight = appearance?.terminalLineHeight;
+  const cellFont = useMemo(
+    () =>
+      terminalCellFont({
+        terminalFontFamily: fontFamily,
+        terminalFontSize: fontSize,
+        terminalLineHeight: lineHeight,
+      }),
+    [fontFamily, fontSize, lineHeight],
+  );
+  useEffect(() => {
+    controllerRef.current?.font(cellFont);
+  }, [cellFont]);
 
   return (
     <div

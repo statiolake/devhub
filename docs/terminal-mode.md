@@ -326,13 +326,37 @@ reproduced byte for byte by the script. `build:native` copies it into
 ### The font, once
 
 Every pane is drawn by the painter Neovim's grids use — the same font
-measurement, the same baseline (`alphabetic` at the ascent), the same box
-drawing, block and Powerline glyphs and Nerd Font icons. That is also the
-fix for the terminal's Source Code Pro baseline: xterm.js' WebGL atlas
-draws with `textBaseline = "ideographic"` at the cell's bottom, which sits
-2.45 px low at 15 px for Source Code Pro (JetBrains Mono and DejaVu happen
-to agree). With the xterm.js path deleted (phase 4) there is no second
-path to patch.
+measurement, the same baseline (`alphabetic`, where the font puts it), the
+same box drawing, block and Powerline glyphs and Nerd Font icons — and in
+the same cell (`shell/neovim/cellFont.ts`): `[appearance]
+terminal_font_family`, `terminal_font_size` and `terminal_line_height` make
+the panes' cell and every Neovim DevHub draws over them, so a Neovim's rows
+are the pane's rows (see `neovim-editor.md` for a `guifont` or `linespace`
+of the person's). An edited setting or a zoom reaches the panes at once:
+they are drawn again in the new cell and tmux is told their new size.
+
+The row is xterm.js': the font's line box on whole device pixels, times
+the line height, floored, with the extra shared above and below the box
+(`cellMetrics`). Measured under Xvfb at `devicePixelRatio` 2 with Source
+Code Pro 12 and a line height of 1.1, from screenshots, in device pixels:
+
+|                                 | row | capitals: above / below | `gjpy`: above / below |
+| ------------------------------- | --- | ----------------------- | --------------------- |
+| xterm.js (WebGL)                | 33  | 12 / 5                  | 10 / 0                |
+| this painter, before            | 32  | 7 / 9                   | 5 / 3                 |
+| Neovim over a pane, before      | 34  | 8 / 10                  | 6 / 4                 |
+| panes and Neovim now            | 33  | 8 / 9                   | 6 / 3                 |
+
+The glyphs themselves were the same size in all three (capitals 16 device
+pixels, the advance 7 px). The row was not: the line height used to become
+a `linespace` of `round(12 × 0.1)` = 1 css pixel (2 device pixels where
+xterm.js gives 3), so every line was half a pixel closer, and the dotfiles'
+`linespace = 2` made the Neovim over a pane a pixel taller than the pane's
+rows. The text sat 2.5 px higher than in xterm.js because xterm.js' atlas
+draws with `textBaseline = "ideographic"` at the box's bottom, about 0.17
+em under the font's own baseline for Source Code Pro (2 px at 12 px; 2.45
+at 15): its descenders touched the row below. Here the capitals are
+centred in the row.
 
 ### The setting, while both paths exist
 

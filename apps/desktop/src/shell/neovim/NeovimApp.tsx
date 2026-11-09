@@ -37,6 +37,7 @@ import {
 } from "../model/pageModel";
 import { decorOf } from "./decor";
 import { NeovimEditor } from "./editor";
+import { terminalCellFont } from "./cellFont";
 import { cmdlineUiPos, popupmenuPlace } from "./place";
 import {
   currentModeInfo,
@@ -153,8 +154,7 @@ function NeovimSurface({
 
   const settings = useMemo(
     () => ({
-      monoFamily: appearance?.terminalFontFamily ?? "",
-      fontSize: appearance?.terminalFontSize ?? 13,
+      font: terminalCellFont(appearance),
       macOptionIsMeta: appearance?.terminalMacOptionIsMeta ?? false,
     }),
     [appearance],

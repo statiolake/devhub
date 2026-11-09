@@ -505,6 +505,10 @@ export interface AppearanceConfig {
    * integrated terminal draws, and the whitespace is the font's rather than
    * ours to misplace. Raising it is still a viewer's choice; it just is not a
    * choice DevHub makes for them.
+   *
+   * That is xterm.js. The control-mode panes and every Neovim DevHub draws
+   * take the same row (`shell/neovim/cellFont.ts`, `cellMetrics`) but set
+   * the text on the font's own baseline, centred in it.
    */
   readonly terminalLineHeight: number;
   /**
