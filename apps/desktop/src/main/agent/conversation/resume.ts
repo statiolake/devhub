@@ -395,14 +395,14 @@ export async function previewPastSession(
 		argv:
 			kind === "claude"
 				? [
-						"sh",
+						"/bin/sh",
 						"-c",
 						TAIL_SCRIPT,
 						"sh",
 						`${await claudeProjectDirectory(runtime, profile, cwd)}/${id}.jsonl`,
 					]
 				: [
-						"sh",
+						"/bin/sh",
 						"-c",
 						CODEX_ROLLOUT_TAIL_SCRIPT,
 						"sh",
@@ -688,7 +688,7 @@ async function paneRecords(
 		`DevHub could not read the processes of the terminal Agent's pane (pid ${String(panePid)})`,
 	)({
 		argv: [
-			"sh",
+			"/bin/sh",
 			"-c",
 			PANE_PROCESSES_SCRIPT,
 			"sh",
@@ -973,7 +973,7 @@ cd -- "$1" || exit 71
 depth=$2
 shift 2
 taken() { [ "$#" -le 1 ] && return 0; d=$1; shift; for p in "$@"; do case "$d" in $p) return 0 ;; esac; done; return 1; }
-find . -mindepth "$depth" -maxdepth "$depth" -name '*.jsonl' -type f -exec sh -c 'stat -c "%Y %n" -- "$@" 2>/dev/null || stat -f "%m %N" -- "$@"' sh {} + |
+find . -mindepth "$depth" -maxdepth "$depth" -name '*.jsonl' -type f -exec /bin/sh -c 'stat -c "%Y %n" -- "$@" 2>/dev/null || stat -f "%m %N" -- "$@"' sh {} + |
 	sort -rn | {
 	n=0
 	while IFS= read -r l; do
@@ -1046,7 +1046,7 @@ async function listClaudeSessions(
 		`DevHub could not list Claude's sessions in ${directory}`,
 	)({
 		argv: [
-			"sh",
+			"/bin/sh",
 			"-c",
 			CLAUDE_LISTING_SCRIPT,
 			"sh",
@@ -1282,7 +1282,7 @@ export async function carryClaudeSession(
 		runtime,
 		`DevHub could not carry Claude's session ${session} over to ${to}`,
 	)({
-		argv: ["sh", "-c", CARRY_SCRIPT, "sh", source, target, session],
+		argv: ["/bin/sh", "-c", CARRY_SCRIPT, "sh", source, target, session],
 		env: await runtime.environment(),
 		deadline: OperationDeadline.in(30_000),
 		cancel: new CancellationToken(),
@@ -1708,7 +1708,7 @@ async function listCodexSessions(
 		`codex app-server did not list its threads`,
 	)({
 		argv: [
-			"sh",
+			"/bin/sh",
 			"-c",
 			CODEX_LISTING_SCRIPT,
 			"sh",

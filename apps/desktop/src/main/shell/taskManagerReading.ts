@@ -144,8 +144,8 @@ export async function takeTaskReading(
 	const spawned = new Set<number>();
 	const output = outputOf(spawned);
 	const [stat, args, footprints, system, tmux] = await Promise.all([
-		output("ps", PS_STAT_ARGUMENTS),
-		output("ps", PS_ARGS_ARGUMENTS),
+		output("/bin/ps", PS_STAT_ARGUMENTS),
+		output("/bin/ps", PS_ARGS_ARGUMENTS),
 		readFootprints(output),
 		readSystemMemory({
 			platform: process.platform,
@@ -213,7 +213,7 @@ export async function takeTaskReading(
 export async function commandOf(pid: number): Promise<string | undefined> {
 	try {
 		const args = (
-			await outputOf(new Set())("ps", ["-o", "args=", "-p", String(pid)])
+			await outputOf(new Set())("/bin/ps", ["-o", "args=", "-p", String(pid)])
 		).trim();
 		return args.length > 0 ? args : undefined;
 	} catch {

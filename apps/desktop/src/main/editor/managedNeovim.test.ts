@@ -111,7 +111,7 @@ function world() {
 		open: (target, argv) => {
 			const paneId = `%${String(next++)}`;
 			// The keeper: `sh -c <script> devhub-nvim <nvim and its arguments>`.
-			expect(argv.slice(0, 2)).toEqual(["sh", "-c"]);
+			expect(argv.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
 			expect(argv[3]).toBe("devhub-nvim");
 			log.push(
 				`open ${target.workspaceId} ${argv.slice(4).join(" ")} -> ${paneId}`,

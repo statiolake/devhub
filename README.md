@@ -144,6 +144,12 @@ processes (the process host, the pty host with node-pty, the Neovim host, the
 conversation engine) — see [docs/process-model.md](docs/process-model.md) and
 [docs/window-and-pages.md](docs/window-and-pages.md).
 
+DevHub runs only the binaries it bundles or delivers — Neovim, bash, tmux,
+the `devhub` command, Electron's Node — never a `node`, `bash` or `tmux` that
+happens to be installed; what it does run of the system's or the person's
+(`/bin/sh`, ssh, git) is listed with the reason in
+[docs/bundled-binaries.md](docs/bundled-binaries.md).
+
 ## Lifecycle
 
 Window Close leaves the process, the agents and the tmux sessions running.

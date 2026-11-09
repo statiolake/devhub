@@ -56,7 +56,7 @@ export async function remoteNeovimSockets(
 	runtime: Runtime,
 	forwardDirectory: string,
 ): Promise<NeovimSockets> {
-	const made = await run(runtime, ["sh", "-c", SOCKET_DIRECTORY_SCRIPT]);
+	const made = await run(runtime, ["/bin/sh", "-c", SOCKET_DIRECTORY_SCRIPT]);
 	const directory = made.stdout.toString("utf8").trim();
 	if (made.code !== 0 || directory.length === 0) {
 		throw new Error(

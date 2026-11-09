@@ -248,7 +248,7 @@ const PANE_LUA = "return vim.env.TMUX_PANE";
  */
 export function neovimArgv(nvim: string, socketPath: string): string[] {
 	return [
-		"sh",
+		"/bin/sh",
 		"-c",
 		KEEPER_SH,
 		"devhub-nvim",
