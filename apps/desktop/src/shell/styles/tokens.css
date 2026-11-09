@@ -883,6 +883,16 @@ a {
   );
 }
 
+/* A strip that scrolls sideways and shows what lies beyond an edge by
+   fading it (the Neovim tab strip) draws no bar at all. */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 /* Reduce Motion: nothing moves.
  *
  * Written on the motion tokens, the distances and scales go to nothing, so

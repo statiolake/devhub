@@ -25,7 +25,10 @@ const PAGES = [
   "shell/picker/main.tsx",
   "shell/toasts/main.tsx",
   "shell/tooltip/main.tsx",
+  "shell/neovim/main.tsx",
+  "shell/pane/main.tsx",
   "settings/SettingsApp.tsx",
+  "taskManager/TaskManagerApp.tsx",
 ] as const;
 
 function stylesheets(directory: string): readonly string[] {
@@ -56,6 +59,17 @@ describe("scrollbars", () => {
     expect(rule("::-webkit-scrollbar-thumb:hover")).toMatch(
       /border-width:\s*2px/,
     );
+  });
+
+  it("are hidden by one class, for a strip that fades its edges instead", () => {
+    const tokens = read("shell/styles/tokens.css");
+    expect(tokens).toMatch(
+      /\n\.scrollbar-none \{\s*scrollbar-width: none;\s*\}/,
+    );
+    expect(tokens).toMatch(
+      /\n\.scrollbar-none::-webkit-scrollbar \{\s*display: none;\s*\}/,
+    );
+    expect(read("shell/neovim/TabStrip.tsx")).toContain('"scrollbar-none"');
   });
 
   it("are drawn nowhere else", () => {

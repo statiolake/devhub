@@ -57,6 +57,7 @@ export function TabStrip(props: {
         ref={ref}
         className={[
           "nvim-tabline-tabs",
+          "scrollbar-none",
           more.left ? "nvim-tabline-more-left" : "",
           more.right ? "nvim-tabline-more-right" : "",
         ]
