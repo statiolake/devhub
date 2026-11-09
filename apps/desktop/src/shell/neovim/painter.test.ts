@@ -3,10 +3,13 @@ import {
   PART_Z,
   floatLook,
   gridBlends,
+  iconBox,
   mixColors,
   parseGuifont,
+  signPadded,
 } from "./painter";
 import { NO_THEME } from "./chrome";
+import { initialUiState } from "./redraw";
 
 describe("guifont", () => {
   it("is a CSS family list and a size", () => {
@@ -129,5 +132,58 @@ describe("a float's look, from the theme's groups", () => {
     expect(look.line).toBe(mixColors(0xf2f2f6, 0x202020, 18));
     // No StatusLine: half way from the editor's ground to the float's.
     expect(look.band).toBe(mixColors(0xffffff, 0xf2f2f6, 50));
+  });
+});
+
+describe("a sign's two cells", () => {
+  // The fold column, a sign padded with its blank, the second (empty) sign
+  // slot, a line number: as ext_hlstate names them (a real Neovim's).
+  const state = initialUiState();
+  state.hl.set(1, { groups: ["FoldColumn", "SignColumn"] });
+  state.hl.set(2, { groups: ["SignColumn", "DiagnosticError"] });
+  state.hl.set(3, { groups: ["SignColumn"] });
+  state.hl.set(4, { groups: ["LineNr"] });
+  const chars = [" ", "\u{f057}", " ", " ", " ", "1", "a"];
+  const hls = [1, 2, 2, 3, 3, 4, 0];
+
+  it("are the sign column's, its text and the blank after it", () => {
+    expect(signPadded(state, chars, hls, 0, 1, chars.length)).toBe(true);
+  });
+
+  it("are not the fold column's, a line number's or the text's", () => {
+    expect(signPadded(state, chars, hls, 0, 0, chars.length)).toBe(false);
+    expect(signPadded(state, chars, hls, 0, 5, chars.length)).toBe(false);
+    expect(signPadded(state, ["x", " "], [0, 0], 0, 0, 2)).toBe(false);
+  });
+
+  it("are the cursor line's too", () => {
+    state.hl.set(5, { groups: ["CursorLineSign", "DiagnosticWarn"] });
+    expect(signPadded(state, ["W", " "], [5, 5], 0, 0, 2)).toBe(true);
+  });
+});
+
+describe("an icon's design box", () => {
+  const m = (width: number) => ({
+    width,
+    actualBoundingBoxLeft: -2,
+    actualBoundingBoxRight: 6,
+    actualBoundingBoxAscent: 5,
+    actualBoundingBoxDescent: 1,
+  });
+
+  it("is the em square for Symbols Nerd Font Mono (advance one em)", () => {
+    const box = iconBox(m(12), 12);
+    expect([box.left, box.right]).toEqual([0, 12]);
+    expect(box.ascent).toBeCloseTo(9.6);
+    expect(box.descent).toBeCloseTo(2.4);
+  });
+
+  it("is the ink for another font's glyph", () => {
+    expect(iconBox(m(7), 12)).toEqual({
+      left: -2,
+      right: 6,
+      ascent: 5,
+      descent: 1,
+    });
   });
 });

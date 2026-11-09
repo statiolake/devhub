@@ -32,7 +32,14 @@ import type {
 import type { CellMetrics } from "./mouse";
 import { pinnedRows, type BufposAnchor, type FloatRef } from "./riders";
 import { strokesFor, type Stroke, type StrokeKind } from "./strokes";
-import { boxArms, fitIcon, glyphKind, glyphShapes, type Shape } from "./glyphs";
+import {
+  boxArms,
+  glyphKind,
+  glyphShapes,
+  placeIcon,
+  type GlyphBox,
+  type Shape,
+} from "./glyphs";
 import { familyOf, markPath, type KindFamily } from "./kinds";
 import {
   foldLineOf,
@@ -118,6 +125,34 @@ const FALLBACK_FAMILY = `Menlo, "SF Mono", Monaco, "DejaVu Sans Mono", monospace
  * whatever `guifont` says — a Nerd Font installed or not.
  */
 export const ICON_FAMILY = `"DevHub Nerd Symbols"`;
+
+/**
+ * An icon's design box for `placeIcon`: Symbols Nerd Font Mono draws every
+ * icon in its em square (advance 1 em, ascent 0.8 em, descent 0.2 em), so an
+ * icon whose advance is the em is in it and gets that square; any other
+ * font's icon gets its own ink.
+ */
+export function iconBox(
+  m: Pick<
+    TextMetrics,
+    | "width"
+    | "actualBoundingBoxLeft"
+    | "actualBoundingBoxRight"
+    | "actualBoundingBoxAscent"
+    | "actualBoundingBoxDescent"
+  >,
+  size: number,
+): GlyphBox {
+  if (Math.abs(m.width - size) <= size * 0.02) {
+    return { left: 0, right: size, ascent: size * 0.8, descent: size * 0.2 };
+  }
+  return {
+    left: m.actualBoundingBoxLeft,
+    right: m.actualBoundingBoxRight,
+    ascent: m.actualBoundingBoxAscent,
+    descent: m.actualBoundingBoxDescent,
+  };
+}
 
 /** `guifont` (`Fira Code,Menlo:h13`) as a CSS family list and a size. */
 /**
@@ -604,13 +639,11 @@ export class GridPainter {
     cells: number;
     attr: HlAttr | undefined;
     fg: number;
-    spill: boolean;
+    /** Centred across its cells (a sign), not on the first. */
+    centre: boolean;
   }[] = [];
-  /** Icons' ink boxes, by font and character. */
-  private readonly inks = new Map<
-    string,
-    { left: number; right: number; ascent: number; descent: number }
-  >();
+  /** Icons' design boxes, by font and character (`iconBox`). */
+  private readonly inks = new Map<string, GlyphBox>();
 
   constructor(
     private readonly root: HTMLElement,
@@ -1803,7 +1836,15 @@ export class GridPainter {
     );
     for (const icon of this.icons) {
       ctx.fillStyle = cssColor(icon.fg);
-      this.paintIcon(ctx, icon.c, icon.x, 0, icon.cells, icon.attr, icon.spill);
+      this.paintIcon(
+        ctx,
+        icon.c,
+        icon.x,
+        0,
+        icon.cells,
+        icon.attr,
+        icon.centre,
+      );
     }
     this.icons.length = 0;
   }
@@ -2313,7 +2354,15 @@ export class GridPainter {
         continue;
       }
       ctx.fillStyle = cssColor(icon.fg);
-      this.paintIcon(ctx, icon.c, icon.x, y, icon.cells, icon.attr, icon.spill);
+      this.paintIcon(
+        ctx,
+        icon.c,
+        icon.x,
+        y,
+        icon.cells,
+        icon.attr,
+        icon.centre,
+      );
     }
     this.icons.length = 0;
     for (const words of this.words) {
@@ -2703,10 +2752,9 @@ export class GridPainter {
   }
 
   /**
-   * A Nerd Font icon in the bundled symbols font first, fitted to its cell
-   * — two when Neovim says it is wide — and centred on the text box, so an
-   * icon from a font of other metrics neither spills into its neighbour nor
-   * sits off the baseline.
+   * A Nerd Font icon in the bundled symbols font first, put in its cells —
+   * two when Neovim says it is wide or a blank follows it — as Ghostty puts
+   * it (`placeIcon`): the same for the editor and the terminal panes.
    */
   private paintIcon(
     ctx: CanvasRenderingContext2D,
@@ -2715,35 +2763,44 @@ export class GridPainter {
     y: number,
     cells: number,
     attr: HlAttr | undefined,
-    spill = false,
+    centre = false,
   ): void {
-    const { width: cw, textHeight, textTop } = this.metrics;
+    const { width: cw, height: ch, textHeight, textTop } = this.metrics;
+    const capHeight = this.capHeightOf(ctx);
     const font = fontOf(this.font, attr);
     ctx.font = font;
     ctx.letterSpacing = "0px";
     const key = `${font}\u0000${c}`;
-    let ink = this.inks.get(key);
-    if (!ink) {
-      const m = ctx.measureText(c);
-      ink = {
-        left: m.actualBoundingBoxLeft,
-        right: m.actualBoundingBoxRight,
-        ascent: m.actualBoundingBoxAscent,
-        descent: m.actualBoundingBoxDescent,
-      };
-      this.inks.set(key, ink);
+    let box = this.inks.get(key);
+    if (!box) {
+      box = iconBox(ctx.measureText(c), this.font.size);
+      this.inks.set(key, box);
     }
-    const box = { w: cells * cw, h: textHeight };
-    const fit = fitIcon(ink, box, cells > 1);
+    const at = placeIcon(c.codePointAt(0) ?? 0, box, {
+      x,
+      y,
+      cellWidth: cw,
+      cellHeight: ch,
+      cells,
+      faceTop: textTop,
+      faceHeight: textHeight,
+      capHeight,
+      align: centre ? "centre" : "first",
+    });
     ctx.save();
-    // An icon spilling into the blank after it starts on its own cell and
-    // takes only the room it needs, so the gap before the text stays.
-    const width = (ink.left + ink.right) * fit.scale;
-    const cx = spill ? x + Math.max(cw / 2, width / 2) : x + box.w / 2;
-    ctx.translate(cx, y + textTop + textHeight / 2);
-    ctx.scale(fit.scale, fit.scale);
-    ctx.fillText(c, fit.dx, fit.dy);
+    ctx.translate(at.x, at.y);
+    ctx.scale(at.sx, at.sy);
+    ctx.fillText(c, 0, 0);
     ctx.restore();
+  }
+
+  /** The grid font's capital height, measured once per font. */
+  private capHeightOf(ctx: CanvasRenderingContext2D): number {
+    if (this.capHeight === 0) {
+      ctx.font = fontOf(this.font, undefined);
+      this.capHeight = ctx.measureText("H").actualBoundingBoxAscent;
+    }
+    return this.capHeight;
   }
 
   /** Fonts arrived (the icon font, a `guifont`): icon fits are measured again. */
@@ -2765,11 +2822,7 @@ export class GridPainter {
     fg: number,
   ): void {
     const { width: cw, baseline } = this.metrics;
-    if (this.capHeight === 0) {
-      ctx.font = fontOf(this.font, undefined);
-      this.capHeight = ctx.measureText("H").actualBoundingBoxAscent;
-    }
-    const size = this.capHeight;
+    const size = this.capHeightOf(ctx);
     const mark = markPath(family, size);
     ctx.save();
     ctx.translate(x + (cw - size) / 2, y + baseline - size);
@@ -2893,7 +2946,8 @@ export class GridPainter {
         kind === undefined &&
         c.length === 1 &&
         c.charCodeAt(0) < 0x2e80 &&
-        !wide;
+        !wide &&
+        !(c !== " " && signPadded(state, chars, hls, base, col, rowWidth));
       if (simple) {
         if (text.length === 0) textStart = col;
         text += c;
@@ -2913,11 +2967,13 @@ export class GridPainter {
           this.paintShapes(ctx, shapes, fg);
         } else if (kind === "icon") {
           // An icon followed by a blank cell of the same background gets
-          // both cells, as kitty and WezTerm give it: nvim-web-devicons,
-          // lualine and the completion menus all put a space after their
-          // icons, and a Mono icon squeezed into one cell is half the size
-          // the Nerd Font draws it.
+          // both cells, as Ghostty, kitty and WezTerm give it:
+          // nvim-web-devicons, lualine and the completion menus all put a
+          // space after their icons, and a Mono icon squeezed into one cell
+          // is half the size the Nerd Font draws it. A sign's blank is its
+          // own second cell: it is centred across the two.
           const next = base + col + 1;
+          const sign = signPadded(state, chars, hls, base, col, rowWidth);
           const roomy =
             !wide &&
             col + 1 < rowWidth &&
@@ -2928,13 +2984,19 @@ export class GridPainter {
             c,
             x: col * cw,
             cells: roomy ? 2 : cells,
-            spill: roomy,
             attr,
             fg,
+            centre: sign && roomy,
           });
         } else if (c.trim().length > 0) {
+          // A sign's text (`E`, `●`) centred on its two cells, as an
+          // icon sign is; anything else on its own cell.
+          const shift =
+            cells === 1 && signPadded(state, chars, hls, base, col, rowWidth)
+              ? cw / 2
+              : 0;
           ctx.letterSpacing = "0px";
-          ctx.fillText(c, col * cw, y + baseline);
+          ctx.fillText(c, col * cw + shift, y + baseline);
           ctx.letterSpacing = `${String(cw - this.metrics.advance)}px`;
         }
         textStart = col + 1;
@@ -2974,4 +3036,30 @@ export class GridPainter {
       }
     }
   }
+}
+
+/**
+ * Whether the cell at `col` is a sign whose second cell is its padding: in
+ * the sign column (`SignColumn`, or `CursorLineSign` on the cursor's line,
+ * as `ext_hlstate` names it) and followed by a blank of the same highlight.
+ * Neovim gives every sign two cells, a one-cell sign's text padded with a
+ * space; a sign is centred across both, not drawn in the first.
+ */
+export function signPadded(
+  state: NeovimUiState,
+  chars: readonly string[],
+  hls: ArrayLike<number>,
+  base: number,
+  col: number,
+  rowWidth: number,
+): boolean {
+  if (col + 1 >= rowWidth || chars[base + col + 1] !== " ") return false;
+  const hl = hls[base + col] ?? 0;
+  if (hls[base + col + 1] !== hl) return false;
+  const groups = state.hl.get(hl)?.groups;
+  return (
+    groups !== undefined &&
+    (groups.includes("SignColumn") || groups.includes("CursorLineSign")) &&
+    !groups.includes("FoldColumn")
+  );
 }

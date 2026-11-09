@@ -301,11 +301,19 @@ z-order and opaque canvas — and where the code still falls short:
     points only (the private-use areas and the IEC power symbols), first in
     the font stack of the grids, the command line, the completion menu, the
     tab strip, toasts and popups — it answers for icons and nothing
-    else. An icon is fitted to its cell (two when Neovim says it is wide)
-    and centred on the text; one followed by a blank cell of the same
-    background may spill into it at up to the Nerd Font's own size, as
-    kitty and WezTerm draw them, since devicons, lualine and completion
-    menus all put a space after their icons. A completion kind that starts
+    else. An icon is put in its cells as Ghostty puts the Nerd Font icons
+    (`placeIcon`, its `fit_cover1` and `center1`; the editor's grids and
+    the terminal panes alike): the font's em square, which every icon of
+    the Mono font is drawn in, scaled to one cell across and the patcher's
+    icon height alone, or to the face's height across two cells when
+    Neovim says it is wide or a blank cell of the same background follows
+    it (devicons, lualine and completion menus all put a space after their
+    icons); centred on the first cell, or from its left edge when wider,
+    and centred down on the face, which is centred in the row. A sign's
+    two cells are the sign column's (`SignColumn`, `CursorLineSign` in
+    `ext_hlstate`'s names): a sign is centred across both, an icon or a
+    letter. Powerline Extra separators (U+E0C0–E0D7) are stretched to the
+    whole cell. A completion kind that starts
     with an icon (lspkind) shows that icon in the popup menu.
   - Selections and search matches are their highlight's own fill, square
     and continuous: the whole cell, `linespace` included, with no seam

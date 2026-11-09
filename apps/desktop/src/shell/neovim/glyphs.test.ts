@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   boxArms,
-  fitIcon,
   glyphKind,
   glyphShapes,
   lightThickness,
+  placeIcon,
   type Shape,
 } from "./glyphs";
 
@@ -148,31 +148,113 @@ describe("glyph geometry", () => {
   });
 });
 
-describe("icon fit", () => {
-  it("leaves an icon that fits its cell at its size, centred", () => {
-    const fit = fitIcon(
-      { left: 0, right: 6, ascent: 9, descent: 1 },
-      { w: 7, h: 14 },
-      false,
-    );
-    expect(fit).toEqual({ scale: 1, dx: -3, dy: 4 });
+describe("icon placement", () => {
+  // Symbols Nerd Font Mono at 12px: every icon in the em square.
+  const EM = { left: 0, right: 12, ascent: 9.6, descent: 2.4 };
+  // A 7×20 cell, its face 14 tall from 3 down (3 of leading each side).
+  const room = {
+    x: 0,
+    y: 0,
+    cellWidth: 7,
+    cellHeight: 20,
+    cells: 1,
+    faceTop: 3,
+    faceHeight: 14,
+    capHeight: 9,
+    align: "first" as const,
+  };
+  /** The drawn design box: left, top, width, height. */
+  const drawn = (p: ReturnType<typeof placeIcon>, box = EM) => [
+    p.x - box.left * p.sx,
+    p.y - box.ascent * p.sy,
+    (box.left + box.right) * p.sx,
+    (box.ascent + box.descent) * p.sy,
+  ];
+
+  it("fits one cell across, centred on the cell's middle down", () => {
+    const [left, top, w, h] = drawn(placeIcon(0xf057, EM, room));
+    expect(w).toBeCloseTo(7);
+    expect(h).toBeCloseTo(7);
+    expect(left).toBeCloseTo(0);
+    expect(top! + h! / 2).toBeCloseTo(10);
   });
 
-  it("shrinks an icon wider than its cell", () => {
-    const fit = fitIcon(
-      { left: 1, right: 13, ascent: 10, descent: 2 },
-      { w: 7, h: 14 },
-      false,
+  it("grows with a blank after it, from the first cell, a gap kept", () => {
+    const [left, top, w, h] = drawn(
+      placeIcon(0xe628, EM, { ...room, cellWidth: 8, cells: 2 }),
     );
-    expect(fit.scale).toBeCloseTo(0.5);
+    // Two cells less half of one across (12), under the face's 14.
+    expect(w).toBeCloseTo(12);
+    expect(h).toBeCloseTo(12);
+    // Wider than a cell: from its left edge, as Ghostty's center1.
+    expect(left).toBeCloseTo(0);
+    expect(top! + h! / 2).toBeCloseTo(10);
+    // Taller than one cell's icon would be.
+    const [, , one] = drawn(placeIcon(0xe628, EM, { ...room, cellWidth: 8 }));
+    expect(w).toBeGreaterThan(one!);
   });
 
-  it("lets an icon with two cells grow, short of the text box", () => {
-    const fit = fitIcon(
-      { left: 0, right: 7, ascent: 8, descent: 0 },
-      { w: 14, h: 10 },
-      true,
+  it("centres a sign across its two cells", () => {
+    const [left, , w] = drawn(
+      placeIcon(0xf057, EM, {
+        ...room,
+        x: 10,
+        cellWidth: 8,
+        cells: 2,
+        align: "centre",
+      }),
     );
-    expect(fit.scale).toBeCloseTo(1.0625);
+    expect(left! + w! / 2).toBeCloseTo(10 + 8);
+  });
+
+  it("keeps a small icon small: the em square is fitted, not the ink", () => {
+    // A dot's ink is half the em; its design box is the em all the same.
+    const p = placeIcon(0xf444, EM, room);
+    const big = placeIcon(0xf057, EM, room);
+    expect(p.sx).toBeCloseTo(big.sx);
+  });
+
+  it("fits a glyph of another font by its ink, centred both ways", () => {
+    const ink = { left: 1, right: 9, ascent: 6, descent: 0 };
+    const [left, top, w, h] = drawn(placeIcon(0xe000, ink, room), ink);
+    // 10 wide, 6 tall: the cell's 7 across is the limit.
+    expect(w).toBeCloseTo(7);
+    expect(h).toBeCloseTo(4.2);
+    expect(left).toBeCloseTo(0);
+    expect(top! + h! / 2).toBeCloseTo(10);
+  });
+
+  it("stretches a Powerline Extra separator to the whole cell", () => {
+    const [left, top, w, h] = drawn(placeIcon(0xe0c0, EM, room));
+    expect([left, top, w, h].map((v) => Number(v!.toFixed(6)))).toEqual([
+      0, 0, 7, 20,
+    ]);
+  });
+
+  it("sits on the cell's true centre at any device pixel ratio and linespace", () => {
+    // The cell and its face box as cellMetrics makes them, at fractional
+    // ratios: the leading split, its top on a device pixel.
+    for (const dpr of [1, 1.25, 1.5, 2, 2.5, 3]) {
+      for (const linespace of [0, 1, 3, 5]) {
+        const box = Math.ceil(14.2 * dpr);
+        const height = box + Math.round(linespace * dpr);
+        const faceTop = Math.round((height - box) / 2) / dpr;
+        const p = placeIcon(0xf057, EM, {
+          ...room,
+          y: 37 * (height / dpr),
+          cellHeight: height / dpr,
+          faceTop,
+          faceHeight: 14.2,
+        });
+        const [, top, , h] = drawn(p);
+        const centre = top! + h! / 2 - 37 * (height / dpr);
+        // On the face's centre exactly; that is the cell's to within the
+        // half device pixel the leading's rounding leaves.
+        expect(centre).toBeCloseTo(faceTop + 7.1, 9);
+        expect(Math.abs(centre - height / dpr / 2)).toBeLessThanOrEqual(
+          0.5 / dpr + 1e-9,
+        );
+      }
+    }
   });
 });

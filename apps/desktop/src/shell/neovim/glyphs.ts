@@ -539,30 +539,125 @@ function powerlineShapes(cp: number, g: Grid): Shape[] {
 }
 
 /**
- * How an icon glyph of the given ink box is fitted into its cells: the
- * scale (never up for one cell; for two, up to three quarters of their
- * width and most of the text's height) and
- * the offset from the cell box's centre to the text origin, so the ink is
- * centred.
+ * Powerline Extra separators (flames, pixels, waveforms, Lego) that are not
+ * drawn as shapes: stretched to the whole cell, as the Nerd Fonts patcher's
+ * `xy` rule (and Ghostty's `.stretch`) does, so they meet the cells above
+ * and below.
  */
-export function fitIcon(
-  ink: { left: number; right: number; ascent: number; descent: number },
-  box: { w: number; h: number },
-  wide: boolean,
-): { scale: number; dx: number; dy: number } {
-  const gw = ink.left + ink.right;
-  const gh = ink.ascent + ink.descent;
-  if (gw <= 0 || gh <= 0) return { scale: 1, dx: 0, dy: 0 };
-  // Two cells keep a margin on each side, so the icon never touches the
-  // text either side of it.
-  const scale = Math.min(
-    wide ? 1.5 : 1,
-    (box.w * (wide ? 0.75 : 1)) / gw,
-    (box.h * (wide ? 0.85 : 1)) / gh,
-  );
+export function isStretchedIcon(cp: number): boolean {
+  return cp >= 0xe0c0 && cp <= 0xe0d7;
+}
+
+/**
+ * A glyph's box in its font, in CSS pixels from its text origin (the
+ * alphabetic baseline): `left` to `right` across, `ascent` above the
+ * baseline and `descent` below it, as `measureText` gives them.
+ */
+export interface GlyphBox {
+  readonly left: number;
+  readonly right: number;
+  readonly ascent: number;
+  readonly descent: number;
+}
+
+/** Where an icon is put: its cells and the cell's text box. */
+export interface IconRoom {
+  /** The first cell's left and top, in CSS pixels. */
+  readonly x: number;
+  readonly y: number;
+  /** One cell. */
+  readonly cellWidth: number;
+  readonly cellHeight: number;
+  /** How many cells it may take: 2 when wide or followed by a blank. */
+  readonly cells: number;
+  /** The font's ascent plus descent, and where that box starts in the cell. */
+  readonly faceTop: number;
+  readonly faceHeight: number;
+  /** The text font's capital height. */
+  readonly capHeight: number;
+  /**
+   * `first`: centred on the first cell, or from its left edge when wider
+   * than a cell (the patcher's `c`, Ghostty's `center1`) — a file icon
+   * before its name. `centre`: centred across all its cells — a sign in
+   * the sign column's two.
+   */
+  readonly align: "first" | "centre";
+}
+
+/**
+ * The text origin and scale to draw an icon at: `fillText` at `(x, y)`
+ * under `scale(sx, sy)` puts it in its room.
+ */
+export interface IconPlacement {
+  readonly x: number;
+  readonly y: number;
+  readonly sx: number;
+  readonly sy: number;
+}
+
+/**
+ * Where a Nerd Font icon goes in its cells: Ghostty's constraint for the
+ * Nerd Font icons (`src/font/Glyph.zig`, `fit_cover1` with `center1`, the
+ * patcher's `pa` rule; MIT), on the icon's design box — `design`, the em
+ * square Symbols Nerd Font Mono draws every icon in, so a small icon (a dot)
+ * stays small and every icon of a set is the same size — or its own ink
+ * when the font is not that one.
+ *
+ * - **Size**: the box, aspect kept, scaled to fill the room: one cell wide
+ *   and the patcher's icon height, `(2 × cap height + face height) / 3`,
+ *   alone; with a blank after it, the face's height and two cells less
+ *   half of one wide, so a gap stays before the text that follows.
+ * - **Across**: per `align`.
+ * - **Down**: centred on the face (the font's ascent and descent), which is
+ *   centred in the cell, `linespace` or line height around it.
+ * - **Powerline Extra** separators (`isStretchedIcon`) are stretched to the
+ *   whole cell instead, to join the cells above and below.
+ */
+export function placeIcon(
+  cp: number,
+  design: GlyphBox,
+  room: IconRoom,
+): IconPlacement {
+  const gw = design.left + design.right;
+  const gh = design.ascent + design.descent;
+  const width = room.cells * room.cellWidth;
+  if (gw <= 0 || gh <= 0) {
+    return {
+      x: room.x,
+      y: room.y + room.faceTop + room.faceHeight,
+      sx: 1,
+      sy: 1,
+    };
+  }
+  if (isStretchedIcon(cp)) {
+    const sx = width / gw;
+    const sy = room.cellHeight / gh;
+    return {
+      x: room.x + design.left * sx,
+      y: room.y + design.ascent * sy,
+      sx,
+      sy,
+    };
+  }
+  const height =
+    room.cells > 1
+      ? room.faceHeight
+      : Math.min(room.faceHeight, (2 * room.capHeight + room.faceHeight) / 3);
+  // Two cells less half of one: the icon keeps a gap before the text after
+  // it (a full-width badge, Seti's `TS`, ran into the name at two).
+  const roomWidth = room.cells > 1 ? width - room.cellWidth / 2 : width;
+  const scale = Math.min(roomWidth / gw, height / gh);
+  const w = gw * scale;
+  const h = gh * scale;
+  const left =
+    room.align === "centre"
+      ? (width - w) / 2
+      : Math.max(0, (room.cellWidth - w) / 2);
+  const top = room.faceTop + (room.faceHeight - h) / 2;
   return {
-    scale,
-    dx: -(ink.right - ink.left) / 2,
-    dy: (ink.ascent - ink.descent) / 2,
+    x: room.x + left + design.left * scale,
+    y: room.y + top + design.ascent * scale,
+    sx: scale,
+    sy: scale,
   };
 }
