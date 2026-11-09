@@ -46,9 +46,15 @@ describe("the keyboard screen", () => {
   it("lists every command in the registry, and nothing else", async () => {
     await open();
     await screen.findByText("Next workspace");
-    for (const command of COMMANDS) {
-      expect(recorder(command.label), command.id).toBeInTheDocument();
-    }
+    // The recorders read once: a role query per command walks the whole
+    // screen's accessible names each time, which on a loaded machine is
+    // longer than a test may take.
+    const recorders = screen
+      .getAllByRole("button", { name: /^Change the key for / })
+      .map((button) => button.getAttribute("aria-label") ?? button.textContent);
+    expect([...recorders].sort()).toEqual(
+      COMMANDS.map((command) => `Change the key for ${command.label}`).sort(),
+    );
   });
 
   it("shows the keys that are actually in effect, not the shipped ones", async () => {
