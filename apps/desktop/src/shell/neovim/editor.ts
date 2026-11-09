@@ -23,6 +23,7 @@ import {
   type NeovimUiState,
   type RedrawChanges,
 } from "./redraw";
+import { compactPanels } from "./floats";
 import {
   GridPainter,
   ICON_FAMILY,
@@ -489,7 +490,13 @@ export class NeovimEditor {
     if (changes.options) this.applyFont();
     // `cmdheight` is asked with them: it moves when the layout does.
     if (changes.colors || changes.layout) this.askTheme();
-    this.boxes = layoutGrids(this.state);
+    // A panel's blank border rows between members are its padding, not
+    // whole rows (`compactPanels`).
+    this.boxes = compactPanels(
+      layoutGrids(this.state),
+      this.painter.cell().height,
+      this.painter.floatTokens().pad,
+    );
     this.host.style.background = cssColor(this.state.defaults.background);
     const theme = this.paintTheme();
     // The floating surfaces' colours (`tokens.css`), for what DevHub draws

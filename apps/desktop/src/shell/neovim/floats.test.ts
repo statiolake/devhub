@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bandGround,
+  compactPanels,
   drawnRect,
   floatClusters,
   panelLayout,
@@ -136,7 +137,8 @@ describe("a float's selected row as a band", () => {
 
 describe("a panel as drawn (「接地」)", () => {
   const cell = { width: 8, height: 16 };
-  const layout = (boxes: GridBox[]) => {
+  const layout = (given: GridBox[]) => {
+    const boxes = compactPanels(given, cell.height, 4);
     const [cluster] = floatClusters(boxes);
     if (!cluster) throw new Error("no cluster");
     return panelLayout(
@@ -167,7 +169,7 @@ describe("a panel as drawn (「接地」)", () => {
     expect(parts[0]?.header).toEqual({ x: 80, y: 32, w: 176, h: 16 });
   });
 
-  it("meets a member across a border whole, with a rule between, and lines only the outline", () => {
+  it("cuts a blank border row between members to the padding, never a whole row", () => {
     const crop = { top: 1, right: 1, bottom: 1, left: 1 };
     // A root box, an input over a list beside a preview, each in a solid
     // border with a title (snacks' default layout).
@@ -184,21 +186,50 @@ describe("a panel as drawn (「接地」)", () => {
       bottom: true,
       left: true,
     });
-    // The input reaches the list: its bottom border's whole row.
-    expect(byGrid.get(4)?.rect).toEqual({ x: 0, y: 0, w: 320, h: 48 });
-    // Inside the root box, only a side on its edge is on the outline.
+    // The input's bottom border is its padding (4px), not a row: the list
+    // and the preview are drawn 12px higher, and the root box ends where
+    // they do.
+    expect(byGrid.get(4)?.rect).toEqual({ x: 0, y: 0, w: 320, h: 36 });
+    expect(byGrid.get(5)?.rect.y).toBe(36);
+    expect(byGrid.get(3)?.rect).toEqual({ x: 0, y: 0, w: 320, h: 36 + 260 });
+    // Inside the root box, only a side on its edge is on the outline: the
+    // root ends where the list does.
     expect(byGrid.get(5)?.outer).toEqual({
       top: false,
       right: false,
-      bottom: false,
+      bottom: true,
       left: true,
     });
     // List and preview meet at the cell between their borders.
     expect(byGrid.get(5)?.rect.x).toBe(0);
     expect(byGrid.get(5)?.rect.w).toBe(160);
     expect(byGrid.get(6)?.rect.x).toBe(160);
-    expect(rules).toContainEqual({ x: 160, y: 48, w: 0, h: 17 * 16 - 16 + 4 });
-    expect(rules).toContainEqual({ x: 0, y: 48, w: 160, h: 0 });
-    expect(rules).toContainEqual({ x: 160, y: 48, w: 160, h: 0 });
+    expect(rules).toContainEqual({ x: 160, y: 36, w: 0, h: 17 * 16 - 16 + 4 });
+    expect(rules).toContainEqual({ x: 0, y: 36, w: 160, h: 0 });
+    expect(rules).toContainEqual({ x: 160, y: 36, w: 160, h: 0 });
+  });
+
+  it("cuts a member's blank top row where it meets one above", () => {
+    const crop = { top: 1, right: 1, bottom: 1, left: 1 };
+    // An input with a title over a list without one: the list's blank top
+    // row is its padding.
+    const given = [
+      float(4, 0, 0, 40, 2, {
+        z: 154,
+        crop: { ...crop, top: 0, bottom: 0 },
+        header: 1,
+      }),
+      float(5, 2, 0, 40, 10, { z: 154, crop }),
+    ];
+    const boxes = compactPanels(given, cell.height, 4);
+    expect(boxes[1]?.row).toBeCloseTo(2 - 12 / 16);
+    const { rules } = layout(given);
+    expect(rules).toContainEqual({ x: 0, y: 32, w: 320, h: 0 });
+  });
+
+  it("leaves a float alone, and members whose lines are their own", () => {
+    const crop = { top: 1, right: 1, bottom: 1, left: 1 };
+    const one = [float(4, 2, 10, 22, 5, { crop })];
+    expect(compactPanels(one, 16, 4)).toEqual(one);
   });
 });

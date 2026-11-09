@@ -648,6 +648,12 @@ title is its border row (the person: 「一行と同じくらいの高さあっ�
 tmux popup with a border keeps that row's whole cell inline and only the
 block padding below its text, as a Neovim float does.
 
+A blank border's row is the block padding, never a whole row: where two
+members of a panel meet across one (a picker's input of one line over its
+list), the rest of the row is cut and what is below is drawn that much
+higher, a member holding the others (snacks' root box) ending where they
+do (`compactPanels`; Neovim's cells do not move, and a click is read back
+by the pixel, `mouse.ts`). Inline a blank border stays a whole cell.
 Where two members of a panel meet (a picker's input over its list, the
 list beside the preview), a 1px rule in the line's colour; the outline is
 drawn only on the sides on the panel's edge, the corners rounded only

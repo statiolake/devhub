@@ -52,14 +52,17 @@ export function hitTest(
       continue;
     }
     // A float's left-out blank border is not there: a click falls through.
+    // Rows by the pointer's place, not its screen row: a panel's member is
+    // drawn a fraction of a row up (`compactPanels`).
     const crop = box.crop;
+    const at = y / cell.height - box.row;
     if (
-      row >= box.row + (crop?.top ?? 0) &&
-      row < box.row + box.height - (crop?.bottom ?? 0) &&
+      at >= (crop?.top ?? 0) &&
+      at < box.height - (crop?.bottom ?? 0) &&
       col >= box.col + (crop?.left ?? 0) &&
       col < box.col + box.width - (crop?.right ?? 0)
     ) {
-      return { grid: box.grid, row: row - box.row, col: col - box.col };
+      return { grid: box.grid, row: Math.floor(at), col: col - box.col };
     }
   }
   return { grid: 1, row, col };

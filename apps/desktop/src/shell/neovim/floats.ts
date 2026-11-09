@@ -556,8 +556,8 @@ export interface PanelPart {
   /**
    * Its ground: its text area grown into the blank border Neovim keeps
    * for it (`GridBox.crop`): the border's cell inline, and `padBlock`
-   * above and below — the whole row where another member is across it, so
-   * the two meet.
+   * above and below — where another member is across it too, the rest of
+   * that row having been cut (`compactPanels`), so the two meet.
    */
   readonly rect: PixelRect;
   /** Its sides on the panel's outline: those get the line. */
@@ -585,6 +585,117 @@ function inside(a: CellRect, b: CellRect): boolean {
 }
 
 /**
+ * Whether a member of a panel has another across `side` within `room` rows
+ * of its drawn rect (a picker's input over its list): the blank border
+ * rows between them are the panel's, not the outside's.
+ */
+function acrossBlock(
+  r: CellRect,
+  others: readonly CellRect[],
+  side: "top" | "bottom",
+  room: number,
+): boolean {
+  return others.some((o) => {
+    if (gap(r.col, r.col + r.width, o.col, o.col + o.width) >= 0) return false;
+    const d =
+      side === "bottom"
+        ? o.row - (r.row + r.height)
+        : r.row - (o.row + o.height);
+    return d >= 0 && d <= room;
+  });
+}
+
+/**
+ * The floats of each panel with every blank border row between two members
+ * cut down to the block padding (docs/neovim-editor.md, "Floating
+ * surfaces"): a `'solid'` border's row is the padding Neovim keeps, never a
+ * whole row of ground (a picker's input of one line showed an empty row
+ * under it, over its list's title). The members below such a row are drawn
+ * that much higher, by a fractional `row`; a member holding others (a
+ * picker's borderless root box) loses as much at its bottom (`crop`).
+ * Neovim's cells are not moved: only where DevHub draws them, and a click
+ * is read back through the same boxes (`mouse.ts`).
+ */
+export function compactPanels(
+  boxes: readonly GridBox[],
+  cellHeight: number,
+  padBlock: number,
+): GridBox[] {
+  if (cellHeight <= 0) return [...boxes];
+  const byGrid = new Map(boxes.map((b) => [b.grid, b]));
+  const moved = new Map<number, GridBox>();
+  for (const cluster of floatClusters(boxes)) {
+    if (cluster.lined || cluster.members.length < 2) continue;
+    const rects = cluster.members.map((m) => m.rect);
+    const holds = (r: CellRect) => rects.some((o) => o !== r && inside(o, r));
+    // A cut at a row line (in cells, before any is taken): what is drawn
+    // from that line down goes up by its amount (in rows).
+    const cuts = new Map<number, number>();
+    const cut = (line: number, rows: number) => {
+      if (rows <= 0) return;
+      cuts.set(line, Math.max(cuts.get(line) ?? 0, rows));
+    };
+    const pad = Math.min(1, padBlock / cellHeight);
+    for (const m of cluster.members) {
+      const box = byGrid.get(m.grid);
+      const crop = box?.crop;
+      if (!box || !crop || holds(m.rect)) continue;
+      const others = rects.filter(
+        (o) => o !== m.rect && !inside(m.rect, o) && !holds(o),
+      );
+      if (
+        crop.bottom >= 1 &&
+        acrossBlock(m.rect, others, "bottom", crop.bottom)
+      )
+        cut(m.rect.row + m.rect.height, crop.bottom - pad);
+      if (crop.top >= 1 && acrossBlock(m.rect, others, "top", crop.top))
+        cut(m.rect.row, crop.top - pad);
+    }
+    const above = (row: number) =>
+      [...cuts].reduce((n, [line, rows]) => (line <= row ? n + rows : n), 0);
+    const held: { rect: CellRect; drawn: CellRect }[] = [];
+    let blank = cuts.size > 0;
+    for (const m of cluster.members) {
+      const box = byGrid.get(m.grid);
+      if (!box || holds(m.rect)) continue;
+      const up = above(m.rect.row);
+      // As drawn, its padding included (`panelLayout`).
+      const crop = box.crop;
+      const top = (crop?.top ?? 0) >= 1 ? pad : 0;
+      const bottom = (crop?.bottom ?? 0) >= 1 ? pad : 0;
+      if (crop !== undefined) blank = true;
+      held.push({
+        rect: m.rect,
+        drawn: {
+          ...m.rect,
+          row: m.rect.row - up - top,
+          height: m.rect.height + top + bottom,
+        },
+      });
+      if (up > 0) moved.set(box.grid, { ...box, row: box.row - up });
+    }
+    // A member holding the others ends where they do: past them it would
+    // be a band of ground the width of the panel.
+    for (const m of cluster.members) {
+      const box = byGrid.get(m.grid);
+      if (!box || !blank || !holds(m.rect)) continue;
+      const inner = held
+        .filter((h) => inside(h.rect, m.rect))
+        .map((h) => h.drawn);
+      if (inner.length === 0) continue;
+      const first = Math.min(...inner.map((h) => h.row));
+      const last = Math.max(...inner.map((h) => h.row + h.height));
+      const crop = box.crop ?? { top: 0, right: 0, bottom: 0, left: 0 };
+      const top = Math.max(crop.top, first - box.row);
+      const bottom = Math.max(crop.bottom, box.row + box.height - last);
+      if (top === crop.top && bottom === crop.bottom) continue;
+      moved.set(box.grid, { ...box, crop: { ...crop, top, bottom } });
+    }
+  }
+  return boxes.map((b) => moved.get(b.grid) ?? b);
+}
+
+/**
  * A panel's members as drawn (the person's pick, 「接地」): each grown into
  * its blank border, its outer sides lined, its header and footer bands,
  * and a rule wherever two members meet. Members inside another (a
@@ -601,29 +712,14 @@ export function panelLayout(
     const box = boxes.get(m.grid);
     const crop = box?.crop;
     const r = m.rect;
-    const others = cluster.members
-      .filter((o) => o !== m && !inside(r, o.rect))
-      .map((o) => o.rect);
-    const spans = (o: CellRect, vertical: boolean) =>
-      vertical
-        ? gap(r.col, r.col + r.width, o.col, o.col + o.width) < 0
-        : gap(r.row, r.row + r.height, o.row, o.row + o.height) < 0;
-    const across = (side: Side, room: number) =>
-      others.some((o) => {
-        if (side === "bottom") {
-          const d = o.row - (r.row + r.height);
-          return spans(o, true) && d >= 0 && d <= room;
-        }
-        if (side === "top") {
-          const d = r.row - (o.row + o.height);
-          return spans(o, true) && d >= 0 && d <= room;
-        }
-        return false;
-      });
+    // A blank border row is the block padding (`compactPanels` has taken
+    // the rest of it where two members meet), on the panel's edge or not.
+    // A member holding the others (a picker's root box) has no border of
+    // its own: what `compactPanels` cut off it is not padding.
+    const holder = cluster.members.some((o) => o !== m && inside(o.rect, r));
     const block = (side: "top" | "bottom") => {
       const room = crop?.[side] ?? 0;
-      if (room < 1) return 0;
-      return across(side, room) ? room * ch : padBlock;
+      return room < 1 || holder ? 0 : padBlock;
     };
     const left = (crop?.left ?? 0) >= 1 ? cw : 0;
     const right = (crop?.right ?? 0) >= 1 ? cw : 0;

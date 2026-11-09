@@ -940,7 +940,7 @@ export class GridPainter {
   }
 
   /** The float tokens (`tokens.css`), read once the page is styled. */
-  private floatTokens(): { radius: number; inset: number; pad: number } {
+  floatTokens(): { radius: number; inset: number; pad: number } {
     this.tokens ??= {
       radius: floatToken("--float-radius", 4),
       inset: floatToken("--float-band-inset", 2),

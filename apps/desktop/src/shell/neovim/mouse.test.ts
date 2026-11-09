@@ -70,6 +70,30 @@ describe("the pointer", () => {
     });
   });
 
+  it("reads a member drawn a fraction of a row up by the pixel", () => {
+    // A picker's list, drawn 12px higher (`compactPanels`): its first row
+    // is from y = 16 * 4 - 12 to 16 * 5 - 12.
+    const list = [
+      ...boxes,
+      {
+        ...box(7, 3.25, 10, 20, 6, 160),
+        crop: { top: 0, right: 1, bottom: 1, left: 1 },
+      },
+    ];
+    expect(hitTest(list, cell, 8 * 12, 16 * 3.25 + 1)).toEqual({
+      grid: 7,
+      row: 0,
+      col: 2,
+    });
+    expect(hitTest(list, cell, 8 * 12, 16 * 4.25 + 15)).toEqual({
+      grid: 7,
+      row: 1,
+      col: 2,
+    });
+    // Under its last row of text, its blank border: the window under it.
+    expect(hitTest(list, cell, 8 * 12, 16 * 8.25 + 1).grid).not.toBe(7);
+  });
+
   it("falls back to grid 1 between windows (a separator, the command line)", () => {
     expect(hitTest(boxes, cell, 8 * 40 + 1, 16 * 3)).toEqual({
       grid: 1,
