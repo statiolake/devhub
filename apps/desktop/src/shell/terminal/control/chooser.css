@@ -1,16 +1,12 @@
 /* The picker DevHub draws for `choose-tree` (`ptyHost/control/chooser.ts`):
-   a float in the popup's frame (`popup.css`), the filter on its top line,
+   a floating surface (`tokens.css`; its colours `popup.css`'s), the filter
+   a band on its top row,
    the tree on its left in the terminal's font, the chosen item's pane on its
    right (the painter's grid 0, over this frame). And `display-panes`' big
    numbers. Their look is here alone, as tokens, as the mock has it
    (`docs/terminal-mode.md`, phase 3). */
 
 .control-terminal {
-  --chooser-rule: color-mix(
-    in srgb,
-    var(--terminal-foreground, currentColor) 10%,
-    transparent
-  );
   --chooser-quiet: color-mix(
     in srgb,
     var(--terminal-foreground, currentColor) 50%,
@@ -26,11 +22,11 @@
   z-index: var(--control-z-chooser);
   box-sizing: border-box;
   overflow: hidden;
-  border: 1px solid var(--popup-border);
-  border-radius: var(--popup-radius);
-  background: var(--terminal-background, Canvas);
+  border: 1px solid var(--float-line);
+  border-radius: var(--float-radius);
+  background: var(--float-ground);
   box-shadow:
-    var(--popup-shadow),
+    var(--float-shadow),
     0 0 0 100vmax var(--popup-under);
   color: var(--terminal-foreground, currentColor);
 }
@@ -43,10 +39,13 @@
   position: absolute;
   inset: 0 0 auto;
   box-sizing: border-box;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--chooser-rule);
+  height: var(--control-row);
+  padding: 0 var(--control-cell, 1ch);
+  border-bottom: 1px solid var(--float-line);
+  background: var(--float-band);
   color: var(--chooser-quiet);
-  font: 12px var(--font-ui, system-ui, sans-serif);
+  font: 12px / calc(var(--control-row) - 1px)
+    var(--font-ui, system-ui, sans-serif);
   white-space: pre;
 }
 
@@ -60,7 +59,7 @@
   left: 0;
   bottom: 0;
   overflow: hidden;
-  border-right: 1px solid var(--chooser-rule);
+  border-right: 1px solid var(--float-line);
   white-space: pre;
 }
 

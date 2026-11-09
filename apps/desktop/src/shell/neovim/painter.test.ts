@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { PART_Z, gridBlends, mixColors, parseGuifont } from "./painter";
+import {
+  PART_Z,
+  floatLook,
+  gridBlends,
+  mixColors,
+  parseGuifont,
+} from "./painter";
+import { NO_THEME } from "./chrome";
 
 describe("guifont", () => {
   it("is a CSS family list and a size", () => {
@@ -88,5 +95,39 @@ describe("what the page lays over a grid", () => {
       "./NeovimApp.tsx",
     ])
       expect(await read(name)).not.toMatch(/zIndex: box\.z/);
+  });
+});
+
+describe("a float's look, from the theme's groups", () => {
+  const defaults = { foreground: 0x202020, background: 0xffffff };
+  const theme = (surface: object) => ({ ...NO_THEME, surface });
+
+  it("takes FloatBorder's ink for its line and StatusLine's ground for a title's band", () => {
+    expect(
+      floatLook(
+        theme({
+          bg: 0xf2f2f6,
+          fg: 0x202020,
+          border: 0xd8d8d8,
+          status: 0xfafafd,
+        }),
+        defaults,
+      ),
+    ).toEqual({
+      ground: 0xf2f2f6,
+      ink: 0x202020,
+      line: 0xd8d8d8,
+      band: 0xfafafd,
+    });
+  });
+
+  it("derives a line where FloatBorder is only the float's ink (linked to NormalFloat)", () => {
+    const look = floatLook(
+      theme({ bg: 0xf2f2f6, fg: 0x202020, border: 0x202020, ground: 0xffffff }),
+      defaults,
+    );
+    expect(look.line).toBe(mixColors(0xf2f2f6, 0x202020, 18));
+    // No StatusLine: half way from the editor's ground to the float's.
+    expect(look.band).toBe(mixColors(0xffffff, 0xf2f2f6, 50));
   });
 });

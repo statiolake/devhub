@@ -359,6 +359,42 @@
   --radius-card: 12px;
   --radius-pill: 999px;
 
+  /* Floating surfaces over a grid of cells (the person's pick, 「接地」;
+   * docs/neovim-editor.md, "Floating surfaces"): Neovim's floats and
+   * clusters, `gui.popup`, the completion menu, the command line's box and
+   * the messages pager, and tmux's popup, menu, chooser and prompt
+   * completion. One set, so no two surfaces on one screen disagree.
+   *
+   *   radius  4px  a quarter of a row: it ends inside the padding (4px
+   *                block, a cell inline), so a corner never reaches text
+   *                and reads as a part's corner, not a blob's.
+   *   band    2px  a selected row's band is inset 2px and rounded 2px:
+   *                concentric with the 4px corner (2 + 2).
+   *   pad     4px  block padding inside the blank border Neovim keeps
+   *                (inline it is the border's whole cell).
+   *   shadow       close and grounded — offset ≤ 2px, spread ≤ 6px, gone
+   *                within a third of a row: the panel is put down on the
+   *                page, not lifted off it. The same at every size. Black,
+   *                stronger in Dark, where a light shadow cannot be seen.
+   *   arrive       a fade only: something that comes and goes with every
+   *                key does not travel.
+   *
+   * Colours are the page's, from the theme's own groups: `--float-ground`
+   * (`NormalFloat`), `--float-ink`, `--float-line` (`FloatBorder`, a 1px
+   * line), `--float-band` (a title's band: `StatusLine`'s ground). A tmux
+   * surface derives them from the terminal's colours (`popup.css`). */
+  --float-radius: 4px;
+  --float-band-inset: 2px;
+  --float-pad-block: 4px;
+  --float-shadow-near: light-dark(rgb(0 0 0 / 10%), rgb(0 0 0 / 40%));
+  --float-shadow-far: light-dark(rgb(0 0 0 / 6%), rgb(0 0 0 / 24%));
+  --float-shadow:
+    0 1px 2px var(--float-shadow-near), 0 2px 6px var(--float-shadow-far);
+  /* The same shadow for a union of shapes (a panel of floats). */
+  --float-shadow-filter: drop-shadow(0 1px 2px var(--float-shadow-near))
+    drop-shadow(0 2px 6px var(--float-shadow-far));
+  --float-arrive: float-arrive var(--motion-fast) var(--ease-enter);
+
   /* Motion: state changes are shown, never performed — nothing here runs
    * long enough to wait on.
    *
@@ -947,5 +983,12 @@ a {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+}
+
+/* A floating surface arriving (`--float-arrive`): it fades in where it is. */
+@keyframes float-arrive {
+  from {
+    opacity: 0;
   }
 }

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { bandGround, drawnRect, floatClusters, touching } from "./floats";
+import {
+  bandGround,
+  drawnRect,
+  floatClusters,
+  panelLayout,
+  touching,
+} from "./floats";
 import type { GridBox } from "./redraw";
 
 const float = (
@@ -125,5 +131,74 @@ describe("a float's selected row as a band", () => {
     const list = ["nnnnnn", "ssssss", "nnnnnn", "nnnnnn", "nnnnnn"];
     expect(bandGround(rows(list), 0, 5, 0, grounds(list))).toBeUndefined();
     expect(bandGround(rows(list), 0, 5, 1, grounds(list))).toBe(110);
+  });
+});
+
+describe("a panel as drawn (「接地」)", () => {
+  const cell = { width: 8, height: 16 };
+  const layout = (boxes: GridBox[]) => {
+    const [cluster] = floatClusters(boxes);
+    if (!cluster) throw new Error("no cluster");
+    return panelLayout(
+      cluster,
+      new Map(boxes.map((b) => [b.grid, b])),
+      cell,
+      4,
+    );
+  };
+
+  it("grows a float into its blank border: a cell inline, 4px above and below", () => {
+    const crop = { top: 1, right: 1, bottom: 1, left: 1 };
+    const { parts, rules } = layout([float(4, 2, 10, 22, 5, { crop })]);
+    expect(parts).toEqual([
+      {
+        grid: 4,
+        rect: { x: 10 * 8, y: 3 * 16 - 4, w: 20 * 8 + 16, h: 3 * 16 + 8 },
+        outer: { top: true, right: true, bottom: true, left: true },
+      },
+    ]);
+    expect(rules).toEqual([]);
+  });
+
+  it("keeps a title's row as a header band, its rule under it", () => {
+    const crop = { top: 0, right: 1, bottom: 1, left: 1 };
+    const { parts } = layout([float(4, 2, 10, 22, 5, { crop, header: 1 })]);
+    expect(parts[0]?.rect).toEqual({ x: 80, y: 32, w: 176, h: 4 * 16 + 4 });
+    expect(parts[0]?.header).toEqual({ x: 80, y: 32, w: 176, h: 16 });
+  });
+
+  it("meets a member across a border whole, with a rule between, and lines only the outline", () => {
+    const crop = { top: 1, right: 1, bottom: 1, left: 1 };
+    // A root box, an input over a list beside a preview, each in a solid
+    // border with a title (snacks' default layout).
+    const { parts, rules } = layout([
+      float(3, 0, 0, 40, 20, { z: 152 }),
+      float(4, 0, 0, 40, 3, { z: 154, crop: { ...crop, top: 0 }, header: 1 }),
+      float(5, 3, 0, 20, 17, { z: 155, crop: { ...crop, top: 0 }, header: 1 }),
+      float(6, 3, 20, 20, 17, { z: 155, crop: { ...crop, top: 0 }, header: 1 }),
+    ]);
+    const byGrid = new Map(parts.map((p) => [p.grid, p]));
+    expect(byGrid.get(3)?.outer).toEqual({
+      top: true,
+      right: true,
+      bottom: true,
+      left: true,
+    });
+    // The input reaches the list: its bottom border's whole row.
+    expect(byGrid.get(4)?.rect).toEqual({ x: 0, y: 0, w: 320, h: 48 });
+    // Inside the root box, only a side on its edge is on the outline.
+    expect(byGrid.get(5)?.outer).toEqual({
+      top: false,
+      right: false,
+      bottom: false,
+      left: true,
+    });
+    // List and preview meet at the cell between their borders.
+    expect(byGrid.get(5)?.rect.x).toBe(0);
+    expect(byGrid.get(5)?.rect.w).toBe(160);
+    expect(byGrid.get(6)?.rect.x).toBe(160);
+    expect(rules).toContainEqual({ x: 160, y: 48, w: 0, h: 17 * 16 - 16 + 4 });
+    expect(rules).toContainEqual({ x: 0, y: 48, w: 160, h: 0 });
+    expect(rules).toContainEqual({ x: 160, y: 48, w: 160, h: 0 });
   });
 });

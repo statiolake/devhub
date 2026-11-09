@@ -73,6 +73,13 @@ export interface Surface {
   /** `Normal`'s ground and ink: the editor's own, under and in its text. */
   readonly ground?: number;
   readonly text?: number;
+  /**
+   * `FloatBorder`'s ink and `StatusLine`'s ground, as the theme says them:
+   * a float's 1px line and a title's band (`floatLook` derives what a
+   * theme leaves unsaid).
+   */
+  readonly border?: number;
+  readonly status?: number;
   readonly muted?: number;
   readonly info?: number;
   readonly warn?: number;
@@ -118,6 +125,8 @@ return out`;
 export const THEME_GROUPS: readonly string[] = [
   "Normal",
   "NormalFloat",
+  "FloatBorder",
+  "StatusLine",
   "WinSeparator",
   "Comment",
   "DiagnosticInfo",
@@ -162,6 +171,8 @@ export function themeOf(answer: unknown): PaintTheme {
     fg: colour("NormalFloat", "fg") ?? colour("Normal", "fg"),
     ground: colour("Normal", "bg"),
     text: colour("Normal", "fg"),
+    border: colour("FloatBorder", "fg"),
+    status: colour("StatusLine", "bg"),
     muted: colour("Comment", "fg"),
     info: colour("DiagnosticInfo", "fg"),
     warn: colour("DiagnosticWarn", "fg"),

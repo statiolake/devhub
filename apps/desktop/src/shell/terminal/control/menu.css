@@ -1,11 +1,10 @@
-/* A `display-menu` DevHub asks (`ptyHost/control/menu.ts`): a float in the
-   popup's frame (`popup.css`'s border, radius and shadow), its items in the
-   UI's type, each key right-aligned in the terminal's. Its look is here
-   alone, as tokens, as the mock has it (`docs/terminal-mode.md`, phase 3). */
+/* A `display-menu` DevHub asks (`ptyHost/control/menu.ts`): a floating
+   surface (`tokens.css`; its colours `popup.css`'s), its items in the UI's
+   type on the panes' rows, each key right-aligned in the terminal's. */
 
 .control-terminal {
-  --menu-ground: var(--terminal-background, Canvas);
-  --menu-row: 22px;
+  /* A row is the panes' row: the menu keeps their rhythm. */
+  --menu-row: var(--control-row, 17px);
   --menu-key: color-mix(
     in srgb,
     var(--terminal-foreground, currentColor) 55%,
@@ -20,11 +19,6 @@
   --menu-disabled: color-mix(
     in srgb,
     var(--terminal-foreground, currentColor) 38%,
-    transparent
-  );
-  --menu-rule: color-mix(
-    in srgb,
-    var(--terminal-foreground, currentColor) 12%,
     transparent
   );
   /* The item the keys are on: the selection's colour, Neovim's Visual. */
@@ -49,11 +43,12 @@
   /* The bar's room kept whether it shows or not: a list that grows past
      its height does not narrow its column (docs/motion.md). */
   scrollbar-gutter: stable;
-  padding: 4px 0;
-  border: 1px solid var(--popup-border);
-  border-radius: var(--popup-radius);
-  background: var(--menu-ground);
-  box-shadow: var(--popup-shadow);
+  padding: var(--float-pad-block) 0;
+  border: 1px solid var(--float-line);
+  border-radius: var(--float-radius);
+  background: var(--float-ground);
+  box-shadow: var(--float-shadow);
+  animation: var(--float-arrive);
   color: var(--terminal-foreground, currentColor);
   font: 13px / var(--menu-row) var(--font-ui, system-ui, sans-serif);
   user-select: none;
@@ -63,18 +58,32 @@
   display: none;
 }
 
+/* Its title: a band one row tall, the 1px line under it (as a popup's). */
 .control-menu-title {
-  padding: 2px 12px 4px;
+  box-sizing: border-box;
+  height: var(--menu-row);
+  margin: calc(-1 * var(--float-pad-block)) 0 var(--float-pad-block);
+  padding: 0 var(--control-cell, 1ch);
+  border-bottom: 1px solid var(--float-line);
+  border-radius: calc(var(--float-radius) - 1px) calc(var(--float-radius) - 1px)
+    0 0;
+  background: var(--float-band);
   color: var(--menu-title);
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: calc(var(--menu-row) - 1px);
   text-align: center;
   white-space: nowrap;
 }
 
+/* An item a cell in from the edge; chosen, a band inset by the floats'
+   band inset, concentric with the corner. */
 .control-menu-item {
   display: flex;
   gap: 24px;
-  padding: 0 12px;
+  margin: 0 var(--float-band-inset);
+  padding: 0 calc(var(--control-cell, 1ch) - var(--float-band-inset));
+  border-radius: calc(var(--float-radius) - var(--float-band-inset));
   white-space: nowrap;
 }
 
@@ -97,6 +106,6 @@
 
 .control-menu-rule {
   height: 1px;
-  margin: 4px 0;
-  background: var(--menu-rule);
+  margin: var(--float-pad-block) 0;
+  background: var(--float-line);
 }

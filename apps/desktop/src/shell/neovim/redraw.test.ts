@@ -197,6 +197,11 @@ describe("the redraw reducer", () => {
       bottom: 1,
       left: 1,
     });
+    // That row is the float's header: drawn as a band.
+    expect(layoutGrids(state).find((b) => b.grid === 4)?.header).toBe(1);
+    expect(
+      layoutGrids(state).find((b) => b.grid === 4)?.footer,
+    ).toBeUndefined();
     // A winbar is text in the top margin of a float without a border: kept.
     expect(
       floatBorder(state.grids.get(4)!, {

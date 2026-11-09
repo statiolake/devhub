@@ -639,10 +639,21 @@ export function ControlTerminalSurface({
       popupFrame.hidden = popup === undefined;
       if (popup !== undefined) {
         popupFrame.dataset.border = String(popup.border);
+        // tmux's border cells are the popup's padding: inline the whole
+        // cell, and a title's band the whole top row; above and below the
+        // text only the floats' block padding (`tokens.css`).
+        const pad = "var(--float-pad-block)";
+        const top =
+          popup.border && popup.title === ""
+            ? `calc(${String((popup.y + 1) * height)}px - ${pad})`
+            : `${String(popup.y * height)}px`;
+        const bottom = popup.border
+          ? `calc(${String((popup.y + popup.height - 1) * height)}px + ${pad})`
+          : `${String((popup.y + popup.height) * height)}px`;
         popupFrame.style.left = `${String(popup.x * width)}px`;
-        popupFrame.style.top = `${String(popup.y * height)}px`;
+        popupFrame.style.top = top;
         popupFrame.style.width = `${String(popup.width * width)}px`;
-        popupFrame.style.height = `${String(popup.height * height)}px`;
+        popupFrame.style.height = `calc(${bottom} - ${top})`;
         if (popupFrame.dataset.title !== popup.title) {
           popupFrame.dataset.title = popup.title;
           popupFrame.replaceChildren(
@@ -657,6 +668,10 @@ export function ControlTerminalSurface({
           );
         }
       }
+      // A cell and a row, for what DevHub draws in CSS on the cells' grid
+      // (a popup's title band, a menu's rows, the chooser's filter).
+      host.style.setProperty("--control-cell", `${String(width)}px`);
+      host.style.setProperty("--control-row", `${String(height)}px`);
       drawPrompt(width, height);
       drawMenu(width, height);
       drawChooser(width, height);
@@ -1128,8 +1143,6 @@ export function ControlTerminalSurface({
       });
       const filter = document.createElement("div");
       filter.className = "control-chooser-filter";
-      filter.style.height = `${String(1.5 * height)}px`;
-      filter.style.lineHeight = `${String(1.5 * height)}px`;
       const typed = document.createElement("b");
       typed.textContent = chooser.filter;
       const caret = Object.assign(document.createElement("span"), {

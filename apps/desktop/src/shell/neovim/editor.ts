@@ -27,6 +27,7 @@ import {
   GridPainter,
   ICON_FAMILY,
   cssColor,
+  floatLook,
   fontOf,
   rgbOfCss,
   resolveColors,
@@ -491,6 +492,18 @@ export class NeovimEditor {
     this.boxes = layoutGrids(this.state);
     this.host.style.background = cssColor(this.state.defaults.background);
     const theme = this.paintTheme();
+    // The floating surfaces' colours (`tokens.css`), for what DevHub draws
+    // over the editor in them: the command line's box, `gui.popup`, the
+    // completion menu.
+    const look = floatLook(theme, this.state.defaults);
+    this.host.style.setProperty("--float-ground", cssColor(look.ground));
+    this.host.style.setProperty("--float-ink", cssColor(look.ink));
+    this.host.style.setProperty("--float-line", cssColor(look.line));
+    this.host.style.setProperty("--float-band", cssColor(look.band));
+    this.host.style.setProperty(
+      "--float-cell",
+      `${String(this.painter.cell().width)}px`,
+    );
     this.windowMotion.paint(this.state, this.boxes, {
       now: performance.now(),
       cmdheight: theme.cmdheight,

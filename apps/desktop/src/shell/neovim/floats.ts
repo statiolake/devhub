@@ -172,7 +172,11 @@ export function floatClusters(boxes: readonly GridBox[]): FloatCluster[] {
   });
   return [...groups.values()].map((list) => {
     const members = list.map(({ box, rect }) => {
-      const others = list.filter((o) => o.box !== box).map((o) => o.rect);
+      // A member inside this one (a picker's list in its root box) does
+      // not make its corner inner: the box's corner is the panel's.
+      const others = list
+        .filter((o) => o.box !== box && !inside(o.rect, rect))
+        .map((o) => o.rect);
       return {
         grid: box.grid,
         rect,
@@ -536,4 +540,209 @@ export function bandGround(
     if (bg === undefined || bg === ground) return undefined;
   }
   return ground;
+}
+
+/** A rectangle in CSS pixels of the editor. */
+export interface PixelRect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/** What DevHub draws of a panel's member without a frame of lines. */
+export interface PanelPart {
+  readonly grid: number;
+  /**
+   * Its ground: its text area grown into the blank border Neovim keeps
+   * for it (`GridBox.crop`): the border's cell inline, and `padBlock`
+   * above and below — the whole row where another member is across it, so
+   * the two meet.
+   */
+  readonly rect: PixelRect;
+  /** Its sides on the panel's outline: those get the line. */
+  readonly outer: Readonly<Record<Side, boolean>>;
+  /** Its header and footer rows (a `title`, a `footer`) as bands. */
+  readonly header?: PixelRect;
+  readonly footer?: PixelRect;
+}
+
+/** A 1px line where two members meet, inside a panel. */
+export interface PanelRule {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+function inside(a: CellRect, b: CellRect): boolean {
+  return (
+    a.row >= b.row &&
+    a.col >= b.col &&
+    a.row + a.height <= b.row + b.height &&
+    a.col + a.width <= b.col + b.width
+  );
+}
+
+/**
+ * A panel's members as drawn (the person's pick, 「接地」): each grown into
+ * its blank border, its outer sides lined, its header and footer bands,
+ * and a rule wherever two members meet. Members inside another (a
+ * picker's root box under its input, list and preview) meet nothing.
+ */
+export function panelLayout(
+  cluster: FloatCluster,
+  boxes: ReadonlyMap<number, GridBox>,
+  cell: { readonly width: number; readonly height: number },
+  padBlock: number,
+): { parts: PanelPart[]; rules: PanelRule[] } {
+  const { width: cw, height: ch } = cell;
+  const grown = cluster.members.map((m) => {
+    const box = boxes.get(m.grid);
+    const crop = box?.crop;
+    const r = m.rect;
+    const others = cluster.members
+      .filter((o) => o !== m && !inside(r, o.rect))
+      .map((o) => o.rect);
+    const spans = (o: CellRect, vertical: boolean) =>
+      vertical
+        ? gap(r.col, r.col + r.width, o.col, o.col + o.width) < 0
+        : gap(r.row, r.row + r.height, o.row, o.row + o.height) < 0;
+    const across = (side: Side, room: number) =>
+      others.some((o) => {
+        if (side === "bottom") {
+          const d = o.row - (r.row + r.height);
+          return spans(o, true) && d >= 0 && d <= room;
+        }
+        if (side === "top") {
+          const d = r.row - (o.row + o.height);
+          return spans(o, true) && d >= 0 && d <= room;
+        }
+        return false;
+      });
+    const block = (side: "top" | "bottom") => {
+      const room = crop?.[side] ?? 0;
+      if (room < 1) return 0;
+      return across(side, room) ? room * ch : padBlock;
+    };
+    const left = (crop?.left ?? 0) >= 1 ? cw : 0;
+    const right = (crop?.right ?? 0) >= 1 ? cw : 0;
+    const top = block("top");
+    const bottom = block("bottom");
+    const rect: PixelRect = {
+      x: r.col * cw - left,
+      y: r.row * ch - top,
+      w: r.width * cw + left + right,
+      h: r.height * ch + top + bottom,
+    };
+    const header =
+      (box?.header ?? 0) > 0
+        ? { x: rect.x, y: r.row * ch, w: rect.w, h: (box?.header ?? 0) * ch }
+        : undefined;
+    const footer =
+      (box?.footer ?? 0) > 0
+        ? {
+            x: rect.x,
+            y: (r.row + r.height - (box?.footer ?? 0)) * ch,
+            w: rect.w,
+            h: (box?.footer ?? 0) * ch,
+          }
+        : undefined;
+    return { m, rect, header, footer };
+  });
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.5;
+  // Whether `others` cover the strip just past `side` of `rect` whole.
+  const coveredPast = (rect: PixelRect, side: Side, self: number) => {
+    const vertical = side === "left" || side === "right";
+    const from = vertical ? rect.y : rect.x;
+    const to = vertical ? rect.y + rect.h : rect.x + rect.w;
+    const at =
+      side === "left"
+        ? rect.x - 0.5
+        : side === "right"
+          ? rect.x + rect.w + 0.5
+          : side === "top"
+            ? rect.y - 0.5
+            : rect.y + rect.h + 0.5;
+    const spans = grown
+      .filter((g) => g.m.grid !== self)
+      .map((g) => g.rect)
+      .filter((o) =>
+        vertical ? at >= o.x && at <= o.x + o.w : at >= o.y && at <= o.y + o.h,
+      )
+      .map((o) => (vertical ? [o.y, o.y + o.h] : [o.x, o.x + o.w]))
+      .sort((p, q) => (p[0] ?? 0) - (q[0] ?? 0));
+    let reach = from;
+    for (const [s, e] of spans) {
+      if ((s ?? 0) > reach + 0.5) return false;
+      reach = Math.max(reach, e ?? 0);
+    }
+    return reach >= to - 0.5;
+  };
+  const parts: PanelPart[] = grown.map((g) => ({
+    grid: g.m.grid,
+    rect: g.rect,
+    outer: {
+      top: !coveredPast(g.rect, "top", g.m.grid),
+      right: !coveredPast(g.rect, "right", g.m.grid),
+      bottom: !coveredPast(g.rect, "bottom", g.m.grid),
+      left: !coveredPast(g.rect, "left", g.m.grid),
+    },
+    ...(g.header ? { header: g.header } : {}),
+    ...(g.footer ? { footer: g.footer } : {}),
+  }));
+  const rules: PanelRule[] = [];
+  grown.forEach((a, i) => {
+    grown.forEach((b, j) => {
+      if (j <= i) return;
+      if (inside(a.m.rect, b.m.rect) || inside(b.m.rect, a.m.rect)) return;
+      const A = a.rect;
+      const B = b.rect;
+      const y0 = Math.max(A.y, B.y);
+      const y1 = Math.min(A.y + A.h, B.y + B.h);
+      const x0 = Math.max(A.x, B.x);
+      const x1 = Math.min(A.x + A.w, B.x + B.w);
+      if (y1 - y0 > 0.5) {
+        if (near(A.x + A.w, B.x))
+          rules.push({ x: B.x, y: y0, w: 0, h: y1 - y0 });
+        else if (near(B.x + B.w, A.x))
+          rules.push({ x: A.x, y: y0, w: 0, h: y1 - y0 });
+      }
+      if (x1 - x0 > 0.5) {
+        if (near(A.y + A.h, B.y))
+          rules.push({ x: x0, y: B.y, w: x1 - x0, h: 0 });
+        else if (near(B.y + B.h, A.y))
+          rules.push({ x: x0, y: A.y, w: x1 - x0, h: 0 });
+      }
+    });
+  });
+  // A seam a cell wide between members without a border: a rule through
+  // its middle.
+  for (const s of cluster.seams) {
+    const cx = (s.col + s.width / 2) * cw;
+    const cy = (s.row + s.height / 2) * ch;
+    const filled = grown.some(
+      (g) =>
+        cx > g.rect.x &&
+        cx < g.rect.x + g.rect.w &&
+        cy > g.rect.y &&
+        cy < g.rect.y + g.rect.h,
+    );
+    if (filled) continue;
+    if (s.width === 1)
+      rules.push({
+        x: (s.col + 0.5) * cw,
+        y: s.row * ch,
+        w: 0,
+        h: s.height * ch,
+      });
+    else
+      rules.push({
+        x: s.col * cw,
+        y: (s.row + 0.5) * ch,
+        w: s.width * cw,
+        h: 0,
+      });
+  }
+  return { parts, rules };
 }

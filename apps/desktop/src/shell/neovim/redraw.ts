@@ -1037,6 +1037,13 @@ export interface GridBox {
    * DevHub's own frame, as with no border — and a click there falls through.
    */
   readonly crop?: Margins;
+  /**
+   * Of a blank border's rows, those kept because they hold text (a
+   * `title`, a `footer`): the float's header and footer, drawn as bands
+   * (docs/neovim-editor.md, "Floating surfaces").
+   */
+  readonly header?: number;
+  readonly footer?: number;
   /** A float with a border of lines: no frame of DevHub's. */
   readonly lined?: boolean;
   /**
@@ -1047,6 +1054,11 @@ export interface GridBox {
   readonly frame?: FloatFrame;
   /** Its border holds text its known `title` / `footer` do not explain. */
   readonly wantsLabels?: boolean;
+  /**
+   * A float its page frames itself (a tmux popup, the chooser's preview):
+   * drawn as its cells, with no panel of DevHub's round it.
+   */
+  readonly bare?: boolean;
 }
 
 /**
@@ -1060,6 +1072,8 @@ export function floatBorder(
   labels?: FloatLabels,
 ): {
   crop?: Margins;
+  header?: number;
+  footer?: number;
   lined?: boolean;
   frame?: FloatFrame;
   wantsLabels?: boolean;
@@ -1097,6 +1111,8 @@ export function floatBorder(
   if (sides && left + right > 0)
     return {
       crop: { top: top - keepTop, right, bottom: bottom - keepBottom, left },
+      ...(keepTop > 0 ? { header: keepTop } : {}),
+      ...(keepBottom > 0 ? { footer: keepBottom } : {}),
     };
   return seen.labels ? { lined: true, wantsLabels: true } : { lined: true };
 }

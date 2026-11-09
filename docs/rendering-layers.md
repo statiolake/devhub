@@ -48,8 +48,10 @@ What follows the rule in code:
   grid (its canvas, or a window's scroll port holding canvas over ghost),
   what rides its text (inline images, cards, decorations), what lies over
   a grid (a pinned winbar, a slide), the cursor, what covers its cells (GUI
-  windows, views), the frame's labels — never by which element was
-  appended last.
+  windows, views), the frame's labels and a panel's 1px outline and
+  rules (a float's line is an element, never painted into a canvas, as
+  rule 3 has it; "Floating surfaces" in `docs/neovim-editor.md`) — never
+  by which element was appended last.
 - `GridPainter.over(grid, part)`: what the page lays over a grid — riders,
   the cursor, covers — is in a clip of that grid's own in its level
   (`overflow: hidden` at the grid's text area: a window's without its

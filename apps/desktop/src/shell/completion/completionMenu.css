@@ -1,9 +1,12 @@
 /*
  * The completion menu, one look across DevHub (`CompletionMenu.tsx`): the
  * Neovim editor's (`ext_popupmenu`) and the tmux prompt's in a control-mode
- * terminal. A popup in the floats' radius (6 px), its rows the editor's
- * line. The selection is a band inset half the radius (3 px) and rounded by
- * the rest (3 px), so its corners are concentric with the menu's. Side
+ * terminal. A floating surface (`tokens.css`): the floats' corner, 1px
+ * line, shadow and fade, its ground and line the page's `--float-ground`
+ * and `--float-line` (the theme's `Pmenu` over them where it says one),
+ * its rows the editor's line. The selection is a band inset
+ * `--float-band-inset` (2 px) and rounded by the rest of the corner
+ * (2 px), so its corners are concentric with the menu's. Side
  * padding makes one cell from the menu's edge to the mark; a cell between
  * the mark and the word. The words are in the terminal's face (Neovim gives
  * its own editor font inline), so a candidate looks as it will once typed.
@@ -15,7 +18,7 @@
  * `--completion-extra-sel`, `--completion-muted`.
  */
 .completion-menu {
-  --completion-inset: 3px;
+  --completion-inset: var(--float-band-inset);
 
   position: absolute;
   z-index: 450;
@@ -28,25 +31,24 @@
   /* The bar's room kept whether it shows or not: a list that grows past
      its height does not narrow its column (docs/motion.md). */
   scrollbar-gutter: stable;
-  border-radius: 6px;
-  background: var(--raised, var(--surface));
-  color: var(--primary);
-  box-shadow:
-    0 0 0 1px var(--line),
-    0 8px 24px rgb(0 0 0 / 24%);
+  border: 1px solid var(--float-line);
+  border-radius: var(--float-radius);
+  background: var(--float-ground);
+  color: var(--float-ink);
+  box-shadow: var(--float-shadow);
   font-family: var(--font-mono);
   text-autospace: no-autospace;
   text-spacing-trim: space-all;
   font-variant-ligatures: none;
-  animation: completion-arrive 90ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: var(--float-arrive);
 }
 
 .completion-menu-item {
   display: flex;
   align-items: baseline;
   height: var(--completion-row);
-  padding: 0 calc(var(--completion-cell) - var(--completion-inset));
-  border-radius: calc(6px - var(--completion-inset));
+  padding: 0 calc(var(--completion-cell) - var(--completion-inset) - 1px);
+  border-radius: calc(var(--float-radius) - var(--completion-inset));
   white-space: nowrap;
 }
 
@@ -103,17 +105,4 @@
 
 .completion-menu-selected .completion-menu-extra {
   color: var(--completion-extra-sel, var(--completion-extra, inherit));
-}
-
-@keyframes completion-arrive {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .completion-menu {
-    animation: none;
-  }
 }

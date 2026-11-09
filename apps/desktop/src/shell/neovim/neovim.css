@@ -179,22 +179,15 @@
 /*
  * Floats: one shadow per panel of them (`floats.ts`: floats edge to edge
  * are one panel, a float alone is one too), under the union of their
- * outlines, with DevHub's hairline unless every member draws a border of
- * lines itself; the canvases round only the panel's outer corners.
+ * grounds — the floating surfaces' grounded shadow (`tokens.css`). Their
+ * 1px line and rules are elements over the members (`.nvim-frame-labels`).
  */
 .nvim-float-shadow {
   position: absolute;
   left: 0;
   top: 0;
   pointer-events: none;
-  filter: drop-shadow(
-      0 0 0.6px color-mix(in srgb, var(--primary) 30%, transparent)
-    )
-    drop-shadow(0 6px 10px rgb(0 0 0 / 22%));
-}
-
-.nvim-float-shadow.nvim-float-shadow-lined {
-  filter: drop-shadow(0 6px 10px rgb(0 0 0 / 20%));
+  filter: var(--float-shadow-filter);
 }
 
 .nvim-float-shadow.nvim-float-shadow-none {
@@ -225,6 +218,10 @@
   left: 0;
   top: 0;
   pointer-events: none;
+}
+
+.nvim-frame-labels > div {
+  position: absolute;
 }
 
 .nvim-frame-labels > .nvim-frame-label {
@@ -353,20 +350,22 @@
 
 /*
  * The command line's box (`Cmdline`, `cmdlinePlace`; mock 2): one box for
- * `:`, `/`, a prompt alike, at the bottom. A hairline and an 8 px radius,
- * enough to tell typed text from the windows' text while it is up; a
- * shadow only when it floats over the windows (`cmdheight=0`), where it
- * stands on them. The text is on cells; the box's own words (badge, count)
- * are labels in the UI face.
+ * `:`, `/`, a prompt alike, at the bottom. A floating surface (`tokens.css`):
+ * the float's ground, ink and 1px line from the theme (`NormalFloat`,
+ * `FloatBorder`), so it is of one material with the completion menu that
+ * opens over it; its shadow only when it floats over the windows
+ * (`cmdheight=0`), where it stands on them — in the rows it is in, it
+ * stands on nothing. The text is on cells; the box's own words (badge,
+ * count) are labels in the UI face.
  */
 .nvim-cmdline {
   position: absolute;
   z-index: var(--nvim-band-cmdline);
   box-sizing: border-box;
-  border-radius: 8px;
-  background: var(--raised, var(--surface));
-  color: var(--primary);
-  border: 1px solid var(--line);
+  border-radius: var(--float-radius);
+  background: var(--float-ground);
+  color: var(--float-ink);
+  border: 1px solid var(--float-line);
   /* The grid's own font is set on the element (`fontOf`); this is the
      token the rule stands on until it is. */
   font-family: "DevHub Nerd Symbols", var(--font-mono);
@@ -378,7 +377,7 @@
 }
 
 .nvim-cmdline-floating {
-  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+  box-shadow: var(--float-shadow);
 }
 
 /* The rows cmdheight keeps while nothing is typed: Neovim's own line, no
@@ -475,8 +474,8 @@
   position: absolute;
   z-index: var(--nvim-band-cmdwin);
   box-sizing: border-box;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--float-line);
+  border-radius: var(--float-radius);
   pointer-events: none;
   overflow: hidden;
 }
@@ -486,8 +485,8 @@
   align-items: center;
   gap: 8px;
   padding: 0 12px;
-  background: var(--raised, var(--surface));
-  border-bottom: 1px solid var(--line);
+  background: var(--float-band);
+  border-bottom: 1px solid var(--float-line);
   font-family: var(--nvim-ui-font);
   font-size: var(--nvim-label-size, 11px);
   color: var(--secondary, var(--primary));
@@ -540,7 +539,7 @@
 }
 
 .nvim-cmdline-caret-block {
-  color: var(--raised, var(--surface));
+  color: var(--float-ground);
 }
 
 /* An IME composing in the bar: its preedit carries the caret. */
@@ -875,7 +874,9 @@
 /*
  * A popup (gui.popup, a hover): DevHub's own, at a buffer position. As wide
  * and tall as its content, up to its maximum (then it scrolls, with a fade
- * at the clipped edge); tight, even spacing; the floats' frame.
+ * at the clipped edge); a floating surface (`tokens.css`): its 1px line,
+ * corner, shadow and padding are the floats', a cell inline and the
+ * block padding above and below.
  */
 .nvim-popup {
   position: absolute;
@@ -883,18 +884,16 @@
   box-sizing: border-box;
   width: max-content;
   overflow: hidden;
-  border-radius: 6px;
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--primary) 12%, transparent),
-    0 8px 24px rgb(0 0 0 / 24%);
+  border: 1px solid var(--float-line);
+  border-radius: var(--float-radius);
+  box-shadow: var(--float-shadow);
   font: var(--nvim-ui-size, 12px) / 1.45 var(--nvim-ui-font);
+  animation: var(--float-arrive);
 }
 
 /* It has the keys: j/k scroll it, q closes it. */
 .nvim-popup-focused {
-  box-shadow:
-    0 0 0 1px var(--nvim-ring),
-    0 8px 24px rgb(0 0 0 / 24%);
+  border-color: var(--nvim-ring);
 }
 
 .nvim-popup-scroll {
@@ -905,7 +904,7 @@
 .nvim-popup-body {
   box-sizing: border-box;
   width: max-content;
-  padding: 6px 10px;
+  padding: var(--float-pad-block) var(--float-cell, 1ch);
   overflow-wrap: anywhere;
 }
 
@@ -969,7 +968,7 @@
 
 .nvim-popup .nvim-rich-code {
   padding: 5px 8px;
-  border-radius: 5px;
+  border-radius: var(--float-radius);
   font-size: var(--nvim-font-size, 12px);
 }
 

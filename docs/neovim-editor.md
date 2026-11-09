@@ -215,16 +215,19 @@ z-order and opaque canvas — and where the code still falls short:
   the special colour, `reverse`, float `blend`. Floats edge to edge (or a
   cell apart) at about the same `zindex` are one panel — a picker's input,
   list and preview (`floats.ts`'s `floatClusters`): one shadow under the
-  union of their outlines (an element of grounds per cluster, under the
-  canvases, with a `drop-shadow`), a one-cell seam between them filled with
-  their ground, only the panel's outer corners rounded; a float alone is a
+  union of their grounds (an element of grounds per cluster, under the
+  canvases, with the floats' `drop-shadow`), a 1px rule where two members
+  meet, only the panel's outer corners rounded; a float alone is a
   panel of one, and one with `winblend` gets none. A float without a border
-  gets DevHub's frame (that shadow, a hairline, rounded corners); one whose
-  border is blank cells (`'solid'`, a table of spaces — Neovim says
-  where a border is with `win_viewport_margins`) is drawn as with none:
-  only its text area, where Neovim put it, in that frame, and a click on
-  the left-out border falls through (`GridBox.crop`); a blank border
-  with a title or footer keeps that row, a header inside the frame. One
+  gets DevHub's frame ("Floating surfaces", below: the shadow, a 1px line,
+  rounded corners); one whose border is blank cells (`'solid'`, a table
+  of spaces — Neovim says where a border is with `win_viewport_margins`)
+  keeps its text where Neovim put it and grows the frame into the border
+  Neovim kept for it: its whole cell inline, the block padding above and
+  below (the whole row where another member of the panel is across it, so
+  the two meet at a rule), and a click on the border falls through
+  (`GridBox.crop`, `panelLayout`); a blank border with a title or footer
+  keeps that row, a header or footer band inside the frame. One
   whose border is lines (`'rounded'`, `'single'`, `'double'`, heavy,
   dashed, a table of box-drawing characters) is cut at its line
   (`frame.ts`, `GridBox.frame`): the line is the float's edge, nothing of
@@ -566,9 +569,11 @@ z-order and opaque canvas — and where the code still falls short:
   and a prompt alike. The bottom is Neovim's promise that what is typed,
   the answer to it, the mode and the ruler are in one place; one box for
   all keeps that place and shape whatever is typed, and only the badge
-  before the text (`:`, `/`) differs. The box is a hairline with an 8 px
-  radius, enough to tell typed text from the windows' text while it is up,
-  and has no arrival.
+  before the text (`:`, `/`) differs. The box is a floating surface
+  ("Floating surfaces"): `NormalFloat`'s ground and ink, `FloatBorder`'s
+  1px line and the floats' corner — the material of the completion menu
+  that opens over it — enough to tell typed text from the windows' text
+  while it is up, and has no arrival.
   - With `cmdheight` > 0 it is in those rows, centred: the rows the person
     kept are where they read what they type. Content taller than them (a
     prompt's question, a wrapped line, `cmdline_block`) grows the box
@@ -599,6 +604,59 @@ z-order and opaque canvas — and where the code still falls short:
   before the text, so a candidate sits over the word it completes.
 - Floats are kept on the screen as Neovim's own compositor keeps them: one
   that would run past the right or bottom edge is moved in.
+
+### Floating surfaces
+
+Everything that floats over the cells has one look, the person's pick of
+three mocks (「接地」, grounded): Neovim's floats and panels of them (hovers,
+signature help, diagnostics, `gui.popup`, the snacks picker, which-key),
+the completion menu (`shell/completion`), the command line's box and its
+window, the messages pager, and tmux's `display-popup`, `display-menu`,
+`choose-tree` and the prompt's completion. The values are tokens
+(`shell/styles/tokens.css`, "Floating surfaces"); the painter reads the
+three it needs as numbers (`floatToken`).
+
+| token                                     | value                                                     | why                                                                                                                                                                              |
+| ----------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--float-radius`                          | 4px                                                       | a quarter of a row: it ends inside the padding, so a corner never reaches text and reads as a part's corner. 6 and 8 px corners with no padding put text into the curve, a blob. |
+| `--float-band-inset`                      | 2px                                                       | a selected row's band, inset 2 and rounded 2: concentric with the 4 px corner.                                                                                                   |
+| `--float-pad-block`, inline a cell        | 4px                                                       | the padding, inside the blank border Neovim keeps (`'solid'`): nothing moves, no click changes, and the text no longer touches the edge.                                         |
+| `--float-shadow`, `--float-shadow-filter` | `0 1px 2px` + `0 2px 6px`, 10 %/6 % Light, 40 %/24 % Dark | close: gone within a third of a row, so a panel is put down on the page, not lifted off it; the same at every size; stronger in Dark, where a light one cannot be seen.          |
+| `--float-arrive`                          | a fade, `--motion-fast`                                   | what comes and goes with each key does not travel (the completion menu's 4 px slide is gone).                                                                                    |
+
+Colours are the theme's own groups, never DevHub's chrome: `--float-ground`
+and `--float-ink` are `NormalFloat`'s, `--float-line` is `FloatBorder`'s
+ink, a 1px CSS border on whole device pixels (it replaces a hairline faked
+with a blurred `drop-shadow`), and `--float-band` is `StatusLine`'s ground
+(`floatLook`). A `FloatBorder` that is only the float's own ink or ground
+(a config links it to `NormalFloat` so `'solid'` draws nothing) names no
+line; the line is then the ground 18 % toward the ink, where themes put
+`FloatBorder`. With no `StatusLine` the band is half way between the
+editor's ground and the float's. The editor sets them on `.nvim-host`
+for what DevHub draws over it. A tmux surface takes them from the
+terminal's colours (`popup.css`): its ground is the panes' 7 % toward the
+ink (in DevHub's themes that is `NormalFloat`), so a popup is never the pane
+it stands on (the painter grounds the popup's grid in the same mix,
+`popupGround`); its line 18 % on from there; its band half way.
+
+A title is a band: a row in the band's ground with a 1px line under it
+(a footer's above it), across the panel's padding — the float's status
+line, in the ground the theme gives that role. Every band is one row
+tall, the cell's height: a Neovim title row is one, and a tmux popup's
+title is its border row (the person: 「一行と同じくらいの高さあったほうが
+バランス取れるやろ」), as are a menu's title and the chooser's filter. A
+tmux popup with a border keeps that row's whole cell inline and only the
+block padding below its text, as a Neovim float does.
+
+Where two members of a panel meet (a picker's input over its list, the
+list beside the preview), a 1px rule in the line's colour; the outline is
+drawn only on the sides on the panel's edge, the corners rounded only
+where they are the panel's. A float without a border has no room kept for
+padding and none is taken from its neighbours: its frame is at its cells.
+A float whose border is lines (`'rounded'`, `'single'`) keeps its lines,
+radius and labels as drawn (`frame.ts`), with the same shadow. The
+chooser's preview is a picture of the pane, in the pane's ground. Inline
+cards (review threads) ride a line rather than float, and keep their card.
 
 ### Messages
 
@@ -1271,9 +1329,10 @@ across DevHub:
 - _Labels_ (the kind's name, `PmenuKind`; the item's source, `PmenuExtra`;
   `*Sel` on the selected row) are in the UI face a step under the
   editor's size: words about the word, not code.
-- _Shape._ The menu is a popup in the floats' radius (6 px, a third of
-  the default line). Its selection is a band rounded concentrically: inset
-  half the radius (3 px) and rounded by the rest (3 px), the menu's own
+- _Shape._ The menu is a floating surface ("Floating surfaces"): the
+  floats' corner (4 px), line and shadow. Its selection is a band rounded
+  concentrically: inset half the radius (2 px) and rounded by the rest
+  (2 px), the menu's own
   shape smaller, as Zed's; VS Code's square band in a rounded widget is two
   shapes. In a plugin's rounded float the selected row (a row whose every
   cell has a ground other than its neighbours') is drawn the same way,

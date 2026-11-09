@@ -1,17 +1,37 @@
 /* A `display-popup` DevHub runs (`ptyHost/control/popup.ts`): the frame
-   under its grid, which the painter draws at z 50 over the panes. Its look
-   is here alone, as tokens, so the mock's review changes nothing else
-   (`docs/terminal-mode.md`, phase 3). */
+   under its grid, which the painter draws at z 50 over the panes. A
+   floating surface (`tokens.css`, docs/neovim-editor.md "Floating
+   surfaces"), as the menu, the chooser and the prompt's completion are. */
+
+/* On the shell: the prompt's completion menu is beside the terminal, not
+   in it. */
+.control-terminal-shell {
+  /* The floating surfaces' colours, from the terminal's: a step off the
+     panes' ground toward the ink (7 %), so a popup is never the pane it
+     stands on — in DevHub's themes this is `NormalFloat`'s ground; its
+     1px line 18 % on from there (`FloatBorder`'s); a title's band half way
+     between the panes' ground and the popup's, where a theme puts
+     `StatusLine`. The painter grounds the popup's grid in the same mix
+     (`paneGrids.ts`, `POPUP_GROUND`). */
+  --float-ground: color-mix(
+    in srgb,
+    var(--terminal-foreground, CanvasText) 7%,
+    var(--terminal-background, Canvas)
+  );
+  --float-ink: var(--terminal-foreground, CanvasText);
+  --float-line: color-mix(
+    in srgb,
+    var(--terminal-foreground, CanvasText) 18%,
+    var(--float-ground)
+  );
+  --float-band: color-mix(
+    in srgb,
+    var(--terminal-foreground, CanvasText) 3.5%,
+    var(--terminal-background, Canvas)
+  );
+}
 
 .control-terminal {
-  /* The popup's border, as tmux draws one around it: a hairline. */
-  --popup-border: color-mix(
-    in srgb,
-    var(--terminal-foreground, currentColor) 24%,
-    transparent
-  );
-  --popup-radius: 6px;
-  --popup-shadow: 0 8px 28px rgb(0 0 0 / 14%), 0 1px 3px rgb(0 0 0 / 10%);
   /* The panes under it, faded towards their ground: the keys are the popup's. */
   --popup-under: color-mix(
     in srgb,
@@ -20,7 +40,7 @@
   );
   --popup-title: color-mix(
     in srgb,
-    var(--terminal-foreground, currentColor) 60%,
+    var(--terminal-foreground, currentColor) 75%,
     transparent
   );
 }
@@ -31,24 +51,35 @@
   z-index: var(--control-z-popupFrame);
   box-sizing: border-box;
   pointer-events: none;
-  background: var(--terminal-background, Canvas);
-  border-radius: var(--popup-radius);
+  background: var(--float-ground);
+  border-radius: var(--float-radius);
   box-shadow:
-    var(--popup-shadow),
+    var(--float-shadow),
     0 0 0 100vmax var(--popup-under);
 }
 
 .control-popup[data-border="true"] {
-  border: 1px solid var(--popup-border);
+  border: 1px solid var(--float-line);
 }
 
+/* Its title: a band one row tall — tmux's top border row, which it is —
+   in the band's ground with the 1px line under it, as a Neovim float's
+   title row is. */
 .control-popup-title {
   position: absolute;
-  top: -0.6em;
-  left: 12px;
-  padding: 0 4px;
-  background: var(--terminal-background, Canvas);
+  top: 0;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  height: calc(var(--control-row) - 1px);
+  overflow: hidden;
+  border-bottom: 1px solid var(--float-line);
+  border-radius: calc(var(--float-radius) - 1px) calc(var(--float-radius) - 1px)
+    0 0;
+  background: var(--float-band);
   color: var(--popup-title);
-  font-size: 11px;
-  line-height: 1.2;
+  font: 600 11px / calc(var(--control-row) - 2px)
+    var(--font-ui, system-ui, sans-serif);
+  text-align: center;
+  white-space: pre;
 }

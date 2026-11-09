@@ -10,7 +10,9 @@ import {
   paneOutlines,
   paneReach,
   plainBorders,
+  popupGround,
 } from "./paneGrids";
+import { resolveColors } from "../../neovim/painter";
 
 const key = (k: string, code = "", mods: Partial<KeyLike> = {}): KeyLike => ({
   key: k,
@@ -270,5 +272,61 @@ describe("panes as the painter's grids", () => {
       0x123456,
     );
     expect(hlOf({ underline: 3 }, defaults)).toEqual({ undercurl: true });
+  });
+});
+
+describe("a popup's ground", () => {
+  it("is the panes' a step toward the ink, under its default and its own styles", () => {
+    const view = newControlView({ foreground: 0xffffff, background: 0x000000 });
+    applyControl(view, {
+      kind: "popup",
+      id: 1,
+      x: 2,
+      y: 1,
+      width: 6,
+      height: 4,
+      border: true,
+      title: " t ",
+      modes: {
+        mouse: 0,
+        sgrMouse: false,
+        bracketedPaste: false,
+        focusEvents: false,
+        alternateScreen: false,
+      },
+      frame: {
+        cols: 4,
+        rows: 2,
+        full: true,
+        cursor: undefined,
+        styles: [
+          [1, { fg: 0xff0000 }],
+          [2, { bg: 0x0000ff }],
+        ],
+        dirty: [
+          {
+            y: 0,
+            cells: ["a", "b", "c", " "],
+            styles: new Uint32Array([0, 1, 2, 0]),
+          },
+        ],
+      },
+    });
+    const ground = popupGround(view.state.defaults);
+    expect(ground).toBe(0x121212);
+    const grid = view.state.grids.get(1);
+    const bg = (cell: number) =>
+      resolveColors(
+        view.state.hl.get(grid?.hls[cell] ?? 0),
+        view.state.defaults,
+      ).bg;
+    expect([bg(0), bg(1), bg(2), bg(3)]).toEqual([
+      ground,
+      ground,
+      0x0000ff,
+      ground,
+    ]);
+    // Its page frames it: no panel of the painter's round it.
+    expect(paneBoxes(view).find((b) => b.grid === 1)?.bare).toBe(true);
   });
 });

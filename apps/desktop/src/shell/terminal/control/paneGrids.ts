@@ -157,6 +157,18 @@ export const CHOOSER_GRID = 0;
 /** The popup's styles, apart from every pane's. */
 const POPUP_STYLES = "popup";
 
+/**
+ * A popup's ground: the panes' a step toward their ink (7 %), so a popup is
+ * never the pane it stands on — `popup.css`'s `--float-ground`, the same
+ * mix, which its frame wears.
+ */
+export function popupGround(defaults: {
+  readonly foreground: number;
+  readonly background: number;
+}): number {
+  return mixColors(defaults.background, defaults.foreground, 7);
+}
+
 /** One engine's frame into its grid: a pane's, the popup's. */
 function applyFrame(
   view: ControlView,
@@ -165,15 +177,32 @@ function applyFrame(
   frame: VtFrame,
   changes: RedrawChanges,
 ): void {
-  for (const [styleId, style] of frame.styles) {
-    const key = `${owner}:${String(styleId)}`;
+  // A popup's cells stand on the popup's ground, not the panes'.
+  const ground =
+    owner === POPUP_STYLES ? popupGround(view.state.defaults) : undefined;
+  const defaults =
+    ground === undefined
+      ? view.state.defaults
+      : { ...view.state.defaults, background: ground };
+  const hlId = (key: string) => {
     let hl = view.hlIds.get(key);
     if (hl === undefined) {
       hl = view.hlIds.size + 1;
       view.hlIds.set(key, hl);
     }
-    view.state.hl.set(hl, hlOf(style, view.state.defaults));
+    return hl;
+  };
+  for (const [styleId, style] of frame.styles) {
+    const hl = hlOf(style, defaults);
+    view.state.hl.set(
+      hlId(`${owner}:${String(styleId)}`),
+      ground !== undefined && style.bg === undefined
+        ? { ...hl, background: ground }
+        : hl,
+    );
   }
+  if (ground !== undefined)
+    view.state.hl.set(hlId(`${owner}:0`), { background: ground });
   let grid = view.state.grids.get(id);
   if (
     grid === undefined ||
@@ -204,7 +233,7 @@ function applyFrame(
       grid.chars[at + x] = row.cells[x];
       const styleId = row.styles[x];
       grid.hls[at + x] =
-        styleId === 0
+        styleId === 0 && ground === undefined
           ? 0
           : (view.hlIds.get(`${owner}:${String(styleId)}`) ?? 0);
     }
@@ -427,6 +456,7 @@ export function paneBoxes(view: ControlView): GridBox[] {
             height: popup.height - 2 * inset,
             z: CONTROL_Z.popup,
             float: true,
+            bare: true,
             win: undefined,
           },
         ];
@@ -443,6 +473,7 @@ export function paneBoxes(view: ControlView): GridBox[] {
             height: chooser.preview.height,
             z: CONTROL_Z.chooserPreview,
             float: true,
+            bare: true,
             win: undefined,
           },
         ];

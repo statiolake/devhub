@@ -3,8 +3,9 @@
  */
 
 /**
- * The completion list's cap, and its inset at each end (the band's inset,
- * `BAND_INSET`), as `neovim.css` draws them; a row is the editor's line.
+ * The completion list's cap, and what it has at each end past its rows:
+ * the band's inset and the 1px line (`--float-band-inset`, 2 + 1), as
+ * `completionMenu.css` draws them; a row is the editor's line.
  */
 const PUM_MAX = 280;
 const PUM_PAD = 3;
