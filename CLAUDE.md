@@ -4,8 +4,9 @@
   reproduces CI on this machine — Linux included — fmt, lint, every typecheck
   (the desktop's main process included), vitest, `test:pty` under DevHub's own
   Electron, the script tests and the app smoke test under `xvfb-run` against
-  the packaged layout. There is nothing to provision beyond `pnpm install`
-  (DevHub has no VS Code any more: `docs/without-vscode.md`).
+  the packaged layout. Beyond `pnpm install` it needs Go on PATH, for the
+  `devhub` CLI in `cli/` (`docs/devhub-cli.md`); there is no VS Code to
+  provision any more (`docs/without-vscode.md`).
 - Iterate locally: name only the stages you need, e.g.
   `scripts/test-local.sh --no-provision vitest pty`. Logs are in
   `.spike/test-local/<stage>.log`.
