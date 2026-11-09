@@ -91,9 +91,10 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   siblings in `.nvim-host`. Which one is on top is the order React and the
   editor happened to insert them. Bug: the cursor block over a GUI window's
   iframe, or a line decoration over the cursor, depending on mount order.
-  **Open**: needs a declared order for riders (decorations and cards under
-  the cursor, GUI windows and views over it) as parts of the window's
-  level.
+  **Fixed** ("Neovim editor: the cursor stacks over riders and under GUI
+  windows, by declaration"): `ABOVE_GRID` puts riders at the grid's z + 1,
+  the cursor at + 2 and what covers the cells (GUI windows, views) at + 3.
+  Clipping them by the window's layer is still open (below).
 - `neovim.css:181,277,389,501,559,807` and `editor.ts:972` DevHub's own
   overlays (popup 300, preedit 300/401, command-line window 390, command
   line 400, status 500, toasts 600) share one integer space with floats at
@@ -169,7 +170,7 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 
 1. Declared overlay tiers in Neovim's zindex space (floats vs DevHub's
    command line, popups and toasts).
-2. Cursor and riders as parts of their window's level, clipped by it.
+2. Cursor and riders inside their window's layer, clipped by it.
 3. Separators as elements, from grounds the windows state.
 4. `underFrames` replaced by a clip of the framed floats.
 5. The control surface's z table; prompt over a popup.

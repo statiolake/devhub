@@ -40,6 +40,7 @@ import type {
   ViewPlace,
 } from "./layers";
 import { placePopup, popupMaxWidth, popupScrollTop } from "./popup";
+import { ABOVE_GRID } from "./painter";
 import type { GridBox } from "./redraw";
 
 interface Cell {
@@ -185,7 +186,7 @@ function GuiView({
     top: box.row * cell.height,
     width: box.width * cell.width,
     height: box.height * cell.height,
-    zIndex: box.z + 2,
+    zIndex: box.z + ABOVE_GRID.covers,
     background: rgbCss(theme.bg),
     color: rgbCss(theme.fg),
     ["--nvim-ring" as string]: ring,
@@ -345,7 +346,7 @@ export function InlineCards({
           top: (box.row + place.row) * cell.height,
           width: place.width * cell.width,
           height: place.rows * cell.height,
-          zIndex: box.z + 1,
+          zIndex: box.z + ABOVE_GRID.riders,
         }}
       >
         <InlineCard
@@ -502,7 +503,7 @@ export function LineDecorations({
               top: (box.row + place.row) * cell.height,
               width: place.width * cell.width,
               height: place.rows * cell.height,
-              zIndex: box.z + 1,
+              zIndex: box.z + ABOVE_GRID.riders,
             }}
           />
         );

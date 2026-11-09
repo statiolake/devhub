@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ABOVE_GRID,
   PART_Z,
   gridBlends,
   isOwnGround,
@@ -80,5 +81,18 @@ describe("a level's parts", () => {
       "utf8",
     );
     expect(source).not.toMatch(/\.prepend\(|lastElementChild/);
+  });
+});
+
+describe("what the page lays over a grid", () => {
+  it("is riders, then the cursor, then what covers the grid's cells", () => {
+    expect(ABOVE_GRID.riders).toBeLessThan(ABOVE_GRID.cursor);
+    expect(ABOVE_GRID.cursor).toBeLessThan(ABOVE_GRID.covers);
+  });
+
+  it("stays under the next float's zindex band only by its own z", () => {
+    // Windows are at 1, floats at 100 + zindex: a window's overlays never
+    // reach a float.
+    expect(1 + ABOVE_GRID.covers).toBeLessThan(100);
   });
 });

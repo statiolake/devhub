@@ -51,6 +51,7 @@ import {
 import { cmdlineLayout, cmdlineLead, textCells } from "./cmdline";
 import { routeMessages } from "./messages";
 import {
+  ABOVE_GRID,
   ICON_FAMILY,
   cssColor,
   fontOf,
@@ -656,7 +657,7 @@ function NeovimSurface({
                         top: box.row * cell.height,
                         width: box.width * cell.width,
                         height: box.height * cell.height,
-                        zIndex: box.z + 1,
+                        zIndex: box.z + ABOVE_GRID.covers,
                         background: cssColor(nvim.defaults.background),
                       }}
                       onMouseDown={(event) => {
@@ -682,7 +683,7 @@ function NeovimSurface({
                   top: (box.row + inset) * cell.height,
                   width: (box.width - 2 * inset) * cell.width,
                   height: (box.height - 2 * inset) * cell.height,
-                  zIndex: box.z + 1,
+                  zIndex: box.z + ABOVE_GRID.covers,
                   background: cssColor(nvim.defaults.background),
                 };
                 const current = win === guiWindows.current;

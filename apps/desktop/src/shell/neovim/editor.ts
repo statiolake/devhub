@@ -24,6 +24,7 @@ import {
   type RedrawChanges,
 } from "./redraw";
 import {
+  ABOVE_GRID,
   GridPainter,
   ICON_FAMILY,
   cssColor,
@@ -913,7 +914,7 @@ export class NeovimEditor {
       `${String(at.x)},${String(at.y)},${this.state.mode.name},${String(focused)}`,
     );
     this.cursor.style.zIndex = String(
-      (this.boxes.find((b) => b.grid === grid)?.z ?? 0) + 1,
+      (this.boxes.find((b) => b.grid === grid)?.z ?? 0) + ABOVE_GRID.cursor,
     );
     // The IME's candidate window opens at the textarea: keep it on the
     // cursor — the command line's, while the bar is up.

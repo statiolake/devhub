@@ -24,6 +24,7 @@ import { markPieces, type MdMark } from "./components";
 import type { GridBox } from "./redraw";
 import { toastGroups, type Decorations, type Toast } from "./decorations";
 import { veilMargin, veilMask, veilSigma, type VeilLine } from "./veil";
+import { ABOVE_GRID } from "./painter";
 
 interface Cell {
   readonly width: number;
@@ -342,7 +343,7 @@ export function InlineImages({
               top: (box.row + place.row) * cell.height,
               width: place.width * cell.width,
               height: place.rows * cell.height,
-              zIndex: box.z + 1,
+              zIndex: box.z + ABOVE_GRID.riders,
             }}
           >
             <img

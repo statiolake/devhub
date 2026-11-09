@@ -410,6 +410,15 @@ export const PART_Z = {
   labels: 4,
 } as const;
 
+/**
+ * What the page lays over a grid, at the grid's z plus this (its level is at
+ * the z itself): what rides the grid's text (inline images, cards, line
+ * decorations), then the cursor, then what covers the grid's cells whole (a
+ * GUI window, a view). Declared, so the cursor is never over a GUI window or
+ * under a decoration because of which was put in the page first.
+ */
+export const ABOVE_GRID = { riders: 1, cursor: 2, covers: 3 } as const;
+
 /** One ground under a panel of floats (`placeClusters`). */
 interface Piece {
   readonly x: number;
