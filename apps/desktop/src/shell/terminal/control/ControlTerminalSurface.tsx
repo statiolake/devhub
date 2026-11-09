@@ -89,6 +89,8 @@ import {
 } from "../../neovim/paneMotion";
 import type { TerminalSurfaceProps } from "../TerminalSurface";
 import { WindowStrip } from "./WindowStrip";
+import { ChooserSheet } from "./ChooserSheet";
+import { createRoot } from "react-dom/client";
 import { CompletionMenu } from "../../completion/CompletionMenu";
 import type { Kind } from "../../neovim/kinds";
 
@@ -279,9 +281,10 @@ export function ControlTerminalSurface({
     menuEl.setAttribute("role", "menu");
     menuEl.hidden = true;
     const chooserEl = document.createElement("div");
-    chooserEl.className = "control-chooser";
+    chooserEl.className = "control-chooser mac-sheet picker";
     chooserEl.setAttribute("role", "dialog");
     chooserEl.hidden = true;
+    const chooserRoot = createRoot(chooserEl);
     const numbersEl = document.createElement("div");
     const copyEl = document.createElement("div");
     // An IME's preedit, drawn at the cursor as the Neovim editor draws it.
@@ -1122,8 +1125,8 @@ export function ControlTerminalSurface({
         .querySelector<HTMLElement>('[aria-selected="true"]')
         ?.scrollIntoView({ block: "nearest" });
     };
-    // The picker (`chooser.css`): its frame and tree; the painter draws the
-    // preview's grid over it.
+    // The picker (`chooser.css`): the quick pick's look (`ChooserSheet`);
+    // the painter draws the chosen pane's grid in its aside.
     let chooserShown = "";
     const drawChooser = (width: number, height: number) => {
       const chooser = view.chooser;
@@ -1132,63 +1135,25 @@ export function ControlTerminalSurface({
         chooserShown = "";
         return;
       }
-      const key = JSON.stringify(chooser);
+      const key = JSON.stringify([chooser, width, height]);
       if (key === chooserShown) return;
       chooserShown = key;
-      // The tree and the preview are on the rows from `preview.y`. Over
-      // them the floats' block padding, and over that the filter's band,
-      // one row tall; under them the padding again (`chooser.css`). The
-      // rest of the rows the picker's box leaves are not drawn: a whole
-      // blank row under the band and over the bottom read as a gap, the
-      // band's text squeezed into its row with nothing round the list.
-      const rows = chooser.preview.height;
-      const pad = "var(--float-pad-block)";
       Object.assign(chooserEl.style, {
         left: `${String(chooser.x * width)}px`,
-        top: `calc(${String((chooser.preview.y - 1) * height)}px - ${pad})`,
+        top: `${String(chooser.y * height)}px`,
         width: `${String(chooser.width * width)}px`,
-        height: `calc(${String((rows + 1) * height)}px + 2 * ${pad})`,
+        height: `${String(chooser.height * height)}px`,
       });
-      const filter = document.createElement("div");
-      filter.className = "control-chooser-filter";
-      const typed = document.createElement("b");
-      typed.textContent = chooser.filter;
-      const caret = Object.assign(document.createElement("span"), {
-        className: "control-prompt-cursor",
-        textContent: " ",
-      });
-      filter.append(
-        chooser.filter === "" ? "Type to filter · " : "Filter: ",
-        typed,
-        caret,
+      chooserRoot.render(
+        <ChooserSheet
+          box={chooser}
+          preview={chooser.preview}
+          filter={chooser.filter}
+          rows={chooser.rows}
+          choice={chooser.choice}
+          cell={{ width, height }}
+        />,
       );
-      const tree = document.createElement("div");
-      tree.className = "control-chooser-tree";
-      tree.style.top = `calc(${String(height)}px + ${pad})`;
-      tree.style.width = `${String((chooser.preview.x - chooser.x) * width)}px`;
-      tree.style.font = `${String(font().size)}px/${String(height)}px ${font().family}`;
-      const visible = Math.max(1, rows);
-      const first = Math.max(
-        0,
-        Math.min(
-          chooser.choice - Math.floor(visible / 2),
-          chooser.rows.length - visible,
-        ),
-      );
-      chooser.rows.slice(first, first + visible).forEach((row, i) => {
-        const index = first + i;
-        const el = document.createElement("div");
-        el.className = "control-chooser-row";
-        el.dataset.index = String(index);
-        el.dataset.current = String(row.current);
-        el.setAttribute("aria-selected", String(index === chooser.choice));
-        const mark =
-          row.expanded === undefined ? "  " : row.expanded ? "▾ " : "▸ ";
-        el.textContent = `${"  ".repeat(row.depth)}${mark}${row.text}`;
-        el.style.paddingLeft = `${String(width)}px`;
-        tree.append(el);
-      });
-      chooserEl.replaceChildren(filter, tree);
     };
     // Copy mode (`copyMode.css`): tmux's position as a badge at the pane's
     // top right, and where the view is in the history as a thin bar.
@@ -1842,6 +1807,10 @@ export function ControlTerminalSurface({
       host.removeEventListener("contextmenu", noContextMenu);
       host.removeEventListener("mousedown", onMenuMouseDown, true);
       host.removeEventListener("mousedown", onChooserMouseDown, true);
+      // Not inside React's own commit: the root is let go once it is over.
+      queueMicrotask(() => {
+        chooserRoot.unmount();
+      });
       host.removeEventListener("paste", markTyped, true);
       if (receipt !== undefined) void detach(receipt);
       receipt = undefined;

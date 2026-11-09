@@ -160,6 +160,14 @@ export interface CopySpan {
 	readonly x1: number;
 }
 
+/**
+ * The rows of a chooser's frame above its tree and the chosen item's pane:
+ * the quick pick's header band (what is asked) and its search field (the
+ * filter), each two rows, so the pane's grid, which the painter draws on
+ * cells, starts on a row of its own under them (`docs/native-picker.md`).
+ */
+export const CHOOSER_HEAD_ROWS = 4;
+
 /** A row of the picker's tree. */
 export interface ChooserRow {
 	readonly depth: number;

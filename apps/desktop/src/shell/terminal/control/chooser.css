@@ -1,83 +1,101 @@
-/* The picker DevHub draws for `choose-tree` (`ptyHost/control/chooser.ts`):
-   a floating surface (`tokens.css`; its colours `popup.css`'s), the filter
-   a band one row tall, the floats' block padding between it and the tree
-   and the preview and under them (the frame is drawn round those rows, not
-   round the whole box the picker was given), the tree on its left in the terminal's font, the chosen item's pane on its
-   right (the painter's grid 0, over this frame). And `display-panes`' big
-   numbers. Their look is here alone, as tokens, as the mock has it
-   (`docs/terminal-mode.md`, phase 3). */
+/* The picker DevHub draws for `choose-tree` (`ptyHost/control/chooser.ts`)
+   in the quick pick's look (`ChooserSheet.tsx`, `docs/native-picker.md`):
+   the tree on its left, the chosen item's pane on its right (the painter's
+   grid 0, over this frame). And `display-panes`' big numbers. */
 
 .control-terminal {
-  --chooser-quiet: color-mix(
-    in srgb,
-    var(--terminal-foreground, currentColor) 50%,
-    transparent
-  );
-  --chooser-chosen: var(--menu-chosen);
   --numbers-ink: var(--control-cursor);
 }
 
-.control-chooser {
+/* The frame is the quick pick's (`mac-sheet picker`, macos.css): its
+   ground, header band, search field and rows, so tmux's chooser is the same
+   question DevHub asks everywhere else. Here only where it is (tmux's cells),
+   what it stands over, and the rows the pane's grid needs kept clear. */
+.control-chooser.mac-sheet {
   position: absolute;
   /* A pane's mode: under a popup (`stacking.ts`). */
   z-index: var(--control-z-chooser);
   box-sizing: border-box;
-  overflow: hidden;
-  border: 1px solid var(--float-line);
-  border-radius: var(--float-radius);
-  background: var(--float-ground);
+  max-height: none;
+  margin: 0;
+  border-radius: 10px;
   box-shadow:
-    var(--float-shadow),
+    var(--shadow-dialog),
     0 0 0 100vmax var(--popup-under);
-  color: var(--terminal-foreground, currentColor);
+  animation: none;
 }
 
 .control-chooser[hidden] {
   display: none;
 }
 
-.control-chooser-filter {
-  position: absolute;
-  inset: 0 0 auto;
+/* The header band and the field: exactly CHOOSER_HEAD_ROWS of the
+   terminal's rows, half each, so the grid starts on the row under them. */
+.control-chooser-head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
   box-sizing: border-box;
-  height: var(--control-row);
-  padding: 0 var(--control-cell, 1ch);
-  border-bottom: 1px solid var(--float-line);
-  border-radius: calc(var(--float-radius) - 1px) calc(var(--float-radius) - 1px)
-    0 0;
-  background: var(--float-band);
-  color: var(--chooser-quiet);
-  /* The bands' type (`tokens.css`): a prompt, so regular. */
-  font: var(--float-header-font-size) / calc(var(--control-row) - 1px)
-    var(--font-ui, system-ui, sans-serif);
+}
+
+.control-chooser-head > * {
+  flex: 1 1 0;
+  min-height: 0;
+  box-sizing: border-box;
+  padding-block: 0;
+  justify-content: center;
+}
+
+.control-chooser-head > .picker-search {
+  border-top: 1px solid var(--line-soft);
+}
+
+.control-chooser .picker-body {
+  min-height: 0;
+}
+
+.control-chooser .picker-results {
+  overflow-y: auto;
+  margin: 0;
+}
+
+.control-chooser-filter {
   white-space: pre;
-}
-
-.control-chooser-filter b {
-  color: var(--terminal-foreground, currentColor);
-  font-weight: normal;
-}
-
-.control-chooser-tree {
-  position: absolute;
-  left: 0;
-  bottom: var(--float-pad-block);
   overflow: hidden;
-  border-right: 1px solid var(--float-line);
-  white-space: pre;
 }
 
-.control-chooser-row {
+.control-chooser-placeholder {
+  color: var(--tertiary);
+}
+
+.control-chooser-caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 1.1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+}
+
+.control-chooser-disclosure {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.control-chooser-leaf {
+  width: 10px;
+}
+
+/* The chosen pane's grid is the painter's, over this. */
+.control-chooser-preview {
+  padding: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
-
-.control-chooser-row[aria-selected="true"] {
-  background: var(--chooser-chosen);
-}
-
-/* The client's own session, window and pane: tmux's flags say so in the
-   text (`*`); the row is not marked twice. */
 
 /* `display-panes`: each pane's index, large, in its middle. */
 .control-number {

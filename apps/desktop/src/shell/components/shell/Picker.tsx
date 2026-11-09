@@ -88,6 +88,7 @@ import { createPortal } from "react-dom";
 import { score } from "../../../model/fuzzy";
 import { isImeComposing } from "../../accessibility/ime";
 import { useInitialFocus } from "../../picker/initialFocus";
+import { PickerHeader, PickerRowText, PickerSearchGlyph } from "./PickerParts";
 
 /** One row: what is drawn, and what the query is matched against. */
 export interface PickerItem {
@@ -269,20 +270,6 @@ export interface CancelRow {
 
 /** The id the picker gives the row it draws for `cancelRow`. */
 const CANCEL_ROW = "devhub:picker-cancel";
-
-function SearchGlyph() {
-  return (
-    <svg
-      className="picker-search-glyph"
-      viewBox="0 0 16 16"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <circle cx="7" cy="7" r="4.2" />
-      <path d="M10.2 10.2 13.4 13.4" />
-    </svg>
-  );
-}
 
 const NO_PINNED: readonly PickerItem[] = [];
 
@@ -659,24 +646,16 @@ export function Picker({
             sentence under it are one statement, and the stack's rule goes
             between bands — a seam drawn between a heading and its own
             subtitle would read as two unrelated things. */}
-        <header className="picker-header">
-          <div className="picker-heading">
-            <h2 className="picker-title" id={headingId}>
-              {title}
-            </h2>
-            {step === undefined ? null : (
-              <span className="picker-step mac-caption">
-                Step {String(step)}
-              </span>
-            )}
-          </div>
-          <p className="picker-question mac-caption" id={questionId}>
-            {question}
-          </p>
-        </header>
+        <PickerHeader
+          title={title}
+          question={question}
+          {...(step === undefined ? {} : { step })}
+          headingId={headingId}
+          questionId={questionId}
+        />
 
         <div className="picker-search">
-          <SearchGlyph />
+          <PickerSearchGlyph />
           <input
             ref={input}
             className="picker-input"
@@ -760,22 +739,14 @@ export function Picker({
                       choose(item.id, event.altKey, event.metaKey);
                     }}
                   >
-                    {item.glyph ? (
-                      <span className="mac-list-glyph">{item.glyph}</span>
-                    ) : null}
-                    <span className="mac-list-text">
-                      <span className="mac-list-title">{item.label}</span>
-                      {item.detail ? (
-                        <span className="mac-list-subtitle mac-caption">
-                          {item.detail}
-                        </span>
-                      ) : null}
-                      {item.unavailable === undefined ? null : (
-                        <span className="mac-list-subtitle mac-caption picker-unavailable">
-                          {item.unavailable}
-                        </span>
-                      )}
-                    </span>
+                    <PickerRowText
+                      glyph={item.glyph}
+                      label={item.label}
+                      detail={item.detail}
+                      {...(item.unavailable === undefined
+                        ? {}
+                        : { unavailable: item.unavailable })}
+                    />
                     {item.accessory ? (
                       <span className="picker-accessory mac-caption">
                         {item.accessory(alternate)}

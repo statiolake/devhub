@@ -30,6 +30,7 @@
  */
 
 import {
+	CHOOSER_HEAD_ROWS,
 	NVIM_NAMED_OSC,
 	type ControlToPage,
 	type PageToControl,
@@ -1435,12 +1436,14 @@ export class ControlClient {
 			width,
 			height,
 		};
+		// The quick pick's look (`ChooserSheet`): its header and search field
+		// over the whole width, then the tree and, a column after it, the pane.
 		const treeWidth = Math.max(16, Math.floor(width * 0.4));
 		const preview = {
 			x: box.x + treeWidth + 1,
-			y: box.y + 2,
+			y: box.y + CHOOSER_HEAD_ROWS,
 			width: Math.max(1, width - treeWidth - 2),
-			height: Math.max(1, height - 3),
+			height: Math.max(1, height - CHOOSER_HEAD_ROWS - 1),
 		};
 		this.#chooser?.vt.dispose();
 		const vt = this.#o.vt.open(preview.width, preview.height, 0);
