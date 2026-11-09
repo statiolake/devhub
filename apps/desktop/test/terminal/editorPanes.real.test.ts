@@ -84,6 +84,24 @@ function panes(tmux: (args: readonly string[]) => string): PaneRow[] {
     });
 }
 
+/**
+ * The pane's row once it runs its program. Straight after `new-window` its
+ * process can still be tmux's own fork, not yet the program (on macOS it
+ * often is, and `pane_current_command` says `tmux`), so it is read until it
+ * is something else, for up to five seconds.
+ */
+function started(
+  tmux: (args: readonly string[]) => string,
+  paneId: string,
+): PaneRow | undefined {
+  const until = Date.now() + 5_000;
+  for (;;) {
+    const row = panes(tmux).find((pane) => pane.paneId === paneId);
+    if (row?.command !== "tmux" || Date.now() > until) return row;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+}
+
 describe.skipIf(TMUX === undefined)(
   "terminal mode's tmux commands, for real",
   () => {
@@ -95,7 +113,7 @@ describe.skipIf(TMUX === undefined)(
         editorWindowArgs(session, root, ["sleep", "600"]),
       ).trim();
       expect(paneId).toMatch(/^%[0-9]+$/u);
-      const row = panes(tmux).find((pane) => pane.paneId === paneId);
+      const row = started(tmux, paneId);
       expect(row).toMatchObject({
         windowIndex: 1,
         windowActive: false,
@@ -113,9 +131,7 @@ describe.skipIf(TMUX === undefined)(
       const paneId = tmux(
         editorWindowArgs(session, "/", ["sh", "-c", "sleep 600", "--listen"]),
       ).trim();
-      expect(
-        panes(tmux).find((pane) => pane.paneId === paneId)?.command,
-      ).toMatch(/sh|sleep/u);
+      expect(started(tmux, paneId)?.command).toMatch(/sh|sleep/u);
     });
   },
 );

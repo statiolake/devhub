@@ -337,8 +337,22 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
   it("draws choose-tree and display-panes, and tmux runs the choice", async () => {
     const socket = `devhub-choose-${String(process.pid)}`;
     sockets.push(socket);
-    tmux(socket, "new-session", "-d", "-s", "c", "-x", "80", "-y", "24", "sh");
-    tmux(socket, "split-window", "-t", "c", "sh");
+    // A pane's row names the program it runs, and a program called `sh`
+    // is not named so everywhere: macOS's `/bin/sh` runs bash, which tmux
+    // calls `bash`. `sleep` is `sleep` on every machine.
+    tmux(
+      socket,
+      "new-session",
+      "-d",
+      "-s",
+      "c",
+      "-x",
+      "80",
+      "-y",
+      "24",
+      "sleep 600",
+    );
+    tmux(socket, "split-window", "-t", "c", "sleep 600");
     const view = page();
     const client = new ControlClient({
       process: controlProcess(socket, "c"),
@@ -353,7 +367,7 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     client.receive({ kind: "keys", keys: ["C-q", "w"] });
     const picker = await until("the picker", () => view.chooser);
     // The client's own pane, the second, is where the keys start.
-    expect(picker.rows[picker.choice]?.text).toMatch(/^1: sh\*/);
+    expect(picker.rows[picker.choice]?.text).toMatch(/^1: sleep\*/);
     client.receive({ kind: "keys", keys: ["Up", "Enter"] });
     await until("the first pane chosen", () =>
       view.layout?.panes.find((p) => p.active)?.pane === top.pane
@@ -605,7 +619,11 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
         [[":", "w", "q", "Enter"], "0"],
         [[":", "c", "q", "Enter"], "1"],
       ] as const) {
-        type(`clear; nvim --clean -n -i NONE ${file}; echo "status=$?"\r`);
+        // The scrollback is emptied too (`\e[3J`), so what is counted below
+        // is this round's: Linux's `clear` sends it, macOS's does not.
+        type(
+          `clear; printf '\\033[3J'; nvim --clean -n -i NONE ${file}; echo "status=$?"\r`,
+        );
         await until(
           "the TUI",
           () =>
