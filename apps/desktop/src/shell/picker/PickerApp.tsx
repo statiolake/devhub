@@ -57,11 +57,12 @@ import { TabPickerSheet } from "./TabPickerSheet";
 import { AgentActionsSheet } from "./AgentActionsSheet";
 import { ChordHelpSheet } from "./ChordHelpSheet";
 import { CommandPaletteSheet } from "./CommandPaletteSheet";
+import { QuickPickSheet } from "./QuickPickSheet";
 import { RecentlyClosedSheet } from "./RecentlyClosedSheet";
 import { ThemePreviewSheet } from "./ThemePreviewSheet";
 
 /** Take one modal off screen, with the answer if it asked for one. */
-function close(id: string, response?: number): void {
+function close(id: string, response?: number | string): void {
   void devhub().closeModal(id, response);
 }
 
@@ -184,6 +185,15 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
           rows={request.rows}
           onDismiss={(chosen) => {
             close(id, chosen);
+          }}
+        />
+      );
+    case "quick-pick":
+      return (
+        <QuickPickSheet
+          request={request}
+          onDismiss={(answer) => {
+            close(id, answer);
           }}
         />
       );

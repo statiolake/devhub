@@ -24,6 +24,7 @@ import { devhubProduct } from "../product.js";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { noteMainActivity } from "../diagnostics/eventLoopLag.js";
 import { SaveCoalescer } from "./saveCoalescer.js";
+import { quickPickRequestOf } from "./quickPick.js";
 import { PaneActivityTracker } from "../terminal/paneActivity.js";
 import {
 	FailureOnce,
@@ -9291,6 +9292,10 @@ export class AppController {
 		receive(NEOVIM_CHANNELS.guiMessage, (_event, message: NeovimGuiMessage) => {
 			this.neovimEditors?.guiMessage(message);
 		});
+		handle(NEOVIM_CHANNELS.quickPick, (_event, request: unknown) => {
+			const asked = quickPickRequestOf(request);
+			return asked === undefined ? -1 : shellWindow().picker.ask(asked);
+		});
 
 		handle(CHANNELS.getSnapshot, () => this.snapshot());
 		// A page that has just started has none of the pushes yet, and main
@@ -10071,7 +10076,7 @@ export class AppController {
 		});
 		handle(
 			CHANNELS.closeModal,
-			(_event, id: string, response: number | undefined) => {
+			(_event, id: string, response: number | string | undefined) => {
 				shellWindow().picker.closeModal(id, response);
 			},
 		);

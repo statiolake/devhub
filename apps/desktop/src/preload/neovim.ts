@@ -244,6 +244,10 @@ const neovim: DevhubNeovimApi = {
 			ipcRenderer.send(NEOVIM_CHANNELS.guiMessage, message);
 		else toHost(port, { type: "gui-message", message });
 	},
+	quickPick: (request) =>
+		ipcRenderer.invoke(NEOVIM_CHANNELS.quickPick, request) as Promise<
+			number | string
+		>,
 };
 
 const api: NeovimBridge = {

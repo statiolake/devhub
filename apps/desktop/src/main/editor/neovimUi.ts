@@ -328,6 +328,64 @@ local function gui_event(kind, payload)
 end
 M._event = gui_event
 
+-- vim.ui.select and vim.ui.input in DevHub's quick pick (docs/native-picker.md):
+-- the question goes to the page, the person answers in DevHub's own picker
+-- (its keys: typing filters, arrows, Return, Escape), and the callback runs
+-- with the answer. Neovim does not wait on it (no rpcrequest): the editor
+-- stays live behind the sheet and the caller goes on from its callback.
+-- devhub.nvim's setup{ quick_pick = true } makes vim.ui.select/input these.
+M._quick = M._quick or {}
+M._quick_seq = M._quick_seq or 0
+local function quick_ask(payload, done)
+  M._quick_seq = M._quick_seq + 1
+  local id = M._quick_seq
+  M._quick[id] = done
+  payload.id = id
+  gui_event("quick_pick", payload)
+end
+
+function M._quick_pick_done(id, answer)
+  local done = M._quick[id]
+  M._quick[id] = nil
+  if done then vim.schedule(function() done(answer) end) end
+end
+
+local function question(prompt, fallback)
+  local text = type(prompt) == "string" and vim.trim(prompt) or ""
+  text = text:gsub("[:%s]+$", "")
+  return text ~= "" and text or fallback
+end
+
+--- vim.ui.select's contract: on_choice(item, idx), or (nil, nil) when cancelled.
+function M.select(items, opts, on_choice)
+  opts = opts or {}
+  local format = opts.format_item or tostring
+  local rows = {}
+  for i, item in ipairs(items or {}) do
+    local ok, label = pcall(format, item)
+    rows[i] = { label = (tostring(ok and label or item):gsub("\n", " ")) }
+  end
+  if #rows == 0 then
+    vim.schedule(function() on_choice(nil, nil) end)
+    return
+  end
+  quick_ask({ title = "Neovim", question = question(opts.prompt, "Select one"), rows = rows },
+    function(answer)
+      local i = type(answer) == "number" and answer >= 0 and answer + 1 or nil
+      if i and items[i] ~= nil then on_choice(items[i], i) else on_choice(nil, nil) end
+    end)
+end
+
+--- vim.ui.input's contract: on_confirm(text), or nil when cancelled.
+function M.input(opts, on_confirm)
+  opts = opts or {}
+  quick_ask({ title = "Neovim", question = question(opts.prompt, "Type a line"),
+    input = { default = opts.default or "" } },
+    function(answer)
+      if type(answer) == "string" then on_confirm(answer) else on_confirm(nil) end
+    end)
+end
+
 -- A GUI window's keyboard (keyboard = "neovim"). Neovim is the modal engine:
 -- while the window is current and no field in it has the keys, they are
 -- Neovim's, as in normal mode. The buffer's lines are the page's focusable

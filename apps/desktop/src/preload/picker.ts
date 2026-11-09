@@ -37,7 +37,7 @@ const api: PickerBridge = {
 
 	onModals: (listener) =>
 		on<readonly OpenModal[]>(CHANNELS.modalsChanged, listener),
-	closeModal: (id: string, response?: number) =>
+	closeModal: (id: string, response?: number | string) =>
 		ipcRenderer.invoke(CHANNELS.closeModal, id, response) as Promise<void>,
 	confirmInjection: (agentId: string, injectionId: string, text: string) =>
 		ipcRenderer.invoke(

@@ -21,6 +21,8 @@
  * forgets the old server's screen in order with the new one's first events
  * (`main/editor/neovimUiSessions.ts`, `shell/neovim/redraw.ts`).
  */
+import type { QuickPickRequestWire } from "./contract.js";
+
 export const NEOVIM_RESTARTED_EVENT = "devhub_restarted";
 
 export const NEOVIM_CHANNELS = {
@@ -50,6 +52,12 @@ export const NEOVIM_CHANNELS = {
 	restarted: "devhub:neovim:restarted",
 	/** main → page: its view is on its pane, and how (`NeovimPlacement`). */
 	placed: "devhub:neovim:placed",
+	/**
+	 * page → main: a Neovim's `vim.ui.select` / `vim.ui.input`, put to the
+	 * person in DevHub's quick pick; answered with the index or the text, -1
+	 * when cancelled (`docs/native-picker.md`).
+	 */
+	quickPick: "devhub:neovim:quick-pick",
 } as const;
 
 /**
@@ -245,4 +253,6 @@ export interface DevhubNeovimApi {
 	 * then each change. None until the view is on its pane.
 	 */
 	onPlaced(listener: (placement: NeovimPlacement) => void): () => void;
+	/** A Neovim's question in DevHub's quick pick; the answer, or -1. */
+	quickPick(request: QuickPickRequestWire): Promise<number | string>;
 }

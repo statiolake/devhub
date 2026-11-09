@@ -324,6 +324,24 @@ function NeovimSurface({
       // scrolled when the placement came, not when it is drawn.
       const scrolled = editor.scrolledRows();
       const rowsOf = (win: number) => scrolled.get(win) ?? 0;
+      if (event.kind === "quick_pick") {
+        // vim.ui.select / vim.ui.input: put to the person in DevHub's quick
+        // pick; Lua's callback runs with the answer (docs/native-picker.md).
+        const asked = event.payload as { id?: unknown } | null;
+        const id = asked?.id;
+        if (typeof id !== "number") return;
+        void bridge.neovim
+          .quickPick(asked as never)
+          .catch(() => -1)
+          .then((answer) => {
+            call("nvim_exec_lua", [
+              "local M = package.loaded['devhub_gui']; if M and M._quick_pick_done then M._quick_pick_done(...) end",
+              [id, answer],
+            ]);
+            editor.focus();
+          });
+        return;
+      }
       if (event.kind === "decor") {
         // Where virtual text and folds' text are: set in the UI face.
         editor.setDecor(decorOf(event.payload));

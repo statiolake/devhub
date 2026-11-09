@@ -2166,7 +2166,7 @@ export interface PickerBridge
 	 * `response` is the button a workbench's own question was answered with;
 	 * every other modal has nothing to answer and passes nothing.
 	 */
-	closeModal(id: string, response?: number): Promise<void>;
+	closeModal(id: string, response?: number | string): Promise<void>;
 	/**
 	 * The wording, as the person settled on it. Nothing is sent by this call.
 	 *
@@ -2570,6 +2570,28 @@ export interface CommandPaletteRowWire {
 	readonly recent: boolean;
 }
 
+/** One row of a quick pick a program asked for (Neovim's `vim.ui.select`). */
+export interface QuickPickRowWire {
+	readonly label: string;
+	/** The second line, dimmer: what the program said about the row. */
+	readonly detail?: string;
+}
+
+/**
+ * A question a program asked DevHub to put to the person in its own quick
+ * pick (`docs/native-picker.md`): Neovim's `vim.ui.select` (rows; the answer
+ * is the index chosen) or `vim.ui.input` (no rows; the answer is the text).
+ */
+export interface QuickPickRequestWire {
+	/** Who is asking: drawn as the title ("Neovim"). */
+	readonly title: string;
+	/** The program's prompt, as the question under the title. */
+	readonly question: string;
+	readonly rows: readonly QuickPickRowWire[];
+	/** `vim.ui.input`: a line to type, starting with `default`. */
+	readonly input?: { readonly default: string };
+}
+
 /** One row of Theme: Preview…: a theme that can be worn. */
 export interface ThemePreviewRowWire {
 	/** What the settings name it by — what is previewed and chosen. */
@@ -2650,6 +2672,12 @@ export type ModalRequest =
 			readonly kind: "command-palette";
 			readonly rows: readonly CommandPaletteRowWire[];
 	  }
+	/**
+	 * A program's question in the quick pick: Neovim's `vim.ui.select` and
+	 * `vim.ui.input`. Closes with the row's index (a select) or the text (an
+	 * input) as its response; Escape answers -1.
+	 */
+	| ({ readonly kind: "quick-pick" } & QuickPickRequestWire)
 	/**
 	 * What `Cmd+Q Shift+T` would reopen, newest first, as a list to choose
 	 * from. Closes with the chosen row's index, as the palette does; main

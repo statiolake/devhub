@@ -36,6 +36,7 @@ import {
 	CHANNELS,
 	type ModalRequest,
 	type OpenModal,
+	type QuickPickRequestWire,
 } from "../../ipc/contract.js";
 
 export interface PickerViewHost {
@@ -75,7 +76,7 @@ export interface PickerViewHost {
 }
 
 /** A sheet that answers with a choice, waiting for the person's. */
-type Settle = (response: number) => void;
+type Settle = (response: number | string) => void;
 
 /**
  * What makes two modals the same question.
@@ -158,7 +159,7 @@ export class PickerView {
 	 * modal that asked nothing carries nothing, and one closed without a
 	 * response is told -1, which is "nothing was chosen".
 	 */
-	closeModal(id: string, response?: number): void {
+	closeModal(id: string, response?: number | string): void {
 		const index = this.open.findIndex((modal) => modal.id === id);
 		if (index === -1) return;
 		const [modal] = this.open.splice(index, 1);
@@ -194,6 +195,20 @@ export class PickerView {
 	): Promise<number> {
 		const id = this.openModal(request);
 		return new Promise<number>((resolve) => {
+			this.pending.set(id, (response) => {
+				resolve(typeof response === "number" ? response : -1);
+			});
+		});
+	}
+
+	/**
+	 * Put a program's question up in the quick pick and wait for the answer:
+	 * the row's index for a select, the text for an input, -1 when the
+	 * person cancelled (Escape, or the sheet replaced by another).
+	 */
+	async ask(request: QuickPickRequestWire): Promise<number | string> {
+		const id = this.openModal({ kind: "quick-pick", ...request });
+		return new Promise<number | string>((resolve) => {
 			this.pending.set(id, resolve);
 		});
 	}
