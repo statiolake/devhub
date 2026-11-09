@@ -35,6 +35,8 @@ import { LocalRuntime } from "../../runtime/local.js";
 import type { Runtime } from "../../runtime/runtime.js";
 import { agentStateDirectory, hostSessionCommand } from "./hostCommand.js";
 import { HostLink, HostLinkFailure, type JournalLine } from "./hostLink.js";
+import { argvWords } from "./hostScript.js";
+import { ORCHESTRATOR_CHARTER } from "../../orchestrator/orchestratorCharter.js";
 
 /** The gitignored scratch root; never the OS temp directory. */
 const SCRATCH_ROOT = fileURLToPath(
@@ -124,6 +126,72 @@ async function readAll(
 	for await (const line of lines) seen.push(line);
 	return seen;
 }
+
+/**
+ * Words no line-wise framing carries: the Orchestrator's charter, which rides
+ * in `--append-system-prompt`, and every edge of a line.
+ */
+const AWKWARD_WORDS = [
+	"--append-system-prompt",
+	ORCHESTRATOR_CHARTER,
+	"",
+	"\n",
+	"ends in a newline\n",
+	"\n\nstarts with two",
+	"  leading blanks\\n and a backslash\r",
+	"-n",
+	"0",
+	"日本語\n\n二行目",
+];
+
+/**
+ * A CLI that writes down the argv it was started on, NUL-separated, in the
+ * file that is its first argument, and then is the fake agent with none.
+ */
+function recordingCli(seen: string, words: readonly string[]) {
+	return {
+		file: "/bin/sh",
+		args: [
+			"-c",
+			`f=$1; shift; for a in "$@"; do printf '%s\\0' "$a"; done >"$f"; exec /bin/sh "$0"`,
+			FAKE_AGENT,
+			seen,
+			...words,
+		],
+	};
+}
+
+function recorded(seen: string): string[] {
+	const words = readFileSync(seen, "utf8").split("\0");
+	expect(words.pop()).toBe("");
+	return words;
+}
+
+describe("an argv as the host is given it", () => {
+	/** `argvWords` read back as the host's `sh` reads it. */
+	function decode(text: string): string[] {
+		const lines = text.split("\n");
+		expect(lines.pop()).toBe("");
+		const words: string[] = [];
+		while (lines.length > 0) {
+			const count = Number(lines.shift());
+			expect(Number.isSafeInteger(count)).toBe(true);
+			words.push(lines.splice(0, count + 1).join("\n"));
+		}
+		return words;
+	}
+
+	it("carries the Orchestrator's charter, and every word, whole", () => {
+		expect(ORCHESTRATOR_CHARTER).toContain("\n");
+		expect(decode(argvWords(AWKWARD_WORDS))).toEqual(AWKWARD_WORDS);
+		expect(argvWords(["claude", "-p"])).toBe("0\nclaude\n0\n-p\n");
+		expect(argvWords(["a\nb\n"])).toBe("2\na\nb\n\n");
+	});
+
+	it("refuses a NUL, which no argv can hold", () => {
+		expect(() => argvWords(["a\0b"])).toThrow("NUL");
+	});
+});
 
 async function failureOf(work: Promise<unknown>): Promise<HostLinkFailure> {
 	const outcome = await work.then(
@@ -269,6 +337,56 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 				'{"history":"last"}',
 				'{"type":"hello","argc":2}',
 			]);
+		}, 20_000);
+
+		it("starts the CLI again on arguments of many lines, the Orchestrator's charter among them, byte for byte", async () => {
+			const directory = stateDirectory();
+			const seen = join(directory, "argv.seen");
+			startHost(directory, ["/bin/sh", FAKE_AGENT]);
+			const link = new HostLink(make(), directory);
+			const lines = link.lines(0, new CancellationToken());
+			await readUntil(lines, (got) => got.length === 1);
+
+			await link.restart(recordingCli(seen, AWKWARD_WORDS), [
+				'{"mark":"charter"}',
+			]);
+			const restarted = await readUntil(lines, (got) => got.length === 2);
+			expect(restarted.map((each) => each.line)).toEqual([
+				'{"mark":"charter"}',
+				'{"type":"hello","argc":0}',
+			]);
+			expect(recorded(seen)).toEqual(AWKWARD_WORDS);
+
+			// And again: the second start reads its own words, not the first's.
+			await link.restart(recordingCli(seen, ["one\ntwo"]), [
+				'{"mark":"again"}',
+			]);
+			await readUntil(lines, (got) => got.length === 2);
+			expect(recorded(seen)).toEqual(["one\ntwo"]);
+		}, 20_000);
+
+		it("refuses an earlier DevHub's host an argument of more than one line, and leaves its CLI running", async () => {
+			const directory = stateDirectory();
+			const seen = join(directory, "argv.seen");
+			startHost(directory);
+			const link = new HostLink(make(), directory);
+			const lines = link.lines(0, new CancellationToken());
+			await readUntil(lines, (got) => got.length === 1);
+			// A host of version 2 reads `again` a word a line. Its script is
+			// this one but for that reading, so a host started on this
+			// script and told it is a 2 stands in for one.
+			writeFileSync(join(directory, "version"), "2\n");
+
+			const failure = await failureOf(
+				link.restart(recordingCli(seen, ["one\ntwo"]), ['{"mark":"no"}']),
+			);
+			expect(failure.message).toContain(
+				"cannot start its CLI again on an argument of more than one line",
+			);
+			expect(existsSync(join(directory, "again"))).toBe(false);
+			await link.write('{"still":"here"}', 0);
+			const [echo] = await readUntil(lines, (got) => got.length === 1);
+			expect(echo?.line).toBe('{"echo":{"still":"here"}}');
 		}, 20_000);
 
 		it("refuses to start again the CLI of a host that would add the argv to its own", async () => {
@@ -521,6 +639,13 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 		it("refuses an offset that is not one", () => {
 			const link = new HostLink(make(), stateDirectory());
 			expect(() => link.write("{}", -1)).toThrow("is not a journal offset");
+		});
+
+		it("refuses a mark line with a newline in it, which the journal would read as two", () => {
+			const link = new HostLink(make(), stateDirectory());
+			expect(() =>
+				link.restart({ file: "/bin/sh", args: [] }, ["one\ntwo"]),
+			).toThrow("must not contain a newline");
 		});
 
 		it("refuses a line with a newline in it rather than sending two", () => {

@@ -24,6 +24,7 @@ import { OperationDeadline } from "../../terminal/command.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import type { ExecLimits, ExecResult, Runtime } from "../../runtime/runtime.js";
 import {
+	argvWords,
 	ENDING_SCRIPT,
 	RESTART_SCRIPT,
 	SENT_LOG_SCRIPT,
@@ -321,24 +322,24 @@ export class HostLink {
 	 * (`RESTART_SCRIPT`). Resolves once the old CLI has been told to
 	 * stop; the mark in the journal is how the caller learns the new one
 	 * started. In order with the writes, like one of them.
+	 *
+	 * The argv may be anything an argv can hold — the Orchestrator's charter
+	 * rides in it, many lines long — and goes to the host as `argvWords`
+	 * frames it. The mark's lines are journal lines, so none of them may
+	 * contain a newline, as a written line may not.
 	 */
 	restart(cli: RestartedCli, mark: readonly string[]): Promise<void> {
 		if (mark.length === 0) throw new Error("a restart's mark has no line");
-		const argv = [cli.file, ...cli.args];
-		for (const each of [...mark, ...argv]) {
-			if (each.includes("\n")) {
-				throw new Error(
-					"a restart's mark lines and arguments must not contain a newline",
-				);
-			}
+		if (mark.some((line) => line.includes("\n"))) {
+			throw new Error("a restart's mark line must not contain a newline");
 		}
+		const argv = [cli.file, ...cli.args];
+		const words = argvWords(argv);
 		const next = this.#writes.then(() =>
 			this.#input(
 				RESTART_SCRIPT,
 				"devhub-agent-restart",
-				[String(argv.length), ...argv, ...mark]
-					.map((each) => `${each}\n`)
-					.join(""),
+				`${String(argv.length)}\n${words}${mark.map((line) => `${line}\n`).join("")}`,
 				"did not start its CLI again",
 			),
 		);

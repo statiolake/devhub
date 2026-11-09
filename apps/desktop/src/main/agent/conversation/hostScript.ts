@@ -39,13 +39,16 @@
  *            host is ready when this exists.
  * - `cli`    the running CLI's pid, written (atomically) each time the host
  *            starts it. What DevHub stops to have the CLI started again.
- * - `version` written before `pid`: `2`, a host whose `again` is
- *            the CLI's whole argv. A host without it (an earlier DevHub's,
- *            which added `again` to the argv it was started with) is refused
- *            a restart rather than started on two sessions' arguments.
+ * - `version` written before `pid`: `3`, a host whose `again` is the CLI's
+ *            whole argv in words of any number of lines (`ARGV_WORDS`). A
+ *            `2` (an earlier DevHub's) reads `again` one word per line, so it
+ *            is restarted only on an argv with no newline in it. A host
+ *            without one (earlier still, which added `again` to the argv it
+ *            was started with) is refused a restart rather than started on
+ *            two sessions' arguments.
  * - `again`  written by DevHub (`RESTART_SCRIPT`) to have the CLI started
- *            again once it ends: the CLI's whole argv for that start, one
- *            word per line, which replaces the one the host was started
+ *            again once it ends: the CLI's whole argv for that start, as
+ *            `ARGV_WORDS` says, which replaces the one the host was started
  *            with. With it, `again.mark`: the lines the host
  *            appends to `out` between the two CLIs' output, so the journal
  *            itself says where the one ended and the other began. The host
@@ -59,6 +62,31 @@
  * session (DevHub's Stop, or a person's `kill-session`) or the machine went
  * down. That is the one way to tell "stopped" from "ended".
  */
+
+/**
+ * How the host is given an argv in a file or on a stdin: every word as the
+ * number of newlines in it, on a line of its own, and then the word's lines,
+ * each ended by a newline. So a word of no newline is two lines (`0` and
+ * itself) and the Orchestrator's charter, which rides in
+ * `--append-system-prompt`, is its line count and then its lines.
+ *
+ * Plain `read -r` and a counter are all it takes to read it back, in any POSIX
+ * `sh` with nothing installed — no `base64`, no `head -c`, no `read -d` — and
+ * nothing in a word is ever taken for anything but its bytes: not a
+ * backslash, not leading blanks, not an empty line or a trailing newline.
+ * (A word cannot hold a NUL; no argv can.)
+ */
+export function argvWords(argv: readonly string[]): string {
+	return argv
+		.map((word) => {
+			if (word.includes("\0")) {
+				throw new Error("an argument cannot contain a NUL");
+			}
+			const lines = word.split("\n");
+			return `${String(lines.length - 1)}\n${lines.map((line) => `${line}\n`).join("")}`;
+		})
+		.join("");
+}
 
 /** `$0` of the host, so that `ps` on any machine says what it is. */
 export const HOST_NAME = "devhub-agent-host";
@@ -87,7 +115,7 @@ refuse() { say "$1"; ended host; exit 70; }
 : >>"$D/out" || refuse "cannot create the journal $D/out"
 mkfifo "$D/in" || refuse "cannot make the input pipe $D/in"
 command exec 3<>"$D/in" || refuse "cannot open the input pipe $D/in"
-printf '2\\n' >"$D/version" || refuse "cannot record the host's version in $D/version"
+printf '3\\n' >"$D/version" || refuse "cannot record the host's version in $D/version"
 { printf '%s\\n' "$$" >"$D/pid.new" && mv -f "$D/pid.new" "$D/pid"; } ||
   refuse "cannot record the host's pid in $D/pid"
 run() {
@@ -99,7 +127,19 @@ run() {
 }
 again() {
   set --
-  while IFS= read -r a; do set -- "$@" "$a"; done <"$D/again" ||
+  bad=
+  while IFS= read -r k; do
+    case $k in ''|*[!0-9]*) bad=1; break ;; esac
+    IFS= read -r a || { bad=1; break; }
+    while [ "$k" -gt 0 ]; do
+      IFS= read -r l || { bad=1; break 2; }
+      a="$a
+$l"
+      k=$((k - 1))
+    done
+    set -- "$@" "$a"
+  done <"$D/again" || bad=1
+  [ -z "$bad" ] ||
     refuse "cannot read the arguments to start the CLI again with from $D/again"
   cat "$D/again.mark" >>"$D/out" ||
     refuse "cannot write the CLI's new start into the journal $D/out"
@@ -238,11 +278,15 @@ printf '%s\\n' "\${x#* }" >"$D/in"
 
 /**
  * Have the host start its CLI again. `$1` is the state directory; stdin is the
- * number of words in the CLI's whole argv for that start, those words one per
- * line, and then the mark: every line left, for the journal. The arguments are read
- * a line at a time and the mark copied whole, because a mark can be long (a
- * resumed session's past). The CLI is sent SIGTERM; the host, finding `again`
- * when it ends, appends the mark to the journal and starts it again.
+ * number of words in the CLI's whole argv for that start, on a line, those
+ * words as `argvWords` writes them, and then the mark: every line left, for
+ * the journal. The arguments are read a line at a time and the mark copied
+ * whole, because a mark can be long (a resumed session's past). A host of
+ * version `3` is given the words as they came; one of version `2` reads
+ * `again` a word a line, so it is given that, and an argument of more than
+ * one line is refused it rather than started as several. The CLI is sent
+ * SIGTERM; the host, finding `again` when it ends, appends the mark to the
+ * journal and starts it again.
  *
  * A host from before restarts (no `cli`) is refused rather than left to end
  * the Agent when its CLI is stopped, and one that would add the argv to its
@@ -256,15 +300,29 @@ if [ ! -f "$D/pid" ] || [ -f "$D/exit" ] || ! kill -0 "$(cat "$D/pid")" 2>/dev/n
 fi
 [ -f "$D/cli" ] ||
   { echo "the host in $D cannot start its CLI again: it was started by a DevHub from before restarts" >&2; exit 1; }
-[ "$(cat "$D/version" 2>/dev/null)" = 2 ] ||
+v=$(cat "$D/version" 2>/dev/null)
+[ "$v" = 3 ] || [ "$v" = 2 ] ||
   { echo "the host in $D cannot start its CLI again: it was started by a DevHub from before a restart gave the CLI's whole argv. Stop the Agent and start it again" >&2; exit 1; }
 [ ! -f "$D/again" ] || { echo "the CLI in $D is already being started again" >&2; exit 1; }
 IFS= read -r n || { echo "the restart of $D carried nothing" >&2; exit 2; }
+case $n in ''|*[!0-9]*) echo "the restart of $D carried no count of arguments" >&2; exit 2 ;; esac
 : >"$D/again.new" || exit 1
 i=0
 while [ "$i" -lt "$n" ]; do
-  IFS= read -r a || { echo "the restart of $D carried fewer arguments than $n" >&2; exit 2; }
-  printf '%s\\n' "$a" >>"$D/again.new" || exit 1
+  IFS= read -r k || { echo "the restart of $D carried fewer arguments than $n" >&2; exit 2; }
+  case $k in ''|*[!0-9]*) echo "the restart of $D carried an argument without its count of lines" >&2; exit 2 ;; esac
+  if [ "$v" = 2 ]; then
+    [ "$k" -eq 0 ] ||
+      { echo "the host in $D cannot start its CLI again on an argument of more than one line: it was started by a DevHub from before restarts carried those. Stop the Agent and start it again" >&2; exit 1; }
+  else
+    printf '%s\\n' "$k" >>"$D/again.new" || exit 1
+  fi
+  j=0
+  while [ "$j" -le "$k" ]; do
+    IFS= read -r a || { echo "the restart of $D carried an argument cut short" >&2; exit 2; }
+    printf '%s\\n' "$a" >>"$D/again.new" || exit 1
+    j=$((j + 1))
+  done
   i=$((i + 1))
 done
 cat >"$D/again.mark" || exit 1
