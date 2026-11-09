@@ -64,6 +64,7 @@ import {
   paneBoxes,
   type ControlView,
 } from "./paneGrids";
+import { CONTROL_Z, controlZStyle } from "./stacking";
 import type { TerminalSurfaceProps } from "../TerminalSurface";
 import { WindowStrip } from "./WindowStrip";
 import { CompletionMenu } from "../../completion/CompletionMenu";
@@ -480,7 +481,7 @@ export function ControlTerminalSurface({
                 : (p.y + p.height) * height;
             return {
               key: p.pane,
-              z: 1,
+              z: CONTROL_Z.panes,
               x: x0,
               y: y0,
               w: x1 - x0,
@@ -596,7 +597,8 @@ export function ControlTerminalSurface({
           : pane === undefined
             ? undefined
             : view.cursors.get(pane.pane);
-      cursor.style.zIndex = popup === undefined ? "" : "60";
+      cursor.style.zIndex =
+        popup === undefined ? "" : String(CONTROL_Z.popupCursor);
       if (
         pane === undefined ||
         at === undefined ||
@@ -1498,6 +1500,7 @@ export function ControlTerminalSurface({
       style={
         {
           ...terminalSurfaceStyle(palette, appearance?.terminalMargin),
+          ...controlZStyle(),
           ...(palette
             ? {
                 "--terminal-foreground": palette.foreground,

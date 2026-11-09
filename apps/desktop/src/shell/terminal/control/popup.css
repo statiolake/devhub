@@ -27,8 +27,8 @@
 
 .control-popup {
   position: absolute;
-  /* Over the panes (z 1) and their hairlines, under the popup's grid (50). */
-  z-index: 40;
+  /* Under the popup's grid (`stacking.ts`). */
+  z-index: var(--control-z-popupFrame);
   box-sizing: border-box;
   pointer-events: none;
   background: var(--terminal-background, Canvas);

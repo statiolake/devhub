@@ -24,7 +24,7 @@
 
 .control-copy-badge {
   position: absolute;
-  z-index: 6;
+  z-index: var(--control-z-copy);
   padding: 0 6px;
   border-radius: 3px;
   background: var(--copy-badge-ground);
@@ -36,7 +36,7 @@
 
 .control-copy-scroll {
   position: absolute;
-  z-index: 6;
+  z-index: var(--control-z-copy);
   width: 3px;
   border-radius: 2px;
   background: var(--copy-scroll);

@@ -10,7 +10,7 @@
    where one pane ends, and nothing else is drawn there. */
 .control-borders {
   position: absolute;
-  z-index: 4;
+  z-index: var(--control-z-borders);
   inset: 0;
   pointer-events: none;
 }
@@ -82,7 +82,7 @@
 .control-cursor {
   position: absolute;
   /* Over the panes' canvases, which the painter stacks at their z. */
-  z-index: 5;
+  z-index: var(--control-z-cursor);
   pointer-events: none;
   box-sizing: border-box;
   overflow: hidden;
@@ -122,7 +122,7 @@
    the cursor, over it. */
 .control-preedit {
   position: absolute;
-  z-index: 6;
+  z-index: var(--control-z-preedit);
   pointer-events: none;
 }
 
@@ -144,7 +144,7 @@
 /* What DevHub did not do, said quietly (`keyGuard.ts`). */
 .control-notice {
   position: absolute;
-  z-index: 2;
+  z-index: var(--control-z-notice);
   right: 12px;
   bottom: 36px;
   max-width: 60%;
@@ -177,4 +177,9 @@
 :root[data-overlaid-holes] .control-terminal-shell,
 :root[data-overlaid-holes] .control-terminal {
   background: transparent;
+}
+
+/* The prompt's completion menu (`completionMenu.css`), over the prompt. */
+.control-terminal-shell .completion-menu {
+  z-index: var(--control-z-completion);
 }

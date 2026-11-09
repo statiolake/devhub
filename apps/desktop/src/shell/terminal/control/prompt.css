@@ -34,8 +34,8 @@
 
 .control-prompt {
   position: absolute;
-  /* Over the panes, their hairlines and a popup's frame (40). */
-  z-index: 45;
+  /* tmux's status line: over a popup and a menu (`stacking.ts`). */
+  z-index: var(--control-z-prompt);
   left: 0;
   right: 0;
   display: flex;

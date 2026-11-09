@@ -154,7 +154,14 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   set of literals (popup frame 40, prompt 45, popup grid 50, chooser 55,
   chooser preview 60, cursor in a popup 60, numbers 65, menu 70). Bug: a
   `command-prompt` raised while a popup is open (from a shell in the popup)
-  is drawn under the popup's grid. **Open**: one table, in one module.
+  is drawn under the popup's grid. **Fixed** ("Control surface: one
+  stacking table, in tmux's order"): `control/stacking.ts` `CONTROL_Z`,
+  as CSS custom properties on the surface (`--control-z-*`) and as the
+  painter's levels: the panes and what is on them, a pane's modes (the
+  chooser and its preview, `display-panes`), a popup (frame, grid, its
+  cursor), a menu, then the prompt — tmux's status line, which no popup or
+  menu covers — and its completion menu. A guard test holds the order and
+  fails on a numeric z-index in the surface's CSS.
 
 ### Hide-to-make-room
 
@@ -244,7 +251,7 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
    clip.
 3. ~~Separators as elements~~ fixed: panes and boundaries.
 4. `underFrames` replaced by a clip of the framed floats.
-5. The control surface's z table; prompt over a popup.
+5. ~~The control surface's z table~~ fixed: `CONTROL_Z`.
 6. ~~Device-pixel snapping of labels, hairlines and outlines~~ fixed.
 7. A Neovim overlay on a tmux pane reaching the pane's boundary, its grid
    inset by half a cell (the seam above).

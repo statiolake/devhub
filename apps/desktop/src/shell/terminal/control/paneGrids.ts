@@ -8,6 +8,7 @@
  * Pure: the surface (`ControlTerminalSurface.tsx`) owns the painter.
  */
 
+import { CONTROL_Z } from "./stacking";
 import type {
   ControlToPage,
   PaneBox,
@@ -424,7 +425,7 @@ export function paneBoxes(view: ControlView): GridBox[] {
             col: popup.x + inset,
             width: popup.width - 2 * inset,
             height: popup.height - 2 * inset,
-            z: 50,
+            z: CONTROL_Z.popup,
             float: true,
             win: undefined,
           },
@@ -440,7 +441,7 @@ export function paneBoxes(view: ControlView): GridBox[] {
             col: chooser.preview.x,
             width: chooser.preview.width,
             height: chooser.preview.height,
-            z: 60,
+            z: CONTROL_Z.chooserPreview,
             float: true,
             win: undefined,
           },
@@ -457,7 +458,7 @@ function panesBoxes(view: ControlView): GridBox[] {
       col: box.x,
       width: box.width,
       height: box.height,
-      z: 1,
+      z: CONTROL_Z.panes,
       float: false,
       win: undefined,
     }));

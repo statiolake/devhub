@@ -22,8 +22,8 @@
 
 .control-chooser {
   position: absolute;
-  /* Over the panes and the popup's frame, under the preview's grid (60). */
-  z-index: 55;
+  /* A pane's mode: under a popup (`stacking.ts`). */
+  z-index: var(--control-z-chooser);
   box-sizing: border-box;
   overflow: hidden;
   border: 1px solid var(--popup-border);
@@ -79,7 +79,7 @@
 /* `display-panes`: each pane's index, large, in its middle. */
 .control-number {
   position: absolute;
-  z-index: 65;
+  z-index: var(--control-z-numbers);
   display: grid;
   place-items: center;
   pointer-events: none;
