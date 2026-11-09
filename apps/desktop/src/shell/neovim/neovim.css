@@ -68,8 +68,12 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
   width: 100%;
   height: 100%;
+  /* Past a tmux pane's cells, out to the boundary (its inset): Neovim's
+     ground, as the pane's own reaches it. */
+  background: var(--nvim-editor-ground, transparent);
 }
 
 .nvim-host {

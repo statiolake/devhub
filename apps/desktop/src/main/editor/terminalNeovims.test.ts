@@ -97,6 +97,37 @@ describe("where an overlay goes", () => {
 	});
 });
 
+describe("an overlay on a pane with a boundary beside it", () => {
+	const reading = parseTerminalNeovimReading(OUTPUT);
+	const client = reading.client!;
+	it("reaches the boundary on whole pixels short of it, and says how far past the cells", () => {
+		const pane = {
+			...reading.panes[1]!,
+			reach: { left: 3.25, top: 0, right: 0, bottom: 7.5 },
+		};
+		const screen = { x: 4, y: 4, width: 640, height: 480, zoom: 1 };
+		const cells = overlayRect(reading.panes[1]!, client, screen)!;
+		expect(overlayRect(pane, client, screen)).toEqual({
+			x: cells.x - 3,
+			y: cells.y,
+			width: cells.width + 3,
+			height: cells.height + 7,
+			inset: { left: 3, top: 0, right: 0, bottom: 7 },
+		});
+	});
+
+	it("is the cells where it has no reach", () => {
+		const pane = {
+			...reading.panes[1]!,
+			reach: { left: 0, top: 0, right: 0, bottom: 0 },
+		};
+		const screen = { x: 4, y: 4, width: 640, height: 480, zoom: 1 };
+		expect(overlayRect(pane, client, screen)).toEqual(
+			overlayRect(reading.panes[1]!, client, screen),
+		);
+	});
+});
+
 describe("an overlay's grid", () => {
 	// The cell sizes a Mac gives Menlo 12 at line height 1.2 and nearby
 	// settings: on a Retina screen a cell is a half pixel (16.5), elsewhere

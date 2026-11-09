@@ -48,7 +48,22 @@ export const NEOVIM_CHANNELS = {
 	port: "devhub:neovim:port",
 	/** main → page: the Neovim host of this generation ended; its port is dead. */
 	restarted: "devhub:neovim:restarted",
+	/** main → page: how much of its view is past its pane's cells (`NeovimInset`). */
+	inset: "devhub:neovim:inset",
 } as const;
+
+/**
+ * A Neovim over a tmux pane reaches the boundary beside the pane, as the
+ * pane's ground does (`docs/rendering-layers.md`, "Panes and boundaries"):
+ * this much of its view, in pixels per side, is past the pane's cells. The
+ * page draws its grid inside it and Neovim's ground in it.
+ */
+export interface NeovimInset {
+	readonly left: number;
+	readonly top: number;
+	readonly right: number;
+	readonly bottom: number;
+}
 
 /** What the page asks for when it attaches. */
 export interface NeovimAttachRequest {
@@ -210,4 +225,6 @@ export interface DevhubNeovimApi {
 	onGuiSend(listener: (message: NeovimGuiMessage) => void): () => void;
 	onGuiEvent(listener: (event: NeovimGuiEvent) => void): () => void;
 	guiMessage(message: NeovimGuiMessage): void;
+	/** The view's inset, as main last said it, then each change. */
+	onInset(listener: (inset: NeovimInset) => void): () => void;
 }

@@ -91,6 +91,7 @@ import {
 import type {
   NeovimGuiWindowWire,
   NeovimGuiWindowsWire,
+  NeovimInset,
 } from "../../ipc/neovim";
 import type { AppAppearance } from "../../ipc/appShell";
 
@@ -144,6 +145,15 @@ function NeovimSurface({
     kind: "connecting",
   });
   const [generation, setGeneration] = useState(0);
+  // Over a tmux pane, the view reaches the boundary beside it: this much
+  // of it is past the pane's cells, Neovim's ground (`NeovimInset`).
+  const [inset, setInset] = useState<NeovimInset>({
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+  });
+  useEffect(() => bridge.neovim.onInset(setInset), [bridge]);
   const [, setTick] = useState(0);
   const [guiContent, setGuiContent] = useState<ReadonlyMap<number, GuiContent>>(
     new Map(),
@@ -620,6 +630,7 @@ function NeovimSurface({
               ["--nvim-editor-ground" as string]: cssColor(
                 nvim.defaults.background,
               ),
+              padding: `${String(inset.top)}px ${String(inset.right)}px ${String(inset.bottom)}px ${String(inset.left)}px`,
               // The type scale of everything DevHub sets in the UI face
               // (`neovim.css`): from the grid's size, so a larger terminal
               // font makes the hovers, toasts, labels and code larger too.

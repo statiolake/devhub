@@ -181,15 +181,15 @@ shown in its terminal (`AppController.openInEditor`; Scratch is selected
 first). `devhub <folder>` only selects the Workspace. Scratch is a Workspace
 like any other.
 
-| Entrance                                  | Where it opens                                   |
-| ----------------------------------------- | ------------------------------------------------ |
-| `devhub <file>` on this Mac               | the containing Workspace's Neovim, or Scratch's  |
-| `devhub -g <file>:<line>:<col>`           | caret at the position                            |
-| `devhub --wait <file>`                    | `filesToWait`                                    |
-| `devhub <folder>`                         | the Workspace selected                           |
-| Conversation file link                    | split beside the Agent, the editor in front      |
-| Finder Open With / Dock drop / `open -a`  | via `openFromCli`, as above                      |
-| `devhub` on an SSH host, an SSH Workspace | that Workspace's Neovim, on its host             |
+| Entrance                                  | Where it opens                                  |
+| ----------------------------------------- | ----------------------------------------------- |
+| `devhub <file>` on this Mac               | the containing Workspace's Neovim, or Scratch's |
+| `devhub -g <file>:<line>:<col>`           | caret at the position                           |
+| `devhub --wait <file>`                    | `filesToWait`                                   |
+| `devhub <folder>`                         | the Workspace selected                          |
+| Conversation file link                    | split beside the Agent, the editor in front     |
+| Finder Open With / Dock drop / `open -a`  | via `openFromCli`, as above                     |
+| `devhub` on an SSH host, an SSH Workspace | that Workspace's Neovim, on its host            |
 
 ## Theme
 
@@ -389,12 +389,12 @@ the line height, floored, with the extra shared above and below the box
 (`cellMetrics`). Measured under Xvfb at `devicePixelRatio` 2 with Source
 Code Pro 12 and a line height of 1.1, from screenshots, in device pixels:
 
-|                                 | row | capitals: above / below | `gjpy`: above / below |
-| ------------------------------- | --- | ----------------------- | --------------------- |
-| xterm.js (WebGL)                | 33  | 12 / 5                  | 10 / 0                |
-| this painter, before            | 32  | 7 / 9                   | 5 / 3                 |
-| Neovim over a pane, before      | 34  | 8 / 10                  | 6 / 4                 |
-| panes and Neovim now            | 33  | 8 / 9                   | 6 / 3                 |
+|                            | row | capitals: above / below | `gjpy`: above / below |
+| -------------------------- | --- | ----------------------- | --------------------- |
+| xterm.js (WebGL)           | 33  | 12 / 5                  | 10 / 0                |
+| this painter, before       | 32  | 7 / 9                   | 5 / 3                 |
+| Neovim over a pane, before | 34  | 8 / 10                  | 6 / 4                 |
+| panes and Neovim now       | 33  | 8 / 9                   | 6 / 3                 |
 
 The glyphs themselves were the same size in all three (capitals 16 device
 pixels, the advance 7 px). The row was not: the line height used to become
@@ -509,7 +509,10 @@ off` hides it. A `refresh-client -B` subscription to every window (`@*`)
 - **Neovim over a pane** (`docs/neovim-editor.md`, "Neovim in a terminal"):
   the page says where each pane is drawn and what it is
   (`reportTerminalPanes`), and the overlay is placed from that, with no
-  polling. Checked in the app with the person's Neovim config and
+  polling. It reaches the boundary beside its pane as the pane's ground
+  does (each shown pane's `reach`), Neovim's ground between its grid and
+  the line (`docs/rendering-layers.md`, "Chrome painted into a grid
+  canvas"). Checked in the app with the person's Neovim config and
   tmux.conf: `nvim` in a pane, a split and a zoom from the overlay, another
   window hiding it, `C-q C-q` reaching Neovim, a click beside it and a key
   that takes the keys back, `git commit`, `devhub -g` into the

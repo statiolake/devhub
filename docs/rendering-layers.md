@@ -217,11 +217,24 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   line up; the hairline (1 px) and the active and synchronized panes'
   outlines (2 px, dashed for the synced) are centred on the shared edge,
   computed from tmux's layout; tmux's border cells are not drawn. A
-  zoomed pane has no boundary. **Open**: a Neovim overlay on a pane is
-  still the pane's cells only (`overlayRect`), so where Neovim's ground
-  differs from the terminal's a strip of the terminal's shows between the
-  overlay and the boundary (half a cell less half the line); the overlay
-  should reach the boundary too, its grid inset by as much.
+  zoomed pane has no boundary. A Neovim overlay on a pane was the pane's
+  cells only (`overlayRect`), so where Neovim's ground differs from the
+  terminal's a strip of the terminal's showed between the overlay and the
+  boundary (half a cell less half the line). **Fixed** ("Neovim over a
+  tmux pane: its view reaches the boundary"): the page reports each
+  shown pane's reach (`paneReach`: to the near edge of the line beside
+  it, the outline's where one runs along that side), `overlayRect` puts
+  the view out to it on whole pixels and says how much of the view is
+  past the cells (`inset`, the `devhub:neovim:inset` message), and the
+  Neovim page draws its grid inside that, its ground in it; the holes
+  cut while the page is raised reach as far. The lines are on whole CSS
+  pixels (`boundaryLine`, a half pixel off the middle at most) so a view
+  on whole pixels meets them exactly. Checked in the app at 2x with
+  Neovim's ground set apart from the terminal's: the overlay meets the
+  active pane's outline and the hairline with no pixel between, beside
+  and under it, on the left and the right of the window. Left: a side
+  that is a neighbour's outline for part of its length and a hairline
+  for the rest stops at the outline, a pixel short of the hairline.
 
 ### Colour sampling from neighbours
 
@@ -244,7 +257,9 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   which Chromium snaps per edge, so a 2 px outline can come out 3 or 5
   device pixels. **Fixed** (with the control surface's panes above): the
   label's left and top, the hairlines' and outlines' edges and the panes'
-  grounds are snapped with `Math.round(v × dpr) / dpr`.
+  grounds are snapped with `Math.round(v × dpr) / dpr`; since the overlay
+  reaches the boundary, the hairlines and outlines across are on whole
+  CSS pixels (`boundaryLine`).
 - Canvases, scroll offsets (`smoothScroll.ts` `snap`) and slides are on
   whole device pixels.
 
@@ -264,8 +279,8 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
    `frameCuts`, `cutClip`.
 5. ~~The control surface's z table~~ fixed: `CONTROL_Z`.
 6. ~~Device-pixel snapping of labels, hairlines and outlines~~ fixed.
-7. A Neovim overlay on a tmux pane reaching the pane's boundary, its grid
-   inset by half a cell (the seam above).
+7. ~~A Neovim overlay on a tmux pane reaching the pane's boundary, its
+   grid inset by half a cell~~ fixed: `paneReach`, `inset`.
 
 Seen while checking the above, not layering bugs but on the same path:
 

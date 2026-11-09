@@ -55,9 +55,11 @@ import "./copyMode.css";
 import {
   applyControl,
   borders,
+  boundaryLine,
   gridOf,
   POPUP_GRID,
   paneOutlines,
+  paneReach,
   plainBorders,
   newControlView,
   paneAt,
@@ -315,6 +317,8 @@ export function ControlTerminalSurface({
 
     // Where the panes are drawn and what each is, for a Neovim DevHub draws
     // over one (`main/editor/terminalNeovims.ts`): said when it changes.
+    const reachOf = (pane: PaneBox) =>
+      paneReach(pane, view.panes, paneOutlines(view.panes), cell());
     const report = () => {
       const tell = live.current.onControlPanes;
       if (tell === undefined) return;
@@ -330,7 +334,11 @@ export function ControlTerminalSurface({
         rows: view.rows,
         client: connected ? view.client : "",
         prefixes: view.prefixes,
-        shown: connected ? view.panes : [],
+        // Each with how far past its cells a Neovim over it may reach:
+        // to the boundary beside it (`paneReach`), as its ground does.
+        shown: connected
+          ? view.panes.map((p) => ({ ...p, reach: reachOf(p) }))
+          : [],
         panes: view.sessionPanes,
         // What DevHub draws over the panes (a popup, a prompt, a menu, the
         // picker) is to be over a Neovim drawn over one too: main puts this
@@ -382,11 +390,15 @@ export function ControlTerminalSurface({
       const at = grids.getBoundingClientRect();
       const base = shell?.getBoundingClientRect() ?? at;
       const rects = cut.map((box) => {
-        const left = Math.ceil(at.x + box.x * width - base.x);
-        const top = Math.ceil(at.y + box.y * height - base.y);
-        const right = Math.floor(at.x + (box.x + box.width) * width - base.x);
+        // The Neovim's view reaches the boundary, as the pane's ground.
+        const reach = reachOf(box);
+        const left = Math.ceil(at.x + box.x * width - reach.left - base.x);
+        const top = Math.ceil(at.y + box.y * height - reach.top - base.y);
+        const right = Math.floor(
+          at.x + (box.x + box.width) * width + reach.right - base.x,
+        );
         const bottom = Math.floor(
-          at.y + (box.y + box.height) * height - base.y,
+          at.y + (box.y + box.height) * height + reach.bottom - base.y,
         );
         return `M${String(left)} ${String(top)}H${String(right)}V${String(bottom)}H${String(left)}Z`;
       });
@@ -506,13 +518,13 @@ export function ControlTerminalSurface({
             : "control-border-h";
           if (line.vertical) {
             const top = edge(line.y, height);
-            el.style.left = `${String(snap(edge(line.x + 0.5, width) - 0.5))}px`;
+            el.style.left = `${String(boundaryLine(line.x, width, 1)[0])}px`;
             el.style.top = `${String(top)}px`;
             el.style.height = `${String(edge(line.y + line.length, height) - top)}px`;
           } else {
             const left = edge(line.x, width);
             el.style.left = `${String(left)}px`;
-            el.style.top = `${String(snap(edge(line.y + 0.5, height) - 0.5))}px`;
+            el.style.top = `${String(boundaryLine(line.y, height, 1)[0])}px`;
             el.style.width = `${String(edge(line.x + line.length, width) - left)}px`;
           }
           return el;
@@ -533,7 +545,7 @@ export function ControlTerminalSurface({
               edge(line.y + line.length, height),
               totalHeight,
             );
-            el.style.left = `${String(edge(line.x + 0.5, width) - thick / 2)}px`;
+            el.style.left = `${String(boundaryLine(line.x, width, thick)[0])}px`;
             el.style.top = `${String(top)}px`;
             el.style.width = `${String(thick)}px`;
             el.style.height = `${String(length)}px`;
@@ -544,7 +556,7 @@ export function ControlTerminalSurface({
               totalWidth,
             );
             el.style.left = `${String(left)}px`;
-            el.style.top = `${String(edge(line.y + 0.5, height) - thick / 2)}px`;
+            el.style.top = `${String(boundaryLine(line.y, height, thick)[0])}px`;
             el.style.width = `${String(length)}px`;
             el.style.height = `${String(thick)}px`;
           }

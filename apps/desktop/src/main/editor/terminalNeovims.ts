@@ -78,6 +78,21 @@ export interface TerminalNeovimPane {
 	readonly inMode: boolean;
 	/** `@devhub-nvim`: the socket its `nvim` listens on, on its machine. */
 	readonly socket: string;
+	/**
+	 * How far past its cells the overlay may reach, in the terminal page's
+	 * CSS pixels per side: to the boundary beside it, as the pane's ground
+	 * does (control mode's `paneReach`). None when polled: a TUI's border
+	 * is a character in a cell.
+	 */
+	readonly reach?: PaneReach;
+}
+
+/** CSS pixels per side (`TerminalNeovimPane.reach`, `OverlayRect.inset`). */
+export interface PaneReach {
+	readonly left: number;
+	readonly top: number;
+	readonly right: number;
+	readonly bottom: number;
 }
 
 /** DevHub's tmux client on the session. */
@@ -199,6 +214,12 @@ export interface OverlayRect {
 	readonly y: number;
 	readonly width: number;
 	readonly height: number;
+	/**
+	 * How much of the rectangle, per side, is past the pane's cells (its
+	 * reach to the boundary): the page draws its grid inside it, Neovim's
+	 * ground in it. None when the rectangle is the cells'.
+	 */
+	readonly inset?: PaneReach;
 }
 
 /** Whether tmux is showing this pane to DevHub's client. */
@@ -238,7 +259,36 @@ export function overlayRect(
 	const right = Math.round(originX + (pane.left + pane.width) * cellWidth);
 	const bottom = Math.round(originY + (row + pane.height) * cellHeight);
 	if (right <= left || bottom <= top) return undefined;
-	return { x: left, y: top, width: right - left, height: bottom - top };
+	const cells = { x: left, y: top, width: right - left, height: bottom - top };
+	const reach = pane.reach;
+	if (reach === undefined) return cells;
+	// Out to the boundary, on whole pixels short of it: the line stays the
+	// terminal page's, and what is left of the gap is under a pixel.
+	const zoom = screen.zoom;
+	const out = {
+		left: Math.ceil(originX + pane.left * cellWidth - reach.left * zoom),
+		top: Math.ceil(originY + row * cellHeight - reach.top * zoom),
+		right: Math.floor(
+			originX + (pane.left + pane.width) * cellWidth + reach.right * zoom,
+		),
+		bottom: Math.floor(
+			originY + (row + pane.height) * cellHeight + reach.bottom * zoom,
+		),
+	};
+	const inset = {
+		left: Math.max(0, left - out.left),
+		top: Math.max(0, top - out.top),
+		right: Math.max(0, out.right - right),
+		bottom: Math.max(0, out.bottom - bottom),
+	};
+	if (inset.left + inset.top + inset.right + inset.bottom === 0) return cells;
+	return {
+		x: left - inset.left,
+		y: top - inset.top,
+		width: right - left + inset.left + inset.right,
+		height: bottom - top + inset.top + inset.bottom,
+		inset,
+	};
 }
 
 /**
@@ -297,6 +347,7 @@ export interface ControlPanes {
 		readonly width: number;
 		readonly height: number;
 		readonly active: boolean;
+		readonly reach?: PaneReach;
 	}[];
 	/** Every pane of the session. */
 	readonly panes: readonly {
@@ -351,6 +402,20 @@ export function parseControlPanes(
 			typeof b.active !== "boolean"
 		)
 			return undefined;
+		const r = b.reach as Record<string, unknown> | null | undefined;
+		const reach =
+			r !== null &&
+			typeof r === "object" &&
+			[r.left, r.top, r.right, r.bottom].every(
+				(v) => finite(v) && (v as number) >= 0 && (v as number) < 1000,
+			)
+				? {
+						left: r.left as number,
+						top: r.top as number,
+						right: r.right as number,
+						bottom: r.bottom as number,
+					}
+				: undefined;
 		shown.push({
 			pane: b.pane as number,
 			x: b.x as number,
@@ -358,6 +423,7 @@ export function parseControlPanes(
 			width: b.width as number,
 			height: b.height as number,
 			active: b.active,
+			...(reach !== undefined ? { reach } : {}),
 		});
 	}
 	const panes: ControlPanes["panes"][number][] = [];
@@ -414,6 +480,7 @@ export function controlReading(
 					height: box?.height ?? 0,
 					inMode: pane.inMode,
 					socket: confirmed.get(paneId) ?? "",
+					...(box?.reach !== undefined ? { reach: box.reach } : {}),
 				};
 			}),
 			client:

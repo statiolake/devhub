@@ -8,6 +8,7 @@ import {
   paneAt,
   paneBoxes,
   paneOutlines,
+  paneReach,
   plainBorders,
 } from "./paneGrids";
 
@@ -223,6 +224,28 @@ describe("panes as the painter's grids", () => {
       { vertical: true, x: 4, y: 3.5, length: 3.5 },
       { vertical: false, x: 4.5, y: 3, length: 4.5 },
     ]);
+  });
+
+  it("lets what is over a pane reach the near edge of the line beside it", () => {
+    // A Retina cell, 8.25 × 16.5: the lines on whole pixels.
+    const cell = { width: 8.25, height: 16.5 };
+    const outlines = paneOutlines(layout.panes);
+    const [left, upper] = layout.panes;
+    // The active pane's side is its 2px outline, from 86 to 88 about the
+    // border cell's middle at 86.625.
+    expect(paneReach(left!, layout.panes, outlines, cell)).toEqual({
+      left: 0,
+      top: 0,
+      right: 86 - 82.5,
+      bottom: 0,
+    });
+    // Beside it the outline too; under it a 1px hairline from 41 to 42.
+    expect(paneReach(upper!, layout.panes, outlines, cell)).toEqual({
+      left: 90.75 - 88,
+      top: 0,
+      right: 0,
+      bottom: 41 - 33,
+    });
   });
 
   it("outlines every synchronized pane, the active one last", () => {
