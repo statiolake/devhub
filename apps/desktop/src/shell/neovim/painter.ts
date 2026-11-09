@@ -392,6 +392,24 @@ function radii(corners: FloatCorners, r: number): string {
   return `${px(corners.tl)} ${px(corners.tr)} ${px(corners.br)} ${px(corners.bl)}`;
 }
 
+/**
+ * Where each part of a level stacks inside it: declared, so that nothing
+ * depends on which element happened to be appended last. A level is one
+ * element per `GridBox.z` (`GridPainter.level`): the windows' at 1, each
+ * float zindex's at 100 + zindex, a tmux popup's at its own. Inside it the
+ * shadow under a panel of floats, then a framed float's ring and lines, then
+ * the grids (a canvas, or a window's scroll port), then what lies over a
+ * grid (a winbar held while the text scrolls, lines sliding into place),
+ * then a frame's title and footer.
+ */
+export const PART_Z = {
+  shadow: 0,
+  frames: 1,
+  grid: 2,
+  over: 3,
+  labels: 4,
+} as const;
+
 /** One ground under a panel of floats (`placeClusters`). */
 interface Piece {
   readonly x: number;
@@ -437,6 +455,8 @@ interface ScrollSlot {
 
 export class GridPainter {
   private readonly canvases = new Map<number, GridCanvas>();
+  /** One stacking element per `GridBox.z`, by z (`PART_Z`). */
+  private readonly levels = new Map<number, HTMLDivElement>();
   /** Each window grid's pixel scrolling, by grid. */
   private readonly scrolls = new Map<number, ScrollSlot>();
   /** One shadow per panel of floats (`floats.ts`), by what it looks like. */
@@ -580,6 +600,41 @@ export class GridPainter {
     return this.theme;
   }
 
+  /**
+   * The element everything at stacking order `z` is drawn in: its own
+   * stacking context, so its parts stack by `PART_Z` and every level stacks
+   * by its z, whatever their order in the page.
+   */
+  private level(z: number): HTMLDivElement {
+    let el = this.levels.get(z);
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "nvim-level";
+      el.style.zIndex = String(z);
+      el.dataset.z = String(z);
+      this.levels.set(z, el);
+      this.root.append(el);
+    }
+    return el;
+  }
+
+  /** `el` as part `part` of level `z`, moved there if it was elsewhere. */
+  private put(el: HTMLElement, z: number, part: keyof typeof PART_Z): void {
+    const level = this.level(z);
+    if (el.parentElement !== level) level.append(el);
+    el.style.zIndex = String(PART_Z[part]);
+  }
+
+  /** Levels nothing is drawn in any more. */
+  private dropEmptyLevels(): void {
+    for (const [z, el] of this.levels) {
+      if (el.childElementCount === 0) {
+        el.remove();
+        this.levels.delete(z);
+      }
+    }
+  }
+
   /** Bring every canvas in line with the state; repaint what changed. */
   paint(
     state: NeovimUiState,
@@ -633,10 +688,15 @@ export class GridPainter {
         if (!ctx) continue;
         entry = { canvas, ctx, width: -1, height: -1, opaque };
         this.canvases.set(box.grid, entry);
-        this.root.append(canvas);
         fresh = true;
       }
       const { canvas } = entry;
+      // In its level (a float whose zindex changed moves); a window
+      // scrolling in pixels is in its port, which is.
+      const port = this.scrolls.get(box.grid)?.port;
+      if (port?.isConnected === true && canvas.parentElement === port)
+        this.put(port, box.z, "grid");
+      else this.put(canvas, box.z, "grid");
       // A float's blank border is left out: the canvas is its text area,
       // where Neovim put it (`paintRow` draws the grid shifted by it).
       const crop = cropOf(box);
@@ -644,7 +704,6 @@ export class GridPainter {
       canvas.style.display = "";
       canvas.style.left = `${String((box.col + crop.left) * this.metrics.width)}px`;
       canvas.style.top = `${String((box.row + crop.top) * this.metrics.height)}px`;
-      canvas.style.zIndex = String(box.z);
       canvas.classList.toggle("nvim-float", box.float);
       const round = corners.get(box.grid);
       canvas.style.borderRadius =
@@ -725,6 +784,7 @@ export class GridPainter {
       }
       if (smooth) this.placeScroll(state, box);
     }
+    this.dropEmptyLevels();
   }
 
   /**
@@ -865,6 +925,7 @@ export class GridPainter {
     if (entry && slot.port) {
       const { canvas } = entry;
       slot.port.before(canvas);
+      canvas.style.zIndex = String(PART_Z.grid);
       canvas.style.transform = "";
       canvas.style.clipPath = "";
       canvas.style.left = slot.port.dataset.left ?? "0px";
@@ -912,8 +973,10 @@ export class GridPainter {
     port.style.top = `${String(box.row * ch + t)}px`;
     port.style.width = canvas.style.width;
     port.style.height = `${String(b - t)}px`;
-    port.style.zIndex = canvas.style.zIndex;
+    port.style.zIndex = String(PART_Z.grid);
     port.style.display = canvas.style.display;
+    // In the port: the canvas over the ghost, where they meet.
+    canvas.style.zIndex = "1";
     canvas.style.left = "0px";
     canvas.style.top = `${String(-t)}px`;
     canvas.style.transform = off === 0 ? "" : `translateY(${String(-off)}px)`;
@@ -924,6 +987,7 @@ export class GridPainter {
     const ghost = slot.ghost;
     if (ghost && view.ghost !== undefined) {
       ghost.style.display = "";
+      ghost.style.zIndex = "0";
       ghost.style.left = "0px";
       ghost.style.top = `${String(-t)}px`;
       ghost.style.width = canvas.style.width;
@@ -964,7 +1028,7 @@ export class GridPainter {
     pin.style.top = `${String(box.row * this.metrics.height)}px`;
     pin.style.width = canvas.style.width;
     pin.style.height = canvas.style.height;
-    pin.style.zIndex = canvas.style.zIndex;
+    pin.style.zIndex = String(PART_Z.over);
     const ctx = pin.getContext("2d");
     if (!ctx) return;
     const dpr = this.dpr;
@@ -1445,14 +1509,10 @@ export class GridPainter {
       const known = this.clusters.get(key);
       if (known) {
         known.grids = cluster.members.map((m) => m.grid);
-        // Over the canvases, which may have come since.
-        if (known.labels && known.labels !== this.root.lastElementChild)
-          this.root.append(known.labels);
         continue;
       }
       const el = document.createElement("div");
       el.className = `nvim-float-shadow${lined ? " nvim-float-shadow-lined" : ""}${blended ? " nvim-float-shadow-none" : ""}`;
-      el.style.zIndex = String(cluster.z);
       const pieceOf = (part: Piece, lines: boolean) => {
         const piece = document.createElement("div");
         piece.style.left = px(part.x);
@@ -1478,7 +1538,7 @@ export class GridPainter {
       };
       // A framed member's ground and lines at its own zindex, under its
       // canvas but over a lower member's (a picker's borderless box under
-      // its framed list): one element per zindex, before the canvases.
+      // its framed list): one element per zindex, in that zindex's level.
       const frames = new Map<number, HTMLDivElement>();
       for (const part of pieces) {
         el.append(pieceOf(part, part.z === undefined));
@@ -1487,7 +1547,7 @@ export class GridPainter {
         if (!layer) {
           layer = document.createElement("div");
           layer.className = "nvim-float-frames";
-          layer.style.zIndex = String(part.z);
+          this.put(layer, part.z, "frames");
           frames.set(part.z, layer);
         }
         layer.append(pieceOf(part, true));
@@ -1499,9 +1559,6 @@ export class GridPainter {
         labels.length > 0 ? document.createElement("div") : undefined;
       if (over) {
         over.className = "nvim-frame-labels";
-        over.style.zIndex = String(
-          Math.max(...cluster.members.map((m) => byGrid.get(m.grid)?.z ?? 0)),
-        );
       }
       for (const label of labels) {
         const tag = document.createElement("div");
@@ -1525,10 +1582,15 @@ export class GridPainter {
         }
         over?.append(tag);
       }
-      // Under the canvases of the same zindex: they come later.
-      for (const layer of frames.values()) this.root.prepend(layer);
-      this.root.prepend(el);
-      if (over) this.root.append(over);
+      // Under the members' canvases, by part, not by place in the page;
+      // the labels over every member (a sibling's canvas may reach a line).
+      this.put(el, cluster.z, "shadow");
+      if (over)
+        this.put(
+          over,
+          Math.max(...cluster.members.map((m) => byGrid.get(m.grid)?.z ?? 0)),
+          "labels",
+        );
       this.clusters.set(key, {
         ground: el,
         frames: [...frames.values()],
@@ -1815,7 +1877,8 @@ export class GridPainter {
     moved: LinesMoved,
   ): void {
     const { canvas } = entry;
-    if (canvas.parentElement !== this.root) return;
+    // Not while the canvas is in a scroll port (pixel scrolling).
+    if (canvas.parentElement?.classList.contains("nvim-level") !== true) return;
     if (Math.abs(moved.rows) > Math.max(1, Math.floor(box.height / 3))) return;
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const { width: cw, height: ch } = this.metrics;
@@ -1830,7 +1893,7 @@ export class GridPainter {
     clip.style.top = `${String(parseFloat(canvas.style.top) + y)}px`;
     clip.style.width = `${String(w)}px`;
     clip.style.height = `${String(h)}px`;
-    clip.style.zIndex = canvas.style.zIndex;
+    clip.style.zIndex = String(PART_Z.over);
     clip.style.background = cssColor(state.defaults.background);
     const image = document.createElement("canvas");
     image.width = Math.max(1, Math.round(w * this.dpr));

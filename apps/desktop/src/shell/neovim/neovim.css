@@ -54,6 +54,13 @@
   font-variant-ligatures: none;
 }
 
+/* One stacking context per stacking order of the grids (`GridPainter.level`):
+   its parts stack inside it by `PART_Z`, never by their order in the page. */
+.nvim-level {
+  position: absolute;
+  inset: 0;
+}
+
 .nvim-grid {
   position: absolute;
   image-rendering: auto;

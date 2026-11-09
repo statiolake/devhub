@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { gridBlends, isOwnGround, mixColors, parseGuifont } from "./painter";
+import {
+  PART_Z,
+  gridBlends,
+  isOwnGround,
+  mixColors,
+  parseGuifont,
+} from "./painter";
 
 describe("guifont", () => {
   it("is a CSS family list and a size", () => {
@@ -56,5 +62,23 @@ describe("a leaf canvas's alpha", () => {
 
   it("has alpha only while a cell blends (`winblend`)", () => {
     expect(gridBlends({ hls: Int32Array.from([1, 1, 2, 1]) }, hl)).toBe(true);
+  });
+});
+
+describe("a level's parts", () => {
+  it("stack by declared order: shadow, frames, grid, over, labels", () => {
+    const order = Object.entries(PART_Z)
+      .sort(([, a], [, b]) => a - b)
+      .map(([part]) => part);
+    expect(order).toEqual(["shadow", "frames", "grid", "over", "labels"]);
+  });
+
+  it("are never ordered by their place in the page", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(
+      new URL("./painter.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).not.toMatch(/\.prepend\(|lastElementChild/);
   });
 });

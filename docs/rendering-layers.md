@@ -41,6 +41,13 @@ computation was off by one something else broke:
 
 What follows the rule in code:
 
+- `GridPainter.level(z)` (`painter.ts`): one stacking element per
+  `GridBox.z` (grid 1 at 0, windows at 1, a float at 100 + its zindex, a
+  tmux popup at 50, the chooser's preview at 60). Inside a level its parts
+  stack by `PART_Z` — a panel's shadow, a framed float's ring and lines, the
+  grid (its canvas, or a window's scroll port holding canvas over ghost),
+  what lies over a grid (a pinned winbar, a slide), the frame's labels —
+  never by which element was appended last.
 - `gridBlends` (`painter.ts`): a leaf canvas has alpha only while one of its
   cells blends (`winblend`); every other grid, floats and tmux popups
   included, is opaque.
@@ -74,7 +81,10 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   canvas's z and relied on being inserted before or after it. Bug: a canvas
   made after a cluster (a float that started or stopped blending, a grid
   re-created by a resize) could land over its frame's labels or under its
-  own shadow's neighbours until the next relayout. **Open.**
+  own shadow's neighbours until the next relayout. **Fixed** ("Neovim
+  painter: each stacking order is a level, its parts stack by declaration"):
+  levels and `PART_Z`; a guard test fails on `prepend` or
+  `lastElementChild` in `painter.ts`.
 - `editor.ts:915` the cursor is at its grid's z + 1, the same z as the
   riders of that window (`LayerViews.tsx:348,505` inline cards, decorations
   `DecorationViews.tsx:345`) and GUI windows (`NeovimApp.tsx:659,685`), all
@@ -157,11 +167,10 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 
 ## Remaining, in order of impact
 
-1. Painter levels: parts stacked by declaration, not DOM order.
 1. Declared overlay tiers in Neovim's zindex space (floats vs DevHub's
    command line, popups and toasts).
-1. Cursor and riders as parts of their window's level, clipped by it.
-1. Separators as elements, from grounds the windows state.
-1. `underFrames` replaced by a clip of the framed floats.
-1. The control surface's z table; prompt over a popup.
-1. Device-pixel snapping of labels, hairlines and outlines.
+2. Cursor and riders as parts of their window's level, clipped by it.
+3. Separators as elements, from grounds the windows state.
+4. `underFrames` replaced by a clip of the framed floats.
+5. The control surface's z table; prompt over a popup.
+6. Device-pixel snapping of labels, hairlines and outlines.
