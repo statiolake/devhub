@@ -472,10 +472,14 @@ workspaces
                                    open a folder as a workspace (Cmd+Q f);
                                    with --worktree, open (making it if needed)
                                    the worktree of <branch> in the clone at
-                                   <path>; the branch must name an Issue
-                                   number, like 123-fix-login. Without it,
-                                   <path> itself: nothing here reads a
-                                   setting
+                                   <path>: a branch that is nowhere yet is
+                                   started from origin's default. One that
+                                   names an Issue (feature/123-x) goes in
+                                   the Issue's folder, <repo>_123; one that
+                                   names none (investigate-api-500s: work
+                                   with no Issue yet) in <repo>_<branch>.
+                                   Without it, <path> itself: nothing here
+                                   reads a setting
   workspace close <w> [--worktree keep|remove] [--agents stop]
                       [--terminals close] [--discard-unsaved]
                                    Close Workspace, as the window does. Each

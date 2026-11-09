@@ -65,6 +65,8 @@ const SSH_CONNECT = "devhub:ssh-connect";
 const OTHER_FOLDER = "devhub:other-folder";
 /** A branch row's id: the prefix, then the branch's name. */
 const BRANCH_ROW = "devhub:branch:";
+/** The New Branch row's id: the prefix, then the name typed. */
+const NEW_BRANCH_ROW = "devhub:new-branch:";
 
 function BranchGlyph() {
   return (
@@ -120,6 +122,40 @@ export function branchItems(
       worktree: true,
     };
   });
+}
+
+/**
+ * The New Branch row: what was typed, as a branch of the selection's
+ * repository that is not there yet, made in a worktree of its own.
+ *
+ * Work does not always start from an Issue — the investigation an Issue is
+ * written from has none to assign — and a worktree is where work happens, so
+ * the name typed is enough to make one: a branch started from the remote's
+ * default, in `{repo}_{branch}` (or the Issue's folder, when the name carries
+ * an Issue number). Offered only when the name is not a branch already (that
+ * one is its own row) and could be one (no spaces).
+ */
+export function newBranchItem(
+  list: BranchListWire | undefined,
+  query: string,
+): PickerItem | undefined {
+  const name = query.trim();
+  if (
+    list === undefined ||
+    name.length === 0 ||
+    /\s/u.test(name) ||
+    list.branches.some((branch) => branch.name === name)
+  )
+    return undefined;
+  return {
+    id: `${NEW_BRANCH_ROW}${name}`,
+    label: name,
+    detail: `${list.repository} · new, from the default branch, in a worktree of its own`,
+    searchText: name,
+    glyph: <BranchGlyph />,
+    accessory: () => "New Branch",
+    worktree: true,
+  };
 }
 
 function PlusGlyph() {
@@ -222,11 +258,15 @@ type Chosen =
    * agent question goes in front of the act, and the act is still one call.
    */
   | { readonly kind: "ssh"; readonly host: string; readonly path?: string }
-  /** A branch of the selection's repository: its worktree, made if need be. */
+  /**
+   * A branch of the selection's repository: its worktree, made if need be;
+   * `create`, the New Branch row's: the branch too.
+   */
   | {
       readonly kind: "branch";
       readonly place: WorkspacePlaceWire;
       readonly branch: string;
+      readonly create: boolean;
     }
   /** No machine named yet: the destination is the next question. */
   | { readonly kind: "ssh-connect" };
@@ -283,6 +323,12 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   const branches = useMemo(
     () => branchItems(branchList, Date.now()),
     [branchList],
+  );
+  // What is typed, for the New Branch row it may name.
+  const [query, setQuery] = useState("");
+  const newBranch = useMemo(
+    () => newBranchItem(branchList, query),
+    [branchList, query],
   );
 
   // The machines `~/.ssh/config` names, as rows in the same list as the
@@ -357,8 +403,9 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   }, [pickerCandidates]);
 
   const search = useCallback(
-    (query: string) => {
-      void cancelWorkspacePicker().then(() => startWorkspacePicker(query));
+    (typed: string) => {
+      setQuery(typed);
+      void cancelWorkspacePicker().then(() => startWorkspacePicker(typed));
     },
     [cancelWorkspacePicker, startWorkspacePicker],
   );
@@ -403,7 +450,9 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
           finish(() => selectWorkspacePicker(row.path, row.create, agent));
           return;
         case "branch":
-          finish(() => openBranchWorkspace(row.place, row.branch, agent));
+          finish(() =>
+            openBranchWorkspace(row.place, row.branch, row.create, agent),
+          );
           return;
         case "ssh-connect":
           void cancelWorkspacePicker();
@@ -526,7 +575,12 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     <Picker
       title="Open Workspace"
       question="Which workspace should this window open? Type to search the folders your sources cover, and the branches of the repository you are in."
-      items={[...pool, ...branches, ...sshHostItems(sshHosts)]}
+      items={[
+        ...pool,
+        ...branches,
+        ...(newBranch === undefined ? [] : [newBranch]),
+        ...sshHostItems(sshHosts),
+      ]}
       pinned={ACTIONS}
       busy={pickerBusy}
       emptyNoMatch="No workspaces match."
@@ -558,13 +612,18 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
           return;
         }
         const alias = aliasFromRowId(choice.id);
+        const create = choice.id.startsWith(NEW_BRANCH_ROW);
         const branch =
-          choice.id.startsWith(BRANCH_ROW) && branchList !== undefined
-            ? choice.id.slice(BRANCH_ROW.length)
-            : undefined;
+          branchList === undefined
+            ? undefined
+            : create
+              ? choice.id.slice(NEW_BRANCH_ROW.length)
+              : choice.id.startsWith(BRANCH_ROW)
+                ? choice.id.slice(BRANCH_ROW.length)
+                : undefined;
         const row: Chosen =
           branch !== undefined && branchList !== undefined
-            ? { kind: "branch", place: branchList.place, branch }
+            ? { kind: "branch", place: branchList.place, branch, create }
             : choice.id === NEW_PROJECT
               ? { kind: "new", query: choice.query }
               : choice.id === CLONE_PROJECT

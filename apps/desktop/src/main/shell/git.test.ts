@@ -347,6 +347,49 @@ describe("the worktree for a branch", () => {
 	});
 });
 
+describe("a branch for work with no Issue yet", () => {
+	it("is started where it is nowhere, in a folder named for the branch", async () => {
+		const path = await ensureWorktree(
+			command,
+			repository,
+			{ kind: "branch", create: true },
+			"investigate-api-500s",
+		);
+		expect(path).toBe(join(parent, "widget_investigate-api-500s"));
+		expect(
+			(
+				await runGit(command, ["rev-parse", "--abbrev-ref", "HEAD"], {
+					cwd: path,
+				})
+			).trim(),
+		).toBe("investigate-api-500s");
+	});
+
+	it("is checked out, not started again, when it exists already", async () => {
+		await runGit(command, ["branch", "investigate-login"], {
+			cwd: repository,
+		});
+		const path = await ensureWorktree(
+			command,
+			repository,
+			{ kind: "branch", create: true },
+			"investigate-login",
+		);
+		expect(path).toBe(join(parent, "widget_investigate-login"));
+	});
+
+	it("is refused, when only picked, if it is nowhere", async () => {
+		await expect(
+			ensureWorktree(
+				command,
+				repository,
+				{ kind: "branch" },
+				"investigate-gone",
+			),
+		).rejects.toThrow(/on neither this machine nor any remote/u);
+	});
+});
+
 describe("a branch that already exists somewhere", () => {
 	/** A bare `origin` with one branch on it that this clone does not have. */
 	async function originWith(branch: string): Promise<string> {

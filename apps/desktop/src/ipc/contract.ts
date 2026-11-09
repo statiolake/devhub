@@ -1448,12 +1448,15 @@ export interface WorkspaceOpeningBridge {
 	 * Open `branch` of the repository at `place` as a Workspace: its worktree
 	 * when it has one (focused when it is open already), else a worktree made
 	 * for it — a remote-only branch as a local branch tracking it — placed
-	 * under the selection's Workspace. A refusal (a folder in the way, git's
-	 * own) is thrown with its reason.
+	 * under the selection's Workspace. `create`: a branch that is nowhere yet
+	 * is started from the remote's default branch (the New Branch row: work
+	 * with no Issue yet); without it, that is refused. A refusal (a folder in
+	 * the way, git's own) is thrown with its reason.
 	 */
 	openBranchWorkspace(
 		place: WorkspacePlaceWire,
 		branch: string,
+		create: boolean,
 		withAgent?: AgentLaunchWire,
 	): Promise<AppOutcome>;
 

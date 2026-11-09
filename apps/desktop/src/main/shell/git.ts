@@ -1065,12 +1065,20 @@ export interface WorktreeOptions {
 
 /**
  * The work a worktree is made for: an Issue or a pull request, or simply a
- * branch somebody picked by name (the workspace picker's branch rows, a
- * session resumed on the branch it ran on). A picked branch is one that
- * exists — it was listed from this clone's refs — so, like a pull request's,
- * it is checked out and never created.
+ * branch somebody named (the workspace picker's branch rows, a session
+ * resumed on the branch it ran on, `workspace open --worktree`).
+ *
+ * A picked branch is one that exists — it was listed from this clone's refs
+ * — so, like a pull request's, it is checked out and never created. One
+ * named to be made (`create`: the picker's New Branch row, `workspace open
+ * --worktree`) is work that has no Issue yet — the investigation an Issue is
+ * written from — and is started from the remote's default branch, as an
+ * Issue's is, when it is nowhere yet. Either way the folder is named for the
+ * branch (`branchWorktreeDirectory`), or for the Issue its name carries.
  */
-export type WorktreeWork = WorkItem | { readonly kind: "branch" };
+export type WorktreeWork =
+	| WorkItem
+	| { readonly kind: "branch"; readonly create?: boolean };
 
 export async function ensureWorktree(
 	command: GitCommand,
@@ -1087,7 +1095,8 @@ export async function ensureWorktree(
 	// an empty branch under the name of the work they asked to review. A
 	// picked branch exists too, but in this clone's own refs, which is where
 	// it was listed from: there is nothing to fetch first.
-	const branchExistsAlready = work.kind === "pull" || work.kind === "branch";
+	const branchExistsAlready =
+		work.kind === "pull" || (work.kind === "branch" && work.create !== true);
 	const name = branch.trim();
 	if (name.length === 0) {
 		throw workspaceFailure("Enter a branch name.");

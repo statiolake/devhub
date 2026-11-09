@@ -18,7 +18,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PickerValue } from "../../picker/PickerContext";
 import { PickerContext } from "../../picker/PickerContext";
 import type { BranchListWire } from "../../../ipc/contract";
-import { branchItems, WorkspacePicker } from "./WorkspacePicker";
+import { branchItems, newBranchItem, WorkspacePicker } from "./WorkspacePicker";
 
 Element.prototype.scrollIntoView = vi.fn();
 afterEach(cleanup);
@@ -116,11 +116,41 @@ describe("the workspace picker's branches", () => {
       expect(openBranchWorkspace).toHaveBeenCalledWith(
         PLACE,
         "release/2.0",
+        false,
         undefined,
       );
     });
     await waitFor(() => {
       expect(onDismiss).toHaveBeenCalled();
+    });
+  });
+
+  it("offers a new branch, in a worktree of its own, for a name that is not one yet", () => {
+    const row = newBranchItem(LIST, "  investigate-api-500s ");
+    expect(row?.id).toBe("devhub:new-branch:investigate-api-500s");
+    expect(row?.label).toBe("investigate-api-500s");
+    expect(row?.accessory?.(false)).toBe("New Branch");
+    // A branch that is there is its own row; a name with a space is none.
+    expect(newBranchItem(LIST, "release/2.0")).toBeUndefined();
+    expect(newBranchItem(LIST, "two words")).toBeUndefined();
+    expect(newBranchItem(LIST, "  ")).toBeUndefined();
+    expect(newBranchItem(undefined, "investigate")).toBeUndefined();
+  });
+
+  it("makes the branch typed, and its worktree, when New Branch is chosen", async () => {
+    const { openBranchWorkspace } = mount();
+    await screen.findByRole("option", { name: /release\/2\.0/u });
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "investigate-api-500s" },
+    });
+    fireEvent.click(await screen.findByRole("option", { name: /New Branch/u }));
+    await waitFor(() => {
+      expect(openBranchWorkspace).toHaveBeenCalledWith(
+        PLACE,
+        "investigate-api-500s",
+        true,
+        undefined,
+      );
     });
   });
 

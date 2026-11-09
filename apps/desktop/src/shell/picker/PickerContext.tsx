@@ -82,10 +82,14 @@ export interface PickerValue {
   readonly chooseWorkspaceFolder: () => Promise<string | undefined>;
   /** The selection's repository's branches, for the workspace picker's branch rows. */
   readonly listSelectionBranches: () => Promise<BranchListWire | undefined>;
-  /** A branch row taken: its worktree opened, or made for it and opened. */
+  /**
+   * A branch row taken: its worktree opened, or made for it and opened.
+   * `create`: the New Branch row, a branch started when it is nowhere yet.
+   */
   readonly openBranchWorkspace: (
     place: WorkspacePlaceWire,
     branch: string,
+    create: boolean,
     withAgent?: AgentLaunchWire,
   ) => Promise<AppOutcome>;
   /** The machines `~/.ssh/config` names, read fresh when the picker opens. */
@@ -340,9 +344,9 @@ export function PickerProvider({ children }: { children: ReactNode }) {
         ),
       chooseWorkspaceFolder: () => bridge.chooseWorkspaceFolder(),
       listSelectionBranches: () => bridge.listSelectionBranches(),
-      openBranchWorkspace: async (place, branch, withAgent) =>
+      openBranchWorkspace: async (place, branch, create, withAgent) =>
         applyOpening(
-          await bridge.openBranchWorkspace(place, branch, withAgent),
+          await bridge.openBranchWorkspace(place, branch, create, withAgent),
         ),
       listSshHosts: () => bridge.listSshHosts(),
       openSshWorkspace: async (host, path, withAgent) =>

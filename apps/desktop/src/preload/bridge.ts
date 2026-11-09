@@ -219,12 +219,14 @@ export function workspaceOpeningBridge(): WorkspaceOpeningBridge {
 		openBranchWorkspace: (
 			place: WorkspacePlaceWire,
 			branch: string,
+			create: boolean,
 			withAgent?: AgentLaunchWire,
 		) =>
 			ipcRenderer.invoke(
 				CHANNELS.openBranchWorkspace,
 				place,
 				branch,
+				create,
 				withAgent,
 			) as Promise<AppOutcome>,
 		createProject: (path: string, withAgent?: AgentLaunchWire) =>

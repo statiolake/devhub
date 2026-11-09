@@ -3422,17 +3422,19 @@ export class AppController {
 	 * A branch row of the workspace picker: its worktree opened (or focused),
 	 * or made for it first — `ensureWorktree` with the branch as the work —
 	 * and placed under the selection's Workspace like every opening from here.
+	 * `create`: the New Branch row, a branch to start when it is nowhere yet.
 	 */
 	private async openBranchWorkspace(
 		place: WorkspacePlaceWire,
 		branch: string,
+		create: boolean,
 		withAgent: AgentLaunchWire | undefined,
 	): Promise<AppOutcomeWire> {
 		const location = workspaceLocation(place);
 		const path = await ensureWorktree(
 			await this.gitCommand(runtimeFor(location)),
 			place.path,
-			{ kind: "branch" },
+			{ kind: "branch", create },
 			branch,
 		);
 		return this.openFolder(
@@ -8304,18 +8306,19 @@ export class AppController {
 					: { kind: "local", path };
 				let target = place;
 				if (worktree !== undefined) {
+					// A branch that names an Issue is that Issue's work, in its
+					// folder; one that names none is work with no Issue yet (the
+					// investigation an Issue is written from), in a folder named for
+					// the branch — the picker's New Branch row, made the same way.
 					const number = issueNumberFromBranch(worktree);
-					if (number === undefined) {
-						throw new Error(
-							`${worktree} names no Issue number, and a worktree folder is named by one (like 123-fix-login). Use a branch with the number in it, or 'issue assign'.`,
-						);
-					}
 					target = {
 						...place,
 						path: await ensureWorktree(
 							await this.gitCommand(runtimeFor(workspaceLocation(place))),
 							place.path,
-							{ kind: "issue", number },
+							number === undefined
+								? { kind: "branch", create: true }
+								: { kind: "issue", number },
 							worktree,
 						),
 					};
@@ -9659,12 +9662,18 @@ export class AppController {
 				_event,
 				place: WorkspacePlaceWire,
 				branch: string,
+				create: boolean,
 				withAgent: AgentLaunchWire | undefined,
 			) => {
 				this.cancelPicker?.();
 				this.cancelPicker = undefined;
 				try {
-					return await this.openBranchWorkspace(place, branch, withAgent);
+					return await this.openBranchWorkspace(
+						place,
+						branch,
+						create === true,
+						withAgent,
+					);
 				} catch (error: unknown) {
 					throw namedFailure(error);
 				}
