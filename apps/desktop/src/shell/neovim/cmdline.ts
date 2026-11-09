@@ -130,3 +130,8 @@ export function cmdlineLead(
     Math.max(1, textCells(line.firstc || line.prompt || "")),
   );
 }
+
+/** The rows a line of text takes, wrapped at `width` cells (at least one). */
+export function wrappedRows(text: string, width: number): number {
+  return Math.max(1, Math.ceil(textCells(text) / Math.max(1, width)));
+}

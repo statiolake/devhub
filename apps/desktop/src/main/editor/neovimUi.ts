@@ -17,6 +17,7 @@
 
 import { MsgpackExt, decode } from "./msgpack.js";
 import { DECOR_LUA } from "./neovimDecor.js";
+import { MESSAGES_LUA } from "./neovimMessages.js";
 import { LAYERS_LUA } from "./neovimGuiLayers.js";
 import { RESTART_STATE_LUA } from "./neovimRestart.js";
 import type { NeovimRpc } from "./neovimRpc.js";
@@ -84,10 +85,11 @@ export interface GuiOpenReport {
 export type GuiKeyboard = "neovim" | "content";
 
 /**
- * What the attach asks for. `ext_messages` stays off: it takes the grid's
- * own message area away, so Neovim keeps drawing messages in the grid (its
- * message grid, `msg_set_pos`).
- * `ext_hlstate` names the groups each highlight is made of, so the page
+ * What the attach asks for. `ext_messages`: Neovim's messages, prompts and
+ * mode come as events and DevHub draws them (`shell/neovim/messages.ts`):
+ * ordinary messages in the notifications' corner, long output in the pager,
+ * prompts in the command line's box; `MESSAGES_LUA` keeps the person's
+ * `cmdheight`, which the attach would set to 0. `ext_hlstate` names the groups each highlight is made of, so the page
  * knows a selection, a pill or a diff's filler by name, not by colour.
  */
 export function uiAttachOptions(): Record<string, boolean> {
@@ -99,7 +101,7 @@ export function uiAttachOptions(): Record<string, boolean> {
 		ext_popupmenu: true,
 		ext_cmdline: true,
 		ext_tabline: true,
-		ext_messages: false,
+		ext_messages: true,
 	};
 }
 
@@ -188,6 +190,8 @@ function M._replay()
   vim.rpcnotify(M._chan, "devhub_buffer", vim.api.nvim_buf_get_name(0), vim.bo.buftype)
   for id, image in pairs(M._images or {}) do M._event("image", { id = id, src = image.src }) end
   if M._place then vim.schedule(M._place) end
+  -- In the command-line window (q:): the new page frames it too.
+  if M._cmdwin_report then M._cmdwin_report() end
   -- Attached: what the config asked for before (devhub.nvim's gui queue).
   vim.api.nvim_exec_autocmds("User", { pattern = "DevhubGui", modeline = false })
 end
@@ -922,7 +926,6 @@ const HANDLE_EVENTS = new Set([
 	"win_viewport",
 	"win_extmark",
 	"tabline_update",
-	"msg_set_pos",
 ]);
 
 function withPlainHandles(batches: readonly unknown[]): unknown[] {
@@ -1042,6 +1045,8 @@ export class NeovimUi {
 		await this.client.request("nvim_exec_lua", [LAYERS_LUA, []]);
 		// Where virtual text and folds' text are, for a proportional face.
 		await this.client.request("nvim_exec_lua", [DECOR_LUA, []]);
+		// Messages: cmdheight held through the attach, the pager, `q:`.
+		await this.client.request("nvim_exec_lua", [MESSAGES_LUA, []]);
 		// A Neovim that had a multigrid UI before (DevHub restarted, the page
 		// reloaded) keeps its window grids and believes the new UI has them
 		// too, so it would send only what changes from here. A moment attached
@@ -1060,6 +1065,11 @@ export class NeovimUi {
 		} finally {
 			this.priming = false;
 		}
+		// The person's cmdheight, held through the attach that zeroes it.
+		await this.client.request("nvim_exec_lua", [
+			"local M = package.loaded['devhub_gui']; if M and M._before_attach then M._before_attach() end",
+			[],
+		]);
 		await this.client.request("nvim_ui_attach", [
 			Math.max(1, Math.floor(cols)),
 			Math.max(1, Math.floor(rows)),
@@ -1070,7 +1080,7 @@ export class NeovimUi {
 		// told again: the page knew none of them.
 		await this.client
 			.request("nvim_exec_lua", [
-				"local M = package.loaded['devhub_gui']; if M and M._replay then M._replay() end",
+				"local M = package.loaded['devhub_gui']; if M and M._keep_cmdheight then M._keep_cmdheight() end; if M and M._replay then M._replay() end",
 				[],
 			])
 			.catch(() => undefined);

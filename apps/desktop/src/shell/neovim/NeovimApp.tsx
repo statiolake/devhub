@@ -40,11 +40,15 @@ import { NeovimEditor } from "./editor";
 import { cmdlineUiPos, popupmenuPlace } from "./place";
 import {
   currentModeInfo,
+  msgText,
   type Chunks,
+  type CmdlineLevel,
   type GridBox,
+  type MsgChunk,
   type NeovimUiState,
 } from "./redraw";
-import { cmdlineLayout, cmdlineLead } from "./cmdline";
+import { cmdlineLayout, cmdlineLead, textCells } from "./cmdline";
+import { routeMessages } from "./messages";
 import { ICON_FAMILY, cssColor, fontOf, resolveColors } from "./painter";
 import { CompletionMenu } from "../completion/CompletionMenu";
 import { TabStrip } from "./TabStrip";
@@ -184,6 +188,39 @@ function NeovimSurface({
       editor;
     const unsubscribe = editor.subscribe(() => {
       setTick((tick) => tick + 1);
+      // Neovim's messages: to the corner, or the pager (`messages.ts`).
+      const events = editor.takeMessages();
+      if (events.length === 0) return;
+      const routed = routeMessages(events, editor.state.lastCommand, (attr) =>
+        editor.state.hl.get(attr),
+      );
+      if (routed.toasts.length > 0) {
+        setDecorations((before) =>
+          routed.toasts.reduce(
+            (state, toast) =>
+              applyGuiEvent(state, "notify", {
+                group: "Neovim",
+                msg: toast.msg,
+                level: toast.level,
+                key: toast.key,
+              }),
+            before,
+          ),
+        );
+      }
+      if (routed.pager) {
+        const { source, title, lines } = routed.pager;
+        call("nvim_exec_lua", [
+          "local M = package.loaded['devhub_gui']; if M and M._pager_show then M._pager_show(...) end",
+          [
+            {
+              source,
+              title,
+              lines: lines.map((line) => line.map((c) => [c.text, c.hl])),
+            },
+          ],
+        ]);
+      }
     });
     const offRedraw = bridge.neovim.onRedraw((id, batches) => {
       if (id === workspaceId) editor.redraw(batches);
@@ -710,7 +747,13 @@ function NeovimSurface({
                 />
               </>
             ) : null}
-            <Cmdline state={nvim} editor={editor} />
+            <CmdwinFrame editor={editor} cmdwin={decorations.cmdwin} />
+            <CmdlineBand state={nvim} editor={editor} />
+            <Cmdline
+              state={nvim}
+              editor={editor}
+              typingCount={decorations.typingCount}
+            />
             <Popupmenu state={nvim} editor={editor} send={send} />
           </>
         ) : null}
@@ -718,7 +761,7 @@ function NeovimSurface({
       <Toasts
         toasts={decorations.toasts}
         dismiss={dismiss}
-        bottom={toastBottom(editor, boxes)}
+        bottom={toastBottom(editor, boxes, decorations.pager)}
         right={toastRight(editor, boxes)}
         surface={editor?.surface()}
         cell={editor?.cellMetrics()}
@@ -764,10 +807,6 @@ function guiWindowsInPaintOrder(
   return [...first, ...rest];
 }
 
-/** The command line bar's padding around its cells, as `neovim.css` rounds it. */
-const CMDLINE_PAD_X = 12;
-const CMDLINE_PAD_Y = 8;
-
 function ChunkSpans({
   chunks,
   state,
@@ -797,52 +836,89 @@ function ChunkSpans({
   );
 }
 
+/** A message's chunks as a command line's (`[attr, text]`). */
+function chunksOfMsg(line: readonly MsgChunk[]): Chunks {
+  return line.map((c) => [c.attr, c.text] as const);
+}
+
 /**
- * `ext_cmdline`. With `cmdheight` > 0, in the rows Neovim keeps for it at
- * the bottom, as the editor's own line: the editor's ground and text, no
- * frame, its text from the first column (`cmdlinePlace`). With
- * `cmdheight=0`, a palette-like bar near the top. Either sits on whole
- * cells in the grid's own font, its text laid out cell by cell as Neovim's
- * own command line would hold it (`cmdlineLayout`), so what plugins draw
- * beside the command line — told where it is by `g:ui_cmdline_pos` —
- * lines up with its text, and the caret and an IME's preedit sit on the
- * cell `cmdline_pos` names.
+ * The badge before the text: `:` for a command, `/` `?` for a search, `=`
+ * for an expression — the one mark that says what is typed, in a box that
+ * is otherwise the same for all — or a prompt's own words.
+ */
+function CmdlineLead({
+  line,
+  cell,
+  x,
+}: {
+  readonly line: CmdlineLevel | undefined;
+  readonly cell: { readonly width: number; readonly height: number };
+  readonly x: number;
+}) {
+  if (!line) return null;
+  if (line.firstc !== "") {
+    return (
+      <span
+        className="nvim-cmdline-badge"
+        style={{ left: x, width: textCells(line.firstc) * cell.width }}
+      >
+        {line.firstc}
+      </span>
+    );
+  }
+  // On cells, as the typed text: page text in the grid's face still runs
+  // wider than Neovim's cells, and a prompt is read with its answer.
+  const layout = cmdlineLayout(
+    { content: [[0, line.prompt]], pos: 0, indent: 0 },
+    cmdlineLead(line, 1000),
+  );
+  return (
+    <>
+      {layout.cells.map((c, index) => (
+        <span
+          key={index}
+          className="nvim-cmdline-cell nvim-cmdline-prompt"
+          style={{
+            left: x + c.col * cell.width,
+            top: c.row * cell.height,
+            width: c.cells * cell.width,
+          }}
+        >
+          {c.ch}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
+ * `ext_cmdline` and its prompts, in one bordered box at the bottom
+ * (`cmdlinePlace`; the person's pick, mock 2): `:` and `/` share the box,
+ * the search count at its right edge; a prompt (`confirm()`, `inputlist()`,
+ * the swap file's question, `:s///c`) shows its question over its line,
+ * answered with the keys as Neovim reads them. Its text sits on whole
+ * cells in the grid's own font, laid out as Neovim's own command line
+ * would hold it (`cmdlineLayout`), so what plugins draw beside it — told
+ * where it is by `g:ui_cmdline_pos` — lines up with its text, and the
+ * caret and an IME's preedit sit on the cell `cmdline_pos` names.
  */
 function Cmdline({
   state,
   editor,
+  typingCount,
 }: {
   readonly state: NeovimUiState;
   readonly editor: NeovimEditor;
+  readonly typingCount: string;
 }) {
   const line = state.cmdline.at(-1);
-  if (!line && !state.cmdlineBlock) return null;
-  const block = state.cmdlineBlock ?? [];
+  if (!line && !state.cmdlineBlock && !state.prompt) return null;
   const cell = editor.cellMetrics();
   const font = editor.font();
   const place = editor.cmdlinePlace();
-  const style: React.CSSProperties = place.bottom
-    ? {
-        left: place.col * cell.width,
-        top: place.row * cell.height,
-        width: place.cols * cell.width,
-        minHeight: (editor.gridSize().rows - place.row) * cell.height,
-        font: fontOf(font),
-        lineHeight: `${String(cell.height)}px`,
-        // The message area's ground and text: the editor's own line.
-        background: cssColor(state.defaults.background),
-        color: cssColor(state.defaults.foreground),
-        ["--nvim-cell" as string]: `${String(cell.width)}px`,
-      }
-    : {
-        left: place.col * cell.width - CMDLINE_PAD_X,
-        top: place.row * cell.height - CMDLINE_PAD_Y,
-        width: place.cols * cell.width + 2 * CMDLINE_PAD_X,
-        padding: `${String(CMDLINE_PAD_Y)}px ${String(CMDLINE_PAD_X)}px`,
-        font: fontOf(font),
-        lineHeight: `${String(cell.height)}px`,
-        ["--nvim-cell" as string]: `${String(cell.width)}px`,
-      };
+  const rows = editor.cmdlineRows(place.cols);
+  const inside = place.left + 1;
+  const searching = line?.firstc === "/" || line?.firstc === "?";
   const label =
     line?.firstc === ":"
       ? "Command"
@@ -852,32 +928,250 @@ function Cmdline({
           ? "Search backward"
           : line?.firstc === "="
             ? "Expression"
-            : line?.prompt
-              ? "Input"
+            : state.prompt || line?.prompt
+              ? "Prompt"
               : "Command";
+  const gridCols = editor.gridSize().cols;
   return (
     <div
       className={
-        place.bottom ? "nvim-cmdline nvim-cmdline-bottom" : "nvim-cmdline"
+        editor.paintTheme().cmdheight === 0
+          ? "nvim-cmdline nvim-cmdline-floating"
+          : "nvim-cmdline"
       }
       role="dialog"
       aria-label={label}
-      style={style}
+      style={{
+        left: place.left,
+        top: place.top,
+        width: place.width,
+        height: place.height,
+        font: fontOf(font),
+        lineHeight: `${String(cell.height)}px`,
+        ["--nvim-cell" as string]: `${String(cell.width)}px`,
+        ["--nvim-label-size" as string]: `${String(font.size - 1)}px`,
+      }}
     >
-      {block.map((chunks, index) => (
-        <div key={index} className="nvim-cmdline-block">
-          <ChunkSpans chunks={chunks} state={state} />
+      <div
+        className="nvim-cmdline-content"
+        style={{ top: place.padY, height: place.rows * cell.height }}
+      >
+        <div className="nvim-cmdline-stack">
+          {(state.prompt ?? []).map((msg, index) => (
+            <div
+              key={`p${String(index)}`}
+              className="nvim-cmdline-message"
+              style={{
+                marginLeft: cell.width - inside,
+                width: (gridCols - 3) * cell.width,
+                // A blank line of the question is a row, as Neovim shows it.
+                minHeight: cell.height,
+              }}
+            >
+              <ChunkSpans chunks={chunksOfMsg(msg)} state={state} />
+            </div>
+          ))}
+          {(state.cmdlineBlock ?? []).map((chunks, index) => (
+            <div
+              key={`b${String(index)}`}
+              className="nvim-cmdline-block"
+              style={{ marginLeft: place.col * cell.width - inside }}
+            >
+              <ChunkSpans chunks={chunks} state={state} />
+            </div>
+          ))}
+          {line ? (
+            <div
+              className="nvim-cmdline-row"
+              style={{ height: rows.text * cell.height }}
+            >
+              <CmdlineLead line={line} cell={cell} x={cell.width - inside} />
+              <CmdlineRow
+                line={line}
+                state={state}
+                cell={cell}
+                cols={place.cols}
+                x={place.col * cell.width - inside}
+                focused={editor.hasKeyboard()}
+              />
+            </div>
+          ) : null}
         </div>
-      ))}
-      {line ? (
-        <CmdlineRow
-          line={line}
-          state={state}
-          cell={cell}
-          cols={place.cols}
-          focused={editor.hasKeyboard()}
-        />
+      </div>
+      {searching && typingCount !== "" ? (
+        <span className="nvim-cmdline-count">{countLabel(typingCount)}</span>
       ) : null}
+    </div>
+  );
+}
+
+/** `3/12` as the box shows it: `3 / 12`. */
+function countLabel(count: string): string {
+  return count.replace(/^\[|\]$/g, "").replace("/", " / ");
+}
+
+/**
+ * The rows `cmdheight` keeps, while nothing is typed: Neovim's own line
+ * there, quietly. Left, the mode (`-- INSERT --`, recording) or, with no
+ * mode to say, the search just entered, where it was typed (the person's
+ * pick: the echo in the same place); right, the search count, `showcmd`
+ * and the ruler, dimmer — counts and keys being typed, glanced at. No
+ * box: it is not being typed into. With `cmdheight=0` there are no rows:
+ * only the search echo is shown, in the box over the status line, for a
+ * few seconds (Neovim draws nothing there either).
+ */
+function CmdlineBand({
+  state,
+  editor,
+}: {
+  readonly state: NeovimUiState;
+  readonly editor: NeovimEditor;
+}) {
+  const echo = state.searchEcho;
+  const [shownEcho, setShownEcho] = useState(echo);
+  const cmdheight = editor.paintTheme().cmdheight;
+  useEffect(() => {
+    setShownEcho(echo);
+    if (!echo || cmdheight > 0) return;
+    const timer = window.setTimeout(() => {
+      setShownEcho(undefined);
+    }, ECHO_MS);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [echo, cmdheight]);
+  if (state.cmdline.length > 0 || state.prompt || state.cmdlineBlock)
+    return null;
+  const mode = state.showmode;
+  const right = [...state.showcmd, ...state.ruler];
+  const searchShown = cmdheight > 0 ? echo : shownEcho;
+  const showEcho = searchShown !== undefined && msgText(mode).trim() === "";
+  if (cmdheight === 0 && !showEcho) return null;
+  if (!showEcho && mode.length === 0 && right.length === 0) return null;
+  const cell = editor.cellMetrics();
+  const font = editor.font();
+  const place = editor.cmdlinePlace();
+  const inside = place.left + 1;
+  const firstc = showEcho ? searchShown.text.slice(0, 1) : "";
+  return (
+    <div
+      className={
+        cmdheight > 0
+          ? "nvim-cmdline nvim-cmdline-band"
+          : "nvim-cmdline nvim-cmdline-floating"
+      }
+      aria-live="polite"
+      style={{
+        left: place.left,
+        top: place.top,
+        width: place.width,
+        height: place.height,
+        font: fontOf(font),
+        lineHeight: `${String(cell.height)}px`,
+        ["--nvim-cell" as string]: `${String(cell.width)}px`,
+        ["--nvim-label-size" as string]: `${String(font.size - 1)}px`,
+      }}
+    >
+      <div
+        className="nvim-cmdline-content"
+        style={{ top: place.padY, height: cell.height }}
+      >
+        {showEcho ? (
+          <>
+            <span
+              className="nvim-cmdline-badge"
+              style={{ left: cell.width - inside, width: cell.width }}
+            >
+              {firstc}
+            </span>
+            <span
+              className="nvim-cmdline-echo"
+              style={{ left: place.col * cell.width - inside }}
+            >
+              {searchShown.text.slice(1)}
+            </span>
+          </>
+        ) : (
+          <span
+            className="nvim-cmdline-echo"
+            style={{ left: cell.width - inside }}
+          >
+            <ChunkSpans chunks={chunksOfMsg(mode)} state={state} />
+          </span>
+        )}
+      </div>
+      <span className="nvim-cmdline-count">
+        {showEcho && searchShown.count !== ""
+          ? countLabel(searchShown.count)
+          : ""}
+        {right.length > 0 && cmdheight > 0 ? (
+          <span className="nvim-cmdline-status">{msgText(right).trim()}</span>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
+/** How long the search echo stays with `cmdheight=0`, where no row keeps it. */
+const ECHO_MS = 4000;
+
+/**
+ * The command-line window (`q:`, `q/`) as the command line's box grown
+ * upward (mock 2): the same edges and hairline, a header naming it where
+ * the status line above it was, and its own status line and the rows
+ * under it covered by the box. The lines inside are Neovim's window,
+ * untouched: where it is, its cursor and its clicks stay Neovim's; only a
+ * frame is added round it.
+ */
+function CmdwinFrame({
+  editor,
+  cmdwin,
+}: {
+  readonly editor: NeovimEditor;
+  readonly cmdwin: { readonly win: number; readonly type: string } | undefined;
+}) {
+  if (!cmdwin) return null;
+  const box = editor.gridBoxes().find((b) => !b.float && b.win === cmdwin.win);
+  if (!box) return null;
+  const cell = editor.cellMetrics();
+  const font = editor.font();
+  const place = editor.cmdlinePlace();
+  const top = Math.max(0, box.row - 1) * cell.height;
+  const textBottom = (box.row + box.height) * cell.height;
+  const bottom = Math.max(textBottom + cell.height, place.top + place.height);
+  const name =
+    cmdwin.type === ":"
+      ? "Command history"
+      : cmdwin.type === "/" || cmdwin.type === "?"
+        ? "Search history"
+        : "History";
+  return (
+    <div
+      className="nvim-cmdwin"
+      aria-label={name}
+      style={{
+        left: place.left,
+        top,
+        width: place.width,
+        height: bottom - top,
+        ["--nvim-label-size" as string]: `${String(font.size - 1)}px`,
+      }}
+    >
+      <div className="nvim-cmdwin-header" style={{ height: cell.height }}>
+        <span className="nvim-cmdline-badge nvim-cmdwin-badge">
+          {cmdwin.type}
+        </span>
+        <span className="nvim-cmdwin-title">
+          {name} (q{cmdwin.type})
+        </span>
+        <span className="nvim-cmdwin-keys">
+          <kbd>Enter</kbd> run <kbd>Ctrl-C</kbd> close
+        </span>
+      </div>
+      <div
+        className="nvim-cmdwin-foot"
+        style={{ top: textBottom - top, bottom: 0 }}
+      />
     </div>
   );
 }
@@ -888,6 +1182,7 @@ function CmdlineRow({
   focused,
   cell,
   cols,
+  x,
 }: {
   readonly line: NeovimUiState["cmdline"][number];
   readonly state: NeovimUiState;
@@ -895,10 +1190,10 @@ function CmdlineRow({
   readonly focused: boolean;
   readonly cell: { readonly width: number; readonly height: number };
   readonly cols: number;
+  /** Where the text's first cell is, from the box's inside left edge. */
+  readonly x: number;
 }) {
-  const lead = line.firstc || line.prompt || "";
-  const leadCells = cmdlineLead(line, cols);
-  const layout = cmdlineLayout(line, cols - leadCells);
+  const layout = cmdlineLayout(line, cols);
   const mode = currentModeInfo(state);
   const caretRef = useRef<HTMLSpanElement>(null);
   // Another view has the keyboard: a steady, faint caret, as the grid's.
@@ -960,45 +1255,34 @@ function CmdlineRow({
       : undefined;
   };
   return (
-    <div className="nvim-cmdline-row">
-      <span
-        className="nvim-cmdline-firstc"
-        style={{ width: leadCells * cell.width }}
-      >
-        {lead}
-      </span>
-      <span
-        className="nvim-cmdline-text"
-        style={{ height: layout.rows * cell.height }}
-      >
-        {layout.cells.map((c, index) => (
-          <span
-            key={index}
-            className={
-              c.special
-                ? "nvim-cmdline-cell nvim-cmdline-special"
-                : "nvim-cmdline-cell"
-            }
-            style={{
-              left: c.col * cell.width,
-              top: c.row * cell.height,
-              width: c.cells * cell.width,
-              color: textColor(c.hl),
-            }}
-          >
-            {c.ch}
-          </span>
-        ))}
+    <>
+      {layout.cells.map((c, index) => (
         <span
-          ref={caretRef}
-          className={`nvim-cmdline-caret nvim-cmdline-caret-${shape}${focused ? "" : " nvim-cmdline-caret-unfocused"}`}
-          style={caretStyle}
-          aria-hidden="true"
+          key={index}
+          className={
+            c.special
+              ? "nvim-cmdline-cell nvim-cmdline-special"
+              : "nvim-cmdline-cell"
+          }
+          style={{
+            left: x + c.col * cell.width,
+            top: c.row * cell.height,
+            width: c.cells * cell.width,
+            color: textColor(c.hl),
+          }}
         >
-          {shape === "block" ? (under?.ch ?? "") : ""}
+          {c.ch}
         </span>
+      ))}
+      <span
+        ref={caretRef}
+        className={`nvim-cmdline-caret nvim-cmdline-caret-${shape}${focused ? "" : " nvim-cmdline-caret-unfocused"}`}
+        style={{ ...caretStyle, left: x + layout.caret.col * cell.width }}
+        aria-hidden="true"
+      >
+        {shape === "block" ? (under?.ch ?? "") : ""}
       </span>
-    </div>
+    </>
   );
 }
 
@@ -1036,28 +1320,23 @@ function Popupmenu({
   // completes.
   const lead = 3 * cell.width;
   const style: React.CSSProperties = {
-    ...(command && !bar.bottom
-      ? {
-          left: (bar.col + menu.col) * cell.width - lead,
-          top: (bar.row + 1) * cell.height + CMDLINE_PAD_Y + 4,
-        }
-      : command
-        ? // Over the command line at the bottom, its candidates over the
-          // word they complete.
-          popupmenuPlace(
-            editor.areaSize(),
-            (bar.row + (state.cmdlineBlock?.length ?? 0)) * cell.height,
-            (bar.col + menu.col) * cell.width - lead,
-            cell.height,
-            menu.items.length,
-          )
-        : popupmenuPlace(
-            editor.areaSize(),
-            ((box?.row ?? 0) + menu.row) * cell.height,
-            ((box?.col ?? 0) + menu.col) * cell.width - lead,
-            cell.height,
-            menu.items.length,
-          )),
+    ...(command
+      ? // Over the command line's box, its candidates over the word they
+        // complete (`menu.col` counts `firstc`, a cell before the text).
+        popupmenuPlace(
+          { ...editor.areaSize(), height: bar.top },
+          bar.top,
+          (bar.col - 1 + menu.col) * cell.width - lead,
+          cell.height,
+          menu.items.length,
+        )
+      : popupmenuPlace(
+          editor.areaSize(),
+          ((box?.row ?? 0) + menu.row) * cell.height,
+          ((box?.col ?? 0) + menu.col) * cell.width - lead,
+          cell.height,
+          menu.items.length,
+        )),
     font: fontOf(font),
     lineHeight: `${String(cell.height)}px`,
     ["--completion-cell" as string]: `${String(cell.width)}px`,
@@ -1112,18 +1391,26 @@ function Popupmenu({
 function toastBottom(
   editor: NeovimEditor | null,
   boxes: readonly GridBox[],
+  pager: number | undefined,
 ): number {
   if (!editor) return 12;
   const cell = editor.cellMetrics();
   const windows = boxes.filter((b) => !b.float && b.win !== undefined);
   if (windows.length === 0) return 12;
   // The status line is the row under the lowest window: clear of its top,
-  // and of messages risen over the windows (a prompt stays readable).
-  const lowest = Math.min(
-    Math.max(...windows.map((b) => b.row + b.height)),
-    editor.messagePanelRow() ?? Number.POSITIVE_INFINITY,
-  );
-  return Math.max(0, editor.areaSize().height - lowest * cell.height);
+  // and of the command line's box when it rises over the windows (a
+  // prompt is never under a notification).
+  const status =
+    Math.max(...windows.map((b) => b.row + b.height)) * cell.height;
+  const state = editor.state;
+  const box =
+    state.cmdline.length > 0 || state.prompt !== undefined
+      ? editor.cmdlinePlace().top
+      : Number.POSITIVE_INFINITY;
+  // And of the pager, which covers the windows' bottom while it is open.
+  const paged = boxes.find((b) => b.float && b.win === pager);
+  const above = paged ? paged.row * cell.height : Number.POSITIVE_INFINITY;
+  return Math.max(0, editor.areaSize().height - Math.min(status, box, above));
 }
 
 /**

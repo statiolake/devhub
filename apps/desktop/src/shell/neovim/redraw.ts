@@ -2,7 +2,8 @@
  * Neovim's UI protocol, folded into a state the painter draws.
  *
  * DevHub attaches to a headless Neovim as its only UI with `ext_linegrid`,
- * `ext_multigrid`, `ext_popupmenu`, `ext_cmdline` and `ext_tabline`
+ * `ext_multigrid`, `ext_popupmenu`, `ext_cmdline`, `ext_messages` and
+ * `ext_tabline`
  * (`docs/neovim-editor.md`). Every `redraw` notification is a list of
  * batches, `[name, ...argument tuples]`; `applyRedraw` folds one into
  * `NeovimUiState` and says what changed, and nothing else in the page reads
@@ -76,11 +77,6 @@ export type GridPlacement =
       readonly anchorCol: number;
       readonly focusable: boolean;
       readonly zindex: number;
-    }
-  | {
-      readonly kind: "message";
-      readonly row: number;
-      readonly scrolled: boolean;
     };
 
 export interface WindowState {
@@ -155,6 +151,41 @@ export interface CmdlineLevel {
   special?: { readonly char: string; readonly shift: boolean };
 }
 
+/**
+ * A message's text (`ext_messages`): each chunk's highlight (`attr`, as the
+ * grids' ids), its text, and its highlight group's id (`hl_id`), which Lua
+ * turns back into a group for the pager's buffer.
+ */
+export interface MsgChunk {
+  readonly attr: number;
+  readonly text: string;
+  readonly hl: number;
+}
+
+/** A message, as `msg_show` says it. */
+export interface MsgShow {
+  readonly kind: string;
+  readonly content: readonly MsgChunk[];
+  readonly replaceLast: boolean;
+  readonly history: boolean;
+  readonly append: boolean;
+  /** Neovim's id: a message with the same one replaces it. */
+  readonly id: string;
+  /** `"typed_cmd"`: the person typed the command that said it. */
+  readonly trigger: string;
+}
+
+/** What `ext_messages` said since the page last took it (`takeMessages`). */
+export type MessageEvent =
+  | { readonly type: "show"; readonly msg: MsgShow }
+  | {
+      readonly type: "history";
+      readonly entries: readonly {
+        readonly kind: string;
+        readonly content: readonly MsgChunk[];
+      }[];
+    };
+
 export interface TabState {
   readonly tab: number;
   readonly name: string;
@@ -197,6 +228,25 @@ export interface NeovimUiState {
   /** The command lines on screen, by level (nested ones are `<C-r>=`). */
   cmdline: CmdlineLevel[];
   cmdlineBlock: Chunks[] | undefined;
+  /**
+   * The command line last entered (`firstc` and text), not abandoned: what
+   * names the output it printed (`:ls`) in the pager.
+   */
+  lastCommand: string | undefined;
+  /**
+   * The messages that ask before a prompt (`confirm`: `confirm()`,
+   * `inputlist()`, the swap file's question, `z=`) and any said with them,
+   * line by line: shown over the prompt's command line until it is answered.
+   */
+  prompt: (readonly MsgChunk[])[] | undefined;
+  /** The search just entered (`search_cmd`) and its count, as Neovim echoes them. */
+  searchEcho: { text: string; count: string } | undefined;
+  /** `msg_showmode` (`-- INSERT --`, recording), `msg_showcmd`, `msg_ruler`. */
+  showmode: readonly MsgChunk[];
+  showcmd: readonly MsgChunk[];
+  ruler: readonly MsgChunk[];
+  /** Messages for the page to route (`messages.ts`), oldest first. */
+  messages: MessageEvent[];
   tabline: { current: number; tabs: readonly TabState[] } | undefined;
 }
 
@@ -210,6 +260,8 @@ export interface RedrawChanges {
   layout: boolean;
   popupmenu: boolean;
   cmdline: boolean;
+  /** A message came, or the band's mode, showcmd, ruler or search echo changed. */
+  messages: boolean;
   tabline: boolean;
   options: boolean;
   /** A `flush` arrived: what is in the state is a frame to draw. */
@@ -242,6 +294,7 @@ export function emptyChanges(): RedrawChanges {
     layout: false,
     popupmenu: false,
     cmdline: false,
+    messages: false,
     tabline: false,
     options: false,
     flushed: false,
@@ -273,6 +326,13 @@ export function initialUiState(
     popupmenu: undefined,
     cmdline: [],
     cmdlineBlock: undefined,
+    lastCommand: undefined,
+    prompt: undefined,
+    searchEcho: undefined,
+    showmode: [],
+    showcmd: [],
+    ruler: [],
+    messages: [],
     tabline: undefined,
   };
 }
@@ -383,6 +443,85 @@ function chunksOf(value: unknown): Chunks {
     const pair = Array.isArray(chunk) ? chunk : [];
     return [num(pair[0]), str(pair[1])] as const;
   });
+}
+
+function msgChunksOf(value: unknown): MsgChunk[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((chunk) => {
+    const c = Array.isArray(chunk) ? chunk : [];
+    return { attr: num(c[0]), text: str(c[1]), hl: num(c[2]) };
+  });
+}
+
+/** A message's text, its chunks joined. */
+export function msgText(content: readonly MsgChunk[]): string {
+  return content.map((c) => c.text).join("");
+}
+
+/** Chunks split at their newlines: a message's lines. */
+export function msgLines(content: readonly MsgChunk[]): MsgChunk[][] {
+  const lines: MsgChunk[][] = [[]];
+  for (const chunk of content) {
+    const parts = chunk.text.split("\n");
+    parts.forEach((part, index) => {
+      if (index > 0) lines.push([]);
+      if (part !== "") lines.at(-1)?.push({ ...chunk, text: part });
+    });
+  }
+  return lines;
+}
+
+/** `[2/5]` out of a `search_count` message (`/foo   [2/5]`). */
+function searchCountOf(content: readonly MsgChunk[]): string {
+  return /\[[^\]]*\]\s*$/.exec(msgText(content))?.[0].trim() ?? "";
+}
+
+function msgShow(
+  state: NeovimUiState,
+  changes: RedrawChanges,
+  args: readonly unknown[],
+): void {
+  const msg: MsgShow = {
+    kind: str(args[0]),
+    content: msgChunksOf(args[1]),
+    replaceLast: args[2] === true,
+    history: args[3] === true,
+    append: args[4] === true,
+    id: typeof args[5] === "number" ? String(args[5]) : str(args[5]),
+    trigger: str(args[6]),
+  };
+  changes.messages = true;
+  switch (msg.kind) {
+    case "confirm": {
+      // What was said with it (the swap file's E325) is its heading: one
+      // screen of Neovim's, shown together over the prompt.
+      const said = state.messages.flatMap((m) =>
+        m.type === "show" && m.msg.kind !== "empty" ? [m.msg] : [],
+      );
+      state.messages = state.messages.filter((m) => m.type !== "show");
+      state.prompt = [...said, msg].flatMap((m) => msgLines(m.content));
+      return;
+    }
+    case "search_cmd":
+      state.searchEcho = { text: msgText(msg.content).trimEnd(), count: "" };
+      return;
+    case "search_count":
+      state.searchEcho = {
+        text:
+          state.searchEcho?.text ??
+          msgText(msg.content)
+            .replace(/\[[^\]]*\]\s*$/, "")
+            .trimEnd(),
+        count: searchCountOf(msg.content),
+      };
+      return;
+    case "empty":
+      // `:echo ""`: what shares the command line's rows is cleared.
+      state.searchEcho = undefined;
+      return;
+    default:
+      state.messages.push({ type: "show", msg });
+  }
 }
 
 function gridOrNew(state: NeovimUiState, id: number): Grid {
@@ -504,6 +643,7 @@ function applyEvent(
       changes.layout = true;
       changes.popupmenu = true;
       changes.cmdline = true;
+      changes.messages = true;
       changes.tabline = true;
       changes.options = true;
       return;
@@ -610,17 +750,6 @@ function applyEvent(
       if (closing?.placement.kind === "float")
         state.floatLabels.delete(closing.placement.win);
       state.windows.delete(num(args[0]));
-      changes.layout = true;
-      return;
-    }
-    case "msg_set_pos": {
-      const grid = num(args[0]);
-      gridOrNew(state, grid);
-      setWindow(state, grid, {
-        kind: "message",
-        row: num(args[1]),
-        scrolled: args[2] === true,
-      });
       changes.layout = true;
       return;
     }
@@ -741,7 +870,10 @@ function applyEvent(
         ...state.cmdline.filter((one) => one.level < level),
         shown,
       ];
+      // A new command line is typed where the last search was echoed.
+      if (shown.prompt === "") state.searchEcho = undefined;
       changes.cmdline = true;
+      changes.messages = true;
       return;
     }
     case "cmdline_pos": {
@@ -757,8 +889,19 @@ function applyEvent(
       return;
     }
     case "cmdline_hide": {
-      const level = num(args[0]);
+      const level = num(args[0], 1);
+      const aborted = args[1] === true;
+      const hidden = state.cmdline.find((one) => one.level === level);
+      if (hidden && !aborted && hidden.prompt === "" && hidden.firstc !== "") {
+        state.lastCommand =
+          hidden.firstc + hidden.content.map(([, text]) => text).join("");
+      }
       state.cmdline = state.cmdline.filter((one) => one.level < level);
+      // A prompt is answered (or abandoned) when its command line goes.
+      if (state.cmdline.length === 0 && state.prompt) {
+        state.prompt = undefined;
+        changes.messages = true;
+      }
       changes.cmdline = true;
       return;
     }
@@ -776,6 +919,40 @@ function applyEvent(
       state.cmdlineBlock = undefined;
       changes.cmdline = true;
       return;
+    case "msg_show":
+      msgShow(state, changes, args);
+      return;
+    case "msg_clear":
+      // The screen was cleared: what shares the command line's rows goes.
+      // Notifications fade by themselves; a prompt waiting stays.
+      state.searchEcho = undefined;
+      if (state.cmdline.length === 0) state.prompt = undefined;
+      changes.messages = true;
+      return;
+    case "msg_showmode":
+      state.showmode = msgChunksOf(args[0]);
+      changes.messages = true;
+      return;
+    case "msg_showcmd":
+      state.showcmd = msgChunksOf(args[0]);
+      changes.messages = true;
+      return;
+    case "msg_ruler":
+      state.ruler = msgChunksOf(args[0]);
+      changes.messages = true;
+      return;
+    case "msg_history_show": {
+      const entries = Array.isArray(args[0]) ? (args[0] as unknown[]) : [];
+      state.messages.push({
+        type: "history",
+        entries: entries.map((entry) => {
+          const e = Array.isArray(entry) ? entry : [];
+          return { kind: str(e[0]), content: msgChunksOf(e[1]) };
+        }),
+      });
+      changes.messages = true;
+      return;
+    }
     case "tabline_update": {
       const tabs = Array.isArray(args[1]) ? (args[1] as unknown[]) : [];
       state.tabline = {
@@ -858,7 +1035,6 @@ export interface GridBox {
    * A float's border is blank cells (`'solid'`, a table of spaces): they
    * are left out — the float shows its text area where Neovim put it, in
    * DevHub's own frame, as with no border — and a click there falls through.
-   * The message grid's rows past the screen's bottom are left out the same way.
    */
   readonly crop?: Margins;
   /** A float with a border of lines: no frame of DevHub's. */
@@ -963,26 +1139,6 @@ export function layoutGrids(state: NeovimUiState): GridBox[] {
         z: 1,
         float: false,
         win: p.win,
-      };
-    } else if (p.kind === "message") {
-      // The message grid is as tall as the screen wherever it starts, and
-      // keeps what it last held below the rows in view (the rest of a
-      // `:messages` after the prompt is answered). Neovim's compositor
-      // shows it down to the screen's last row and no further; so does
-      // this, or those rows show in whatever the pane has past the grid.
-      const below = base ? p.row + grid.height - base.height : 0;
-      box = {
-        grid: window.grid,
-        row: p.row,
-        col: 0,
-        width: grid.width,
-        height: grid.height,
-        z: 200,
-        float: false,
-        win: undefined,
-        ...(below > 0
-          ? { crop: { top: 0, right: 0, bottom: below, left: 0 } }
-          : {}),
       };
     } else {
       const anchorWindow = state.windows.get(p.anchorGrid);

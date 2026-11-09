@@ -16,8 +16,10 @@ import {
   gridRowText,
   initialUiState,
   layoutGrids,
+  msgText,
   placeUnplacedWindows,
   type GridBox,
+  type MessageEvent,
   type NeovimUiState,
   type RedrawChanges,
 } from "./redraw";
@@ -40,7 +42,7 @@ import {
   type PaintTheme,
   type Surface,
 } from "./chrome";
-import { cmdlineLayout, cmdlineLead } from "./cmdline";
+import { cmdlineLayout, cmdlineLead, wrappedRows } from "./cmdline";
 import type { Decor } from "./decor";
 import { cmdlinePlace, type CmdlinePlace } from "./place";
 import { SCROLL_LUA, replied, type ScrollRequest } from "./smoothScroll";
@@ -297,25 +299,67 @@ export class NeovimEditor {
   }
 
   /**
-   * Where the command line is now (`cmdlinePlace`): in the rows `cmdheight`
-   * keeps, risen by what it holds beyond them, or the palette.
+   * Where the command line is now (`cmdlinePlace`): its box at the bottom,
+   * as tall as what it holds — a prompt's question, a block, the text.
    */
   cmdlinePlace(): CmdlinePlace {
     const size = this.gridSize();
     const screen = this.state.grids.get(1);
+    const gridCols = screen?.width ?? size.cols;
+    const gridRows = screen?.height ?? size.rows;
+    const cmdheight = this.paintTheme().cmdheight;
+    const line = this.state.cmdline.at(-1);
     const room = {
-      gridCols: screen?.width ?? size.cols,
-      gridRows: screen?.height ?? size.rows,
-      cellWidth: this.painter.cell().width,
-      cmdheight: this.paintTheme().cmdheight,
+      gridCols,
+      gridRows,
+      cell: this.painter.cell(),
+      cmdheight,
+      statusRow: this.statusRow(gridRows, cmdheight),
+      lead: line ? cmdlineLead(line, gridCols) : 1,
     };
     const first = cmdlinePlace(room);
-    const line = this.state.cmdline.at(-1);
+    return cmdlinePlace({ ...room, rows: this.cmdlineRows(first.cols).total });
+  }
+
+  /**
+   * The command line box's rows: a prompt's question (`confirm`), wrapped
+   * at the box's width; a `cmdline_block`'s lines; the text, wrapped.
+   */
+  cmdlineRows(cols: number): {
+    prompt: number;
+    block: number;
+    text: number;
+    total: number;
+  } {
+    const gridCols = this.state.grids.get(1)?.width ?? this.gridSize().cols;
+    const prompt = (this.state.prompt ?? []).reduce(
+      (n, line) => n + wrappedRows(msgText(line), gridCols - 3),
+      0,
+    );
     const block = this.state.cmdlineBlock?.length ?? 0;
-    const text = line
-      ? cmdlineLayout(line, first.cols - cmdlineLead(line, first.cols)).rows
-      : 0;
-    return cmdlinePlace({ ...room, rows: block + text });
+    const line = this.state.cmdline.at(-1);
+    const text = line ? cmdlineLayout(line, cols).rows : 1;
+    return { prompt, block, text, total: prompt + block + text };
+  }
+
+  /**
+   * The row under the lowest window (its status line, or the band under
+   * it): where a box with no rows of its own (`cmdheight=0`) sits.
+   */
+  private statusRow(gridRows: number, cmdheight: number): number {
+    let lowest = 0;
+    for (const box of this.boxes) {
+      if (!box.float && box.win !== undefined)
+        lowest = Math.max(lowest, box.row + box.height);
+    }
+    return lowest > 0 ? lowest : Math.max(1, gridRows - cmdheight - 1);
+  }
+
+  /** Messages for the page to route (`messages.ts`): taken, once. */
+  takeMessages(): MessageEvent[] {
+    const taken = this.state.messages;
+    this.state.messages = [];
+    return taken;
   }
 
   /** The font the grids are painted in. */
@@ -325,18 +369,6 @@ export class NeovimEditor {
 
   gridBoxes(): readonly GridBox[] {
     return this.boxes;
-  }
-
-  /**
-   * The row messages scrolled up over the windows start at (`:ls`, a
-   * hit-enter prompt), or `undefined` while they keep to their own rows.
-   */
-  messagePanelRow(): number | undefined {
-    for (const box of this.boxes) {
-      const p = this.state.windows.get(box.grid)?.placement;
-      if (p?.kind === "message" && p.scrolled) return box.row;
-    }
-    return undefined;
   }
 
   /** What the colorscheme says beyond the grid (`chrome.ts`). */
@@ -898,12 +930,13 @@ export class NeovimEditor {
     if (!line) return undefined;
     const cell = this.painter.cell();
     const place = this.cmdlinePlace();
-    const lead = cmdlineLead(line, place.cols);
-    const { caret } = cmdlineLayout(line, place.cols - lead);
-    const above = this.state.cmdlineBlock?.length ?? 0;
+    const { caret } = cmdlineLayout(line, place.cols);
+    const rows = this.cmdlineRows(place.cols);
+    // What does not fit is cut from the top: the text stays in view.
+    const above = rows.prompt + rows.block - (rows.total - place.rows);
     return {
-      x: (place.col + lead + caret.col) * cell.width,
-      y: (place.row + above + caret.row) * cell.height,
+      x: (place.col + caret.col) * cell.width,
+      y: place.textTop + (above + caret.row) * cell.height,
     };
   }
 
@@ -918,12 +951,8 @@ export class NeovimEditor {
     const cell = this.painter.cell();
     // Cell by cell, as the grid will hold it once committed.
     const layout = preeditLayout(text);
-    // In the palette, in its colours and over it; at the bottom, the
-    // command line is the editor's own line, in the editor's colours.
-    const style =
-      bar && !this.cmdlinePlace().bottom
-        ? getComputedStyle(document.documentElement)
-        : undefined;
+    // In the command line's box, in its colours and over it.
+    const style = bar ? getComputedStyle(document.documentElement) : undefined;
     const fg = style
       ? rgbOfCss(style.getPropertyValue("--primary"))
       : undefined;

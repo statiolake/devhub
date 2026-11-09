@@ -54,6 +54,12 @@ export interface Decorations {
   readonly images: ReadonlyMap<number, string>;
   readonly placedImages: readonly ImagePlace[];
   readonly nextToast: number;
+  /** The search count as a pattern is typed (`3/12`), or `""`. */
+  readonly typingCount: string;
+  /** The command-line window (`q:`): its window and type (`:`, `/`, `?`). */
+  readonly cmdwin: { readonly win: number; readonly type: string } | undefined;
+  /** The pager's window (`neovimMessages.ts`): notifications rise above it. */
+  readonly pager: number | undefined;
 }
 
 export const NO_DECORATIONS: Decorations = {
@@ -61,6 +67,9 @@ export const NO_DECORATIONS: Decorations = {
   images: new Map(),
   placedImages: [],
   nextToast: 1,
+  typingCount: "",
+  cmdwin: undefined,
+  pager: undefined,
 };
 
 /** At most this many notifications at once; the oldest goes first. */
@@ -188,6 +197,28 @@ export function applyGuiEvent(
       const next = new Map(state.images);
       next.delete(id);
       return { ...state, images: next };
+    }
+    case "search_count":
+      return {
+        ...state,
+        typingCount: typeof p["text"] === "string" ? p["text"] : "",
+      };
+    case "cmdwin": {
+      const win = num(p, "win");
+      return {
+        ...state,
+        cmdwin:
+          win !== undefined && win > 0
+            ? { win, type: typeof p["type"] === "string" ? p["type"] : ":" }
+            : undefined,
+      };
+    }
+    case "pager": {
+      const win = num(p, "win");
+      return {
+        ...state,
+        pager: win !== undefined && win > 0 ? win : undefined,
+      };
     }
     case "place":
       return {

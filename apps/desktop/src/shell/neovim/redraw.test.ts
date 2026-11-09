@@ -231,23 +231,108 @@ describe("the redraw reducer", () => {
     expect(state.windows.size).toBe(0);
   });
 
-  it("shows the message grid down to the screen's last row, not past it", () => {
+  it("keeps a prompt's question, with what was said with it, until it is answered", () => {
     const state = initialUiState();
-    // Neovim's message grid is as tall as the screen wherever it starts.
+    // The swap file's question, as 0.12 says it: an error, the question,
+    // then the prompt's command line.
     applyRedraw(state, [
-      ["grid_resize", [1, 80, 24], [3, 80, 24]],
-      ["msg_set_pos", [3, 4, true, "─"]],
+      [
+        "msg_show",
+        [
+          "emsg",
+          [[25, "E325: ATTENTION", 6]],
+          false,
+          true,
+          false,
+          1,
+          "typed_cmd",
+        ],
+      ],
+      [
+        "msg_show",
+        [
+          "confirm",
+          [[16, "Found a swap file\nmodified: YES", 10]],
+          false,
+          false,
+          false,
+          2,
+          "typed_cmd",
+        ],
+      ],
+      [
+        "cmdline_show",
+        [[[0, "", 0]], 0, "", "[O]pen Read-Only, (E)dit anyway: ", 0, 1, 10],
+      ],
     ]);
-    expect(layoutGrids(state).find((b) => b.grid === 3)?.crop).toEqual({
-      top: 0,
-      right: 0,
-      bottom: 4,
-      left: 0,
-    });
-    // Back to the cmdheight rows: what `:messages` left below them stays out.
-    applyRedraw(state, [["msg_set_pos", [3, 22, false, "─"]]]);
-    const box = layoutGrids(state).find((b) => b.grid === 3);
-    expect([box?.row, box?.crop?.bottom]).toEqual([22, 22]);
+    expect(
+      state.prompt?.map((line) => line.map((c) => c.text).join("")),
+    ).toEqual(["E325: ATTENTION", "Found a swap file", "modified: YES"]);
+    // Not a notification as well.
+    expect(state.messages).toEqual([]);
+    applyRedraw(state, [["cmdline_hide", [1, false]]]);
+    expect(state.prompt).toBeUndefined();
+  });
+
+  it("echoes a search and its count, and names the command a list came from", () => {
+    const state = initialUiState();
+    applyRedraw(state, [
+      ["cmdline_show", [[[0, "ls", 0]], 2, ":", "", 0, 1, 0]],
+      ["cmdline_hide", [1, false]],
+      [
+        "msg_show",
+        [
+          "list_cmd",
+          [[0, '  1 %a  "a.txt"', 0]],
+          false,
+          false,
+          false,
+          3,
+          "typed_cmd",
+        ],
+      ],
+    ]);
+    expect(state.lastCommand).toBe(":ls");
+    expect(state.messages).toHaveLength(1);
+    applyRedraw(state, [
+      [
+        "msg_show",
+        ["search_cmd", [[0, "/foo       ", 0]], false, false, false, 4, ""],
+      ],
+      [
+        "msg_show",
+        ["search_count", [[0, "/foo   [2/5]", 0]], true, false, false, 5, ""],
+      ],
+    ]);
+    expect(state.searchEcho).toEqual({ text: "/foo", count: "[2/5]" });
+    // An abandoned command line names nothing; a new one clears the echo.
+    applyRedraw(state, [
+      ["cmdline_show", [[[0, "x", 0]], 1, ":", "", 0, 1, 0]],
+      ["cmdline_hide", [1, true]],
+    ]);
+    expect(state.lastCommand).toBe(":ls");
+    expect(state.searchEcho).toBeUndefined();
+  });
+
+  it("keeps the mode, showcmd and the ruler, and the :messages history", () => {
+    const state = initialUiState();
+    applyRedraw(state, [
+      ["msg_showmode", [[[15, "-- INSERT --", 11]]]],
+      ["msg_showcmd", [[[0, "2d", 0]]]],
+      ["msg_history_show", [[["echomsg", [[0, "hi", 0]], false]], false]],
+    ]);
+    expect(state.showmode.map((c) => c.text)).toEqual(["-- INSERT --"]);
+    expect(state.showcmd.map((c) => c.text)).toEqual(["2d"]);
+    expect(state.messages).toEqual([
+      {
+        type: "history",
+        entries: [
+          { kind: "echomsg", content: [{ attr: 0, text: "hi", hl: 0 }] },
+        ],
+      },
+    ]);
+    applyRedraw(state, [["msg_showmode", [[]]]]);
+    expect(state.showmode).toEqual([]);
   });
 
   it("follows the popupmenu, the command line and the tab line", () => {
@@ -321,7 +406,7 @@ describe("the redraw reducer", () => {
     });
     applyRedraw(state, [
       ["popupmenu_hide", []],
-      ["cmdline_hide", [1]],
+      ["cmdline_hide", [1, false]],
     ]);
     expect(state.popupmenu).toBeUndefined();
     expect(state.cmdline).toEqual([]);

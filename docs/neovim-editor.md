@@ -147,20 +147,16 @@ DevHub's runs the person's own as before.
 ### The attach
 
 `main/editor/neovimUi.ts` attaches with `rgb`, `ext_linegrid`,
-`ext_multigrid`, `ext_hlstate`, `ext_popupmenu`, `ext_cmdline` and
-`ext_tabline`. `ext_hlstate` only adds the groups each highlight is made of
+`ext_multigrid`, `ext_hlstate`, `ext_popupmenu`, `ext_cmdline`,
+`ext_messages` and `ext_tabline`. `ext_hlstate` only adds the groups each highlight is made of
 (`hl_attr_define`'s info: `ui_name`, `hi_name`); the page keeps them on the
 highlight and knows a diff's filler and the
 end-of-buffer `~` by name, not by colour.
-`ext_messages` stays off: it is still marked experimental, and it hands the
-GUI every prompt Neovim would otherwise draw and wait on —
-the hit-enter prompt, `confirm()`, the swap-file question, `:s///c` — which
-a GUI that renders them as toasts has to get exactly right or leave the
-person stuck in an invisible prompt. Neovim's own message grid
-(`msg_set_pos`, `cmdheight`, `messagesopt`) handles all of them, and a
-config's `vim.notify` replacement (fidget, snacks) already draws floats. So
-messages stay Neovim's, in its message grid. Before attaching it runs a Lua
-snippet (`SETUP_LUA`) that:
+`ext_messages` hands DevHub Neovim's messages, prompts, mode and ruler as
+events, and DevHub draws them (Messages, below); Neovim 0.12 has no
+hit-enter prompt for such a UI and asks every question through the command
+line, so nothing waits on a screen DevHub does not draw. Before attaching
+it runs a Lua snippet (`SETUP_LUA`) that:
 
 - sets `g:devhub_gui` (and the pane has `$DEVHUB_NEOVIM_GUI=1` from the first
   line of the config); `has('gui_running')` is 1 for an RPC UI already;
@@ -196,13 +192,14 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
 
 - `redraw.ts` — the pure reducer: `grid_resize/line/clear/destroy/scroll`,
   `grid_cursor_goto`, `win_pos/win_float_pos/win_hide/win_close`,
-  `msg_set_pos`, `win_viewport`, `hl_attr_define`, `default_colors_set` (with
+  `win_viewport`, `hl_attr_define`, `default_colors_set` (with
   DevHub's theme for `-1`), `mode_info_set/mode_change`, `option_set`,
-  `busy_start/stop`, `flush`, and the popupmenu, command line and tab line.
+  `busy_start/stop`, `flush`, the popupmenu, command line and tab line,
+  and the messages (`msg_show`, `msg_clear`, `msg_showmode`, `msg_showcmd`,
+  `msg_ruler`, `msg_history_show`; `messages.ts` routes them).
   `layoutGrids` stacks the grids: grid 1, the windows, floats by `zindex`
-  against their anchor grid, the message grid on top, cut at the screen's
-  last row as Neovim's compositor cuts it (the grid is as tall as the
-  screen and keeps a `:messages`' old rows below the `cmdheight` rows).
+  against their anchor grid. The message grid (`msg_set_pos`) is not laid
+  out: with `ext_messages` Neovim draws nothing in it.
 - `painter.ts` — a 2D canvas per grid, repainted a dirty row at a time on
   the animation frame after a `flush`; runs of one highlight, wide characters
   cell by cell, underline/undercurl/underdouble/dotted/dashed/strikethrough in
@@ -318,9 +315,18 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
       any other (`: i32`, `-> T`) to the code before, the slack after,
       where reading goes on. Right-aligned text keeps to the window's
       edge. The rest starts where Neovim starts it.
-    - A fold's `+--` marker stays on cells: the cursor sits on its first
-      cell on a closed fold, and its dashes count the level. The words
-      after it are set; the fill after them is the fold's.
+    - A closed fold is its own row (mock 3, the person's pick): from its
+      marker to the window's edge the cells are the fold's, drawn as `›`
+      where the marker's level puts it (two cells a level: depth by
+      place, as the dashes counted it), the words in the UI face, how many
+      lines it holds dimmer and a step smaller right after them (counted,
+      not a heading, so no badge), and the fill as a fading hairline
+      (below). With Neovim's own `foldtext` Lua sends the count and the
+      words without the `+--  N lines:` lead and the fold marker (the
+      marker is folding's mechanism, not words to read); a person's
+      `foldtext` is their words as they are, with no count. The cursor
+      stays on the marker's first cell, as Neovim keeps it, and shows the
+      `›` there; clicks are on the cells as before.
     - Left as cells: `overlay` and `virt_text_win_col` text (put on the
       buffer's own columns — indent guides, tables, concealed markup —
       it only works on cells), `virt_lines_above`, and a fold whose
@@ -336,13 +342,17 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
       as often as right.
     - Wide characters take their two cells in the match; a CJK word in a
       proportional face is about as wide as its cells.
-  - A closed fold's fill, when the person's `fold:` character draws a line
-    (`─`, `-`, heavy, double or dashed), is one hairline fading out over
-    about a dozen cells (260 px; mock C1 of round 6): it leads from the
-    fold's words into the lines it stands for without ruling a line across
-    the editor that reads as a separator. Box drawing's own line (its
-    thickness and place), in the fill's colour. Any other fill —
-    Neovim's default `·`, the person's — is drawn as Neovim says.
+  - A closed fold's fill, whatever its `fold:` character, is one hairline
+    fading out over about a dozen cells (260 px; mock C1 of round 6, and
+    mock 3): it says the row goes on into the lines it stands for, without
+    ruling a line across the editor that reads as a separator, and a row
+    of `·` says the same thing louder. Box drawing's own line (its
+    thickness and place), in the fold's colour at 45 %.
+  - The fold column, only where the config shows one: Neovim's default
+    marks as chevrons, `⌄` for an open fold and `›` for a closed one, the
+    fold line's own mark; its `|` levels are left blank. Drawn, two strokes
+    as thick as box drawing's line, not a glyph each face shapes its own
+    way. A person's `foldopen:`/`foldclose:` is theirs.
   - The underline family and strikethrough (`strokes.ts`) are drawn as type
     is: as thick as the face asks, on whole device pixels under the
     baseline; undercurl a true wave whose phase is the row's (runs side by
@@ -495,29 +505,96 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   in the current mode's `guicursor` shape, colours and blink (`c`, `ci`,
   `cr`), in `cmdline_block` and after an `input()` prompt too; an IME's
   preedit and candidate window go there while the bar is up.
-- Where the command line is (`cmdlinePlace`). With `cmdheight` > 0 —
-  the person's config has rows kept for it — it is in those rows at the
-  bottom, from the first column, its text on the first of them, as Neovim
-  draws its own: the editor's own line, in the editor's ground and text,
-  with no frame, shadow or arrival. The rows the person gave the command
-  line are where they read what they type; a palette elsewhere would leave
-  them empty and move the eye. What makes it a GUI's stays: the caret in
-  `guicursor`'s shape and blink, crisp text on cells, the completion menu
-  over the word it completes (opening upward from the line), an IME's
-  preedit and candidates at the caret. A wrapped line or a
-  `cmdline_block` that needs more rows rises over the windows above, as
-  Neovim's message area does. With `cmdheight=0` no row is kept: drawn at
-  the bottom it would cover the last window's last lines and its status
-  line, so there it is the palette-like bar near the top, centred, where
-  it covers least of what is being edited.
-- Either sits on whole cells in the grid's font, and Neovim is told where:
-  `g:ui_cmdline_pos` (`[row, col]`, the convention noice.nvim started),
-  which blink.cmp's `:` completion menu reads. At the bottom it names the
-  text's own row, so blink's menu opens above it, as at Neovim's own
-  command line; for the palette, the row under the bar's text, so the
-  menu opens under it instead of at the bottom.
+- Where the command line is (`cmdlinePlace`; mock 2, the person's pick):
+  at the bottom, in one bordered box for `:`, `/`, `?`, `=`, an `input()`
+  and a prompt alike. The bottom is Neovim's promise that what is typed,
+  the answer to it, the mode and the ruler are in one place; one box for
+  all keeps that place and shape whatever is typed, and only the badge
+  before the text (`:`, `/`) differs. The box is a hairline with an 8 px
+  radius, enough to tell typed text from the windows' text while it is up,
+  and has no arrival.
+  - With `cmdheight` > 0 it is in those rows, centred: the rows the person
+    kept are where they read what they type. Content taller than them (a
+    prompt's question, a wrapped line, `cmdline_block`) grows the box
+    upward over the windows, as Neovim's message area rises; what does
+    not fit the editor is cut from the top, the line being typed stays.
+  - With `cmdheight=0` there are no rows: the box sits on the lowest
+    window's status line, over the window's last lines, with a shadow
+    (it stands on the text).
+  - A search's count is at the box's right edge as the pattern is typed
+    (`searchcount()` on `CmdlineChanged`; Neovim says `search_count` only
+    once it is entered) and stays there with the search echoed after
+    Enter, in the same place without the box (with `cmdheight=0`, in the
+    box for 4 s: no row keeps it).
+  - While nothing is typed, the rows `cmdheight` keeps are Neovim's own
+    line, quietly: the mode (`-- INSERT --`, recording) or the search
+    echo at the left, `showcmd` and the ruler dimmer at the right. With
+    `cmdheight=0` they are not drawn, as Neovim draws none there.
+  - `q:` (the command-line window) is the box grown upward: Lua says which
+    window it is (`CmdwinEnter`), and its edges and hairline go round that
+    Neovim window, a header naming it where the status line above was
+    (`Enter` runs, `Ctrl-C` closes), its own status line covered. Where
+    it is, its cursor and its clicks stay Neovim's: only a frame is added.
+- The text sits on whole cells in the grid's font, two cells in, and
+  Neovim is told where: `g:ui_cmdline_pos` (`[row, col]`, the convention
+  noice.nvim started), which blink.cmp's `:` completion menu reads. The
+  row is the one the box starts in, so blink's menu, which goes on the
+  rows before it, ends at the box's top; the column is `firstc`'s, a cell
+  before the text, so a candidate sits over the word it completes.
 - Floats are kept on the screen as Neovim's own compositor keeps them: one
   that would run past the right or bottom edge is moved in.
+
+### Messages
+
+Neovim's messages (`ext_messages`), the person's pick ("C" of three mocks):
+merged into the notifications' corner, with the prompts and the long output
+where they are read (`shell/neovim/messages.ts` routes, `redraw.ts` keeps
+the prompt and the band, `main/editor/neovimMessages.ts` is the Lua).
+
+- **Ordinary messages** — `:echo`, `:echomsg`, errors and `:echoerr`,
+  warnings (`wmsg`), undo's and a write's reports, a plugin's `print` — are
+  notifications under "Neovim", in the same quiet lines as `gui.notify`
+  (the UI face, the tone by level: `emsg`, `echoerr`, `lua_error`,
+  `rpc_error`, `shell_err` or an `ErrorMsg` highlight is an error, `wmsg`
+  or `WarningMsg` a warning). One place for what the editor says, and the
+  command line's rows stay for typing. A message of more than four lines
+  nobody typed for (a plugin's trace) shows its first four and how many
+  more, `:messages` having all of it.
+- **Repeats collapse** — undo's and redo's reports, a quickfix step, a
+  completion's count and `wildlist` say where something is now, so each
+  replaces the one before: one line that changes, not a column of them.
+  Any message said again while it shows is that line again, its fade
+  started over; a progress message (`:w`'s) is updated under its id.
+- **Prompts** — on 0.12 every question comes as a `confirm` message and a
+  prompt on the command line (`confirm()`, `inputlist()`, `z=`, the swap
+  file's question with its E325 heading said just before it), or as the
+  prompt alone (`:s///c`). The question is shown in the command line's box
+  over its prompt, the box grown upward to hold it (cut from the top if
+  the editor is shorter), and answered with the keys as Neovim reads them.
+  It goes when the prompt's command line does, answered or abandoned: a
+  prompt can be neither lost (it is where the person types) nor stuck (the
+  keys are Neovim's, not a dialog's), and a notification never covers it
+  (the corner rises above the box).
+- **Long output** — what a command was asked to print (`list_cmd`: `:ls`,
+  `:map`, `:set all`; `:!cmd`'s output; a typed command's output of three
+  lines or more; `:messages` and `g<`) opens in the pager: a Neovim buffer
+  (`filetype=devhub_pager`) in a float across the editor, its bottom on
+  the lowest status line, at most 60 % of the editor's height. In a buffer
+  it is moved through, searched and yanked with the person's own keys
+  (`j`/`k`, `/`, `y`); `q`, `<Esc>` and `<CR>` close it (`<CR>` as it
+  dismissed Neovim's hit-enter prompt), leaving its window closes it, and
+  `<Tab>` goes between Messages (`:messages`, with Neovim's highlights) and
+  Notifications (`gui.history()`). Its blank border carries a header (the
+  command, or the two tabs, and how many lines) and a footer of keys,
+  which DevHub's frame draws as rows inside it. A one-line answer
+  (`:pwd`, `:set ts?`) is a notification instead: not worth a window.
+- **`cmdheight`** — Neovim sets it to 0 when a UI takes `ext_messages`
+  (and to 1 when it goes). The rows a config keeps are the person's, so
+  the value is read just before that attach (a pane's `--embed` Neovim has
+  read its config by then, not before the first attach) and put back; one
+  the person sets while DevHub is attached is kept for the next attach.
+- `ui2` stays off: it takes `ext_cmdline` and the messages itself and the
+  command line would no longer be DevHub's.
 
 ### GUI windows: GUI surfaces live inside Neovim windows
 
@@ -622,8 +699,8 @@ img.clear()
   (`progress = true`, `percent`, `done`) shows how far it is and ticks
   when done (gone 2 s later). devhub.nvim's `setup{ notify = true }` makes
   `vim.notify` this (its `title` is the source) and shows `LspProgress`
-  the way fidget does. Not `ext_messages`: Neovim's messages stay
-  Neovim's. Each choice and its reason (`DecorationViews.tsx`,
+  the way fidget does. Neovim's own messages join them under
+  "Neovim" (Messages, below). Each choice and its reason (`DecorationViews.tsx`,
   `veil.ts`):
   - _Place._ The lowest line on the row over the lowest window's status
     line; the right edge a cell in from the window's, the edge the status
@@ -666,7 +743,12 @@ img.clear()
     `level`, `key`), at most 200, kept across attaches;
     `gui.clear_history()` empties it. Work in progress is kept only once
     done (its ticks are not news), and a `key` shown again replaces its
-    entry. How it is shown is not decided yet.
+    entry. `:DevhubNotifications` (devhub.nvim: `:Notifications`,
+    `gui.notifications()`) reads it in the pager (Messages, below): time
+    dim, source, the message in the toast's tones, newest last; `<Tab>`
+    goes to Neovim's `:messages`. Not mixed into `:messages`: a plugin's
+    notifications there would bury undo and errors, and putting them there
+    (`nvim_echo`) would draw them again as Neovim messages.
 - **image** — an extmark's `virt_lines` reserve `height_rows` blank rows
   under the line, so Neovim lays them out (the cursor steps over them,
   `:vsplit` shows them twice) and DevHub paints the image there. A path is
@@ -1034,10 +1116,8 @@ editor half); `Cmd+Q O` between the halves; resize; switching Workspaces;
 - DevHub's Neovim only: a host it cannot run on (musl, glibc before 2.34,
   not Linux on x86_64 or arm64) has no Neovim editor, and its panes' `nvim`
   is the host's own TUI.
-- `ext_messages` off (see The attach and item 6 of the survey); messages
-  are Neovim's own, in its message grid, which DevHub draws as a panel
-  when they scroll over the windows. 0.12's `ui2` takes the command line
-  from DevHub's palette: leave it off in DevHub.
+- 0.12's `ui2` takes the command line and the messages from DevHub:
+  leave it off in DevHub (Messages).
 - A GUI window's web page gives `<C-w>` to Neovim.
 - Pixel scrolling inside a line taller than the window turns
   `smoothscroll` on for that window until the view leaves the line
@@ -1309,30 +1389,18 @@ least risky first within a band):
    before. Thumbs drawn as glyphs inside a float (`█`, `▐`) are left as
    text: telling them from content is a guess.
 6. _The message area and `cmdheight` row_ (`-- INSERT --`, the ruler, `Press
-ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
-   is still experimental and still hands the UI `return_prompt`,
-   `confirm`, `confirm_sub` and the swap-file question while Neovim waits
-   for a key: a GUI that draws them as toasts must draw every one, with
-   its choices, or the person types into a prompt they cannot see. 0.12's answer is not a remote
-   UI's at all: `ui2` (`require('vim._core.ui2').enable()`) is a Lua UI
-   inside Neovim that takes `ext_messages` and `ext_cmdline` itself and
-   draws messages, the pager and dialogs in Neovim windows. Tried under
-   DevHub on 0.12.6 it takes the command line away from DevHub's palette
-   (nothing shows while typing `:`), so it and DevHub's `ext_cmdline`
-   exclude each other; once ui2 is the default the way forward is to
-   leave messages to it and draw its windows as floats, not to grow a
-   second message UI here. What landed instead is safe: messages that
-   scroll up over the windows (`msg_set_pos` with `scrolled`: `:ls`, an
-   error's trace, a hit-enter or `confirm()` prompt) are a panel risen
-   from the bottom and the notifications move above it, so a prompt is never under a toast.
-   Prompts are answered by keyboard as before (checked: hit-enter,
-   `confirm()` answered with `n`). Round 5 took its hairline and shadow back:
-   it is Neovim's message grid, square and crisp.
-7. _Sign, number and fold columns_ — ~~fold chevrons~~ (rounds 2–3 drew
-   the fold column's `-`/`+` as chevrons, an open fold's only on hover;
-   taken back in round 5: an invention). The fold column is what
-   `foldcolumn` and `fillchars` say, only when the config asks for it.
-   Signs and numbers as Neovim draws them.
+ENTER`) — done (round 9): `ext_messages` on, Neovim 0.12 only, which asks
+   every question through the command line and has no hit-enter prompt
+   for such a UI. Of three mocks (a panel, a pager, the corner) the person
+   picked the corner for ordinary messages, the pager for long output and
+   the command line's box for prompts (Messages). `ui2` stays off: it and
+   DevHub's `ext_cmdline` exclude each other.
+7. _Sign, number and fold columns_ — fold chevrons (rounds 2–3 drew the
+   fold column's `-`/`+` as chevrons, an open fold's only on hover; taken
+   back in round 5 as an invention; back in round 9, mock 3, the person's
+   pick): `⌄` and `›` always, never on hover alone (nothing only the mouse
+   finds), and only where `foldcolumn` shows a column. Signs and numbers
+   as Neovim draws them.
 8. ~~_Indent guides_~~ — round 3 redrew any guide plugin's character as
    one light line at the cell's left edge; taken back in round 5. A guide
    is the plugin's own character where its config draws it; box-drawing
@@ -1343,10 +1411,9 @@ ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
     `-` in `DiffDelete`'s ground (the default `diff:`) is a hatched band
     of thin diagonals in its foreground, continuous from row to row, as
     GUI diff views mark lines the other side has. A person's `diff:` is
-    kept. Folds' `+--  12 lines` stay Neovim's text — `foldtext` is the
-    person's, and a fold bar of DevHub's would have to guess at it — set in
-    the UI face after the marker (round 8, "Decorations in a proportional
-    face").
+    kept. Folds are `›`, their words and a dim count (round 9, mock 3);
+    a person's own `foldtext` is their words, set in the UI face as they
+    are ("Decorations in a proportional face").
 11. _The block cursor and its cell_ — done: the block is square (round 5; its
     rounded corners were taken back), it still shows the character in the
     cursor's foreground, and the blink (`guicursor`'s) fades in and out
@@ -1370,6 +1437,6 @@ ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
 15. ~~_The matching bracket_~~ — round 4 boxed `MatchParen`'s cells with a
     hairline, as VS Code's; taken back in round 5: the highlight as it is.
     **Also:** dev containers (Neovim in the container through `docker exec`, its
-    socket reached by a relay like the `devhub` command's), `ext_messages`, ligatures, a
+    socket reached by a relay like the `devhub` command's), ligatures, a
     glyph-atlas (WebGL) painter if large redraws need it, and the
     Sidebar following the current buffer.

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { cmdlinePlace, cmdlineUiPos, popupmenuPlace } from "./place";
+import {
+  BOX_MARGIN,
+  BOX_PAD_Y,
+  cmdlinePlace,
+  cmdlineUiPos,
+  popupmenuPlace,
+} from "./place";
 
 describe("where the completion menu goes", () => {
   const area = { width: 800, height: 600 };
@@ -24,30 +30,56 @@ describe("where the completion menu goes", () => {
 });
 
 describe("where the command line goes", () => {
-  const room = { gridCols: 200, gridRows: 50, cellWidth: 8, cmdheight: 0 };
+  const cell = { width: 8, height: 20 };
+  const room = {
+    gridCols: 100,
+    gridRows: 50,
+    cell,
+    cmdheight: 2,
+    statusRow: 47,
+  };
 
-  it("is centred on whole cells near the top with cmdheight=0", () => {
+  it("is a box centred in the rows cmdheight keeps, its text two cells in", () => {
     const place = cmdlinePlace(room);
-    expect(place).toEqual({ row: 1, col: 57, cols: 85, bottom: false });
-    expect(cmdlineUiPos(place)).toEqual([3, 57]);
+    // Rows 48 and 49 are the band: 960..1000 px.
+    expect(place.top).toBeGreaterThanOrEqual(960);
+    expect(place.top + place.height).toBeLessThanOrEqual(1000);
+    expect(place.textTop).toBe(970);
+    expect(place.col).toBe(3);
+    expect(place.cols).toBe(96);
+    // Half a cell in from each edge.
+    expect(place.left).toBe(4);
+    expect(place.width).toBe(99 * 8);
   });
 
-  it("fits a narrow grid", () => {
-    const place = cmdlinePlace({ ...room, gridCols: 40 });
-    expect(place.cols).toBe(36);
-    expect(place.col).toBe(2);
+  it("tells blink the row the box starts in and firstc's column", () => {
+    const place = cmdlinePlace(room);
+    expect(cmdlineUiPos(place)).toEqual([49, 2]);
+    // blink's menu ends on that row's top: over the box, not on it.
+    expect(48 * 20).toBeLessThanOrEqual(place.top);
   });
 
-  it("is in the rows cmdheight keeps, from the first column, its text on the first", () => {
-    const place = cmdlinePlace({ ...room, cmdheight: 2 });
-    expect(place).toEqual({ row: 48, col: 0, cols: 200, bottom: true });
-    // blink.cmp's menu goes above the text's own row.
-    expect(cmdlineUiPos(place)).toEqual([49, 0]);
-    expect(cmdlinePlace({ ...room, cmdheight: 1 }).row).toBe(49);
+  it("grows upward over the windows when it holds more than its rows", () => {
+    const place = cmdlinePlace({ ...room, rows: 5 });
+    expect(place.top + place.height).toBe(1000 - BOX_MARGIN);
+    expect(place.rows).toBe(5);
+    expect(place.height).toBe(5 * 20 + 2 * (1 + place.padY));
   });
 
-  it("rises over the windows when it holds more than those rows", () => {
-    expect(cmdlinePlace({ ...room, cmdheight: 2, rows: 5 }).row).toBe(45);
-    expect(cmdlinePlace({ ...room, cmdheight: 2, rows: 1 }).row).toBe(48);
+  it("cuts a question taller than the editor from the top", () => {
+    const place = cmdlinePlace({ ...room, rows: 500 });
+    expect(place.top).toBeGreaterThanOrEqual(20);
+    expect(place.rows).toBeLessThan(50);
+  });
+
+  it("sits on the lowest status line with cmdheight=0", () => {
+    const place = cmdlinePlace({ ...room, cmdheight: 0, statusRow: 49 });
+    expect(place.top + place.height).toBe(49 * 20 - BOX_MARGIN);
+    expect(place.padY).toBe(BOX_PAD_Y);
+  });
+
+  it("leaves a long prompt's answer room", () => {
+    const place = cmdlinePlace({ ...room, gridCols: 40, lead: 72 });
+    expect(place.cols).toBeGreaterThanOrEqual(8);
   });
 });

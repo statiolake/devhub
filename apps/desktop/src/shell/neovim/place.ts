@@ -35,18 +35,39 @@ export function popupmenuPlace(
   return { left, top: anchorTop - height - 2, maxHeight: height };
 }
 
-/** Where the command line is, in grid cells. */
+/**
+ * The command line's box, as `neovim.css` draws it: a hairline (1 px)
+ * around the text, at most `BOX_PAD_Y` above and below it (less when the
+ * rows kept for it are fewer: it stays inside them), `BOX_MARGIN` clear of
+ * the status line or the editor's edge under it.
+ */
+export const BOX_BORDER = 1;
+export const BOX_PAD_Y = 6;
+const BOX_PAD_MIN = 2;
+export const BOX_MARGIN = 4;
+
+/** Where the command line is: its text on cells, its box in pixels. */
 export interface CmdlinePlace {
-  /** The row its first line is on (0-based): a block's first, else the text's. */
-  readonly row: number;
-  /** The column its first character (`:`, `/`, …) is in. */
-  readonly col: number;
-  readonly cols: number;
   /**
-   * In the rows `cmdheight` keeps at the bottom of the editor, where
-   * Neovim's own command line is; else the palette near the top.
+   * The row the box starts in (0-based, whole): what `g:ui_cmdline_pos`
+   * names, so a menu opened above it ends at the box's top.
    */
-  readonly bottom: boolean;
+  readonly row: number;
+  /** The column the text's first character is in. */
+  readonly col: number;
+  /** Cells for the text, from `col` to the box's inner right edge. */
+  readonly cols: number;
+  /** The box, in the editor area's pixels. */
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+  /** Where the content's first row starts (pixels). */
+  readonly textTop: number;
+  /** The box's padding above and below its content (pixels). */
+  readonly padY: number;
+  /** The content rows that fit; what is over them is cut from the top. */
+  readonly rows: number;
 }
 
 /** What the command line holds and where Neovim keeps room for it. */
@@ -54,66 +75,99 @@ export interface CmdlineRoom {
   /** The editor's grid (grid 1), in cells. */
   readonly gridCols: number;
   readonly gridRows: number;
-  readonly cellWidth: number;
+  readonly cell: { readonly width: number; readonly height: number };
   /** `cmdheight`: the rows Neovim keeps for it at the bottom; 0 for none. */
   readonly cmdheight: number;
-  /** The rows its content takes: a block's lines and the text's. */
+  /**
+   * The row under the lowest window: its status line's (or the band's,
+   * with no status line). With `cmdheight=0` the box sits on it.
+   */
+  readonly statusRow: number;
+  /** The rows its content takes: a prompt's message, a block, the text. */
   readonly rows?: number;
+  /** Cells the lead takes (`firstc`'s badge or a prompt), 1 if left out. */
+  readonly lead?: number;
 }
 
 /**
- * Where the command line is.
+ * Where the command line is: at the bottom, where Neovim's own is and
+ * where the answers to it (the search echo, a prompt) are read, in one
+ * bordered box for `:`, `/`, `?`, `=`, an `input()` and a prompt alike —
+ * the same place and shape whatever is typed, only the badge differs.
  *
- * With `cmdheight` > 0 Neovim keeps rows at the bottom of the editor for
- * it, and that is where it is: on those rows, from the first column, as
- * Neovim would draw it, the editor's own line rather than a widget over the
- * text — what the person typed stays where they are used to reading it, and
- * the rows they gave it are not left empty under a palette elsewhere. Its
- * text starts on the first of them, as Neovim's does; content longer than
- * the rows (a wrapped line, `cmdline_block`) rises over the windows above,
- * as Neovim's own message area does.
+ * - With `cmdheight` > 0 the box is in the rows the person's config keeps
+ *   for it, centred in them: those rows are where they read what they
+ *   type, and are otherwise empty. Content taller than the rows (a prompt
+ *   with its question, a wrapped line, `cmdline_block`) grows the box
+ *   upward over the windows, as Neovim's own message area rises.
+ * - With `cmdheight=0` there are no rows: the box sits on the lowest
+ *   window's status line, over the window's last lines, at the bottom
+ *   still, as the person's place for a command.
  *
- * With `cmdheight=0` no row is kept: drawn at the bottom it would cover the
- * last window's last lines and status line, so it is the palette: near the
- * top, centred on whole cells, where it covers least of what is being
- * edited and the eye already goes for a command (a launcher's place).
- *
- * Both are on whole cells, so their text lines up with the grid: plugins
- * that draw next to the command line (blink.cmp's menu for `:`) are told
- * where it is through `g:ui_cmdline_pos` (`cmdlineUiPos`), and their floats
- * are cells.
+ * The text is on whole cells (columns): plugins that draw beside it are
+ * told the column (`cmdlineUiPos`), and the caret and an IME's preedit go
+ * on the cell `cmdline_pos` names. Its first character is two cells in:
+ * the badge (`:` or `/`) in the cell before a blank one.
  */
 export function cmdlinePlace(room: CmdlineRoom): CmdlinePlace {
-  const { gridCols, gridRows, cellWidth, cmdheight } = room;
-  if (cmdheight > 0 && gridRows > 0) {
-    const rows = Math.max(cmdheight, room.rows ?? 1);
-    return {
-      row: Math.max(0, gridRows - rows),
-      col: 0,
-      cols: Math.max(1, gridCols),
-      bottom: true,
-    };
-  }
-  const cols = Math.max(
-    10,
-    Math.min(Math.floor(680 / Math.max(1, cellWidth)), gridCols - 4),
+  const { gridCols, gridRows, cell, cmdheight } = room;
+  const ch = Math.max(1, cell.height);
+  const cw = Math.max(1, cell.width);
+  // A long prompt (`:s///c`'s) leaves the answer room, at least 8 cells.
+  const lead = Math.max(1, Math.min(room.lead ?? 1, gridCols - 11));
+  const col = Math.max(1, Math.min(gridCols - 2, 1 + lead + 1));
+  const left = Math.round(cw / 2);
+  const width = Math.max(cw, Math.round((gridCols - 1) * cw));
+  const cols = Math.max(1, gridCols - col - 1);
+  const band = cmdheight > 0 && gridRows > 0;
+  // Inside the rows kept for it, when one line of text fits there.
+  const padY = band
+    ? Math.max(
+        BOX_PAD_MIN,
+        Math.min(
+          BOX_PAD_Y,
+          Math.floor(
+            (cmdheight * ch - ch - 2 * BOX_BORDER - 2 * BOX_MARGIN) / 2,
+          ),
+        ),
+      )
+    : BOX_PAD_Y;
+  const chrome = 2 * (BOX_BORDER + padY);
+  const bandTop = band ? (gridRows - cmdheight) * ch : 0;
+  const bottom = band
+    ? gridRows * ch - BOX_MARGIN
+    : Math.max(1, Math.min(room.statusRow, gridRows)) * ch - BOX_MARGIN;
+  // Rows that fit under the editor's top (a cell and the margin clear).
+  const fit = Math.max(1, Math.floor((bottom - ch - chrome) / ch));
+  const rows = Math.min(fit, Math.max(1, room.rows ?? 1));
+  const height = rows * ch + chrome;
+  const centred = bandTop + (cmdheight * ch - height) / 2;
+  const top = Math.round(
+    band && height <= cmdheight * ch - 2 * BOX_MARGIN
+      ? centred
+      : bottom - height,
   );
   return {
-    row: 1,
-    col: Math.max(0, Math.floor((gridCols - cols) / 2)),
+    row: Math.max(0, Math.floor(top / ch)),
+    col,
     cols,
-    bottom: false,
+    left,
+    top,
+    width,
+    height,
+    textTop: top + BOX_BORDER + padY,
+    rows,
+    padY,
   };
 }
 
 /**
  * `g:ui_cmdline_pos` — `[row, col]`, (1, 0)-indexed, the convention
- * noice.nvim started and blink.cmp reads (its menu goes on the row after
- * it, else on the row before) — for a command line at `place`. At the
- * bottom it names the text's own row, where Neovim's command line is, so a
- * menu opens above it; for the palette, the row under the bar's text, so a
- * menu clears the bar's padding instead of covering it.
+ * noice.nvim started and blink.cmp reads: the row is where the command
+ * line starts (blink's menu goes on the rows before it, so it ends where
+ * the box begins) and the column is `firstc`'s (blink puts a word's
+ * candidates at that column plus the word's place in the text).
  */
 export function cmdlineUiPos(place: CmdlinePlace): [number, number] {
-  return place.bottom ? [place.row + 1, place.col] : [place.row + 2, place.col];
+  return [place.row + 1, Math.max(0, place.col - 1)];
 }

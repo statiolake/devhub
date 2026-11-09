@@ -264,16 +264,22 @@
   color: var(--primary);
 }
 
+/*
+ * The command line's box (`Cmdline`, `cmdlinePlace`; mock 2): one box for
+ * `:`, `/`, a prompt alike, at the bottom. A hairline and an 8 px radius,
+ * enough to tell typed text from the windows' text while it is up; a
+ * shadow only when it floats over the windows (`cmdheight=0`), where it
+ * stands on them. The text is on cells; the box's own words (badge, count)
+ * are labels in the UI face.
+ */
 .nvim-cmdline {
   position: absolute;
   z-index: 400;
   box-sizing: border-box;
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--raised, var(--surface));
   color: var(--primary);
-  box-shadow:
-    0 0 0 1px var(--line),
-    0 12px 32px rgb(0 0 0 / 30%);
+  border: 1px solid var(--line);
   /* The grid's own font is set on the element (`fontOf`); this is the
      token the rule stands on until it is. */
   font-family: "DevHub Nerd Symbols", var(--font-mono);
@@ -282,33 +288,149 @@
   font-variant-ligatures: none;
   white-space: pre-wrap;
   word-break: break-all;
-  animation: nvim-arrive 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.nvim-cmdline-floating {
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+}
+
+/* The rows cmdheight keeps while nothing is typed: Neovim's own line, no
+   box — it is not being typed into. */
+.nvim-cmdline.nvim-cmdline-band {
+  border-color: transparent;
+  background: none;
+  pointer-events: none;
+}
+
+/* What does not fit is cut from the top: the line being typed stays. */
+.nvim-cmdline-content {
+  position: absolute;
+  left: 0;
+  right: 0;
+  overflow: hidden;
+}
+
+.nvim-cmdline-stack {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 
 .nvim-cmdline-block {
   opacity: 0.8;
 }
 
+.nvim-cmdline-message {
+  white-space: pre-wrap;
+}
+
 .nvim-cmdline-row {
-  display: flex;
-}
-
-/* `firstc` or an `input()` prompt, on whole cells as Neovim's own command
-   line has it: the text starts where a plugin told `g:ui_cmdline_pos`
-   expects it. */
-.nvim-cmdline-firstc {
-  flex: none;
-  min-width: var(--nvim-cell);
-  overflow: hidden;
-  color: var(--accent);
-  font-weight: 600;
-}
-
-/* The text on cells (`cmdline.ts`): each character on the cells Neovim
-   gives it, the caret on the cursor's. */
-.nvim-cmdline-text {
   position: relative;
-  flex: 1;
+}
+
+/* `:`, `/`, `?`, `=`: a small chip on its cell, the one mark that differs. */
+.nvim-cmdline-badge {
+  position: absolute;
+  top: 0;
+  box-sizing: border-box;
+  text-align: center;
+  color: var(--secondary, var(--primary));
+}
+
+.nvim-cmdline-badge::before {
+  content: "";
+  position: absolute;
+  inset: 3px -3px;
+  z-index: -1;
+  border-radius: 4px;
+  background: var(--wash, rgb(127 127 127 / 14%));
+}
+
+/* A prompt's own words (`[Y]es, (N)o: `), as Neovim colours a question. */
+.nvim-cmdline-prompt {
+  color: var(--accent);
+}
+
+.nvim-cmdline-echo {
+  position: absolute;
+  top: 0;
+  white-space: pre;
+}
+
+/* The search count (and, in the band, showcmd and the ruler): a label at
+   the box's right edge, dimmer than the text. */
+.nvim-cmdline-count {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  font-size: var(--nvim-label-size, 12px);
+  color: var(--secondary, var(--primary));
+  opacity: 0.8;
+  white-space: pre;
+}
+
+.nvim-cmdline-status {
+  margin-left: 1.5em;
+  font-family: "DevHub Nerd Symbols", var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
+}
+
+/*
+ * The command-line window (`q:`) as the box grown upward: its edges and
+ * hairline round Neovim's window, a header where the status line above
+ * was, its own status line covered. Clicks go through to the window.
+ */
+.nvim-cmdwin {
+  position: absolute;
+  z-index: 390;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.nvim-cmdwin-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--raised, var(--surface));
+  border-bottom: 1px solid var(--line);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  font-size: var(--nvim-label-size, 12px);
+  color: var(--secondary, var(--primary));
+}
+
+.nvim-cmdwin-badge {
+  position: relative;
+  min-width: 1em;
+  font-family: "DevHub Nerd Symbols", var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
+}
+
+.nvim-cmdwin-keys {
+  margin-left: auto;
+}
+
+.nvim-cmdwin-keys kbd {
+  margin: 0 4px 0 10px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.nvim-cmdwin-foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: var(--raised, var(--surface));
 }
 
 .nvim-cmdline-cell {
@@ -407,10 +529,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .nvim-cmdline {
-    animation: none;
-  }
-
   .nvim-cursor-glide {
     transition: none;
   }
@@ -810,13 +928,4 @@
 .nvim-rich-code code {
   padding: 0;
   background: none;
-}
-
-/* The command line in the rows `cmdheight` keeps (`cmdlinePlace`): the
-   editor's own line, its ground and text from the element, no frame and
-   no arrival — it is where Neovim's command line always is. */
-.nvim-cmdline.nvim-cmdline-bottom {
-  border-radius: 0;
-  box-shadow: none;
-  animation: none;
 }
