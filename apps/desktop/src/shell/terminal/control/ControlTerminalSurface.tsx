@@ -831,15 +831,16 @@ export function ControlTerminalSurface({
     /** A transition from what was shown before the commit to the view now. */
     const startMotion = (before: Shown, now: number) => {
       const { width, height } = cell();
-      const change =
-        before.cols === view.cols && before.rows === view.rows
-          ? changeOf(before, view)
-          : undefined;
+      const sameSize = before.cols === view.cols && before.rows === view.rows;
+      const change = sameSize ? changeOf(before, view) : undefined;
       // A boundary dragged, or a resize key held: at once, under the hand.
       const repeated =
         change?.kind === "step" &&
         (dragging || now - lastStep < STEP_REPEAT_MS);
       if (change?.kind === "step") lastStep = now;
+      // Nothing moved (the active pane changed, a window was renamed): a
+      // transition running goes on to the layout it was going to.
+      if (change === undefined && sameSize) return;
       if (change === undefined || repeated || !motionAllowed()) {
         stopMotion();
         return;
