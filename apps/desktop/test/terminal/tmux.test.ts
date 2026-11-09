@@ -516,6 +516,25 @@ describe("provider output parsing", () => {
     ).toThrow();
     expect(parseRecords(Buffer.from(""), 3)).toEqual([]);
   });
+
+  it("reads tmux 3.4's escaped separators, and only where none is raw", () => {
+    // tmux 3.4 writes the C0 separators of a format as vis(3) octal escapes
+    // (measured: `list-sessions -F` under -u, any locale).
+    const listing = "scratch\\037global\\037/a\\036\nws\\037\\037/x\ny\\036\n";
+    expect(parseRecords(Buffer.from(listing), 3)).toEqual([
+      ["scratch", "global", "/a"],
+      ["ws", "", "/x\ny"],
+    ]);
+    // A tmux that writes them raw is read as it wrote: the same text inside
+    // a value is the value's, not a separator.
+    expect(
+      parseRecords(Buffer.from("a\u001fb\\036\u001fc\u001e\n"), 3),
+    ).toEqual([["a", "b\\036", "c"]]);
+    // An escaped answer that stops mid-record is still malformed.
+    expect(() =>
+      parseRecords(Buffer.from("a\\037b\\037c\n"), 3),
+    ).toThrow();
+  });
 });
 
 describe("executable resolution", () => {

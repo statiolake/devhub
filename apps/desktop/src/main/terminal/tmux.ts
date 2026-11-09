@@ -66,6 +66,7 @@ import {
 	serverReach,
 	shapeFailure,
 	splitRecords,
+	withRawSeparators,
 	type CommandOutput,
 	type CommandSpec,
 	type ResolvedExecutable,
@@ -3137,7 +3138,7 @@ export class TmuxTerminalRuntime {
 				deadline,
 			);
 			if (!answer.success) throw answer.refusal();
-			const [agentId, pid] = parseCapture(answer.stdout)
+			const [agentId, pid] = withRawSeparators(parseCapture(answer.stdout))
 				.split("\n")[0]!
 				.split(FIELD_SEPARATOR);
 			if (agentId !== record.agentId) throw portFailure("conflict");

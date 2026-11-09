@@ -358,6 +358,46 @@ export const FIELD_SEPARATOR = "\u001f";
 export const RECORD_SEPARATOR = "\u001e";
 
 /**
+ * The two separators as an older tmux writes them: as octal escapes.
+ *
+ * Measured: tmux 3.4 passes every expanded format through vis(3) before
+ * printing it, with or without `-u` and whatever the locale, so a C0
+ * character comes out as a backslash and three digits (`\036`); tab and
+ * newline are left as they are, and a backslash in a value is not escaped.
+ * tmux 3.7c, the one DevHub ships, prints the format as it expanded. DevHub
+ * accepts a person's own tmux from 3.3 on, so a Mac whose tmux is 3.4, and the
+ * Linux smoke test's system tmux, answer this way.
+ */
+const ESCAPED_FIELD_SEPARATOR = "\\037";
+const ESCAPED_RECORD_SEPARATOR = "\\036";
+
+/**
+ * An answer's separators as DevHub wrote them, whichever tmux printed it.
+ *
+ * Which of the two a tmux did is told by the answer itself: an answer to a
+ * format DevHub wrote carries at least one separator, and a tmux that escapes
+ * them leaves none raw — a terminal consumes C0 characters rather than
+ * storing them, so even a screen `capture-pane` prints between two formats
+ * cannot hold one. So escapes are read as separators only in an answer with
+ * no raw separator in it, and a newer tmux's answer is never touched.
+ *
+ * In an escaped answer, a value that itself contains the text `\036` or
+ * `\037` reads as one more record or field than DevHub asked for, which every
+ * reader refuses as the wrong shape: the fail-closed side, as for a raw
+ * separator inside a value.
+ */
+export function withRawSeparators(text: string): string {
+	if (text.includes(RECORD_SEPARATOR) || text.includes(FIELD_SEPARATOR)) {
+		return text;
+	}
+	return text
+		.split(ESCAPED_RECORD_SEPARATOR)
+		.join(RECORD_SEPARATOR)
+		.split(ESCAPED_FIELD_SEPARATOR)
+		.join(FIELD_SEPARATOR);
+}
+
+/**
  * Cut one client's whole answer into the records DevHub asked tmux to frame.
  *
  * The newline tmux appends after each expanded format is *not* the record
@@ -378,7 +418,7 @@ export const RECORD_SEPARATOR = "\u001e";
 export function splitRecords(output: Buffer): string[] {
 	if (output.byteLength > MAX_OUTPUT_BYTES)
 		throw shapeFailure("too much of it");
-	const text = decodeUtf8(output);
+	const text = withRawSeparators(decodeUtf8(output));
 	if (text.includes("\0")) throw shapeFailure("a NUL byte");
 	if (text.length === 0) return [];
 	const chunks = text.split(RECORD_SEPARATOR);
