@@ -42,7 +42,8 @@ import { StatusMark } from "../components/sidebar/StatusMark";
 import { useAgents } from "./AgentsContext";
 import { devhub } from "./client";
 import { historyDirectionOfButton } from "../historyButtons";
-import { focusIsOurs, reducedMotion, useNavStack } from "./navStack";
+import { useGlide } from "../glide";
+import { focusIsOurs, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { FilesPage } from "./OrchestratorFiles";
 import { EventsSwitch } from "./OrchestratorDelivery";
@@ -258,49 +259,16 @@ export function OrchestratorBoard({
   );
 }
 
-/**
- * 要回答 re-ranked: its cards glide from where they were to where they are
- * now (transform only, ~200 ms), instead of jumping. Nothing moves under
- * Reduce Motion, or where the Web Animations API is missing.
- */
-function useReorderGlide(
-  lanes: RefObject<HTMLDivElement | null>,
-  needsAnswer: readonly EscalationWire[],
-): void {
-  const before = useRef(new Map<number, number>());
-  const order = needsAnswer.map((one) => one.id).join(",");
-  const last = useRef(order);
-  useLayoutEffect(() => {
-    const lane = lanes.current?.querySelector('[data-tone="ask"]');
-    const cards = [
-      ...(lane?.querySelectorAll<HTMLElement>("[data-escalation-id]") ?? []),
-    ];
-    const now = new Map(
-      cards.map((card) => [
-        Number(card.dataset["escalationId"]),
-        card.getBoundingClientRect().top,
-      ]),
-    );
-    const moved = last.current !== order;
-    last.current = order;
-    const was = before.current;
-    before.current = now;
-    if (!moved || reducedMotion()) return;
-    for (const card of cards) {
-      const id = Number(card.dataset["escalationId"]);
-      const from = was.get(id);
-      const to = now.get(id);
-      if (from === undefined || to === undefined || from === to) continue;
-      if (typeof card.animate !== "function") continue;
-      card.animate(
-        [
-          { transform: `translateY(${String(from - to)}px)` },
-          { transform: "translateY(0)" },
-        ],
-        { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" },
-      );
-    }
-  }, [lanes, order]);
+/** What on the board glides: the leaves, never what holds them. */
+const BOARD_PARTS =
+  ".orchestrator-lane-heading, .orchestrator-lane-empty, [data-escalation-id]";
+
+function boardPartKey(element: HTMLElement): string | undefined {
+  const card = element.dataset["escalationId"];
+  if (card !== undefined) return `card:${card}`;
+  const lane = element.closest<HTMLElement>("[data-tone]")?.dataset["tone"];
+  if (lane === undefined) return undefined;
+  return `${element.className}:${lane}`;
 }
 
 /** The board tab: the lanes, and an escalation pushed over them. */
@@ -479,7 +447,12 @@ function BoardPage({
     },
     [dispatch],
   );
-  useReorderGlide(lanes, board.needsAnswer);
+  // Whatever changes place on the board glides there — a card re-ranked,
+  // moved to another lane, the lanes under one that grew or folded — and
+  // what is new rises in (`glide.ts`). One rule for all of it: a card used
+  // to glide inside 要回答 while the lanes under it jumped.
+  const boardDrawn = useMemo(() => ({ board, folded }), [board, folded]);
+  useGlide(lanes, BOARD_PARTS, boardPartKey, boardDrawn);
   // Enter on the board, with no card focused, opens the card on top: the
   // first of 要回答, else of the lanes after it. A focused card (a button)
   // opens itself, and a field or a link keeps its own Enter.
