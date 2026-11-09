@@ -108,6 +108,7 @@ export class NeovimEditor {
   private frame = 0;
   private readonly painter: GridPainter;
   private readonly gridLayer: HTMLDivElement;
+  private readonly band: HTMLDivElement;
   private readonly cursor: HTMLDivElement;
   /** The character under a block cursor, painted as the grid paints it. */
   private readonly cursorCell: HTMLCanvasElement;
@@ -178,8 +179,14 @@ export class NeovimEditor {
     // follows then sits at the end of the preedit, as the overlay draws it.
     this.input.setAttribute("wrap", "off");
     this.input.setAttribute("aria-label", "Neovim");
-    this.gridLayer.append(this.cursor, this.preedit, this.input);
-    host.append(this.gridLayer);
+    this.gridLayer.append(this.cursor, this.input);
+    // The editor's band holds the grids and what the page lays over them;
+    // the preedit is a band of its own over DevHub's command line
+    // (`neovim.css`, the bands).
+    this.band = document.createElement("div");
+    this.band.className = "nvim-editor";
+    this.band.append(this.gridLayer);
+    host.append(this.band, this.preedit);
     this.painter = new GridPainter(this.gridLayer, this.fontSpec());
     this.gridLayer.style.font = fontOf(this.painter.fontSpec());
     this.input.style.font = this.gridLayer.style.font;
@@ -191,6 +198,14 @@ export class NeovimEditor {
     this.watchDevicePixelRatio();
     this.watchFonts();
     this.watchViewFocus();
+  }
+
+  /**
+   * The editor's band (`neovim.css`): where what the page lays over a grid
+   * goes, so it stacks with the grids by their z and under DevHub's own.
+   */
+  editorBand(): HTMLElement {
+    return this.band;
   }
 
   /**
@@ -434,7 +449,8 @@ export class NeovimEditor {
     window.clearTimeout(this.themeTimer);
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
     if (this.scrollTick !== 0) cancelAnimationFrame(this.scrollTick);
-    this.gridLayer.remove();
+    this.band.remove();
+    this.preedit.remove();
   }
 
   private fontSpec(): FontSpec {
@@ -970,7 +986,6 @@ export class NeovimEditor {
       fg ?? this.state.defaults.foreground,
       bg ?? this.state.defaults.background,
     );
-    this.preedit.style.zIndex = bar ? "401" : "";
     this.preedit.style.left = `${String(at.x)}px`;
     this.preedit.style.top = `${String(at.y)}px`;
     // The textarea's caret — where the IME opens its candidates — after the

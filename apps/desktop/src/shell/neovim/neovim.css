@@ -33,6 +33,38 @@
 }
 
 .neovim-surface {
+  /*
+   * Stacking bands, bottom to top (docs/rendering-layers.md, "Bands"). Each
+   * band is one stacking context, so nothing in a band, whatever its own
+   * z-index, is drawn over a band above it or under one below it.
+   *
+   * Over the editor (`.nvim-host`), in the surface: the toasts, then the
+   * status (starting, failed), which stands for the whole editor.
+   */
+  --nvim-band-host: 0;
+  --nvim-band-toasts: 1;
+  --nvim-band-status: 2;
+  /*
+   * In `.nvim-host`: the editor first — Neovim's composition, the grids at
+   * their stacking orders (grid 1, the windows, each float at 100 + its
+   * `zindex`, so Neovim's zindex orders floats among themselves and nothing
+   * else) and what the page lays over them by grid (riders, the cursor,
+   * GUI windows). Then DevHub's own, each over every float: a popup (a
+   * hover asked for by a key, gone at the next cursor move: a float must
+   * not hide what was just asked to be read), the command-line window's
+   * frame, the command line (what is being typed is never under a float;
+   * Neovim's own puts the message area over its floats at the default
+   * zindex too), the completion menu (over the command line it completes),
+   * and the IME's preedit (the text being composed, at the cursor or in
+   * the command line).
+   */
+  --nvim-band-editor: 0;
+  --nvim-band-popup: 1;
+  --nvim-band-cmdwin: 2;
+  --nvim-band-cmdline: 3;
+  --nvim-band-menu: 4;
+  --nvim-band-preedit: 5;
+
   position: relative;
   display: flex;
   flex-direction: column;
@@ -42,10 +74,18 @@
 
 .nvim-host {
   position: relative;
+  z-index: var(--nvim-band-host);
   flex: 1;
   min-height: 0;
   overflow: hidden;
   cursor: text;
+}
+
+/* The editor band (`NeovimEditor`): the grids and what rides them. */
+.nvim-editor {
+  position: absolute;
+  inset: 0;
+  z-index: var(--nvim-band-editor);
 }
 
 .nvim-grids {
@@ -185,7 +225,7 @@
 /* The IME's preedit: a canvas the painter draws as it draws the grid. */
 .nvim-preedit {
   position: absolute;
-  z-index: 300;
+  z-index: var(--nvim-band-preedit);
   pointer-events: none;
 }
 
@@ -281,7 +321,7 @@
  */
 .nvim-cmdline {
   position: absolute;
-  z-index: 400;
+  z-index: var(--nvim-band-cmdline);
   box-sizing: border-box;
   border-radius: 8px;
   background: var(--raised, var(--surface));
@@ -393,7 +433,7 @@
  */
 .nvim-cmdwin {
   position: absolute;
-  z-index: 390;
+  z-index: var(--nvim-band-cmdwin);
   box-sizing: border-box;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -505,7 +545,7 @@
 .nvim-status {
   position: absolute;
   inset: 0;
-  z-index: 500;
+  z-index: var(--nvim-band-status);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -563,7 +603,7 @@
 
   position: absolute;
   right: 12px;
-  z-index: 600;
+  z-index: var(--nvim-band-toasts);
   max-width: min(520px, calc(100% - 24px));
   pointer-events: none;
   font-family: inherit;
@@ -811,7 +851,7 @@
  */
 .nvim-popup {
   position: absolute;
-  z-index: 300;
+  z-index: var(--nvim-band-popup);
   box-sizing: border-box;
   width: max-content;
   overflow: hidden;
@@ -932,4 +972,9 @@
 .nvim-rich-code code {
   padding: 0;
   background: none;
+}
+
+/* The completion menu (`completionMenu.css`) in the editor's band for it. */
+.nvim-host .completion-menu {
+  z-index: var(--nvim-band-menu);
 }

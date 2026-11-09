@@ -48,6 +48,28 @@ What follows the rule in code:
   grid (its canvas, or a window's scroll port holding canvas over ghost),
   what lies over a grid (a pinned winbar, a slide), the frame's labels —
   never by which element was appended last.
+- Bands (`neovim.css`, `--nvim-band-*`): the editor is stacked in bands,
+  each one stacking context, so nothing in one is drawn over a band above
+  it, whatever its own z-index. `.nvim-host` is a band of the surface,
+  under the toasts and the status. A guard test (`bands.test.ts`) holds
+  the order and fails on a numeric z-index in `neovim.css`. Inside the
+  host, bottom to top:
+  - **editor** (`.nvim-editor`, made by `NeovimEditor`): Neovim's
+    composition — the levels, and what the page lays over a grid by its z
+    (riders, the cursor, GUI windows and views, a React portal into the
+    band). A float's 100 + zindex orders it among the grids and nothing
+    else: which-key at 1000 is still under every band above.
+  - **popup**: `gui.popup` (hovers, LSP floats). Asked for by a key and
+    closed by the next cursor move, so a float must not hide what was just
+    asked to be read.
+  - **cmdwin**: the frame round the command-line window.
+  - **cmdline**: the command line's box and its echo band. What is being
+    typed is never under a float (Neovim's own message area is over its
+    floats at the default zindex too).
+  - **menu**: the completion menu (`ext_popupmenu`), over the command line
+    it completes.
+  - **preedit**: the IME's composition, at the cursor or in the command
+    line: the text going in is over everything that could cover it.
 - `gridBlends` (`painter.ts`): a leaf canvas has alpha only while one of its
   cells blends (`winblend`); every other grid, floats and tmux popups
   included, is opaque.
@@ -100,8 +122,8 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   line 400, status 500, toasts 600) share one integer space with floats at
   100 + zindex. Bug: a float with zindex ≥ 200 ties or covers `gui.popup`,
   one ≥ 300 the command line, one ≥ 500 the toasts (which-key is 1000).
-  Neovim's own compositor puts the message area at zindex 200 and its
-  popup menu at 100, so the declared order should be Neovim's. **Open.**
+  **Fixed** ("Neovim editor: DevHub's own stacks in bands over Neovim's
+  floats"): the bands above; checked in the app with which-key (zindex 1000) up while a toast is shown.
 - `ControlTerminalSurface.tsx:557` and `paneGrids.ts:427,443`, `prompt.css`,
   `popup.css`, `chooser.css`, `menu.css`: the control surface's order is a
   set of literals (popup frame 40, prompt 45, popup grid 50, chooser 55,
@@ -168,8 +190,7 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 
 ## Remaining, in order of impact
 
-1. Declared overlay tiers in Neovim's zindex space (floats vs DevHub's
-   command line, popups and toasts).
+1. ~~Declared overlay tiers~~ fixed: bands.
 2. Cursor and riders inside their window's layer, clipped by it.
 3. Separators as elements, from grounds the windows state.
 4. `underFrames` replaced by a clip of the framed floats.
