@@ -1,7 +1,8 @@
 /* The picker DevHub draws for `choose-tree` (`ptyHost/control/chooser.ts`):
    a floating surface (`tokens.css`; its colours `popup.css`'s), the filter
-   a band on its top row,
-   the tree on its left in the terminal's font, the chosen item's pane on its
+   a band one row tall, the floats' block padding between it and the tree
+   and the preview and under them (the frame is drawn round those rows, not
+   round the whole box the picker was given), the tree on its left in the terminal's font, the chosen item's pane on its
    right (the painter's grid 0, over this frame). And `display-panes`' big
    numbers. Their look is here alone, as tokens, as the mock has it
    (`docs/terminal-mode.md`, phase 3). */
@@ -42,9 +43,12 @@
   height: var(--control-row);
   padding: 0 var(--control-cell, 1ch);
   border-bottom: 1px solid var(--float-line);
+  border-radius: calc(var(--float-radius) - 1px) calc(var(--float-radius) - 1px)
+    0 0;
   background: var(--float-band);
   color: var(--chooser-quiet);
-  font: 12px / calc(var(--control-row) - 1px)
+  /* The bands' type (`tokens.css`): a prompt, so regular. */
+  font: var(--float-header-font-size) / calc(var(--control-row) - 1px)
     var(--font-ui, system-ui, sans-serif);
   white-space: pre;
 }
@@ -57,7 +61,7 @@
 .control-chooser-tree {
   position: absolute;
   left: 0;
-  bottom: 0;
+  bottom: var(--float-pad-block);
   overflow: hidden;
   border-right: 1px solid var(--float-line);
   white-space: pre;

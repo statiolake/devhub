@@ -1135,11 +1135,19 @@ export function ControlTerminalSurface({
       const key = JSON.stringify(chooser);
       if (key === chooserShown) return;
       chooserShown = key;
+      // The tree and the preview are on the rows from `preview.y`. Over
+      // them the floats' block padding, and over that the filter's band,
+      // one row tall; under them the padding again (`chooser.css`). The
+      // rest of the rows the picker's box leaves are not drawn: a whole
+      // blank row under the band and over the bottom read as a gap, the
+      // band's text squeezed into its row with nothing round the list.
+      const rows = chooser.preview.height;
+      const pad = "var(--float-pad-block)";
       Object.assign(chooserEl.style, {
         left: `${String(chooser.x * width)}px`,
-        top: `${String(chooser.y * height)}px`,
+        top: `calc(${String((chooser.preview.y - 1) * height)}px - ${pad})`,
         width: `${String(chooser.width * width)}px`,
-        height: `${String(chooser.height * height)}px`,
+        height: `calc(${String((rows + 1) * height)}px + 2 * ${pad})`,
       });
       const filter = document.createElement("div");
       filter.className = "control-chooser-filter";
@@ -1156,11 +1164,10 @@ export function ControlTerminalSurface({
       );
       const tree = document.createElement("div");
       tree.className = "control-chooser-tree";
-      const treeTop = 2 * height;
-      tree.style.top = `${String(treeTop)}px`;
+      tree.style.top = `calc(${String(height)}px + ${pad})`;
       tree.style.width = `${String((chooser.preview.x - chooser.x) * width)}px`;
       tree.style.font = `${String(font().size)}px/${String(height)}px ${font().family}`;
-      const visible = Math.max(1, chooser.height - 2);
+      const visible = Math.max(1, rows);
       const first = Math.max(
         0,
         Math.min(

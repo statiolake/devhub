@@ -78,8 +78,8 @@
     0 0;
   background: var(--float-band);
   color: var(--popup-title);
-  font: 600 11px / calc(var(--control-row) - 2px)
-    var(--font-ui, system-ui, sans-serif);
+  font: var(--float-header-font-weight) var(--float-header-font-size) /
+    calc(var(--control-row) - 2px) var(--font-ui, system-ui, sans-serif);
   text-align: center;
   white-space: pre;
 }

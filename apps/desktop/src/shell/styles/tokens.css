@@ -378,6 +378,13 @@
    *                stronger in Dark, where a light shadow cannot be seen.
    *   arrive       a fade only: something that comes and goes with every
    *                key does not travel.
+   *   header       a title's or a filter's band is one row tall, the
+   *                cell's height, its text in the UI's face a size under
+   *                the cells' (11px) so it sits inside the row with room
+   *                above and below; a title semibold, a filter's prompt
+   *                regular. One set for every band (a popup's and a menu's
+   *                title, the chooser's filter, and the picker the
+   *                chooser, `vim.ui.select` and snacks will share).
    *
    * Colours are the page's, from the theme's own groups: `--float-ground`
    * (`NormalFloat`), `--float-ink`, `--float-line` (`FloatBorder`, a 1px
@@ -394,6 +401,8 @@
   --float-shadow-filter: drop-shadow(0 1px 2px var(--float-shadow-near))
     drop-shadow(0 2px 6px var(--float-shadow-far));
   --float-arrive: float-arrive var(--motion-fast) var(--ease-enter);
+  --float-header-font-size: 11px;
+  --float-header-font-weight: 600;
 
   /* Motion: state changes are shown, never performed — nothing here runs
    * long enough to wait on.

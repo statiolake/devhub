@@ -69,8 +69,8 @@
     0 0;
   background: var(--float-band);
   color: var(--menu-title);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--float-header-font-size);
+  font-weight: var(--float-header-font-weight);
   line-height: calc(var(--menu-row) - 1px);
   text-align: center;
   white-space: nowrap;
