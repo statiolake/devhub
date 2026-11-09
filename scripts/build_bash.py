@@ -170,6 +170,17 @@ def bash_env(os_name: str, prefix: Path) -> dict[str, str]:
 	"""
 	env = build_env(os_name, prefix)
 	env["bash_cv_termcap_lib"] = "gnutermcap"
+	if os_name == "darwin":
+		# On Apple, `lib/termcap/ltcap.h` leaves `__private_extern__` as the
+		# compiler's storage class, which is `extern` with hidden visibility:
+		# `tparam.c`'s `__private_extern__ char *BC, *UP;` then only declares
+		# them. Readline's `terminal.c` would define them, but not when
+		# `NCURSES_VERSION` is defined, and the SDK's ncurses `<termcap.h>`,
+		# which configure finds, defines it. So nothing defined `BC` or `UP`
+		# and the link failed. Spelled away, the termcap library defines all
+		# three, as it does on Linux, and readline none; hiding them is
+		# nothing to a program that is one executable.
+		env["CPPFLAGS"] = f"{env['CPPFLAGS']} -D__private_extern__="
 	return env
 
 

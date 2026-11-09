@@ -146,6 +146,12 @@ class Commands(unittest.TestCase):
 		for leaked in ("TERM", "TERMINFO", "TERMINFO_DIRS"):
 			self.assertNotIn(leaked, env)
 
+	def test_darwin_termcap_defines_what_readline_leaves_to_it(self) -> None:
+		# BC and UP are only declared by bash's termcap on Apple unless
+		# `__private_extern__` is spelled away; the Linux build needs nothing.
+		self.assertIn("-D__private_extern__=", bash_env("darwin", Path("/p"))["CPPFLAGS"].split())
+		self.assertIn("-I/p/include", bash_env("darwin", Path("/p"))["CPPFLAGS"].split())
+
 	def test_patches_apply_from_the_tree_root_once(self) -> None:
 		self.assertEqual(
 			patch_command(Path("/d/bash53-001")),
