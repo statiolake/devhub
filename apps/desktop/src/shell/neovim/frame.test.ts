@@ -35,7 +35,7 @@ const rounded = gridOf(
   (row, col) => (row === 0 && col >= 4 && col <= 8 ? 7 : 3),
 );
 
-describe("a float's border of lines as a frame", () => {
+describe("a float's border as a frame", () => {
   it("reads the sides, the corners and a title its config explains", () => {
     const seen = analyzeFrame(rounded, ALL, { title: " Files " });
     expect(seen.frame).toEqual({
@@ -47,10 +47,40 @@ describe("a float's border of lines as a frame", () => {
         right: { glyph: "│", hl: 3 },
       },
       corners: { tl: "╭", tr: "╮", br: "╯", bl: "╰" },
+      // The title's cells as Neovim sent them, its blanks included.
       labels: [
-        { side: "top", col: 4, cells: 5, runs: [{ text: "Files", hl: 7 }] },
+        {
+          side: "top",
+          col: 3,
+          cells: 7,
+          runs: [
+            { text: " ", hl: 3, cells: 1 },
+            { text: "Files", hl: 7, cells: 5 },
+            { text: " ", hl: 3, cells: 1 },
+          ],
+        },
       ],
     });
+  });
+
+  it("reads a blank border (`'solid'`) and its title's own blanks", () => {
+    const solid = gridOf(
+      ["   Results   ", " hello       ", "             "],
+      (row, col) => (row === 0 && col >= 2 && col <= 10 ? 7 : 3),
+    );
+    const frame = analyzeFrame(solid, ALL, { title: " Results " }).frame;
+    expect(frame?.sides.top).toEqual({ glyph: " ", hl: 3 });
+    expect(frame?.corners.tl).toBe(" ");
+    expect(frame?.labels).toEqual([
+      {
+        side: "top",
+        col: 2,
+        cells: 9,
+        runs: [{ text: " Results ", hl: 7, cells: 9 }],
+      },
+    ]);
+    // Without its config, the text is not explained yet.
+    expect(analyzeFrame(solid, ALL, undefined)).toEqual({ labels: true });
   });
 
   it("is drawn cell for cell while the border's text is not explained", () => {
@@ -80,25 +110,34 @@ describe("a float's border of lines as a frame", () => {
         col: 2,
         cells: 4,
         runs: [
-          { text: "1", hl: 2 },
-          { text: "/", hl: 9 },
-          { text: "20", hl: 2 },
+          { text: "1", hl: 2, cells: 1 },
+          { text: "/", hl: 9, cells: 1 },
+          { text: "20", hl: 2, cells: 2 },
         ],
       },
     ]);
   });
 
-  it("is no frame for other borders: ASCII, block elements, a winbar, mixed sides", () => {
-    expect(analyzeFrame(gridOf(["+--+", "|ab|", "+--+"]), ALL, {})).toEqual({});
-    expect(analyzeFrame(gridOf(["▛▀▀▜", "▌ab▐", "▙▄▄▟"]), ALL, {})).toEqual({});
-    expect(analyzeFrame(gridOf(["╭──╮", "│ab ", "╰──╯"]), ALL, {})).toEqual({});
+  it("frames a border of any characters: ASCII, block elements, mixed sides", () => {
+    for (const rows of [
+      ["+--+", "|ab|", "+--+"],
+      ["▛▀▀▜", "▌ab▐", "▙▄▄▟"],
+      ["╭──╮", "│ab ", "╰──╯"],
+    ])
+      expect(analyzeFrame(gridOf(rows), ALL, {}).frame).toBeDefined();
+  });
+
+  it("is no frame for text in a side, a winbar, a border of two cells", () => {
+    expect(
+      analyzeFrame(gridOf(["╭──╮", "│ab│", "xab│", "╰──╯"]), ALL, {}),
+    ).toEqual({});
     expect(
       analyzeFrame(
         gridOf(["winbar", "text  "]),
         { ...ALL, left: 0, right: 0, bottom: 0 },
         {},
       ),
-    ).toEqual({});
+    ).toEqual({ labels: true });
     // A border of two cells (a winbar under a border) is not one.
     expect(analyzeFrame(rounded, { ...ALL, top: 2 }, {})).toEqual({});
   });
@@ -139,86 +178,50 @@ const frameOf = (g: Grid): FloatFrame => {
   return frame;
 };
 
-describe("where a frame's lines are", () => {
+describe("where a frame's line is", () => {
   const cell = { width: 8, height: 20 };
   const place = { row: 2, col: 3, width: 13, height: 4 };
 
-  it("is the float's edge at its lines, on whole device pixels", () => {
-    const g = frameGeometry(frameOf(rounded), place, cell, 2, 13);
-    // A light line at 13px is one CSS pixel (two device pixels), in the
-    // middle of its cell: half a cell (less half the line) inside the box.
+  it("is half a cell outside the text area, one pixel, on whole device pixels", () => {
+    const g = frameGeometry(ALL, place, cell, 2, 4);
     expect(g.widths).toEqual({ top: 1, right: 1, bottom: 1, left: 1 });
-    expect(g.x).toBe(3 * 8 + 3.5);
-    expect(g.y).toBe(2 * 20 + 9.5);
-    expect(g.x + g.w).toBe(15 * 8 + 4.5);
-    expect(g.y + g.h).toBe(5 * 20 + 10.5);
-    expect(g.styles.top).toBe("solid");
-    // The rounded corner's arc, measured on its outer edge.
-    expect(g.radii.tl).toBeCloseTo(4.5, 5);
-    expect(g.radii).toEqual({
-      tl: g.radii.tl,
-      tr: g.radii.tl,
-      br: g.radii.tl,
-      bl: g.radii.tl,
-    });
-    // Every edge is on a device pixel.
+    // The text area is 32..120 by 60..100: the line's inner edge half a
+    // cell out, through the middle of the border's cells.
+    expect(g.x).toBe(4 * 8 - 4 - 1);
+    expect(g.y).toBe(3 * 20 - 10 - 1);
+    expect(g.x + g.w).toBe(15 * 8 + 4 + 1);
+    expect(g.y + g.h).toBe(5 * 20 + 10 + 1);
+    // One radius for every border, the floats' corner.
+    expect(g.radii).toEqual({ tl: 4, tr: 4, br: 4, bl: 4 });
     for (const v of [g.x, g.y, g.x + g.w, g.y + g.h])
       expect((v * 2) % 1).toBe(0);
   });
 
-  it("has square corners for `single` and doubled lines for `double`", () => {
-    const single = frameGeometry(
-      frameOf(gridOf(["┌──┐", "│ab│", "└──┘"])),
-      { row: 0, col: 0, width: 4, height: 3 },
+  it("pads a float without a border as much, outside its cells", () => {
+    const none = { top: 0, right: 0, bottom: 0, left: 0 };
+    const g = frameGeometry(
+      none,
+      { row: 1, col: 2, width: 10, height: 3 },
       cell,
       1,
-      13,
+      4,
     );
-    expect(single.radii).toEqual({ tl: 0, tr: 0, br: 0, bl: 0 });
-    const double = frameGeometry(
-      frameOf(gridOf(["╔══╗", "║ab║", "╚══╝"])),
-      { row: 0, col: 0, width: 4, height: 3 },
-      cell,
-      1,
-      13,
-    );
-    expect(double.styles).toEqual({
-      top: "double",
-      right: "double",
-      bottom: "double",
-      left: "double",
-    });
-    expect(double.widths.left).toBe(3);
+    expect([g.x, g.y, g.x + g.w, g.y + g.h]).toEqual([
+      2 * 8 - 5,
+      20 - 11,
+      12 * 8 + 5,
+      4 * 20 + 11,
+    ]);
   });
 
-  it("ends a side without a border at the text area", () => {
-    const g = gridOf(["────", "ab  ", "────"]);
-    const frame = analyzeFrame(
-      g,
-      { top: 1, right: 0, bottom: 1, left: 0 },
-      {},
-    ).frame;
-    if (!frame) throw new Error("no frame");
-    const geo = frameGeometry(
-      frame,
-      { row: 0, col: 1, width: 4, height: 3 },
-      cell,
-      1,
-      13,
-    );
-    expect(geo.x).toBe(8);
-    expect(geo.w).toBe(32);
-    expect(geo.widths.left).toBe(0);
-  });
-
-  it("puts a title on its line, over the cells Neovim gave it", () => {
+  it("puts a title's cells on its line, where Neovim gave them", () => {
     const frame = frameOf(rounded);
-    const geo = frameGeometry(frame, place, cell, 2, 13);
+    const geo = frameGeometry(frame.margins, place, cell, 2, 4);
     const label = frame.labels[0];
     if (!label) throw new Error("no label");
     expect(labelBox(label, place, geo, cell)).toEqual({
-      x: (3 + 4) * 8,
-      w: 5 * 8,
+      x: (3 + 3) * 8,
+      w: 7 * 8,
       cy: geo.y + 0.5,
     });
   });
@@ -243,15 +246,17 @@ describe("a panel of framed floats", () => {
   const member = (
     grid: number,
     rect: { row: number; col: number; width: number; height: number },
+    ruled = true,
   ): FramedMember => ({
     grid,
     rect,
+    ruled,
     geometry: frameGeometry(
-      frameOf(gridOf(["╭──╮", "│ab│", "╰──╯"])),
+      ruled ? ALL : { top: 0, right: 0, bottom: 0, left: 0 },
       rect,
       cell,
       1,
-      13,
+      4,
     ),
   });
 
@@ -295,7 +300,20 @@ describe("a panel of framed floats", () => {
     expect(i ? i.y + i.h : 0).toBe(l?.y);
   });
 
-  it("keeps a lone float's outline as its lines", () => {
+  it("draws no line where a float without a border meets another", () => {
+    // blink's menu and its documentation, side by side.
+    const menu = member(4, { row: 0, col: 0, width: 10, height: 6 }, false);
+    const docs = member(5, { row: 0, col: 10, width: 10, height: 6 }, false);
+    const [a, b] = framePieces([menu, docs], 1);
+    expect(a?.draw.right).toBe(false);
+    expect(b?.draw.left).toBe(false);
+    expect(a?.draw.left).toBe(true);
+    // Their grounds meet at the edge they share.
+    expect(a ? a.x + a.w : 0).toBe(80);
+    expect(b?.x).toBe(80);
+  });
+
+  it("keeps a lone float's outline as its line", () => {
     const one = member(4, { row: 1, col: 1, width: 6, height: 4 });
     const [piece] = framePieces([one], 1);
     expect(piece).toMatchObject({
@@ -344,9 +362,6 @@ describe("a click on a framed float", () => {
     // Above the top line: behind; below it, the float.
     expect(hitTest([base, box], cell, 6 * 8, 2 * 20 + 3).grid).toBe(1);
     expect(hitTest([base, box], cell, 6 * 8, 2 * 20 + 15).grid).toBe(4);
-    // Outside the rounded corner's arc, though inside its cell's inner half.
-    expect(hitTest([base, box], cell, 3 * 8 + 4, 2 * 20 + 10).grid).toBe(1);
-    expect(hitTest([base, box], cell, 3 * 8 + 6, 2 * 20 + 14).grid).toBe(4);
     // The text area.
     expect(hitTest([base, box], cell, 5 * 8 + 2, 3 * 20 + 2)).toEqual({
       grid: 4,

@@ -498,39 +498,45 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		h.ui.client.close();
 	});
 
-	it("leaves out a float's blank border and keeps a border of lines", async () => {
+	it("frames a float's border, blank or lines, in place", async () => {
 		const h = await attached(60, 20);
 		await h.ui.request("nvim_exec_lua", [
 			"local buf = vim.api.nvim_create_buf(false, true); vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'hello' }); _G.f = vim.api.nvim_open_win(buf, false, { relative = 'editor', row = 2, col = 3, width = 10, height = 2, border = 'rounded' })",
 			[],
 		]);
 		const float = () => layoutGrids(h.state).find((b) => b.float);
-		await h.until(() => float()?.lined === true, "a border of lines");
-		expect(float()?.crop).toBeUndefined();
+		await h.until(
+			() => float()?.frame?.corners.tl === "╭",
+			"a border of lines",
+		);
 		await h.ui.request("nvim_exec_lua", [
 			"vim.api.nvim_win_set_config(_G.f, { border = 'solid' })",
 			[],
 		]);
-		await h.until(() => float()?.crop !== undefined, "the blank border");
+		await h.until(() => float()?.frame?.corners.tl === " ", "the blank border");
 		expect(float()).toMatchObject({
 			row: 2,
 			col: 3,
 			width: 12,
 			height: 4,
-			crop: { top: 1, right: 1, bottom: 1, left: 1 },
 		});
-		expect(float()?.lined).toBeUndefined();
+		expect(float()?.frame?.margins).toEqual({
+			top: 1,
+			right: 1,
+			bottom: 1,
+			left: 1,
+		});
 		await h.ui.request("nvim_exec_lua", [
 			"vim.api.nvim_win_set_config(_G.f, { border = 'none' })",
 			[],
 		]);
 		await h.until(() => float()?.width === 10, "no border");
-		expect(float()?.crop).toBeUndefined();
+		expect(float()?.frame).toBeUndefined();
 		expect(float()?.lined).toBeUndefined();
 		h.ui.client.close();
 	});
 
-	it("frames a float's border of lines, its title a label once its config is known", async () => {
+	it("frames a float's border of lines, its title's cells on it once its config is known", async () => {
 		const h = await attached(60, 20);
 		const win = (await h.ui.request("nvim_exec_lua", [
 			"local buf = vim.api.nvim_create_buf(false, true); vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'hello' }); return vim.api.nvim_open_win(buf, false, { relative = 'editor', row = 2, col = 3, width = 20, height = 3, border = 'rounded', title = ' Files ', title_pos = 'center', footer = { { '1', 'Title' }, { '/2', 'Comment' } }, footer_pos = 'right' })",
@@ -554,8 +560,8 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 				l.runs.map((r) => r.text).join(""),
 			]),
 		).toEqual([
-			// Centred: (22 - 7) / 2 = 7, after its blank.
-			["top", 8, 5, "Files"],
+			// Centred: (22 - 7) / 2 = 7, its blanks its own.
+			["top", 7, 7, " Files "],
 			// Right: against the corner.
 			["bottom", 18, 3, "1/2"],
 		]);

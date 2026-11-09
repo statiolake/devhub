@@ -1031,25 +1031,14 @@ export interface GridBox {
   readonly z: number;
   readonly float: boolean;
   readonly win: number | undefined;
-  /**
-   * A float's border is blank cells (`'solid'`, a table of spaces): they
-   * are left out — the float shows its text area where Neovim put it, in
-   * DevHub's own frame, as with no border — and a click there falls through.
-   */
-  readonly crop?: Margins;
-  /**
-   * Of a blank border's rows, those kept because they hold text (a
-   * `title`, a `footer`): the float's header and footer, drawn as bands
-   * (docs/neovim-editor.md, "Floating surfaces").
-   */
-  readonly header?: number;
-  readonly footer?: number;
-  /** A float with a border of lines: no frame of DevHub's. */
+  /** A float with a border of its own: no padding of DevHub's round it. */
   readonly lined?: boolean;
   /**
-   * That border as a frame (`frame.ts`): the canvas is the text area, the
-   * lines and labels are DevHub's, cut at the line. Without it, a border of
-   * lines is drawn cell for cell.
+   * That border as a frame (`frame.ts`), whatever its cells are (blank,
+   * lines, a table of characters): the canvas is the text area, DevHub's
+   * one rounded line goes through the middle of the border's cells, its
+   * title and footer cells on it. Without it (text in a side, a border
+   * wider than a cell), the border is drawn cell for cell.
    */
   readonly frame?: FloatFrame;
   /** Its border holds text its known `title` / `footer` do not explain. */
@@ -1062,18 +1051,15 @@ export interface GridBox {
 }
 
 /**
- * How a float's border shows: `crop` when its cells are blank (but for rows
- * of text above or below, which are kept), `frame` when it is lines,
- * `lined` when it draws something else, neither without one.
+ * How a float's border shows: `frame` when its cells make one (any
+ * character, a `title` and `footer` on it), `lined` when they draw
+ * something else, neither without one.
  */
 export function floatBorder(
   grid: Grid,
   margins: Margins | undefined,
   labels?: FloatLabels,
 ): {
-  crop?: Margins;
-  header?: number;
-  footer?: number;
   lined?: boolean;
   frame?: FloatFrame;
   wantsLabels?: boolean;
@@ -1083,37 +1069,8 @@ export function floatBorder(
   if (top + right + bottom + left === 0) return {};
   if (top + bottom >= grid.height || left + right >= grid.width)
     return { lined: true };
-  const blank = (row: number, from: number, to: number) => {
-    for (let col = from; col < to; col += 1) {
-      const ch = grid.chars[row * grid.width + col] ?? "";
-      if (ch !== "" && ch !== " ") return false;
-    }
-    return true;
-  };
-  // The edges only: this runs on every paint.
-  let sides = true;
-  for (let row = 0; row < grid.height && sides; row += 1) {
-    sides = blank(row, 0, left) && blank(row, grid.width - right, grid.width);
-  }
-  let keepTop = top;
-  while (keepTop > 0 && blank(top - keepTop, 0, grid.width)) keepTop -= 1;
-  let keepBottom = bottom;
-  while (
-    keepBottom > 0 &&
-    blank(grid.height - bottom + keepBottom - 1, 0, grid.width)
-  )
-    keepBottom -= 1;
-  if (sides && keepTop === 0 && keepBottom === 0) return { crop: margins };
   const seen = analyzeFrame(grid, margins, labels);
   if (seen.frame) return { lined: true, frame: seen.frame };
-  // A blank border with a title or footer (`'solid'` and a `title`): the
-  // blank is left out, the rows with text kept, a header in DevHub's frame.
-  if (sides && left + right > 0)
-    return {
-      crop: { top: top - keepTop, right, bottom: bottom - keepBottom, left },
-      ...(keepTop > 0 ? { header: keepTop } : {}),
-      ...(keepBottom > 0 ? { footer: keepBottom } : {}),
-    };
   return seen.labels ? { lined: true, wantsLabels: true } : { lined: true };
 }
 

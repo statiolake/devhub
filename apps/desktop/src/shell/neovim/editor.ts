@@ -23,7 +23,7 @@ import {
   type NeovimUiState,
   type RedrawChanges,
 } from "./redraw";
-import { compactPanels } from "./floats";
+import { clearCursorRow } from "./floats";
 import {
   GridPainter,
   ICON_FAMILY,
@@ -490,12 +490,14 @@ export class NeovimEditor {
     if (changes.options) this.applyFont();
     // `cmdheight` is asked with them: it moves when the layout does.
     if (changes.colors || changes.layout) this.askTheme();
-    // A panel's blank border rows between members are its padding, not
-    // whole rows (`compactPanels`).
-    this.boxes = compactPanels(
-      layoutGrids(this.state),
-      this.painter.cell().height,
-      this.painter.floatTokens().pad,
+    // A panel next to the cursor's row is moved half a row off it, so a
+    // borderless float's padding never covers what is typed
+    // (`clearCursorRow`).
+    const laid = layoutGrids(this.state);
+    const at = laid.find((b) => b.grid === this.state.cursor.grid);
+    this.boxes = clearCursorRow(
+      laid,
+      at === undefined ? undefined : at.row + this.state.cursor.row,
     );
     this.host.style.background = cssColor(this.state.defaults.background);
     const theme = this.paintTheme();

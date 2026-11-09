@@ -52,46 +52,32 @@ describe("the pointer", () => {
     });
   });
 
-  it("lets a click through a float's left-out border", () => {
+  it("lets a click through a blank border outside its line", () => {
+    const margins = { top: 1, right: 1, bottom: 1, left: 1 };
+    const blank = { glyph: " ", hl: 0 };
     const solid = [
       ...boxes,
       {
-        ...box(6, 10, 10, 20, 4, 160),
-        crop: { top: 1, right: 1, bottom: 1, left: 1 },
+        ...box(6, 13, 10, 20, 4, 160),
+        lined: true,
+        frame: {
+          margins,
+          sides: { top: blank, right: blank, bottom: blank, left: blank },
+          corners: { tl: " ", tr: " ", br: " ", bl: " " },
+          labels: [],
+        },
       },
     ];
-    // The border row: the window under it.
-    expect(hitTest(solid, cell, 8 * 12, 16 * 10).grid).toBe(2);
+    // The border row's outer half: the window under it.
+    expect(hitTest(solid, cell, 8 * 12, 16 * 13 + 2).grid).toBe(2);
+    // Its inner half, inside the line: the float's.
+    expect(hitTest(solid, cell, 8 * 12, 16 * 13 + 12).grid).toBe(6);
     // The text area: the float's own cell, counted from its grid's corner.
-    expect(hitTest(solid, cell, 8 * 12, 16 * 11)).toEqual({
+    expect(hitTest(solid, cell, 8 * 12, 16 * 14)).toEqual({
       grid: 6,
       row: 1,
       col: 2,
     });
-  });
-
-  it("reads a member drawn a fraction of a row up by the pixel", () => {
-    // A picker's list, drawn 12px higher (`compactPanels`): its first row
-    // is from y = 16 * 4 - 12 to 16 * 5 - 12.
-    const list = [
-      ...boxes,
-      {
-        ...box(7, 3.25, 10, 20, 6, 160),
-        crop: { top: 0, right: 1, bottom: 1, left: 1 },
-      },
-    ];
-    expect(hitTest(list, cell, 8 * 12, 16 * 3.25 + 1)).toEqual({
-      grid: 7,
-      row: 0,
-      col: 2,
-    });
-    expect(hitTest(list, cell, 8 * 12, 16 * 4.25 + 15)).toEqual({
-      grid: 7,
-      row: 1,
-      col: 2,
-    });
-    // Under its last row of text, its blank border: the window under it.
-    expect(hitTest(list, cell, 8 * 12, 16 * 8.25 + 1).grid).not.toBe(7);
   });
 
   it("falls back to grid 1 between windows (a separator, the command line)", () => {

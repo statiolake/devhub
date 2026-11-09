@@ -179,8 +179,9 @@
 /*
  * Floats: one shadow per panel of them (`floats.ts`: floats edge to edge
  * are one panel, a float alone is one too), under the union of their
- * grounds — the floating surfaces' grounded shadow (`tokens.css`). Their
- * 1px line and rules are elements over the members (`.nvim-frame-labels`).
+ * grounds — the floating surfaces' shadow (`tokens.css`). Each member's
+ * frame — its padding's ground and its 1px rounded line — is an element
+ * under its canvas (`.nvim-float-frames`).
  */
 .nvim-float-shadow {
   position: absolute;
@@ -198,10 +199,6 @@
   position: absolute;
 }
 
-/*
- * A framed float's title or footer (`frame.ts`): a label on its line, the
- * line broken around it.
- */
 .nvim-float-frames {
   position: absolute;
   left: 0;
@@ -213,6 +210,10 @@
   position: absolute;
 }
 
+/*
+ * A framed float's title or footer (`frame.ts`): its cells as Neovim sent
+ * them, in the grid's face, on its line — the line broken under them.
+ */
 .nvim-frame-labels {
   position: absolute;
   left: 0;
@@ -220,15 +221,15 @@
   pointer-events: none;
 }
 
-.nvim-frame-labels > div {
-  position: absolute;
-}
-
 .nvim-frame-labels > .nvim-frame-label {
   position: absolute;
-  box-sizing: border-box;
+  display: flex;
   white-space: pre;
-  text-align: center;
+  overflow: hidden;
+}
+
+.nvim-frame-label > span {
+  flex: none;
   overflow: hidden;
 }
 

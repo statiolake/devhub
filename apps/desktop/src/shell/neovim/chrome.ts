@@ -406,7 +406,7 @@ export function floatScrollbars(
   boxes: readonly GridBox[],
 ): Map<number, ScrollbarPart> {
   const thin = boxes.filter((box) => {
-    if (!box.float || box.width !== 1 || box.crop || box.frame) return false;
+    if (!box.float || box.width !== 1 || box.frame) return false;
     const placement = state.windows.get(box.grid)?.placement;
     if (placement?.kind !== "float" || placement.focusable) return false;
     const grid = state.grids.get(box.grid);

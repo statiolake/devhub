@@ -360,18 +360,20 @@
   --radius-pill: 999px;
 
   /* Floating surfaces over a grid of cells (the person's pick, 「接地」;
-   * docs/neovim-editor.md, "Floating surfaces"): Neovim's floats and
-   * clusters, `gui.popup`, the completion menu, the command line's box and
-   * the messages pager, and tmux's popup, menu, chooser and prompt
-   * completion. One set, so no two surfaces on one screen disagree.
+   * docs/neovim-editor.md, "Floating surfaces"): DevHub's own — `gui.popup`,
+   * the completion menu, the command line's box and the messages pager,
+   * and tmux's popup, menu, chooser and prompt completion. One set, so no
+   * two surfaces on one screen disagree. Neovim's floats and clusters take
+   * only the radius and the shadow: their content is drawn as Neovim sends
+   * it, in a frame half a cell from it.
    *
    *   radius  4px  a quarter of a row: it ends inside the padding (4px
-   *                block, a cell inline), so a corner never reaches text
-   *                and reads as a part's corner, not a blob's.
+   *                block, a cell inline; half a cell round a Neovim float),
+   *                so a corner never reaches text and reads as a part's
+   *                corner, not a blob's.
    *   band    2px  a selected row's band is inset 2px and rounded 2px:
    *                concentric with the 4px corner (2 + 2).
-   *   pad     4px  block padding inside the blank border Neovim keeps
-   *                (inline it is the border's whole cell).
+   *   pad     4px  block padding inside a DevHub surface's line.
    *   shadow       close and grounded — offset ≤ 2px, spread ≤ 6px, gone
    *                within a third of a row: the panel is put down on the
    *                page, not lifted off it. The same at every size. Black,

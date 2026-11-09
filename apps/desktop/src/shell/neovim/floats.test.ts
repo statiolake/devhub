@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  bandGround,
-  compactPanels,
-  drawnRect,
-  floatClusters,
-  panelLayout,
-  touching,
-} from "./floats";
+import { clearCursorRow, floatClusters, touching } from "./floats";
 import type { GridBox } from "./redraw";
 
 const float = (
@@ -76,18 +69,7 @@ describe("floats that make one panel", () => {
     });
   });
 
-  it("use what is drawn of a float: a left-out blank border is not there", () => {
-    const solid = float(4, 2, 2, 12, 5, {
-      crop: { top: 1, right: 1, bottom: 1, left: 1 },
-    });
-    expect(drawnRect(solid)).toEqual({ row: 3, col: 3, width: 10, height: 3 });
-    // Two cells from the next one once the border is left out: apart.
-    expect(
-      floatClusters([solid, float(5, 3, 15, 5, 3)]).map((c) => c.key),
-    ).toEqual(["4", "5"]);
-  });
-
-  it("lose DevHub's hairline only when every member draws its own border", () => {
+  it("know when every member has a border of its own", () => {
     const lined = { lined: true };
     expect(
       floatClusters([
@@ -102,134 +84,26 @@ describe("floats that make one panel", () => {
   });
 });
 
-describe("a float's selected row as a band", () => {
-  // Rows of a float 6 wide: "n" its ground, "s" the selection, "t" a title.
-  const grounds = (rows: readonly string[]) => (r: number, c: number) => {
-    const g = rows[r]?.[c];
-    return g === undefined ? undefined : g.charCodeAt(0);
-  };
-  const rows = (list: readonly string[]) => ({ top: 0, bottom: list.length });
-
-  it("is a row in another ground between rows of the float's", () => {
-    const list = ["nnnnnn", "ssssss", "nnnnnn", "nnnnnn"];
-    expect(bandGround(rows(list), 0, 5, 1, grounds(list))).toBe(110);
+describe("a panel next to the cursor's row", () => {
+  it("moves half a row off it when a float without a border touches it", () => {
+    // blink's menu under the line being typed, its scrollbar beside it.
+    const menu = float(4, 6, 10, 20, 5);
+    const bar = float(5, 6, 30, 1, 5);
+    const boxes = clearCursorRow([menu, bar], 5);
+    expect(boxes.map((b) => b.row)).toEqual([6.5, 6.5]);
+    // Above the cursor: up.
+    expect(clearCursorRow([float(4, 1, 10, 20, 4)], 5)[0]?.row).toBe(0.5);
   });
 
-  it("is the first row too, with the float's ground under it", () => {
-    const list = ["ssssss", "nnnnnn", "nnnnnn"];
-    expect(bandGround(rows(list), 0, 5, 0, grounds(list))).toBe(110);
-  });
-
-  it("is the selected one of two rows", () => {
-    const list = ["ssssss", "nnnnnn"];
-    expect(bandGround(rows(list), 0, 5, 0, grounds(list))).toBe(110);
-  });
-
-  it("is not the title row above a selected first item", () => {
-    // A picker's list: its kept title row in the float's ground, the first
-    // item selected under it. The title is not a band cut out of the
-    // selection.
-    const list = ["nnnnnn", "ssssss", "nnnnnn", "nnnnnn", "nnnnnn"];
-    expect(bandGround(rows(list), 0, 5, 0, grounds(list))).toBeUndefined();
-    expect(bandGround(rows(list), 0, 5, 1, grounds(list))).toBe(110);
-  });
-});
-
-describe("a panel as drawn (「接地」)", () => {
-  const cell = { width: 8, height: 16 };
-  const layout = (given: GridBox[]) => {
-    const boxes = compactPanels(given, cell.height, 4);
-    const [cluster] = floatClusters(boxes);
-    if (!cluster) throw new Error("no cluster");
-    return panelLayout(
-      cluster,
-      new Map(boxes.map((b) => [b.grid, b])),
-      cell,
-      4,
-    );
-  };
-
-  it("grows a float into its blank border: a cell inline, 4px above and below", () => {
-    const crop = { top: 1, right: 1, bottom: 1, left: 1 };
-    const { parts, rules } = layout([float(4, 2, 10, 22, 5, { crop })]);
-    expect(parts).toEqual([
-      {
-        grid: 4,
-        rect: { x: 10 * 8, y: 3 * 16 - 4, w: 20 * 8 + 16, h: 3 * 16 + 8 },
-        outer: { top: true, right: true, bottom: true, left: true },
-      },
-    ]);
-    expect(rules).toEqual([]);
-  });
-
-  it("keeps a title's row as a header band, its rule under it", () => {
-    const crop = { top: 0, right: 1, bottom: 1, left: 1 };
-    const { parts } = layout([float(4, 2, 10, 22, 5, { crop, header: 1 })]);
-    expect(parts[0]?.rect).toEqual({ x: 80, y: 32, w: 176, h: 4 * 16 + 4 });
-    expect(parts[0]?.header).toEqual({ x: 80, y: 32, w: 176, h: 16 });
-  });
-
-  it("cuts a blank border row between members to the padding, never a whole row", () => {
-    const crop = { top: 1, right: 1, bottom: 1, left: 1 };
-    // A root box, an input over a list beside a preview, each in a solid
-    // border with a title (snacks' default layout).
-    const { parts, rules } = layout([
-      float(3, 0, 0, 40, 20, { z: 152 }),
-      float(4, 0, 0, 40, 3, { z: 154, crop: { ...crop, top: 0 }, header: 1 }),
-      float(5, 3, 0, 20, 17, { z: 155, crop: { ...crop, top: 0 }, header: 1 }),
-      float(6, 3, 20, 20, 17, { z: 155, crop: { ...crop, top: 0 }, header: 1 }),
-    ]);
-    const byGrid = new Map(parts.map((p) => [p.grid, p]));
-    expect(byGrid.get(3)?.outer).toEqual({
-      top: true,
-      right: true,
-      bottom: true,
-      left: true,
+  it("stays where Neovim put it otherwise", () => {
+    expect(clearCursorRow([float(4, 8, 10, 20, 5)], 5)[0]?.row).toBe(8);
+    const margins = { top: 1, right: 1, bottom: 1, left: 1 };
+    const framed = float(4, 6, 10, 20, 5, {
+      lined: true,
+      frame: { margins, sides: {}, corners: {}, labels: [] },
     });
-    // The input's bottom border is its padding (4px), not a row: the list
-    // and the preview are drawn 12px higher, and the root box ends where
-    // they do.
-    expect(byGrid.get(4)?.rect).toEqual({ x: 0, y: 0, w: 320, h: 36 });
-    expect(byGrid.get(5)?.rect.y).toBe(36);
-    expect(byGrid.get(3)?.rect).toEqual({ x: 0, y: 0, w: 320, h: 36 + 260 });
-    // Inside the root box, only a side on its edge is on the outline: the
-    // root ends where the list does.
-    expect(byGrid.get(5)?.outer).toEqual({
-      top: false,
-      right: false,
-      bottom: true,
-      left: true,
-    });
-    // List and preview meet at the cell between their borders.
-    expect(byGrid.get(5)?.rect.x).toBe(0);
-    expect(byGrid.get(5)?.rect.w).toBe(160);
-    expect(byGrid.get(6)?.rect.x).toBe(160);
-    expect(rules).toContainEqual({ x: 160, y: 36, w: 0, h: 17 * 16 - 16 + 4 });
-    expect(rules).toContainEqual({ x: 0, y: 36, w: 160, h: 0 });
-    expect(rules).toContainEqual({ x: 160, y: 36, w: 160, h: 0 });
-  });
-
-  it("cuts a member's blank top row where it meets one above", () => {
-    const crop = { top: 1, right: 1, bottom: 1, left: 1 };
-    // An input with a title over a list without one: the list's blank top
-    // row is its padding.
-    const given = [
-      float(4, 0, 0, 40, 2, {
-        z: 154,
-        crop: { ...crop, top: 0, bottom: 0 },
-        header: 1,
-      }),
-      float(5, 2, 0, 40, 10, { z: 154, crop }),
-    ];
-    const boxes = compactPanels(given, cell.height, 4);
-    expect(boxes[1]?.row).toBeCloseTo(2 - 12 / 16);
-    const { rules } = layout(given);
-    expect(rules).toContainEqual({ x: 0, y: 32, w: 320, h: 0 });
-  });
-
-  it("leaves a float alone, and members whose lines are their own", () => {
-    const crop = { top: 1, right: 1, bottom: 1, left: 1 };
-    const one = [float(4, 2, 10, 22, 5, { crop })];
-    expect(compactPanels(one, 16, 4)).toEqual(one);
+    // A border's line is in its cells: nothing to clear.
+    expect(clearCursorRow([framed], 5)[0]?.row).toBe(6);
+    expect(clearCursorRow([float(4, 6, 10, 20, 5)], undefined)[0]?.row).toBe(6);
   });
 });

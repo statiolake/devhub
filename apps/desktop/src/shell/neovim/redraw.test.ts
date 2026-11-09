@@ -153,7 +153,7 @@ describe("the redraw reducer", () => {
     expect([float?.row, float?.col]).toEqual([18, 50]);
   });
 
-  it("leaves out a float's blank border and keeps a border of lines", () => {
+  it("frames a float's border, blank or lines, and draws text in a side as cells", () => {
     const state = initialUiState();
     applyRedraw(state, [
       ["grid_resize", [1, 80, 24], [4, 6, 3], [5, 6, 3]],
@@ -170,14 +170,12 @@ describe("the redraw reducer", () => {
     ]);
     const boxes = layoutGrids(state);
     const solid = boxes.find((b) => b.grid === 4);
-    expect(solid?.crop).toEqual({ top: 1, right: 1, bottom: 1, left: 1 });
-    expect(solid?.lined).toBeUndefined();
-    // Where Neovim put it: the text area stays in its place.
+    // One frame for both (`frame.ts`), cut half a cell from the text.
+    expect(solid?.frame?.sides.top?.glyph).toBe(" ");
+    // Where Neovim put it: the box stays in its place.
     expect([solid?.row, solid?.col, solid?.width]).toEqual([2, 2, 6]);
     const rounded = boxes.find((b) => b.grid === 5);
-    expect(rounded?.crop).toBeUndefined();
     expect(rounded?.lined).toBe(true);
-    // Drawn as DevHub's frame, cut at its lines (`frame.ts`).
     expect(rounded?.frame?.corners.tl).toBe("╭");
     // No border: neither.
     expect(floatBorder(state.grids.get(4)!, undefined)).toEqual({});
@@ -189,26 +187,20 @@ describe("the redraw reducer", () => {
         left: 0,
       }),
     ).toEqual({});
-    // A title in a blank border: its row is kept, the rest left out.
+    // A title in a blank border: drawn as cells until its config says it.
     applyRedraw(state, [["grid_line", [4, 0, 1, [["T"]], false]]]);
-    expect(layoutGrids(state).find((b) => b.grid === 4)?.crop).toEqual({
-      top: 0,
-      right: 1,
-      bottom: 1,
-      left: 1,
+    expect(layoutGrids(state).find((b) => b.grid === 4)).toMatchObject({
+      lined: true,
+      wantsLabels: true,
     });
-    // That row is the float's header: drawn as a band.
-    expect(layoutGrids(state).find((b) => b.grid === 4)?.header).toBe(1);
-    expect(
-      layoutGrids(state).find((b) => b.grid === 4)?.footer,
-    ).toBeUndefined();
-    // A winbar is text in the top margin of a float without a border: kept.
+    // Text in a side is drawn as Neovim drew it.
+    applyRedraw(state, [["grid_line", [4, 1, 0, [["x"]], false]]]);
     expect(
       floatBorder(state.grids.get(4)!, {
-        top: 1,
-        right: 0,
-        bottom: 0,
-        left: 0,
+        top: 0,
+        right: 1,
+        bottom: 1,
+        left: 1,
       }),
     ).toEqual({ lined: true });
   });

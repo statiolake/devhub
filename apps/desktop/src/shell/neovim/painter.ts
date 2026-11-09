@@ -24,6 +24,7 @@
 import type {
   GridBox,
   HlAttr,
+  Margins,
   LinesMoved,
   NeovimUiState,
   RedrawChanges,
@@ -41,11 +42,9 @@ import {
   type FoldLine,
 } from "./decor";
 import {
-  bandGround,
   floatClusters,
   cutClip,
   frameCuts,
-  panelLayout,
   framePieces,
   type FloatCorners,
   type FramedMember,
@@ -79,6 +78,7 @@ import {
   frameGeometry,
   labelBox,
   type FrameLabel,
+  type FrameSide,
   type Side,
 } from "./frame";
 
@@ -318,7 +318,7 @@ interface GridCanvas {
   readonly ctx: CanvasRenderingContext2D;
   width: number;
   height: number;
-  /** The crop it was sized for (`GridBox.crop`). */
+  /** The border it was sized without (`cropOf`). */
   crop?: string;
   /** Made without an alpha channel: not blending (`gridBlends`). */
   readonly opaque: boolean;
@@ -346,11 +346,10 @@ const FOLD_FADE = 260;
 const SLIDE_MS = 60;
 
 /**
- * A floating surface's look, from the tokens (`tokens.css`, "Floating
- * surfaces"; docs/neovim-editor.md): its corner, a selected row's band
- * inset, and the padding above and below inside a blank border. Read once
- * from the page's stylesheet; the values in brackets are the tokens' own,
- * for a page without it (a test).
+ * A floating surface's token (`tokens.css`, "Floating surfaces";
+ * docs/neovim-editor.md) as a number: a float's corner. Read once from the
+ * page's stylesheet; the fallback is the token's own, for a page without
+ * it (a test).
  */
 function floatToken(name: string, fallback: number): number {
   const root =
@@ -396,11 +395,11 @@ export function floatLook(
 }
 
 /**
- * What of a grid its canvas shows: a float's left-out blank border, or a
- * framed float's border (DevHub draws the frame).
+ * What of a grid its canvas shows: a framed float's text area, without its
+ * border (DevHub draws the frame).
  */
 function cropOf(box: GridBox) {
-  return box.frame?.margins ?? box.crop ?? NO_CROP;
+  return box.frame?.margins ?? NO_CROP;
 }
 
 /** Rounded corners as CSS: the float's radius token where `corners` say. */
@@ -415,14 +414,13 @@ function radii(corners: FloatCorners): string {
  * element per `GridBox.z` (`GridPainter.level`): the windows' at 1, each
  * float zindex's at 100 + zindex, a tmux popup's at its own. Inside it a
  * window's pane (its ground out to the boundaries beside it), the
- * shadow under a panel of floats, then a float's ground grown into its
- * blank border with its title's band, or a framed float's ring and lines, then
+ * shadow under a panel of floats, then a float's frame (its padding's
+ * ground and its line), then
  * the grids (a canvas, or a window's scroll port), then what rides a grid's
  * text (inline images, cards, line decorations), then what lies over a grid
  * (a winbar held while the text scrolls, lines sliding into place), then the
  * cursor, then what covers a grid's cells whole (a GUI window, a view),
- * then a frame's title and footer and a panel's 1px outline and rules,
- * then the boundaries between the
+ * then a frame's title and footer cells, then the boundaries between the
  * windows' panes (`placePanes`). Riders, the cursor and covers are the
  * page's, each in its grid's own clipping element (`GridPainter.over`).
  */
@@ -472,7 +470,7 @@ interface Piece {
   readonly h: number;
   readonly radius: string;
   readonly background: string;
-  /** A framed member's lines: top, right, bottom, left, as CSS borders. */
+  /** A framed member's line: top, right, bottom, left, as CSS borders. */
   readonly borders?: readonly string[];
   /** A blended framed member's text area, left out. */
   readonly hole?: string;
@@ -482,13 +480,18 @@ interface Piece {
   readonly z?: number;
 }
 
-/** A title or footer on a frame's line. */
+/** A title or footer on a frame's line: its cells, as Neovim sent them. */
 interface Label {
   readonly x: number;
   readonly w: number;
   readonly cy: number;
-  readonly background: string;
-  readonly runs: readonly { text: string; color: string; font: string }[];
+  readonly runs: readonly {
+    text: string;
+    cells: number;
+    color: string;
+    background: string;
+    font: string;
+  }[];
 }
 
 /**
@@ -553,8 +556,8 @@ export class GridPainter {
   private font: FontSpec;
   private metrics: Metrics;
   private theme: PaintTheme = NO_THEME;
-  /** The tokens' corner, band inset and block padding (`floatToken`). */
-  private tokens: { radius: number; inset: number; pad: number } | undefined;
+  /** The floats' corner (`floatToken`). */
+  private radius: number | undefined;
   /** Lines sliding into place after a `dd` or an `o`, by grid. */
   private readonly slides = new Map<
     number,
@@ -588,8 +591,6 @@ export class GridPainter {
   /** The row's cells whose glyph is not drawn (`~`, a filler's `-`). */
   private readonly skip = new Set<number>();
   private dpr: number;
-  /** Floats whose canvas is rounded (not a border of lines, not framed). */
-  private readonly roundFloats = new Set<number>();
   /** The editor face's cap height: a kind mark's size. */
   private capHeight = 0;
   /** The row's icons, drawn after its backgrounds (`paintRow`). */
@@ -926,27 +927,10 @@ export class GridPainter {
     }
   }
 
-  /** Whether `row` is a float's header or footer row, drawn as a band. */
-  private titleRow(
-    box: GridBox,
-    grid: { readonly height: number },
-    row: number,
-  ): boolean {
-    if (!box.float || !box.crop) return false;
-    const { top, bottom } = box.crop;
-    if (row >= top && row < top + (box.header ?? 0)) return true;
-    const end = grid.height - bottom;
-    return row < end && row >= end - (box.footer ?? 0);
-  }
-
-  /** The float tokens (`tokens.css`), read once the page is styled. */
-  floatTokens(): { radius: number; inset: number; pad: number } {
-    this.tokens ??= {
-      radius: floatToken("--float-radius", 4),
-      inset: floatToken("--float-band-inset", 2),
-      pad: floatToken("--float-pad-block", 4),
-    };
-    return this.tokens;
+  /** A float's corner (`--float-radius`), read once the page is styled. */
+  private floatRadius(): number {
+    this.radius ??= floatToken("--float-radius", 4);
+    return this.radius;
   }
 
   /** Bring every canvas in line with the state; repaint what changed. */
@@ -977,8 +961,8 @@ export class GridPainter {
     const shown = boxes;
     const cuts = frameCuts(boxes);
     const shapes = new Map<number, FrameShape>();
-    const corners = this.placeClusters(state, shown, cuts, shapes);
     const scrollbars = floatScrollbars(state, shown);
+    this.placeClusters(state, shown, cuts, shapes, scrollbars);
     this.placePanes(state, shown);
     for (const box of shown) {
       const grid = state.grids.get(box.grid);
@@ -1018,16 +1002,6 @@ export class GridPainter {
       canvas.style.left = `${String((box.col + crop.left) * this.metrics.width)}px`;
       canvas.style.top = `${String((box.row + crop.top) * this.metrics.height)}px`;
       canvas.classList.toggle("nvim-float", box.float);
-      const round = corners.get(box.grid);
-      // A float grown into its blank border (`panelLayout`) is rounded by
-      // its ground there; its canvas is inside it.
-      canvas.style.borderRadius =
-        round && box.lined !== true && box.crop === undefined
-          ? radii(round)
-          : "";
-      if (round && box.lined !== true && box.frame === undefined)
-        this.roundFloats.add(box.grid);
-      else this.roundFloats.delete(box.grid);
       canvas.classList.toggle("nvim-framed", box.frame !== undefined);
       // A menu's scrollbar drawn as floats: the thumb a thin rounded bar
       // in the middle of its cell, the gutter left to the menu's ground,
@@ -1119,7 +1093,7 @@ export class GridPainter {
    * mixes.
    */
   private backdropOf(state: NeovimUiState, box: GridBox): string | undefined {
-    if (box.frame || box.crop) return undefined;
+    if (box.frame) return undefined;
     const grid = state.grids.get(box.grid);
     if (!grid || grid.width * grid.height === 0) return undefined;
     let tint: string | undefined;
@@ -1876,28 +1850,30 @@ export class GridPainter {
   /**
    * The shadow under each panel of floats (`floatClusters`): one element per
    * cluster under its members, holding a ground for each member and seam,
-   * whose drop shadow follows their union's outline. A member whose border
-   * is a frame (`frame.ts`) gets its ground out to its lines and no
-   * further, the lines and its title and footer drawn here: the float is cut
-   * at its line. Kept while the cluster looks the same, so a member's redraw
-   * does not touch it. Answers each member's outer corners, for its canvas's
-   * radius.
+   * whose drop shadow follows their union's outline. Every float is in a
+   * frame (`frame.ts`; docs/neovim-editor.md, "Floating surfaces"): one
+   * rounded 1px line half a cell from its text, the ground between them its
+   * border's (or, without a border, its own), the title and footer cells
+   * on the line — the float is cut at it. Not a picker's box under framed
+   * floats (cut by them, `frameCuts`), a float that blends, or a border
+   * drawn cell for cell. Kept while the cluster looks the same, so a
+   * member's redraw does not touch it.
    */
   private placeClusters(
     state: NeovimUiState,
     boxes: readonly GridBox[],
     cuts: ReadonlyMap<number, readonly GridBox[]>,
     shapes: Map<number, FrameShape>,
-  ): Map<number, FloatCorners> {
+    scrollbars: ReadonlyMap<number, unknown>,
+  ): void {
     const { width: cw, height: ch } = this.metrics;
-    const corners = new Map<number, FloatCorners>();
     const live = new Set<string>();
     const blendOf = (grid: number) => {
       const hl = state.grids.get(grid)?.hls[0] ?? 0;
       return state.hl.get(hl)?.blend ?? 0;
     };
     // A float that lets what is under it show (winblend) gets no ground,
-    // unless it is framed: then the ring between its lines and its text.
+    // unless it is framed: then the ring between its line and its text.
     const shown = boxes.filter(
       (box) =>
         box.float &&
@@ -1908,183 +1884,105 @@ export class GridPainter {
     const colors = (hl: number) =>
       resolveColors(hl ? state.hl.get(hl) : undefined, state.defaults);
     const px = (v: number) => `${String(v)}px`;
+    const radius = this.floatRadius();
+    const look = floatLook(this.theme, state.defaults);
+    // A member's frame: its border's, or the padding round a float without
+    // one; none for a box the frames over it cut, a menu's scrollbar drawn
+    // as floats, or a border drawn cell for cell.
+    const marginsOf = (box: GridBox): Margins | undefined => {
+      if (box.frame) return box.frame.margins;
+      if (box.lined === true || cuts.has(box.grid) || scrollbars.has(box.grid))
+        return undefined;
+      return NO_CROP;
+    };
     // Every framed member's shape first: a float under framed ones, in
     // its cluster or another, is clipped by theirs (`cutClip`).
     const panels = floatClusters(shown).map((cluster) => {
       const framed: (FramedMember & { box: GridBox })[] = [];
       for (const m of cluster.members) {
         const box = byGrid.get(m.grid);
-        if (!box?.frame) continue;
+        const margins = box ? marginsOf(box) : undefined;
+        if (!box || !margins) continue;
         framed.push({
           grid: m.grid,
           rect: m.rect,
           box,
-          geometry: frameGeometry(
-            box.frame,
-            box,
-            this.metrics,
-            this.dpr,
-            this.font.size,
-          ),
+          ruled: box.frame !== undefined,
+          geometry: frameGeometry(margins, box, this.metrics, this.dpr, radius),
         });
       }
       const framedPieces = framePieces(framed, this.dpr);
       for (const piece of framedPieces) shapes.set(piece.grid, piece);
       return { cluster, framed, framedPieces };
     });
-    const look = floatLook(this.theme, state.defaults);
-    const snap = (v: number) => Math.round(v * this.dpr) / this.dpr;
     for (const { cluster, framed, framedPieces } of panels) {
       const blended = cluster.members.some((m) => blendOf(m.grid) > 0);
       const pieces: Piece[] = [];
       const labels: Label[] = [];
-      // Members without a frame of lines (`panelLayout`): grown into their
-      // blank border, lined on the panel's outline, their titles bands,
-      // a rule where two meet.
-      const plain = cluster.members.filter((m) => !byGrid.get(m.grid)?.frame);
-      const layout = panelLayout(
-        { ...cluster, members: plain },
-        byGrid,
-        this.metrics,
-        this.floatTokens().pad,
-      );
-      const parts = new Map(layout.parts.map((p) => [p.grid, p]));
-      // A corner of the panel's outline is round, and so is whatever
-      // reaches it (a header's band in that corner).
-      const roundAt: { x: number; y: number }[] = [];
-      for (const m of plain) {
-        const p = parts.get(m.grid);
-        if (!p || m.lined) continue;
-        const { x, y, w, h } = p.rect;
-        if (m.corners.tl) roundAt.push({ x, y });
-        if (m.corners.tr) roundAt.push({ x: x + w, y });
-        if (m.corners.br) roundAt.push({ x: x + w, y: y + h });
-        if (m.corners.bl) roundAt.push({ x, y: y + h });
-      }
-      const round = (r: { x: number; y: number; w: number; h: number }) => {
-        const at = (x: number, y: number) =>
-          roundAt.some(
-            (c) => Math.abs(c.x - x) < 0.5 && Math.abs(c.y - y) < 0.5,
-          );
-        return radii({
-          tl: at(r.x, r.y),
-          tr: at(r.x + r.w, r.y),
-          br: at(r.x + r.w, r.y + r.h),
-          bl: at(r.x, r.y + r.h),
-        });
-      };
-      const outlines: Piece[] = [];
-      const rules: { x: number; y: number; w: number; h: number }[] = [];
-      for (const m of plain) {
-        corners.set(m.grid, m.corners);
+      const geometries = new Map(framed.map((f) => [f.grid, f]));
+      // The others' grounds, for the shadow: a box cut by the frames over
+      // it (`cutClip`), a border drawn cell for cell.
+      for (const m of cluster.members) {
         const box = byGrid.get(m.grid);
-        const part = parts.get(m.grid);
-        if (!box || !part || blendOf(m.grid) > 0) continue;
-        const grid = state.grids.get(m.grid);
-        const ground = colors(grid?.hls[0] ?? 0).bg;
+        if (!box || geometries.has(m.grid) || blendOf(m.grid) > 0) continue;
+        const x = m.rect.col * cw;
+        const y = m.rect.row * ch;
         const cut = cuts.get(box.grid);
-        const { x, y, w, h } = part.rect;
-        const clip = cut
-          ? { clip: cutClip(box, cut, shapes, this.metrics, { x, y }) }
-          : {};
-        const rounded = m.lined ? "0" : round(part.rect);
-        // The ground: under the panel's shadow for its outline, and at the
-        // member's own zindex, over a lower member's canvas (a picker's
-        // root box under its list).
         pieces.push({
           x,
           y,
-          w,
-          h,
-          radius: rounded,
-          background: cssColor(ground),
-          ...clip,
-        });
-        if (box.crop)
-          pieces.push({
-            x,
-            y,
-            w,
-            h,
-            radius: rounded,
-            background: cssColor(ground),
-            z: box.z,
-            ...clip,
-          });
-        for (const band of [part.header, part.footer]) {
-          if (!band) continue;
-          pieces.push({
-            ...band,
-            radius: round(band),
-            background: cssColor(look.band),
-            z: box.z,
-          });
-          // Its rule on the side toward the text.
-          const below = band === part.header;
-          rules.push({
-            x: band.x,
-            y: below ? band.y + band.h : band.y,
-            w: band.w,
-            h: 0,
-          });
-        }
-        if (m.lined || blended) continue;
-        const line = `1px solid ${cssColor(look.line)}`;
-        outlines.push({
-          x,
-          y,
-          w,
-          h,
-          radius: rounded,
-          background: "transparent",
-          borders: SIDES.map((side) => (part.outer[side] ? line : "none")),
+          w: m.rect.width * cw,
+          h: m.rect.height * ch,
+          radius: m.lined ? "0" : radii(m.corners),
+          background: cssColor(this.floatGround(state, box)),
+          ...(cut
+            ? { clip: cutClip(box, cut, shapes, this.metrics, { x, y }) }
+            : {}),
         });
       }
-      if (!blended) rules.push(...layout.rules);
-      const framedGrids = new Set(framed.map((f) => f.grid));
       for (const seam of cluster.seams) {
-        if (seam.between.every((g) => framedGrids.has(g))) continue;
-        const grid = state.grids.get(seam.between[0]);
+        if (seam.between.every((g) => geometries.has(g))) continue;
+        const box = byGrid.get(seam.between[0]);
+        if (!box) continue;
         pieces.push({
           x: seam.col * cw,
           y: seam.row * ch,
           w: seam.width * cw,
           h: seam.height * ch,
           radius: "0",
-          background: cssColor(colors(grid?.hls[0] ?? 0).bg),
+          background: cssColor(this.floatGround(state, box)),
         });
-      }
-      const geometries = new Map(framed.map((f) => [f.grid, f]));
-      for (const m of cluster.members) {
-        if (geometries.has(m.grid)) corners.set(m.grid, m.corners);
       }
       for (const piece of framedPieces) {
         const member = geometries.get(piece.grid);
-        const frame = member?.box.frame;
-        if (!member || !frame) continue;
-        const sideHl = SIDES.map((side) => frame.sides[side]?.hl).find(
-          (hl) => hl !== undefined,
-        );
-        const ring = colors(sideHl ?? 0);
+        if (!member) continue;
+        const frame = member.box.frame;
+        const side = frame
+          ? SIDES.map((s) => frame.sides[s]).find((s) => s !== undefined)
+          : undefined;
+        // Inside the line, the border's ground (without one, the float's).
+        const ground =
+          side !== undefined
+            ? colors(side.hl).bg
+            : this.floatGround(state, member.box);
+        const line = cssColor(this.frameLine(state, side, ground, look));
         const blend = blendOf(piece.grid);
-        const border = (side: Side) => {
-          const s = frame.sides[side];
-          const width = member.geometry.widths[side];
-          if (!piece.draw[side] || !s || width <= 0) return "none";
-          return `${px(width)} ${member.geometry.styles[side]} ${cssColor(colors(s.hl).fg)}`;
-        };
+        const border = (s: Side) =>
+          piece.draw[s]
+            ? `${px(member.geometry.widths[s])} solid ${line}`
+            : "none";
         pieces.push({
           x: piece.x,
           y: piece.y,
           w: piece.w,
           h: piece.h,
           radius: `${px(piece.radii.tl)} ${px(piece.radii.tr)} ${px(piece.radii.br)} ${px(piece.radii.bl)}`,
-          background: cssColor(ring.bg, 1 - blend / 100),
+          background: cssColor(ground, 1 - blend / 100),
           borders: SIDES.map(border),
           z: member.box.z,
           ...(blend > 0 ? { hole: this.textArea(member.box, piece) } : {}),
         });
-        for (const label of frame.labels) {
+        for (const label of frame?.labels ?? []) {
           labels.push(
             this.label(
               state,
@@ -2094,14 +1992,7 @@ export class GridPainter {
           );
         }
       }
-      const key = JSON.stringify([
-        cluster.z,
-        blended,
-        pieces,
-        labels,
-        outlines,
-        rules,
-      ]);
+      const key = JSON.stringify([cluster.z, blended, pieces, labels]);
       live.add(key);
       const known = this.clusters.get(key);
       if (known) {
@@ -2134,16 +2025,13 @@ export class GridPainter {
         }
         return piece;
       };
-      // A member's ground and lines at its own zindex, under its canvas
-      // but over a lower member's (a picker's box under its list): one
-      // element per zindex, in that zindex's level.
+      // A framed member's ground and line at its own zindex, under its
+      // canvas but over a lower member's (a picker's box under its list):
+      // one element per zindex, in that zindex's level.
       const frames = new Map<number, HTMLDivElement>();
       for (const part of pieces) {
-        if (part.z === undefined) {
-          el.append(pieceOf(part, false));
-          continue;
-        }
-        if (part.borders) el.append(pieceOf(part, false));
+        el.append(pieceOf(part, false));
+        if (part.z === undefined) continue;
         let layer = frames.get(part.z);
         if (!layer) {
           layer = document.createElement("div");
@@ -2153,55 +2041,39 @@ export class GridPainter {
         }
         layer.append(pieceOf(part, true));
       }
-      // Over the members (a sibling's canvas may reach a line): the
-      // outline and the rules, the panel's 1px lines, and the labels on
-      // framed members' lines; at the members' top zindex, after them.
-      const textHeight = Math.round(this.metrics.textHeight) + 2;
+      // The title and footer cells over the members (a sibling's canvas may
+      // reach a line): an element of their own, at the members' top
+      // zindex, after them. On whole device pixels: a half pixel is snapped
+      // edge by edge, a label a pixel taller or shorter than its neighbour.
+      const snap = (v: number) => Math.round(v * this.dpr) / this.dpr;
+      const textHeight = Math.round(this.metrics.textHeight);
+      const spacing = px(cw - this.metrics.advance);
       const over =
-        labels.length + outlines.length + rules.length > 0
-          ? document.createElement("div")
-          : undefined;
-      if (over) {
-        over.className = "nvim-frame-labels";
-      }
-      for (const outline of outlines) over?.append(pieceOf(outline, true));
-      // On whole device pixels, centred on the edge they mark (a half
-      // pixel is snapped edge by edge: a line a pixel thicker here).
-      for (const rule of rules) {
-        const line = document.createElement("div");
-        line.className = "nvim-float-rule";
-        const vertical = rule.w === 0;
-        line.style.left = px(vertical ? snap(rule.x - 0.5) : snap(rule.x));
-        line.style.top = px(vertical ? snap(rule.y) : snap(rule.y - 0.5));
-        line.style.width = px(vertical ? 1 : snap(rule.w));
-        line.style.height = px(vertical ? snap(rule.h) : 1);
-        line.style.background = cssColor(look.line);
-        over?.append(line);
-      }
+        labels.length > 0 ? document.createElement("div") : undefined;
+      if (over) over.className = "nvim-frame-labels";
       for (const label of labels) {
         const tag = document.createElement("div");
         tag.className = "nvim-frame-label";
-        const pad = Math.max(4, Math.round(cw * 0.5));
-        tag.style.left = px(snap(label.x - pad));
-        tag.style.minWidth = px(label.w + 2 * pad);
+        tag.style.left = px(label.x);
+        tag.style.width = px(label.w);
         tag.style.top = px(snap(label.cy - textHeight / 2));
         tag.style.height = px(textHeight);
         tag.style.lineHeight = px(textHeight);
-        tag.style.padding = `0 ${px(pad)}`;
-        tag.style.borderRadius = px(textHeight / 2);
-        tag.style.background = label.background;
         for (const run of label.runs) {
           const span = document.createElement("span");
           span.textContent = run.text;
+          span.style.width = px(run.cells * cw);
           span.style.color = run.color;
+          span.style.background = run.background;
           span.style.font = run.font;
           span.style.lineHeight = px(textHeight);
+          span.style.letterSpacing = spacing;
           tag.append(span);
         }
         over?.append(tag);
       }
       // Under the members' canvases, by part, not by place in the page;
-      // the lines and labels over every member.
+      // the labels over every member.
       this.put(el, cluster.z, "shadow");
       if (over)
         this.put(
@@ -2224,10 +2096,59 @@ export class GridPainter {
         this.clusters.delete(key);
       }
     }
-    return corners;
   }
 
-  /** A title or footer, in its highlights, at `at`. */
+  /**
+   * A float's own ground: the commonest along its edges (a menu's first
+   * row may be its selection), its padding's colour where it has no border.
+   */
+  private floatGround(state: NeovimUiState, box: GridBox): number {
+    const grid = state.grids.get(box.grid);
+    if (!grid || grid.width * grid.height === 0)
+      return state.defaults.background;
+    const tally = new Map<number, number>();
+    const count = (row: number, col: number) => {
+      const hl = grid.hls[row * grid.width + col] ?? 0;
+      tally.set(hl, (tally.get(hl) ?? 0) + 1);
+    };
+    for (let col = 0; col < grid.width; col += 1) {
+      count(0, col);
+      count(grid.height - 1, col);
+    }
+    for (let row = 0; row < grid.height; row += 1) {
+      count(row, 0);
+      count(row, grid.width - 1);
+    }
+    let hl = 0;
+    let most = 0;
+    for (const [id, n] of tally) {
+      if (n > most) [hl, most] = [id, n];
+    }
+    return resolveColors(hl ? state.hl.get(hl) : undefined, state.defaults).bg;
+  }
+
+  /**
+   * A frame's line colour, the same whatever the border's cells: its
+   * highlight's ink (`FloatBorder`; the theme's, without a border) where it
+   * names one — not the float's own ink or ground, as a config that links
+   * it to `NormalFloat` has it — else the ground 18 % toward the ink, where
+   * themes put `FloatBorder` (`floatLook`).
+   */
+  private frameLine(
+    state: NeovimUiState,
+    side: FrameSide | undefined,
+    ground: number,
+    look: FloatLook,
+  ): number {
+    const named = side
+      ? resolveColors(state.hl.get(side.hl), state.defaults).fg
+      : this.theme.surface?.border;
+    if (named !== undefined && named !== ground && named !== look.ink)
+      return named;
+    return mixColors(ground, look.ink, 18);
+  }
+
+  /** A title or footer's cells, in their highlights, at `at`. */
   private label(
     state: NeovimUiState,
     label: FrameLabel,
@@ -2239,10 +2160,11 @@ export class GridPainter {
       x: at.x,
       w: at.w,
       cy: at.cy,
-      background: cssColor(colors(label.runs[0]?.hl ?? 0).bg),
       runs: label.runs.map((run) => ({
         text: run.text,
+        cells: run.cells,
         color: cssColor(colors(run.hl).fg),
+        background: cssColor(colors(run.hl).bg),
         font: fontOf(this.font, state.hl.get(run.hl)),
       })),
     };
@@ -2306,30 +2228,9 @@ export class GridPainter {
     }
     // Every ground first, then the shapes over them, then the text: no
     // run's ground covers the text of the run before it.
-    const band = this.bandOf(state, box, grid, row);
-    if (band) {
-      // A selected row in a rounded float: the float's ground, then the
-      // row's grounds inside the band's rounded outline.
-      ctx.fillStyle = cssColor(band.ground);
-      ctx.fillRect(0, y, grid.width * cw, ch);
-      ctx.save();
-      ctx.beginPath();
-      ctx.roundRect(band.x0, y, band.x1 - band.x0, ch, band.radius);
-      ctx.clip();
-    }
-    // A header or footer row (a `title`, a `footer` in a blank border):
-    // a band, in `StatusLine`'s ground where the row is the float's own.
-    const swap = this.titleRow(box, grid, row)
-      ? {
-          from: resolveColors(state.hl.get(grid.hls[base] ?? 0), state.defaults)
-            .bg,
-          to: floatLook(this.theme, state.defaults).band,
-        }
-      : undefined;
     for (const run of runs) {
-      this.paintGround(ctx, state, box, grid.chars, base, run, y, swap);
+      this.paintGround(ctx, state, box, grid.chars, base, run, y);
     }
-    if (band) ctx.restore();
     this.skip.clear();
     // Grid 1's cells in a boundary's column are the panes' and the
     // hairline's (`placePanes`): not drawn.
@@ -2882,57 +2783,6 @@ export class GridPainter {
     ctx.restore();
   }
 
-  /**
-   * A float row that is a band: a rounded float's one row whose every cell
-   * has a ground other than the float's (its neighbours', the float's
-   * commonest), a menu's or a picker's selected row. Answers its outline in the canvas's own
-   * coordinates, or `undefined` for a row drawn as cells.
-   */
-  private bandOf(
-    state: NeovimUiState,
-    box: GridBox,
-    grid: {
-      readonly width: number;
-      readonly height: number;
-      readonly chars: readonly string[];
-      readonly hls: ArrayLike<number>;
-    },
-    row: number,
-  ): { x0: number; x1: number; radius: number; ground: number } | undefined {
-    if (!box.float || !this.roundFloats.has(box.grid)) return undefined;
-    const crop = cropOf(box);
-    const first = crop.left;
-    const last = grid.width - crop.right - 1;
-    if (last <= first) return undefined;
-    const bgAt = (r: number, c: number) => {
-      const attr = state.hl.get(grid.hls[r * grid.width + c] ?? 0);
-      if ((attr?.blend ?? 0) > 0) return undefined;
-      return resolveColors(attr, state.defaults).bg;
-    };
-    const ground = bandGround(
-      { top: crop.top, bottom: grid.height - crop.bottom },
-      first,
-      last,
-      row,
-      bgAt,
-    );
-    if (ground === undefined) return undefined;
-    const blank = (c: string | undefined) => c === " " || c === undefined;
-    const base = row * grid.width;
-    const { radius, inset: bandInset } = this.floatTokens();
-    const inset =
-      blank(grid.chars[base + first]) && blank(grid.chars[base + last])
-        ? bandInset
-        : 0;
-    const { width: cw } = this.metrics;
-    return {
-      x0: first * cw + inset,
-      x1: (last + 1) * cw - inset,
-      radius: radius - inset,
-      ground,
-    };
-  }
-
   /** A run's background, `winblend` applied. */
   private paintGround(
     ctx: CanvasRenderingContext2D,
@@ -2942,13 +2792,11 @@ export class GridPainter {
     base: number,
     run: { readonly start: number; readonly end: number; readonly hl: number },
     y: number,
-    swap?: { readonly from: number; readonly to: number },
   ): void {
     const { width: cw, height: ch } = this.metrics;
     const { start, end } = run;
     const attr = state.hl.get(run.hl);
-    const own = resolveColors(attr, state.defaults).bg;
-    const bg = swap && own === swap.from ? swap.to : own;
+    const { bg } = resolveColors(attr, state.defaults);
     const blend = box.float && attr?.blend !== undefined ? attr.blend : 0;
     ctx.fillStyle = cssColor(bg, 1 - blend / 100);
     ctx.fillRect(start * cw, y, (end - start) * cw, ch);

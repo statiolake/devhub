@@ -44,14 +44,18 @@ What follows the rule in code:
 - `GridPainter.level(z)` (`painter.ts`): one stacking element per
   `GridBox.z` (grid 1 at 0, windows at 1, a float at 100 + its zindex, a
   tmux popup at 50, the chooser's preview at 60). Inside a level its parts
-  stack by `PART_Z` — a panel's shadow, a framed float's ring and lines, the
+  stack by `PART_Z` — a panel's shadow, a float's frame (its padding's
+  ground and its 1px rounded line: an element, never painted into a
+  canvas, as rule 3 has it), the
   grid (its canvas, or a window's scroll port holding canvas over ghost),
   what rides its text (inline images, cards, decorations), what lies over
   a grid (a pinned winbar, a slide), the cursor, what covers its cells (GUI
-  windows, views), the frame's labels and a panel's 1px outline and
-  rules (a float's line is an element, never painted into a canvas, as
-  rule 3 has it; "Floating surfaces" in `docs/neovim-editor.md`) — never
-  by which element was appended last.
+  windows, views), the title and footer cells on a frame's line — never
+  by which element was appended last. A Neovim float's canvas is its cells
+  as Neovim sent them; DevHub adds only the frame and the panel's fusion
+  ("Floating surfaces" in `docs/neovim-editor.md`): richer UI is a native
+  DevHub surface in a band of its own (below), not a decoration of
+  Neovim's grid.
 - `GridPainter.over(grid, part)`: what the page lays over a grid — riders,
   the cursor, covers — is in a clip of that grid's own in its level
   (`overflow: hidden` at the grid's text area: a window's without its
@@ -254,12 +258,14 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   (with the above): a pane's ground is its window's `Normal`/`NormalNC`
   as asked of Neovim (`THEME_LUA`'s `grounds`, `windowGround`);
   `separatorsOf` and a7ea595f's `isOwnGround` are gone.
-- `painter.ts:2245-2256` (`bandOf`) reads a float row's neighbours to find
-  the float's ground: its own grid, so within the rule.
+- `painter.ts` (`floatGround`) reads a float's edge cells for the ground
+  of its padding: its own grid, so within the rule. (`bandOf`, which read a
+  row's neighbours to round a selected row, is gone with the decoration:
+  a float's rows are its cells.)
 
 ### Fractional positioning
 
-- `painter.ts:1489` a frame label's top is `cy - textHeight / 2`, and
+- `painter.ts` a frame label's top is `cy - textHeight / 2`, and
   `ControlTerminalSurface.tsx:470-506` the hairlines and outlines sit at
   `(x + 0.5) × cell`: on a 16.5 px cell at 2× these are half device pixels,
   which Chromium snaps per edge, so a 2 px outline can come out 3 or 5

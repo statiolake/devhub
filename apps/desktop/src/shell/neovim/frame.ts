@@ -1,28 +1,27 @@
 /**
- * A float's border of lines as a GUI frame, pure.
+ * A float's border as a GUI frame, pure.
  *
- * Neovim draws a float's border (`rounded`, `single`, `double`, a table of
- * box-drawing characters) as whole cells around its text area, the line
- * through the middle of each: drawn cell for cell, a half-cell band of the
- * float's ground sticks out past the line on every side. DevHub draws such
- * a border as a frame instead: the float's edge is the line itself, nothing
- * of it outside — the windows behind show there — and its title and footer
- * are labels sitting on the line.
+ * Neovim draws a float's border (`'solid'`, `'rounded'`, `'single'`,
+ * `'double'`, a table of characters) as whole cells around its text area.
+ * DevHub draws one frame for every one of them instead (docs/neovim-editor.md,
+ * "Floating surfaces"): a 1px rounded line through the middle of the
+ * border's cells, half a cell from the text — the float's edge, nothing of
+ * the cells outside it drawn, the windows behind showing there — with the
+ * border's own ground inside it. A title and footer are the cells Neovim
+ * put in the border, on the line where Neovim put them.
  *
  * - `analyzeFrame` reads the border cells (where `win_viewport_margins`
- *   says they are) and answers the frame they draw: each side's line
- *   glyph and highlight, the corners', the labels. Anything it does not
- *   recognise as a frame — a border of other characters, text in the
- *   border that is not the window's configured `title` / `footer` — is no
+ *   says they are) and answers the frame they make: each side's character
+ *   and highlight, the corners', the labels. A border with text that is not
+ *   the window's configured `title` / `footer` (or wider than a cell) is no
  *   frame, and the float is drawn cell for cell, as Neovim drew it.
- * - `frameGeometry` is where the lines are, in CSS pixels on whole device
- *   pixels: the same geometry `glyphShapes` draws `─ │ ╭` with, so the
- *   frame sits exactly where the cells' lines did.
- * - `labelBox` is where a title or footer sits: on its line, where Neovim
- *   put its text along it (`title_pos` included).
+ * - `frameGeometry` is where the line is, in CSS pixels on whole device
+ *   pixels: half a cell outside the text area on every side, a border or
+ *   not (a float without one is padded as much, outside its cells).
+ * - `labelBox` is where a title or footer sits: on its line, over the
+ *   cells Neovim gave it.
  */
 
-import { boxArms, glyphKind, glyphShapes, isDashed } from "./glyphs.js";
 import type { Grid, Margins } from "./redraw.js";
 
 export type Side = "top" | "right" | "bottom" | "left";
@@ -31,22 +30,23 @@ export type Corner = "tl" | "tr" | "br" | "bl";
 export const SIDES: readonly Side[] = ["top", "right", "bottom", "left"];
 
 export interface FrameSide {
-  /** The side's line character (`─`, `│`, `═`, `┄`, …). */
+  /** The side's character (`─`, `│`, ` ` for `'solid'`, …). */
   readonly glyph: string;
   /** Its highlight (`FloatBorder`). */
   readonly hl: number;
 }
 
-/** One run of a label's text in one highlight. */
+/** One run of a label's text in one highlight, and the cells it takes. */
 export interface LabelRun {
   readonly text: string;
   readonly hl: number;
+  readonly cells: number;
 }
 
 /** A title (top) or footer (bottom) on the border's line. */
 export interface FrameLabel {
   readonly side: "top" | "bottom";
-  /** Its first and last non-blank cell, in the grid's columns. */
+  /** Its cells, in the grid's columns: the title's own blanks included. */
   readonly col: number;
   readonly cells: number;
   readonly runs: readonly LabelRun[];
@@ -100,24 +100,10 @@ export type FrameAnalysis =
    */
   | { readonly frame?: undefined; readonly labels?: true };
 
-/** A straight line along a side: `─` for top and bottom, `│` for the sides. */
-function lineGlyph(c: string, horizontal: boolean): boolean {
-  const arms = boxArms(c);
-  if (!arms) return false;
-  return horizontal
-    ? arms.e > 0 && arms.w > 0 && arms.n === 0 && arms.s === 0
-    : arms.n > 0 && arms.s > 0 && arms.e === 0 && arms.w === 0;
-}
-
-/** The line character most of `cells` are, if it is one. */
-function commonLine(
-  cells: readonly string[],
-  horizontal: boolean,
-): string | undefined {
+/** The character most of `cells` are: a side's. */
+function commonChar(cells: readonly string[]): string | undefined {
   const counts = new Map<string, number>();
-  for (const c of cells) {
-    if (lineGlyph(c, horizontal)) counts.set(c, (counts.get(c) ?? 0) + 1);
-  }
+  for (const c of cells) counts.set(c, (counts.get(c) ?? 0) + 1);
   let best: string | undefined;
   let most = 0;
   for (const [c, n] of counts) {
@@ -129,10 +115,16 @@ function commonLine(
   return best;
 }
 
+/** Its leading and trailing blanks. */
+function blanks(text: string): { lead: number; trail: number } {
+  const lead = text.length - text.trimStart().length;
+  const trail = text.length - text.trimEnd().length;
+  return { lead, trail };
+}
+
 /**
- * The label in cells `first..last` of a border row: its text without the
- * blanks around it (the gap the line leaves, which DevHub draws as its own
- * padding), in runs of one highlight.
+ * The label in cells `first..last` of a border row, as Neovim sent them
+ * (its blanks too), in runs of one highlight.
  */
 function readLabel(
   grid: Grid,
@@ -142,10 +134,8 @@ function readLabel(
   last: number,
 ): FrameLabel | undefined {
   const at = (col: number) => grid.chars[row * grid.width + col] ?? "";
-  let a = first;
-  let b = last;
-  while (a <= b && at(a) === " ") a += 1;
-  while (b >= a && at(b) === " ") b -= 1;
+  const a = first;
+  const b = last;
   if (a > b) return undefined;
   const runs: LabelRun[] = [];
   for (let col = a; col <= b; col += 1) {
@@ -153,8 +143,12 @@ function readLabel(
     const hl = grid.hls[row * grid.width + col] ?? 0;
     const prev = runs[runs.length - 1];
     if (prev && prev.hl === hl)
-      runs[runs.length - 1] = { hl, text: prev.text + c };
-    else runs.push({ hl, text: c });
+      runs[runs.length - 1] = {
+        hl,
+        text: prev.text + c,
+        cells: prev.cells + 1,
+      };
+    else runs.push({ hl, text: c, cells: 1 });
   }
   return { side, col: a, cells: b - a + 1, runs };
 }
@@ -178,13 +172,14 @@ export function analyzeFrame(
   const found: FrameLabel[] = [];
   let unexplained = false;
 
-  // Top and bottom: a line, perhaps broken by one run of text (the label).
+  // Top and bottom: one character, perhaps broken by one run of text (the
+  // label: the `title` or `footer`, its own blanks included).
   const across = (side: "top" | "bottom", row: number): boolean => {
     const from = left;
     const to = grid.width - right;
     const cells: string[] = [];
     for (let col = from; col < to; col += 1) cells.push(at(row, col) ?? "");
-    const glyph = commonLine(cells, true);
+    const glyph = commonChar(cells);
     if (glyph === undefined) return false;
     let first = -1;
     let last = -1;
@@ -202,21 +197,27 @@ export function analyzeFrame(
     let text = "";
     for (let col = first; col <= last; col += 1) text += at(row, col) ?? "";
     const want = side === "top" ? labels?.title : labels?.footer;
-    if (want === undefined || want !== text) {
+    if (want === undefined || want.trim() !== text.trim()) {
       unexplained = true;
       return false;
     }
-    const label = readLabel(grid, side, row, first, last);
+    // In a blank border the title's own blanks are the border's character:
+    // they are the title's, as Neovim put them.
+    const own = blanks(want);
+    const seen = blanks(text);
+    const start = Math.max(from, first - Math.max(0, own.lead - seen.lead));
+    const end = Math.min(to - 1, last + Math.max(0, own.trail - seen.trail));
+    const label = readLabel(grid, side, row, start, end);
     if (label) found.push(label);
     return true;
   };
-  // Left and right: a line, nothing else.
+  // Left and right: one character, nothing else.
   const down = (side: "left" | "right", col: number): boolean => {
     const cells: string[] = [];
     for (let row = top; row < grid.height - bottom; row += 1)
       cells.push(at(row, col) ?? "");
     const glyph = cells[0];
-    if (glyph === undefined || !lineGlyph(glyph, false)) return false;
+    if (glyph === undefined) return false;
     if (cells.some((c) => c !== glyph)) return false;
     sides[side] = { glyph, hl: hlAt(top, col) };
     return true;
@@ -231,37 +232,26 @@ export function analyzeFrame(
 
   const corners: Partial<Record<Corner, string>> = {};
   const corner = (name: Corner, on: boolean, row: number, col: number) => {
-    if (!on) return true;
-    const c = at(row, col) ?? "";
-    if (glyphKind(c) !== "box") return false;
-    corners[name] = c;
-    return true;
+    if (on) corners[name] = at(row, col) ?? "";
   };
   const last = grid.width - 1;
   const bottomRow = grid.height - 1;
-  if (
-    !corner("tl", top > 0 && left > 0, 0, 0) ||
-    !corner("tr", top > 0 && right > 0, 0, last) ||
-    !corner("br", bottom > 0 && right > 0, bottomRow, last) ||
-    !corner("bl", bottom > 0 && left > 0, bottomRow, 0)
-  ) {
-    return {};
-  }
+  corner("tl", top > 0 && left > 0, 0, 0);
+  corner("tr", top > 0 && right > 0, 0, last);
+  corner("br", bottom > 0 && right > 0, bottomRow, last);
+  corner("bl", bottom > 0 && left > 0, bottomRow, 0);
   return { frame: { margins, sides, corners, labels: found } };
 }
 
-export type LineStyle = "solid" | "double" | "dashed";
-
 export interface FrameGeometry {
-  /** The lines' outer edges, in the editor's CSS pixels. */
+  /** The line's outer edges, in the editor's CSS pixels. */
   readonly x: number;
   readonly y: number;
   readonly w: number;
   readonly h: number;
-  /** Each side's line, CSS pixels across; 0 where the side has none. */
+  /** Each side's line, CSS pixels across. */
   readonly widths: Readonly<Record<Side, number>>;
-  readonly styles: Readonly<Record<Side, LineStyle>>;
-  /** Each corner's outer radius: a rounded corner's arc, else 0. */
+  /** Each corner's outer radius. */
   readonly radii: Readonly<Record<Corner, number>>;
 }
 
@@ -278,131 +268,44 @@ export interface CellPlace {
   readonly height: number;
 }
 
-function styleOf(c: string): LineStyle {
-  if (isDashed(c)) return "dashed";
-  const arms = boxArms(c);
-  return arms && Math.max(arms.n, arms.e, arms.s, arms.w) === 3
-    ? "double"
-    : "solid";
-}
-
-/** The device-pixel snapped extent of what `glyphShapes` draws for `c`. */
-function inkOf(
-  c: string,
-  cell: { x: number; y: number; w: number; h: number },
-  dpr: number,
-  fontSize: number,
-): { x0: number; y0: number; x1: number; y1: number } {
-  const shapes = glyphShapes(c, cell, dpr, fontSize) ?? [];
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  for (const s of shapes) {
-    if (s.kind !== "rect") continue;
-    x0 = Math.min(x0, s.x);
-    y0 = Math.min(y0, s.y);
-    x1 = Math.max(x1, s.x + s.w);
-    y1 = Math.max(y1, s.y + s.h);
-  }
-  if (!Number.isFinite(x0)) {
-    const mx = cell.x + cell.w / 2;
-    const my = cell.y + cell.h / 2;
-    return { x0: mx, y0: my, x1: mx, y1: my };
-  }
-  return { x0, y0, x1, y1 };
-}
-
-/** A rounded corner's arc radius, measured on its own outer edge. */
-function arcRadius(
-  c: string,
-  cell: { x: number; y: number; w: number; h: number },
-  dpr: number,
-  fontSize: number,
-): number {
-  const cp = c.codePointAt(0) ?? 0;
-  if (cp < 0x256d || cp > 0x2570) return 0;
-  for (const s of glyphShapes(c, cell, dpr, fontSize) ?? []) {
-    if (s.kind !== "stroke") continue;
-    for (const op of s.path) {
-      if (op[0] === "T") return op[5] + (s.lineWidth ?? 1) / 2;
-    }
-  }
-  return 0;
-}
+/** The frame's line: one CSS pixel. */
+export const FRAME_LINE = 1;
 
 /**
- * Where a frame's lines are: the outline that is the float's edge. A side
- * without a border ends at the text area's edge.
+ * Where a float's line is: half a cell outside its text area on every side
+ * (`margins`, the border's cells; none without one), so the text has that
+ * much padding — through the middle of a border's cells, where Neovim
+ * draws its line, and as far outside the cells of a float without a
+ * border. On whole device pixels, `radius` round at every corner.
  */
 export function frameGeometry(
-  frame: FloatFrame,
+  margins: Margins,
   place: CellPlace,
   cell: CellSize,
   dpr: number,
-  fontSize: number,
+  radius: number,
 ): FrameGeometry {
   const { width: cw, height: ch } = cell;
-  const at = (row: number, col: number) => ({
-    x: col * cw,
-    y: row * ch,
-    w: cw,
-    h: ch,
-  });
-  const m = frame.margins;
-  const midRow = place.row + m.top;
-  const midCol = place.col + m.left;
-  const lastRow = place.row + place.height - 1;
-  const lastCol = place.col + place.width - 1;
-  let x0 = (place.col + m.left) * cw;
-  let x1 = (place.col + place.width - m.right) * cw;
-  let y0 = (place.row + m.top) * ch;
-  let y1 = (place.row + place.height - m.bottom) * ch;
-  const widths: Record<Side, number> = { top: 0, right: 0, bottom: 0, left: 0 };
-  const styles: Record<Side, LineStyle> = {
-    top: "solid",
-    right: "solid",
-    bottom: "solid",
-    left: "solid",
+  const snap = (v: number) => Math.round(v * dpr) / dpr;
+  const m = margins;
+  const line = FRAME_LINE;
+  const x0 = snap((place.col + m.left) * cw - cw / 2) - line;
+  const x1 = snap((place.col + place.width - m.right) * cw + cw / 2) + line;
+  const y0 = snap((place.row + m.top) * ch - ch / 2) - line;
+  const y1 = snap((place.row + place.height - m.bottom) * ch + ch / 2) + line;
+  return {
+    x: x0,
+    y: y0,
+    w: x1 - x0,
+    h: y1 - y0,
+    widths: { top: line, right: line, bottom: line, left: line },
+    radii: { tl: radius, tr: radius, br: radius, bl: radius },
   };
-  const { top, right, bottom, left } = frame.sides;
-  if (top) {
-    const ink = inkOf(top.glyph, at(place.row, midCol), dpr, fontSize);
-    y0 = ink.y0;
-    widths.top = ink.y1 - ink.y0;
-    styles.top = styleOf(top.glyph);
-  }
-  if (bottom) {
-    const ink = inkOf(bottom.glyph, at(lastRow, midCol), dpr, fontSize);
-    y1 = ink.y1;
-    widths.bottom = ink.y1 - ink.y0;
-    styles.bottom = styleOf(bottom.glyph);
-  }
-  if (left) {
-    const ink = inkOf(left.glyph, at(midRow, place.col), dpr, fontSize);
-    x0 = ink.x0;
-    widths.left = ink.x1 - ink.x0;
-    styles.left = styleOf(left.glyph);
-  }
-  if (right) {
-    const ink = inkOf(right.glyph, at(midRow, lastCol), dpr, fontSize);
-    x1 = ink.x1;
-    widths.right = ink.x1 - ink.x0;
-    styles.right = styleOf(right.glyph);
-  }
-  const c = frame.corners;
-  const radii: Record<Corner, number> = {
-    tl: c.tl ? arcRadius(c.tl, at(place.row, place.col), dpr, fontSize) : 0,
-    tr: c.tr ? arcRadius(c.tr, at(place.row, lastCol), dpr, fontSize) : 0,
-    br: c.br ? arcRadius(c.br, at(lastRow, lastCol), dpr, fontSize) : 0,
-    bl: c.bl ? arcRadius(c.bl, at(lastRow, place.col), dpr, fontSize) : 0,
-  };
-  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, widths, styles, radii };
 }
 
 /** Where a label sits: centred on its line, over the cells Neovim gave it. */
 export interface LabelBox {
-  /** Its text's span, CSS pixels. */
+  /** Its cells' span, CSS pixels. */
   readonly x: number;
   readonly w: number;
   /** The middle of its line. */

@@ -41,28 +41,26 @@ export function hitTest(
     // inside their lines, where they take the click themselves.
     const cut = cuts.get(box.grid);
     if (cut !== undefined && inFrameCells(cut, row, col)) continue;
+    // Rows by the pointer's place, not its screen row: a panel may be
+    // drawn half a row off Neovim's (`clearCursorRow`).
+    const at = Math.floor(y / cell.height - box.row);
     if (box.frame) {
       if (insideFrame(box, boxes, cell, x, y)) {
         return {
           grid: box.grid,
-          row: Math.min(box.height - 1, Math.max(0, row - box.row)),
+          row: Math.min(box.height - 1, Math.max(0, at)),
           col: Math.min(box.width - 1, Math.max(0, col - box.col)),
         };
       }
       continue;
     }
-    // A float's left-out blank border is not there: a click falls through.
-    // Rows by the pointer's place, not its screen row: a panel's member is
-    // drawn a fraction of a row up (`compactPanels`).
-    const crop = box.crop;
-    const at = y / cell.height - box.row;
     if (
-      at >= (crop?.top ?? 0) &&
-      at < box.height - (crop?.bottom ?? 0) &&
-      col >= box.col + (crop?.left ?? 0) &&
-      col < box.col + box.width - (crop?.right ?? 0)
+      at >= 0 &&
+      at < box.height &&
+      col >= box.col &&
+      col < box.col + box.width
     ) {
-      return { grid: box.grid, row: Math.floor(at), col: col - box.col };
+      return { grid: box.grid, row: at, col: col - box.col };
     }
   }
   return { grid: 1, row, col };
@@ -83,7 +81,7 @@ function insideFrame(
 ): boolean {
   const frame = box.frame;
   if (!frame) return false;
-  const g = frameGeometry(frame, box, cell, 1, 12.5);
+  const g = frameGeometry(frame.margins, box, cell, 1, 0);
   const near = (d: number) => d >= -1 && d <= 1;
   const overlap = (a0: number, a1: number, b0: number, b1: number) =>
     Math.max(a0, b0) < Math.min(a1, b1);
