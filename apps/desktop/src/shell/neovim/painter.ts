@@ -9,6 +9,15 @@
  * lands on its two cells), then the underline family and strikethrough in
  * the special colour. Ligatures are off (`font-variant-ligatures: none`):
  * a cell grid cannot place a glyph that spans cells it did not ask for.
+ *
+ * A grid that is not a float (a window, a terminal pane) is an opaque
+ * canvas (`alpha: false`): every cell's ground is painted, and Chromium sets
+ * text with subpixel antialiasing — on macOS, CoreText's font smoothing —
+ * only on an opaque canvas. On one with alpha the same text is grayscale and
+ * lighter, the thin, hazy look of `-webkit-font-smoothing: antialiased`
+ * beside the old terminal (xterm.js draws its glyphs on their ground for the
+ * same reason). Floats keep their alpha: a `winblend` ground lets the grid
+ * under it show.
  */
 
 import type {
@@ -267,6 +276,8 @@ interface GridCanvas {
   height: number;
   /** The crop it was sized for (`GridBox.crop`). */
   crop?: string;
+  /** Made without an alpha channel: not a float (see the top). */
+  readonly opaque: boolean;
 }
 
 const NO_CROP = { top: 0, right: 0, bottom: 0, left: 0 } as const;
@@ -545,12 +556,21 @@ export class GridPainter {
       if (!grid) continue;
       let entry = this.canvases.get(box.grid);
       let fresh = false;
+      // A canvas's alpha is fixed when it is made: a window grid that
+      // becomes a float, or a float that is docked, gets a new one.
+      const opaque = !box.float;
+      if (entry && entry.opaque !== opaque) {
+        this.dropScroll(box.grid);
+        entry.canvas.remove();
+        this.canvases.delete(box.grid);
+        entry = undefined;
+      }
       if (!entry) {
         const canvas = document.createElement("canvas");
         canvas.className = "nvim-grid";
-        const ctx = canvas.getContext("2d", { alpha: true });
+        const ctx = canvas.getContext("2d", { alpha: !opaque });
         if (!ctx) continue;
-        entry = { canvas, ctx, width: -1, height: -1 };
+        entry = { canvas, ctx, width: -1, height: -1, opaque };
         this.canvases.set(box.grid, entry);
         this.root.append(canvas);
         fresh = true;
@@ -1151,7 +1171,9 @@ export class GridPainter {
     if (canvas.height !== h) canvas.height = h;
     canvas.style.width = `${String(cells * cw)}px`;
     canvas.style.height = `${String(ch)}px`;
-    const ctx = canvas.getContext("2d");
+    // Its ground is painted whole: opaque, so its text is set as the
+    // grid's is (subpixel, font smoothing; see the top).
+    const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) return;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = cssColor(bg);
@@ -1216,7 +1238,9 @@ export class GridPainter {
     canvas.height = Math.max(1, Math.ceil(ch * this.dpr));
     canvas.style.width = `${String(w)}px`;
     canvas.style.height = `${String(ch)}px`;
-    const ctx = canvas.getContext("2d");
+    // Its ground is painted whole: opaque, so its text is set as the
+    // grid's is (subpixel, font smoothing; see the top).
+    const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) return;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = cssColor(bg);
