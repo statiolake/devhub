@@ -30,7 +30,8 @@ reach the new shell. `:q` ends a Neovim.
 ## Architecture
 
 ```
- neovim.html#tnv:<n> (one per pane)      Neovim host (utility process)     the Workspace's machine
+ pane.html (a terminal's page;           Neovim host (utility process)     the Workspace's machine
+  a Neovim per pane, tnv:<n>)
  ┌───────────────────────────────┐ port ┌──────────────────────────┐      ┌──────────────────────────┐
  │ redraw.ts  (pure reducer)     │◀─────│ NeovimUiSessions         │◀─────│ nvim --headless --listen │
  │ painter.ts (a canvas per grid)│redraw│  NeovimUi (attach,       │ rpc  │   in its devhub-nvim     │
@@ -49,7 +50,9 @@ connection per server for its lifecycle (it closing is Neovim having
 exited), the file jumps and the theme; the UI opens a second one to the
 same socket (on an SSH host, the same forward) and runs in the Neovim host
 (`main/neovimHost/`), which sends every redraw to the page over the page's
-`MessagePort` and takes its calls back on it. Main answers the attach (which
+`MessagePort` and takes its calls back on it. That page is the terminal's
+own (`pane.html`): it holds the terminal and each Neovim over one of its
+panes, every UI on it named by its overlay's key on the one port. Main answers the attach (which
 Neovim, which socket), hands the port out, and answers the clipboard, which a
 utility process has none of. A host that ends is restarted and the pages
 reconnect by themselves; after three ends in a minute, or with
@@ -79,9 +82,9 @@ Neither is ever used for the other's job: an open never goes to a Neovim the
 person started (a `git commit` waiting on its editor gets no other file),
 and `nvim` in a pane never reuses the `devhub-nvim` one.
 
-Each is drawn by a `neovim.html#tnv:<n>` page over its pane
-(`main/editor/terminalNeovims.ts`), with its own UI connection to the socket
-(below).
+Each is drawn in its pane by that terminal's own page
+(`shell/pane/PaneNeovims.tsx`, `main/editor/terminalNeovims.ts`), with its
+own UI connection to the socket (below).
 
 - **This Mac**: the socket is in DevHub's own `0700` directory and is
   connected to directly.
@@ -188,19 +191,37 @@ and growing back spreads the rows anew, so each tab's sizes are kept before it
 (`winrestcmd()`) and put back once attached, scaled to the rows and columns
 there are now and with the person's `cmdheight` put back after: `:resize` at
 the old, smaller size (an `--embed` Neovim's first 80x24) would give the
-difference to the command line, not the windows. The page attaches only once its
-view is on its pane, at the pane's size (main's `devhub:neovim:placed`): a
-view not yet placed, or over the whole terminal, is no pane's size, and a UI
-attached at it reshapes the windows the same way. A page that loads again
-lets go of its old UI and its port to the Neovim host, which died with its
-old document, and attaches anew. A Neovim stopped at a prompt is let out of
-it first.
+difference to the command line, not the windows. A Neovim attaches only once
+the terminal surface has put its element on its pane, at the pane's size
+(`placed`): an element not yet placed is no pane's size, and a UI attached at
+it reshapes the windows the same way. A page that loads again lets go of its
+old UIs and its port to the Neovim host, which died with its old document,
+and each Neovim on it attaches anew. A Neovim stopped at a prompt is let out
+of it first.
 
 ### The page
 
-`shell/neovim/`. What every layer of it is held to — its own element, clip,
-z-order and opaque canvas — and where the code still falls short:
-`docs/rendering-layers.md`.
+`shell/neovim/`, mounted by the terminal's page (`NeovimSurface`, one per
+Neovim, in `shell/pane/PaneNeovims.tsx`). What every layer of it is held to —
+its own element, clip, z-order and opaque canvas — and where the code still
+falls short: `docs/rendering-layers.md`.
+
+**Its failures are its own.** It shares the terminal's renderer with the
+terminal and the other Neovims there, where it had a renderer of its own.
+What is per Neovim stays per Neovim. Its UI's end (Neovim exited, the host
+restarted, an SSH drop) is shown in its pane, with Retry or a reconnect by
+itself. A redraw it cannot apply is caught, and that Neovim starts over
+with a new attach. A render that throws is caught by its pane's error
+boundary, which offers Retry. Its UI runs in the Neovim host, as before, so
+a Neovim whose RPC dies or floods takes down the host at most, never the
+page. Every Neovim then reconnects. Checked in the app: a pane's Neovim
+killed (`kill -9`) leaves its pane to the shell and the other Neovim and the
+terminal as they were; the Neovim host killed, both Neovims reconnect and
+take keys. What is not isolated any more is the renderer process itself:
+a crash of the terminal's renderer (out of memory, a GPU fault) takes its
+Neovims with it. The page is reloaded (`supervisePage`), its Neovims attach
+again, and the Neovims themselves run on in tmux. That trade was taken for
+one layer model and pane motion.
 
 - `redraw.ts` — the pure reducer: `grid_resize/line/clear/destroy/scroll`,
   `grid_cursor_goto`, `win_pos/win_float_pos/win_hide/win_close`,
@@ -548,12 +569,14 @@ z-order and opaque canvas — and where the code still falls short:
   column between windows side by side, the row between a window and the
   one under it) gives the pointer `col-resize`/`row-resize`, nothing more.
   Keys: `<C-w><`, `<C-w>>`, `<C-w>+`, `<C-w>-`, `<C-w>=`.
-- Resize: the view's size over the cell size, `nvim_ui_try_resize`.
+- Resize: its element's size over the cell size, `nvim_ui_try_resize`.
 - Focus: `nvim_ui_set_focus` (FocusGained/FocusLost), told once per
   change. The editor has the keyboard when its textarea is focused _and_
-  its view has the keys (`document.hasFocus()`, followed on the window's
-  `focus`/`blur`): a page keeps its focused element while the Sidebar, an
-  Agent or a terminal view has them. Without it the block cursor is
+  its terminal's page has the keys (`document.hasFocus()`, followed on the
+  window's `focus`/`blur`): a page keeps its focused element while the
+  Sidebar, an Agent or another view has them. Within the page, the terminal
+  or another Neovim having the keys is the textarea not focused. A Neovim
+  focuses itself only while it has them (`NeovimEditor.setKeys`). Without it the block cursor is
   hollow, a bar or underline (and the command line's caret) faint and
   steady.
 - Widgets in DevHub's chrome: the completion menu at its anchor cell (flipped
@@ -1090,7 +1113,7 @@ Neovim, inside a DevHub GUI Neovim (`$DEVHUB_NEOVIM_GUI`), with stdin
 or stdout not a terminal, for non-editing arguments (`--headless`, `-es`,
 `--remote*`, `--version`, `-`…), and when no UI attached within ten seconds
 (the terminal is not on screen, DevHub not running while its tmux server
-still says the overlay is on, the overlay page or the socket forward
+still says the overlay is on, the terminal's page or the socket forward
 failing): then the waiting Neovim, which has read no config and opened no
 file yet, is killed, one dim line in the pane says DevHub did not draw it
 (it stays in the scrollback; `DEVHUB_NVIM_DEBUG=1` says every other reason
@@ -1114,44 +1137,52 @@ reaches panes that already have the shim. While the script waits, tmux's
 every pane reading DevHub makes says `nvim` for a pane with `@devhub-nvim`
 instead, so closing the terminal still asks first.
 
-**Where the overlay goes** (`main/editor/terminalNeovims.ts`). While a
-terminal is on screen — a Workspace's in the editor area (`pane.html#ws:<id>`,
-its `ws-` session), an Agent's beside it (`tm-`), both at once in a split —
-its session is read every 150 ms (400 ms on a host):
-each pane's cells, which window and pane are active, zoom, modes, the socket
-option, and DevHub's client's size, key table, prefix and status line. tmux
-pushes none of a window switch, a zoom, `swap-pane` or a resize to anyone
-but the client, and one `list-panes` and one `list-clients` read all of it.
-The terminal page reports where xterm's screen is (`shell/pane/screenReport.ts`);
-the client's size in cells divides it, so the overlay is the pane's exact
-rectangle in the terminal view, a `neovim.html#tnv:<n>` view placed right
-above it (`ShellWindow.syncTerminalNeovims`). It is hidden while tmux does
-not show the pane: another window, a zoomed sibling, copy mode or a chooser.
-In control mode what DevHub draws over the panes (a popup, a prompt, a menu,
-the picker) is drawn over the Neovim, which stays shown under it
-(`docs/terminal-mode.md`, "Over a Neovim"), and copy mode hides only the
-Neovim of the pane in it.
-A terminal not on screen is not read; its overlays keep their pages, hidden.
+**Where the overlay goes** (`main/editor/terminalNeovims.ts`,
+`shell/pane/PaneNeovims.tsx`). In the terminal's own page, in its pane. Main
+says each terminal's page which of its panes have a Neovim, whether tmux
+shows each, and which has the keys (`PaneBridge.onTerminalNeovims`); the
+page mounts a `NeovimSurface` for each, in an element of its own that the
+terminal surface places. In control mode (below) that element is the pane's
+content, and moves with it. Without control mode, while a terminal is on
+screen — a Workspace's in the editor area (`pane.html#ws:<id>`, its `ws-`
+session), an Agent's beside it (`tm-`), both at once in a split — its
+session is read every 150 ms (400 ms on a host): each pane's cells, which
+window and pane are active, zoom, modes, the socket option, and DevHub's
+client's size, key table, prefix and status line. tmux pushes none of a
+window switch, a zoom, `swap-pane` or a resize to anyone but the client, and
+one `list-panes` and one `list-clients` read all of it. Main says the pane's
+cells and the client's size, and the page puts the element over those cells
+of xterm's screen (`shell/terminal/PolledNeovims.tsx`). It is hidden while
+tmux does not show the pane: another window, a zoomed sibling, copy mode or a
+chooser. In control mode what DevHub draws over the panes (a popup, a
+prompt, a menu, the chooser) is over the Neovim by the panes' stacking
+table, and the Neovim stays shown under it (`docs/terminal-mode.md`, "Over a
+Neovim"). Copy mode hides only the Neovim of the pane in it. A terminal not
+on screen is not read; its Neovims stay mounted in its page, hidden.
 
-**Its size is its pane's.** The page asks Neovim for the grid its view holds
-(`nvim_ui_try_resize`), so the view is the pane: hidden, it stays at the
-pane's last place, not the terminal's (tmux keeps a hidden pane's size), and a
-view a pixel short of its pane's cells — the edges are put on whole pixels,
-and a Retina cell is 16.5 px — still holds them (`gridSize.ts`). Neovim draws
-every UI at the smallest one's size, so a page that goes (its overlay ended,
-its terminal closed) takes its UI with it (`NeovimEditors`); a UI left behind
-held the Neovim at that page's last size, which no pane growing could undo.
-A page that starts speaking for its terminal in control mode keeps the
-overlays the last reading of tmux found, rather than ending and making them
-again.
+**Its size is its pane's.** The Neovim asks for the grid its element holds
+(`nvim_ui_try_resize`), and the element is the pane's cells. Hidden, it stays
+at the pane's last size, never `display: none`, since tmux keeps a hidden
+pane's size. An element a pixel short of its pane's cells — over xterm.js
+the edges are put on whole pixels, and a Retina cell is 16.5 px — still holds
+them (`gridSize.ts`). A tmux layout that resizes the pane asks the Neovim for
+its new grid before the pane moves, and the move waits for it
+(`docs/pane-motion.md`). Neovim draws every UI at the smallest one's size, so
+an overlay that goes lets its UI go (`TerminalNeovimsOptions.gone`,
+`NeovimEditors.letGoOf`), and so does a page that goes (its terminal closed).
+A UI left behind held the Neovim at its last size, which no pane growing
+could undo. A page that starts speaking for its terminal in control mode
+keeps the overlays the last reading of tmux found, rather than ending and
+making them again.
 
 In tmux control mode (`[terminal] tmux_control_mode`, `docs/terminal-mode.md`)
 nothing is polled: the terminal's page draws each pane at the rectangle tmux's
-layout gives it, so it says those rectangles itself whenever they change
-(`PaneBridge.reportTerminalPanes`) — where the panes' first cell is, a cell's
-size, the shown window's panes, and every pane's window, mode and
-`@devhub-nvim` — and the overlay moves in the same frame as the panes it sits
-on (a split, a zoom, a window switch). The pty host's control client hears a
+layout gives it, and the Neovim in a pane is that pane's content
+(`placeNeovims`), moved by the same transforms as the pane on a split, a
+close, a zoom or a window switch (`docs/pane-motion.md`). What the page says
+is what each pane is (`PaneBridge.reportTerminalPanes`: the shown window's
+panes, the active one, every pane's mode and `@devhub-nvim`, the client and
+its prefixes, and whether something it draws over the panes has the keys). The pty host's control client hears a
 mode change from tmux at once (`%pane-mode-changed`) and `@devhub-nvim`
 through a subscription (`refresh-client -B`, which tmux checks once a
 second); DevHub's `nvim` also writes an OSC tmux does not know
@@ -1166,11 +1197,20 @@ waiting on a terminal's Neovim gets no other file.
 
 **The keyboard.** The overlay has the keys whenever its terminal would and
 its pane is tmux's active pane, shown. DevHub's chords are caught first, as on
-every page. The tmux prefix typed in it is tmux's: DevHub puts its client in
+every page. The terminal and its Neovims are one page, so the keys reach it
+whichever has them. Main keeps whose they are, reads each key in the page's
+`before-input-event`, and pushes the page which Neovim has them
+(`TerminalNeovimsWire.keys`). The page moves its focus to that Neovim's
+input, or to the terminal's. A key main takes on the way in — one that gives
+a Neovim the keys, or tmux's prefix typed in one — is typed by the page where
+it was meant (`onTerminalNeovimKey`, `NeovimEditor.typeKey`, the surface's
+`typeKey`). A press reports where the person put the keys
+(`reportNeovimPointer`). On that page Cmd+A/C/X/Z are Neovim's while a
+Neovim has the keys (`ChordHost.neovimHasKeys`). The tmux prefix typed in it is tmux's: DevHub puts its client in
 the prefix table (`switch-client -T prefix`) and the terminal takes the next
 key; once that binding ran (a zoom, a pane switch, a window switch), the keys
 come back if the overlaid pane is still the active one. In control mode the
-prefix is handed to the terminal's page as the keystroke it was, since that
+prefix is typed into the terminal surface as the keystroke it was, since that
 page's control client keeps its own place in tmux's key tables
 (`keyGuard.ts`). A binding that opens
 a prompt or a chooser (`:`, `[`, `w`, `s`, `,`…) keeps them in the terminal
@@ -1196,14 +1236,14 @@ and modifyOtherKeys (honoured with `extended-keys on`), and reads every
 encoding tmux answers with: legacy bytes, CSI u (`extended-keys-format
 csi-u`), xterm's `CSI 27;m;c~`, cursor and function keys with modifiers, ESC
 before a key as Alt. It is the shim's own doing, so it works the same on an
-SSH host, and nothing comes twice: keys typed in the overlay go over RPC, and
-a key the terminal page would hand to the pane is taken from the page. When
+SSH host, and nothing comes twice: keys typed in the Neovim go over RPC, and
+a key the terminal would hand to the pane is taken from it. When
 the Neovim exits the shim ends the reader and gives the tty and tmux's modes
 back before it exits with the Neovim's status.
 
 Limits: DevHub's terminals only (an Agent's own pane, `ag-`, gets the TUI);
 without tmux control mode nothing drawn by tmux over a pane
-(`display-popup`, `display-menu`) shows over an overlay; a binding of the person's own that opens a prompt is not
+(`display-popup`, `display-menu`) shows over a Neovim, and nothing moves; a binding of the person's own that opens a prompt is not
 known as one; in bash or fish, a startup file that puts another `nvim`'s
 directory in front of the PATH shadows the shim.
 
@@ -1232,9 +1272,9 @@ follows it wherever a Neovim lives, and nothing on screen leaves:
   server's grids, windows and highlights (keeping its colours) in order
   with the new server's first events: the old frame stays until the new
   server's first `flush`, so there is no blank frame, no shell and no TUI
-  between. The overlay, its pane, its placement and the keys are not
-  touched; main hears nothing (no `ended`). The old server's GUI windows
-  are closed on the page.
+  between. The Neovim, its pane, its place and the keys are not touched;
+  main hears nothing (no `ended`). The old server's GUI windows
+  are closed.
 - _The pane_ (`neovimRestart.ts`): the new server is the old one's child,
   not the pane's, so whatever waited on the old one would see it exit 0 —
   the shim would give the pane back to the shell and `git commit` would go
@@ -1297,6 +1337,27 @@ the commit; a file opened from an Agent's pane (the split, the keys in the
 editor half); `Cmd+Q O` between the halves; resize; switching Workspaces;
 `exit` in a session's last shell (attached again); a DevHub restart (the
 `devhub-nvim` Neovim adopted, its unsaved edit drawn).
+
+Drawn in the terminal's page (DevHub run under Xvfb at 2×, the dotfiles'
+settings with control mode, tmux.conf and Neovim config). These were checked:
+- the `devhub-nvim` window's Neovim and a `nvim` typed in a pane, side by
+  side in one tmux window, each with its own UI, the keys moving between
+  them with tmux's pane moves;
+- typing; the prefix (`C-q z`) from a Neovim and the keys coming back;
+- the command line and its completion menu;
+- a snacks picker (framed) and `vim.ui.select` through it;
+- fidget's and `vim.notify`'s notifications;
+- `:DevhubGuiDemo`'s GUI window;
+- `:restart`, followed with the pane, the place and the keys kept;
+- a window resize;
+- a DevHub restart (both Neovims attached again);
+- the Neovim host killed (both reconnect);
+- one pane's Neovim killed (its pane back to the shell, the rest untouched);
+- without control mode, the Neovim placed over its pane's cells of the
+  xterm.js screen.
+
+Not checked again: an IME's preedit (Xvfb has none; its code is unchanged,
+in the same textarea) and SSH hosts.
 
 ## Limitations
 

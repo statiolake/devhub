@@ -46,7 +46,7 @@ What each change does now:
 | Unzoom | The zoomed pane shrinks to its rectangle; the others come back from 30% away, fading in, under it | | 250 ms |
 | Window switch / tab switch | The next window (by index) slides in from the right over the last, which slides 150 px on and fades; the previous one from the left | The same for a tab (`gt`, `gT`, `:tabnext`), by the tabs' order | in 300 ms on (0.1, 0.9, 0.2, 1); out 150 ms on (0.7, 0, 1, 0.5) |
 | First attach, surface resize, Reduce Motion | At once | At once | 0 |
-| A window with a Neovim drawn over one of its panes | At once (below) | (its own windows move, in its page) | 0 |
+| A pane with a Neovim drawn in it | As any pane: the Neovim, its floats, cursor, command line and notifications move with the pane (below) | (its own windows move, inside it) | as the change |
 
 ### How the anchors are found
 
@@ -135,12 +135,31 @@ itself, and the resting path draws the frame after the last.
   single step is 90% done in about 40 ms and the key is never held, so it
   costs no responsiveness; steps less than 250 ms apart (a held key, a
   repeat binding) are placed at once, so a stream of them never trails.
-- **Not moved, documented:** a tmux window with a Neovim drawn over one
-  of its panes is placed at once (that Neovim is a view of its own, which
-  this page cannot move; a cut is better than a Neovim that jumps while
-  its pane glides). Neovim floats anchored to a window (`relative='win'`)
-  are placed where Neovim puts them, at their final place, not with
-  their window's visual origin.
+- **A Neovim in a tmux pane is that pane's content.** The terminal's
+  page draws it (`shell/pane/PaneNeovims.tsx`), in an element of its
+  own inside a group the shape of a pane's motion group
+  (`placeNeovims` in `ControlTerminalSurface.tsx`). That group is in the
+  panes' level and is moved by the same `placeGroup` and edges, from the
+  same track, as the pane's own group would be (`applyMotion`'s `own`).
+  Its clips cut the pane's rectangle, and its ground, the clip's
+  background, is Neovim's own colour, out to the boundary. Everything the
+  Neovim draws is inside it and moves with it: its windows, floats,
+  cursor, command line, menus, popups, framed views and notifications.
+  Its content is glued to the pane's first cell. A held layout asks the
+  Neovim for its new grid at once (`NeovimHandle.resizeFor`) and waits
+  for the flush at that size as it waits for a tty's new picture, within
+  the same 100 ms. So the Neovim moves at its final size, clipped, like a
+  tty pane. The element is never moved to another parent while it moves,
+  since an iframe in it (a GUI window) would load again. Typing during
+  the motion goes to the Neovim as usual and shows where it stays.
+- **Not moved, documented:** inside a Neovim, floats anchored to a
+  window (`relative='win'`) are placed where Neovim puts them, at their
+  final place, not with their window's visual origin, when Neovim's own
+  windows move (`<C-w>v` and the rest). A float is a grid of its own at
+  its own stacking order, outside its window's motion group, whose clip
+  would cut it. Moving it with its window would need a group of its own
+  that follows that window's track. When tmux moves the pane, they move
+  with it, like the rest of the Neovim.
 
 ### Reflow, not animated
 
@@ -177,6 +196,22 @@ within the rules:
   pixel, with no content offset left; only transforms are written; a
   click maps to the cell drawn; a shell's anchor and its leaving rows;
   what a commit waits for; what a change is.
+- `controlMotion.test.ts` again: a Neovim's own group (`applyMotion`'s
+  `own`) is drawn, mid-way and in the last frame, at the same rectangle
+  and origin as the pane's own group would be, on Neovim's ground.
+- A Neovim in a tmux pane, in the app (Xvfb, 2×, the person's settings,
+  tmux.conf and Neovim config), recorded with the terminal page's clock
+  slowed to 0.03× (`requestAnimationFrame` and `performance.now` scaled),
+  and in real time at 60 fps against the build before. Split right from a
+  Neovim pane, close of a neighbour with a snacks picker open in the
+  Neovim that grows, zoom and unzoom from the Neovim (`C-q z`), and a
+  window switch both ways with two Neovims in the window: the Neovim's
+  text, floats, status line and its pane's edge and outline move in the
+  same frames, from the first to the last. Before, the Neovim view jumped
+  to the new rectangle while the panes beside it were placed at once.
+  Text typed during the motion into the picker landed in it. A GUI
+  window's iframe did not load again through a split, a close, a zoom and
+  an unzoom. The window resized at once, with Neovim's grid fitted.
 - `windowMotion.test.ts`: a window's rest is its pane's (`placePanes`)
   with its status line; a split ends on its rests; `topline` moves the
   text.
@@ -317,7 +352,7 @@ drag.
 | Neovim maximize (`<C-w>\|`, `<C-w>_`) | resize | As a resize: every edge that moved | 167 ms |
 | Swap, move, rotate (`bind m` = `move-pane`/`swap-pane`, `<C-w>x`, `<C-w>r`, `<C-w>HJKL`) | layout | The panes travel to each other's places, the active one on top; where they part, the surface's ground shows for the moment | 167 ms |
 | Window switch (tmux) / tab switch (Neovim) | `%session-window-changed`; `tabline_update` and a new set of windows | Nothing moves. The new window is drawn at its final layout over the old one and fades in (opacity only). The window strip's pill or the tab strip's current tab moves on the same clock | 83 ms, linear |
-| First attach, surface resize, a pane hosting a Neovim overlay (below), reduced motion | | Nothing: the layout is placed at once | 0 |
+| First attach, surface resize, reduced motion | | Nothing: the layout is placed at once | 0 |
 
 Why each value:
 - **167 ms for structural changes**: WinUI's `ControlFast` and the
@@ -505,13 +540,11 @@ What this asks of the layer model, which follows from
   from that window's visual origin during a transition, as riders are
   placed from its scroll. Editor-relative floats (`relative='editor'`,
   the command line, popups) stay where Neovim puts them.
-- **Neovim drawn over a tmux pane** is a separate `WebContentsView`, placed
-  by main from `reportTerminalPanes`. The page's compositor cannot move
-  it, and `setBounds` every frame would be a relayout across processes.
-  Until that Neovim is drawn in the terminal's page (rendering-layers,
-  "Hide-to-make-room"), a tmux layout change in a window with such a pane
-  is placed at once. That keeps the overlay and its pane together. A
-  cut is better than a Neovim that jumps while its pane glides.
+- **Neovim drawn in a tmux pane** was at first a separate
+  `WebContentsView`, placed by main with `setBounds`, which the page's
+  compositor could not move. A tmux layout change in a window with such a
+  pane was placed at once. It is now drawn in the terminal's page, as that
+  pane's content, and moves with it (As built, "A Neovim in a tmux pane").
 - **Bands are untouched.** The command line, popup, menu and preedit
   bands are over the editor band and do not move with panes.
 

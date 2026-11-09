@@ -16,7 +16,7 @@ computation was off by one something else broke:
 - borders garbled while a window scrolled (a scroll blit crossing the
   separator's cells);
 - the Neovim overlay hidden under tmux prompts (one view cleared to make
-  room for another);
+  room for another, while the Neovim was a view of its own);
 - the glyph under the cursor a pixel off (page text, not the row's painter);
 - a transparent canvas turning subpixel antialiasing off;
 - a separator's colour borrowed from the highlights scrolling past beside it
@@ -107,6 +107,19 @@ What follows the rule in code:
   boundary ending on it meets its `┴` (grid 1 draws it on the same
   pixels), and a status line drawn as a line beside a boundary runs into
   it (a stub element).
+- One page, one layer model: a Neovim DevHub draws in a tmux pane is in
+  the terminal's own page (`shell/pane/PaneNeovims.tsx`), not a view of
+  its own over it. The control surface puts it in the panes' level
+  (`CONTROL_Z.panes`), in a group of its own the shape of a pane's motion
+  group (`placeNeovims`). Its clips cut its pane's ground, which is in
+  Neovim's colour. So it stacks as the pane it is: over the panes' grounds
+  and under the hairlines and outlines (`CONTROL_Z.borders`), the chooser,
+  `display-panes`, a popup, a menu and the prompt. Inside it, its own
+  editor stacks as above: its levels at Neovim's z, notifications at
+  `AMBIENT_Z` under the floats, and its bands (popup, cmdwin, cmdline,
+  menu, preedit) over its editor and inside its pane. Several Neovims, in
+  one window or across windows and surfaces, are each their own such
+  group, element, painter and UI.
 - `gridBlends` (`painter.ts`): a leaf canvas has alpha only while one of its
   cells blends (`winblend`); every other grid, floats and tmux popups
   included, is opaque.
@@ -187,12 +200,14 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 
 - `ControlTerminalSurface.tsx:359-400` (`holes`, `drawHoles`) and main's
   `ShellWindow.placeOverlays`: while a prompt, menu, popup or chooser is
-  open, the terminal page is raised over the Neovim views and cuts holes in
-  its own ground where they are. The Neovim is a separate WebContentsView,
-  which the page's CSS cannot stack, so this is the only way across two
-  views; it is the remedy for the overlay hidden under tmux prompts and is
-  checked frame by frame (`terminal-mode.md`, "Over a Neovim"). **Kept**
-  until the Neovim is drawn in the terminal's page.
+  open, the terminal page was raised over the Neovim views and cut holes
+  in its own ground where they were. The Neovim was a separate
+  WebContentsView, which the page's CSS cannot stack, so this was the only
+  way across two views. **Fixed** ("Neovim over a tmux pane: drawn in the
+  terminal's page, moving with its pane"): the Neovim is in the page, in
+  its pane's place in the stacking table (above, "One page, one layer
+  model"). The holes, the raise, the backdrop and the overlay views are
+  gone.
 - `painter.ts:583-588` (`underFrames`): a borderless float wholly behind
   framed ones (a picker's root box) is not drawn, because its ground would
   show in the framed floats' cut-away border cells. **Fixed** ("Neovim
@@ -240,21 +255,19 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   zoomed pane has no boundary. A Neovim overlay on a pane was the pane's
   cells only (`overlayRect`), so where Neovim's ground differs from the
   terminal's a strip of the terminal's showed between the overlay and the
-  boundary (half a cell less half the line). **Fixed** ("Neovim over a
-  tmux pane: its view reaches the boundary"): the page reports each
-  shown pane's reach (`paneReach`: to the near edge of the line beside
-  it, the outline's where one runs along that side), `overlayRect` puts
-  the view out to it on whole pixels and says how much of the view is
-  past the cells (`inset`, the `devhub:neovim:inset` message), and the
-  Neovim page draws its grid inside that, its ground in it; the holes
-  cut while the page is raised reach as far. The lines are on whole CSS
-  pixels (`boundaryLine`, a half pixel off the middle at most) so a view
-  on whole pixels meets them exactly. Checked in the app at 2x with
-  Neovim's ground set apart from the terminal's: the overlay meets the
-  active pane's outline and the hairline with no pixel between, beside
-  and under it, on the left and the right of the window. Left: a side
-  that is a neighbour's outline for part of its length and a hairline
-  for the rest stops at the outline, a pixel short of the hairline.
+  boundary (half a cell less half the line). **Fixed** first with a reach
+  for the view (`paneReach`, `inset`), which left one case: a side that
+  was a neighbour's outline for part of its length and a hairline for the
+  rest stopped at the outline, a pixel short of the hairline. **Fixed**
+  since by drawing the Neovim in the page: its pane's ground is the clip
+  of its group, placed exactly as every pane's ground is (`restPlace`, to
+  the middle of tmux's border cell), in Neovim's colour, and the hairlines
+  and outlines are drawn over it as over any pane. `paneReach`, `inset`
+  and the view are gone. Checked in the app at 2x with Neovim's `Normal`
+  set apart from the terminal's (`#ffe0e0` on white), the Neovim pane
+  beside a pane split across. Its ground meets the 1px hairline along the
+  upper neighbour and the 2px active outline along the lower one with no
+  pixel between, on the same side.
 
 ### Colour sampling from neighbours
 
@@ -279,9 +292,8 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   which Chromium snaps per edge, so a 2 px outline can come out 3 or 5
   device pixels. **Fixed** (with the control surface's panes above): the
   label's left and top, the hairlines' and outlines' edges and the panes'
-  grounds are snapped with `Math.round(v × dpr) / dpr`; since the overlay
-  reaches the boundary, the hairlines and outlines across are on whole
-  CSS pixels (`boundaryLine`).
+  grounds are snapped with `Math.round(v × dpr) / dpr`; the hairlines and
+  outlines across are on whole CSS pixels (`boundaryLine`).
 - Canvases, scroll offsets (`smoothScroll.ts` `snap`) and slides are on
   whole device pixels.
 
@@ -302,7 +314,10 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 5. ~~The control surface's z table~~ fixed: `CONTROL_Z`.
 6. ~~Device-pixel snapping of labels, hairlines and outlines~~ fixed.
 7. ~~A Neovim overlay on a tmux pane reaching the pane's boundary, its
-   grid inset by half a cell~~ fixed: `paneReach`, `inset`.
+   grid inset by half a cell~~ fixed: drawn in the terminal's page, its
+   pane's ground in its colour.
+8. ~~The Neovim over a tmux pane a view of its own, the page raised over it
+   with holes~~ fixed: one page, one layer model.
 
 Seen while checking the above, not layering bugs but on the same path:
 
@@ -312,8 +327,8 @@ Seen while checking the above, not layering bugs but on the same path:
   difference. **Fixed** ("Neovim editor: windows keep their sizes through
   a reattach"): two attaches at another size did it — the priming attach
   at half the size (its sizes are now kept and put back), and a page that
-  attached before its view was on its pane (it now waits for main's
-  `placed`). Checked in the app: a split at 32 and 8 rows through three
+  attached before its view was on its pane (it now waits until the
+  terminal surface has put its element on its pane, `placed`). Checked in the app: a split at 32 and 8 rows through three
   restarts, 32 and 8 each time (31 and 8 became 17 and 22 before).
 - A Neovim page reloaded (DevTools) stays blank: it does not attach
   again. **Fixed** ("Neovim editor: a reloaded page attaches again"): it

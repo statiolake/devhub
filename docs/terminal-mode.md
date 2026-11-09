@@ -42,7 +42,7 @@ followed from its own keydown and keyup, since a letter's keydown does not say
 which Option is held; one already held when the terminal took focus counts as
 up until it is pressed again. A refused value is `invalid_mac_option_is_meta`.
 
-In tmux control mode, and in the Neovim editor and its overlays, nothing
+In tmux control mode, and in the Neovim editor drawn in a pane, nothing
 encodes for DevHub: a Meta chord is named by its physical key (`code`), read
 through the keyboard layout (`shell/surfaces/baseKeys.ts`: what each key
 typed without Option, learned from plain keydowns, else Chromium's
@@ -53,9 +53,10 @@ is `M-x` to tmux and `<M-x>` to Neovim, Option+Shift+X `M-X`, Option+E
 (`M-|` with Shift). A non-letter whose Shift the layout has not shown yet is
 the key and Shift (`M-S-2`). Option+Left and Right are `M-b` and `M-f`,
 Cmd+Left, Right and Backspace `C-a`, `C-e` and `C-u`, Ghostty's bindings as
-in the xterm.js terminal. A key the terminal page hands to a Neovim overlay
-(`forwardedKey`) carries its physical key, and the left Option if it is
-held, which the overlay would not otherwise have seen go down.
+in the xterm.js terminal. A key main takes on its way into a terminal's page
+and has typed into a Neovim there (`TerminalNeovimKeyWire`) carries its
+physical key, and whether the left Option is held, which that Neovim's input
+did not see go down.
 
 A Meta key sends only its `ESC` sequence. Option+N, E, U, I and `` ` `` are dead
 keys on a US layout, and macOS starts their composition before the page sees
@@ -506,25 +507,27 @@ off` hides it. A `refresh-client -B` subscription to every window (`@*`)
   person's tmux.conf, Min Light and Min Dark: five windows and a split, a
   bell and activity arriving live, a zoom, 370 px wide, a theme switch, and
   `status-position top` / `status-justify left` / a `status-right` set live.
-- **Neovim over a pane** (`docs/neovim-editor.md`, "Neovim in a terminal"):
-  the page says where each pane is drawn and what it is
-  (`reportTerminalPanes`), and the overlay is placed from that, with no
-  polling. It reaches the boundary beside its pane as the pane's ground
-  does (each shown pane's `reach`), Neovim's ground between its grid and
-  the line (`docs/rendering-layers.md`, "Chrome painted into a grid
-  canvas"). Checked in the app with the person's Neovim config and
-  tmux.conf: `nvim` in a pane, a split and a zoom from the overlay, another
+- **Neovim in a pane** (`docs/neovim-editor.md`, "Neovim in a terminal"):
+  the page says what each pane is (`reportTerminalPanes`: the shown
+  window's panes, the active one, modes and sockets), and draws each
+  Neovim main confirms in its pane itself (`placeNeovims`,
+  `shell/pane/PaneNeovims.tsx`), with no polling. The Neovim is that
+  pane's content. Its ground is the pane's ground, in Neovim's colour, out
+  to the boundary. It moves with its pane (`docs/pane-motion.md`), and
+  everything the surface draws over the panes is over it. First checked
+  with a view of its own over the pane, using the person's Neovim config
+  and tmux.conf: `nvim` in a pane, a split and a zoom from the overlay, another
   window hiding it, `C-q C-q` reaching Neovim, a click beside it and a key
   that takes the keys back, `git commit`, `devhub -g` into the
-  `devhub-nvim` window and `:restart` there. From the socket named to the
-  UI attached: 370 ms, most of it the overlay's page starting.
+  `devhub-nvim` window and `:restart` there; checked again drawn in the
+  page (`docs/neovim-editor.md`, "What works").
 
 - **An SSH host** (checked against a local sshd, DevHub's tmux 3.7c
   installed on the host as it is for any host): the control client runs as
   `ssh -T <host> -- … tmux -C attach-session`, typing and splits as here, a
   `nvim` on the host drawn over its pane through the forwarded socket. With
   the connection killed on the host's side, the surface attaches a new
-  control client by itself, and the Neovim's overlay comes back with it: a
+  control client by itself, and the Neovim in the pane comes back with it: a
   new client name in the page's report is the connection back, so a pane
   whose UI ended with the old one is tried again. Seen on the way: a host
   whose non-interactive shell has no UTF-8 locale (no `AcceptEnv LANG`)
@@ -861,29 +864,24 @@ command from a control client has not got), line numbers
 (`copy-mode-line-numbers`), the 0.4 s flash the mock shows on a prompt-mark
 copy.
 
-**Over a Neovim.** A Neovim drawn over a pane (`docs/neovim-editor.md`,
-"Neovim in a terminal") is a view of its own above the terminal's page, so
-whatever the page draws over the panes would be under it. While a popup, a
-prompt (`:`, `,`, a `confirm-before`), a menu, the picker or `display-panes`
-is open, the page says so (`covered` in its panes' report) and main puts the
-page above that terminal's Neovims (`ShellWindow.placeOverlays`), which stay
-shown and live under it: the page leaves their panes clear — no canvas, and
-its ground (`.control-backdrop`) with a hole there — so each Neovim shows
-through, under the prompt line, a menu, the popup's scrim. Main tells the
-page which panes have a Neovim shown and whether it is above them
-(`PaneBridge.onTerminalOverlaid`); the page says it is covered only once the
-frame with the holes is drawn, and keeps them after it closes until main
-has put it back under, so neither way is there a frame of the bare pane.
-While covered the keys are the page's (tmux's prompt, menu, popup), not the
+**Over a Neovim.** A Neovim drawn in a pane (`docs/neovim-editor.md`,
+"Neovim in a terminal") is in this page, in the panes' level
+(`CONTROL_Z.panes`), so whatever the page draws over the panes is over it
+by the same stacking table as over any pane: a popup, a prompt (`:`, `,`, a
+`confirm-before`), a menu, the chooser, `display-panes`. The Neovim stays
+shown and live under it. Nothing is cut or raised. The page says it is
+covered (`covered` in its panes' report) only for the keys. While covered
+the keys are the page's (tmux's prompt, menu, popup), not the
 Neovim's; when it closes they go back to the Neovim if its pane is the
 active one. Copy mode is not a cover: a pane in copy mode shows tmux's
 copy-mode view of that pane and its Neovim is hidden (only that pane; one in
 copy mode beside it changes nothing), since what copy mode copies is tmux's
 — the pane's history, the shell's output before `nvim` — and the Neovim's
 text is copied in Neovim. Checked in the app with the person's tmux.conf and
-Neovim config: `C-q :`, `C-q ,`, `C-q W`, `C-q <`, `C-q w`, `bind m`, copy
-mode in the Neovim's pane and beside it; recorded at 60 fps while each opened
-and closed, no frame without the Neovim.
+Neovim config, when the Neovim was a view of its own: `C-q :`, `C-q ,`,
+`C-q W`, `C-q <`, `C-q w`, `bind m`, copy mode in the Neovim's pane and
+beside it; recorded at 60 fps while each opened and closed, no frame without
+the Neovim. Drawn in the page, the same stacking is the panes' own.
 
 What DevHub does not draw yet is not let do that
 (`main/ptyHost/control/keyGuard.ts`):
