@@ -1953,6 +1953,9 @@ export class GridPainter {
           rect: m.rect,
           box,
           ruled: box.frame !== undefined,
+          labelled: Object.fromEntries(
+            (box.frame?.labels ?? []).map((l) => [l.side, true]),
+          ),
           geometry: frameGeometry(margins, box, this.metrics, this.dpr, radius),
         });
       }

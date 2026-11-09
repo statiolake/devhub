@@ -16,8 +16,9 @@
  *   the window's configured `title` / `footer` (or wider than a cell) is no
  *   frame, and the float is drawn cell for cell, as Neovim drew it.
  * - `frameGeometry` is where the line is, in CSS pixels on whole device
- *   pixels: half a cell outside the text area on every side, a border or
- *   not (a float without one is padded as much, outside its cells).
+ *   pixels: centred on the middle of the border's cells, half a cell
+ *   outside the text area on every side, a border or not (a float without
+ *   one is padded as much, outside its cells).
  * - `labelBox` is where a title or footer sits: on its line, over the
  *   cells Neovim gave it.
  */
@@ -271,12 +272,34 @@ export interface CellPlace {
 /** The frame's line: one CSS pixel. */
 export const FRAME_LINE = 1;
 
+/** The frame's line on whole device pixels: `FRAME_LINE`, at least one. */
+export function lineWidth(dpr: number): number {
+  return Math.max(1, Math.round(FRAME_LINE * dpr)) / dpr;
+}
+
 /**
- * Where a float's line is: half a cell outside its text area on every side
- * (`margins`, the border's cells; none without one), so the text has that
- * much padding — through the middle of a border's cells, where Neovim
- * draws its line, and as far outside the cells of a float without a
- * border. On whole device pixels, `radius` round at every corner.
+ * Where a line `width` across (whole device pixels) runs when its middle is
+ * at `middle`: its start and end, on device pixels, the middle within half
+ * a device pixel of the true one — rounded to the nearest, never floored or
+ * ceiled, so no fractional ratio or cell height moves it one way.
+ */
+export function lineSpan(
+  middle: number,
+  width: number,
+  dpr: number,
+): [number, number] {
+  const w = Math.round(width * dpr);
+  const start = Math.round(middle * dpr - w / 2);
+  return [start / dpr, (start + w) / dpr];
+}
+
+/**
+ * Where a float's line is: through the middle of its border's cells — the
+ * top and bottom rows, the left and right columns — where Neovim draws its
+ * line (`margins`, the border's cells), so the text is half a cell inside
+ * it; a float without a border is padded as much, the line half a cell
+ * outside its cells. The line is centred on that middle, on whole device
+ * pixels (`lineSpan`), `radius` round at every corner.
  */
 export function frameGeometry(
   margins: Margins,
@@ -286,13 +309,20 @@ export function frameGeometry(
   radius: number,
 ): FrameGeometry {
   const { width: cw, height: ch } = cell;
-  const snap = (v: number) => Math.round(v * dpr) / dpr;
   const m = margins;
-  const line = FRAME_LINE;
-  const x0 = snap((place.col + m.left) * cw - cw / 2) - line;
-  const x1 = snap((place.col + place.width - m.right) * cw + cw / 2) + line;
-  const y0 = snap((place.row + m.top) * ch - ch / 2) - line;
-  const y1 = snap((place.row + place.height - m.bottom) * ch + ch / 2) + line;
+  const line = lineWidth(dpr);
+  const [x0] = lineSpan((place.col + m.left) * cw - cw / 2, line, dpr);
+  const [, x1] = lineSpan(
+    (place.col + place.width - m.right) * cw + cw / 2,
+    line,
+    dpr,
+  );
+  const [y0] = lineSpan((place.row + m.top) * ch - ch / 2, line, dpr);
+  const [, y1] = lineSpan(
+    (place.row + place.height - m.bottom) * ch + ch / 2,
+    line,
+    dpr,
+  );
   return {
     x: x0,
     y: y0,

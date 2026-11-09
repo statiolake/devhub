@@ -222,8 +222,10 @@ z-order and opaque canvas — and where the code still falls short:
   `'double'`, a table of characters) the frame is one 1px rounded line
   half a cell from its text, the ground between them the border's own
   (`frame.ts`, `GridBox.frame`). Neovim says where a border is with
-  `win_viewport_margins`; its line goes through the middle of the border's
-  cells, nothing of them outside it drawn — the windows behind show there,
+  `win_viewport_margins`; its line is centred on the middle of the border's
+  cells, across and down, on whole device pixels rounded to the nearest
+  (`lineSpan`: no floor or ceil, so no ratio or row height moves it one
+  way), the title's text centred on it; nothing of the cells outside it drawn — the windows behind show there,
   and a click there goes to them. A float without a border is padded as
   much outside its cells; a panel where such a float is next to the
   cursor's row (a completion menu under the line being typed) is drawn
@@ -241,8 +243,10 @@ z-order and opaque canvas — and where the code still falls short:
   union of their frames (an element of grounds per cluster, under the
   canvases, with the floats' `drop-shadow`), only the panel's outer
   corners rounded; a float alone is a panel of one, and one with
-  `winblend` gets none. Members with borders meet half way between their
-  lines and the edge they share is drawn once (`framePieces`); members
+  `winblend` gets none. The edge members with borders share is drawn once
+  (`framePieces`), still through the middle of border cells: of the one
+  whose border holds a title or footer there (a list's title under the
+  input sits on the line), else of the upper or left one; members
   without one meet ground to ground, a one-cell seam between them filled
   with their ground. A borderless float inside the rectangle the framed
   floats over it span (a picker's root box) has no frame of its own and

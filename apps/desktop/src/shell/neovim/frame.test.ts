@@ -182,36 +182,72 @@ describe("where a frame's line is", () => {
   const cell = { width: 8, height: 20 };
   const place = { row: 2, col: 3, width: 13, height: 4 };
 
-  it("is half a cell outside the text area, one pixel, on whole device pixels", () => {
+  it("runs through the middle of the border's cells, one pixel, on whole device pixels", () => {
     const g = frameGeometry(ALL, place, cell, 2, 4);
     expect(g.widths).toEqual({ top: 1, right: 1, bottom: 1, left: 1 });
-    // The text area is 32..120 by 60..100: the line's inner edge half a
-    // cell out, through the middle of the border's cells.
-    expect(g.x).toBe(4 * 8 - 4 - 1);
-    expect(g.y).toBe(3 * 20 - 10 - 1);
-    expect(g.x + g.w).toBe(15 * 8 + 4 + 1);
-    expect(g.y + g.h).toBe(5 * 20 + 10 + 1);
+    // The text area is 32..120 by 60..100; the border's cells the one
+    // around it, their middles half a cell out: the line centred on them.
+    expect(g.x + g.widths.left / 2).toBe(4 * 8 - 4);
+    expect(g.y + g.widths.top / 2).toBe(3 * 20 - 10);
+    expect(g.x + g.w - g.widths.right / 2).toBe(15 * 8 + 4);
+    expect(g.y + g.h - g.widths.bottom / 2).toBe(5 * 20 + 10);
     // One radius for every border, the floats' corner.
     expect(g.radii).toEqual({ tl: 4, tr: 4, br: 4, bl: 4 });
     for (const v of [g.x, g.y, g.x + g.w, g.y + g.h])
       expect((v * 2) % 1).toBe(0);
   });
 
-  it("pads a float without a border as much, outside its cells", () => {
+  it("pads a float without a border as much, the line half a cell outside its cells", () => {
     const none = { top: 0, right: 0, bottom: 0, left: 0 };
     const g = frameGeometry(
       none,
       { row: 1, col: 2, width: 10, height: 3 },
       cell,
-      1,
+      2,
       4,
     );
-    expect([g.x, g.y, g.x + g.w, g.y + g.h]).toEqual([
-      2 * 8 - 5,
-      20 - 11,
-      12 * 8 + 5,
-      4 * 20 + 11,
+    expect([g.x + 0.5, g.y + 0.5, g.x + g.w - 0.5, g.y + g.h - 0.5]).toEqual([
+      2 * 8 - 4,
+      20 - 10,
+      12 * 8 + 4,
+      4 * 20 + 10,
     ]);
+  });
+
+  it("keeps the line on the cells' middle at fractional ratios and row heights", () => {
+    // Rows of 16.5 and 17.25 px (a line height, a linespace), at ratios
+    // from 1 to 3: every side's middle within half a device pixel of the
+    // border cells' middle, on whole device pixels, never always low.
+    let drift = 0;
+    let n = 0;
+    for (const dpr of [1, 1.25, 1.5, 1.75, 2, 2.5, 3]) {
+      for (const height of [16.5, 17.25, 19.6, 20]) {
+        for (const width of [7.2, 8, 8.4]) {
+          const c = { width, height };
+          const at = { row: 3, col: 5, width: 20, height: 7 };
+          const g = frameGeometry(ALL, at, c, dpr, 4);
+          const w = g.widths.top;
+          expect((w * dpr) % 1).toBeCloseTo(0, 9);
+          const middles = [
+            [g.y + w / 2, (at.row + 0.5) * height],
+            [g.y + g.h - w / 2, (at.row + at.height - 0.5) * height],
+            [g.x + w / 2, (at.col + 0.5) * width],
+            [g.x + g.w - w / 2, (at.col + at.width - 0.5) * width],
+          ];
+          for (const [line, cells] of middles) {
+            expect(Math.abs(line! - cells!)).toBeLessThanOrEqual(
+              0.5 / dpr + 1e-9,
+            );
+            drift += line! - cells!;
+            n += 1;
+          }
+          for (const v of [g.x, g.y, g.x + g.w, g.y + g.h])
+            expect((v * dpr) % 1).toBeCloseTo(Math.round((v * dpr) % 1), 9);
+        }
+      }
+    }
+    // No bias downward (or upward) on average: rounded, not floored.
+    expect(Math.abs(drift / n)).toBeLessThan(0.1);
   });
 
   it("puts a title's cells on its line, where Neovim gave them", () => {
@@ -247,6 +283,7 @@ describe("a panel of framed floats", () => {
     grid: number,
     rect: { row: number; col: number; width: number; height: number },
     ruled = true,
+    dpr = 1,
   ): FramedMember => ({
     grid,
     rect,
@@ -255,7 +292,7 @@ describe("a panel of framed floats", () => {
       ruled ? ALL : { top: 0, right: 0, bottom: 0, left: 0 },
       rect,
       cell,
-      1,
+      dpr,
       4,
     ),
   });
@@ -276,9 +313,10 @@ describe("a panel of framed floats", () => {
       bottom: true,
       left: false,
     });
-    // Their lines were in the middle of columns 9 and 10: they meet at 80.
-    expect(a ? a.x + a.w : 0).toBe(80);
-    expect(b?.x).toBe(80);
+    // Two border columns, 9 and 10: the line through the left one's
+    // middle (76), one pixel on whole pixels; the preview's ground from it.
+    expect(a ? a.x + a.w : 0).toBe(77);
+    expect(b?.x).toBe(77);
     // Only the panel's outer corners are round.
     expect(a?.radii.tr).toBe(0);
     expect(a?.radii.tl).toBeGreaterThan(0);
@@ -300,11 +338,40 @@ describe("a panel of framed floats", () => {
     expect(i ? i.y + i.h : 0).toBe(l?.y);
   });
 
+  it("runs the line two members share through the row that holds a title", () => {
+    // A picker's input over its list, the list's title in its top border
+    // (snacks' "Results"): the line through that row's middle, the title
+    // on it, not on the edge between the two border rows.
+    const input = member(4, { row: 0, col: 0, width: 10, height: 3 }, true, 2);
+    const list = {
+      ...member(5, { row: 3, col: 0, width: 10, height: 7 }, true, 2),
+      labelled: { top: true },
+    };
+    const [i, l] = framePieces([input, list], 2);
+    expect(i?.draw.bottom).toBe(true);
+    expect(l?.draw.top).toBe(false);
+    // The line [69.5, 70.5]: the input's piece reaches its far side, the
+    // list's ground starts there.
+    expect(i ? i.y + i.h : 0).toBe(70.5);
+    expect(l?.y).toBe(70.5);
+    expect(
+      labelBox(
+        { side: "top", col: 1, cells: 7, runs: [] },
+        { row: 3, col: 0, width: 10, height: 7 },
+        list.geometry,
+        cell,
+      ).cy,
+    ).toBe(70);
+    // No title: through the upper one's bottom row instead (row 2, 50).
+    const [i2] = framePieces([input, { ...list, labelled: {} }], 2);
+    expect(i2 ? i2.y + i2.h : 0).toBe(50.5);
+  });
+
   it("draws no line where a float without a border meets another", () => {
     // blink's menu and its documentation, side by side.
-    const menu = member(4, { row: 0, col: 0, width: 10, height: 6 }, false);
-    const docs = member(5, { row: 0, col: 10, width: 10, height: 6 }, false);
-    const [a, b] = framePieces([menu, docs], 1);
+    const menu = member(4, { row: 0, col: 0, width: 10, height: 6 }, false, 2);
+    const docs = member(5, { row: 0, col: 10, width: 10, height: 6 }, false, 2);
+    const [a, b] = framePieces([menu, docs], 2);
     expect(a?.draw.right).toBe(false);
     expect(b?.draw.left).toBe(false);
     expect(a?.draw.left).toBe(true);

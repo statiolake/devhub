@@ -10,7 +10,13 @@
  * (`framePieces`). A float alone is a cluster of one.
  */
 
-import type { Corner, FrameGeometry, Side } from "./frame";
+import {
+  lineSpan,
+  lineWidth,
+  type Corner,
+  type FrameGeometry,
+  type Side,
+} from "./frame";
 import type { GridBox } from "./redraw";
 
 export interface CellRect {
@@ -221,6 +227,8 @@ export interface FramedMember {
    * there is no line, the two grounds meet (a cell between them filled).
    */
   readonly ruled?: boolean;
+  /** The sides a title or footer is on: a line shared there runs through it. */
+  readonly labelled?: Readonly<Partial<Record<Side, boolean>>>;
 }
 
 /**
@@ -304,17 +312,39 @@ function lineMiddle(m: FramedMember, side: Side): number {
 }
 
 /**
+ * Where the line `m` and `o` share on `m`'s `side` runs (its middle). A
+ * line goes through the middle of border cells: when both have a border
+ * there, through the one that holds a title or footer — a list's title
+ * under an input sits on the line between them — else the upper or left
+ * one's; a border beside none, through the border; two without one meet
+ * half way, ground to ground.
+ */
+function sharedMiddle(m: FramedMember, side: Side, o: FramedMember): number {
+  const back = OPPOSITE[side];
+  const mine = lineMiddle(m, side);
+  const theirs = lineMiddle(o, back);
+  const mRuled = m.ruled !== false;
+  const oRuled = o.ruled !== false;
+  if (!mRuled && !oRuled) return (mine + theirs) / 2;
+  if (mRuled !== oRuled) return mRuled ? mine : theirs;
+  const mLabel = m.labelled?.[side] === true;
+  const oLabel = o.labelled?.[back] === true;
+  if (mLabel !== oLabel) return mLabel ? mine : theirs;
+  return side === "right" || side === "bottom" ? mine : theirs;
+}
+
+/**
  * The framed members of a panel as what to draw of each. An edge two
  * members with borders share is drawn by one: the one whose side the other
  * covers whole (the left or upper one when each covers the other's), so a
  * list beside a preview, or an input over a list, shows one line between
- * them. A member without a border draws no line where it meets another.
+ * them, through the middle of border cells (`sharedMiddle`). A member
+ * without a border draws no line where it meets another.
  */
 export function framePieces(
   members: readonly FramedMember[],
   dpr: number,
 ): FramePiece[] {
-  const snap = (v: number) => Math.round(v * dpr) / dpr;
   const draws = new Map<FramedMember, Record<Side, boolean>>(
     members.map((m) => [
       m,
@@ -360,11 +390,21 @@ export function framePieces(
     for (const side of SIDE_LIST) {
       const others = across(m, side, members);
       if (others.length === 0) continue;
+      const mids = others.map((o) => sharedMiddle(m, side, o));
+      const middle = mids.reduce((a, b) => a + b, 0) / mids.length;
+      // The line is `width` across, centred on its middle, on whole device
+      // pixels (`lineSpan`). A member that draws it reaches its far side; one
+      // that does not stops at its near side, its ground not under it.
+      const width = g.widths[side] > 0 ? g.widths[side] : lineWidth(dpr);
+      const [start, end] = lineSpan(middle, width, dpr);
+      const outward = side === "right" || side === "bottom";
       const back = OPPOSITE[side];
-      const mids = others.map(
-        (o) => (lineMiddle(m, side) + lineMiddle(o, back)) / 2,
-      );
-      edges[side] = snap(mids.reduce((a, b) => a + b, 0) / mids.length);
+      if (!drawOf(m)[side] && others.every((o) => !drawOf(o)[back])) {
+        // No line: the grounds meet at its middle.
+        edges[side] = Math.round(middle * dpr) / dpr;
+      } else {
+        edges[side] = drawOf(m)[side] === outward ? end : start;
+      }
     }
     // Round where no other framed member meets it (a borderless member
     // under them all — a picker's box — does not square their corners).
