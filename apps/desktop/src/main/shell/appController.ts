@@ -4452,27 +4452,39 @@ export class AppController {
 							snapshot.selection.context.kind !== "agent")
 					? "editor"
 					: "agents";
-		shell.setLayoutState({
-			// The window was built with one of the two chromes and the setting
-			// can have moved since; the setting wins, because it is what the
-			// page is drawing. Anything the config does not recognise is the
-			// chrome the window has, which is the one on screen.
-			titleBar: appearance.titleBar === "hidden" ? "hidden" : "shown",
-			density:
-				appearance.sidebarDensity === "comfortable" ? "comfortable" : "compact",
-			sidebar: {
-				width: this.sidebarWidthPreview ?? snapshot.sidebar.width,
-				collapsed: snapshot.sidebar.collapsed,
-				...(this.sidebarOverlay ? { overlay: true } : {}),
+		// While a divider is being dragged the views follow the pointer as
+		// they go; anything else is a change of arrangement, and the views it
+		// moves land in one frame each (`ShellWindow.setLayoutState`).
+		const live =
+			this.sidebarWidthPreview !== undefined ||
+			this.splitRatioPreview !== undefined ||
+			this.terminalSharePreview !== undefined;
+		shell.setLayoutState(
+			{
+				// The window was built with one of the two chromes and the setting
+				// can have moved since; the setting wins, because it is what the
+				// page is drawing. Anything the config does not recognise is the
+				// chrome the window has, which is the one on screen.
+				titleBar: appearance.titleBar === "hidden" ? "hidden" : "shown",
+				density:
+					appearance.sidebarDensity === "comfortable"
+						? "comfortable"
+						: "compact",
+				sidebar: {
+					width: this.sidebarWidthPreview ?? snapshot.sidebar.width,
+					collapsed: snapshot.sidebar.collapsed,
+					...(this.sidebarOverlay ? { overlay: true } : {}),
+				},
+				surface:
+					surface.kind === "split" && this.splitRatioPreview !== undefined
+						? { ...surface, ratio: this.splitRatioPreview }
+						: surface,
+				keyboard,
+				...(terminal === undefined ? {} : { terminal }),
+				...(conversation === undefined ? {} : { conversation }),
 			},
-			surface:
-				surface.kind === "split" && this.splitRatioPreview !== undefined
-					? { ...surface, ratio: this.splitRatioPreview }
-					: surface,
-			keyboard,
-			...(terminal === undefined ? {} : { terminal }),
-			...(conversation === undefined ? {} : { conversation }),
-		});
+			{ live },
+		);
 		this.publishAreas(shell);
 	}
 
@@ -9989,6 +10001,11 @@ export class AppController {
 				shellWindow().tooltip.setSize(size);
 			},
 		);
+		// A content page has drawn at the size its view waits at: the view goes
+		// to its place in one move (`ShellWindow.staged`).
+		receive(CHANNELS.layoutSettled, (_event, token: unknown) => {
+			if (typeof token === "number") shellWindow().layoutSettled(token);
+		});
 		// The Sidebar asking for a tooltip over the window, about one of its
 		// own rows. It composes the sentence and knows where the pointer is
 		// resting; main owns where anything in the window goes. The anchor

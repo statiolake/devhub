@@ -25,6 +25,8 @@ class FakeView {
 		return this.bounds;
 	}
 	destroyed = false;
+	/** What main told this view's page, in order. */
+	readonly sent: [string, unknown][] = [];
 	private readonly listeners = new Map<string, (() => void)[]>();
 	readonly webContents = {
 		id: nextId(),
@@ -49,7 +51,9 @@ class FakeView {
 			for (const listener of this.listeners.get(event) ?? []) listener();
 		},
 		setWindowOpenHandler: () => undefined,
-		send: () => undefined,
+		send: (channel: string, payload: unknown) => {
+			this.sent.push([channel, payload]);
+		},
 		focus: () => {
 			focused = this.webContents.id;
 		},
@@ -220,7 +224,9 @@ const { ShellWindow, shellWindowOptions } = await import("./shellWindow.js");
 const { WINDOW_TITLES } = await import("../../ipc/windowTitles.js");
 type ShellPalette = import("../../ipc/palette.js").ShellPalette;
 const { scrimColor } = await import("../../ipc/palette.js");
-const { sidebarRect, trafficLightPosition } = await import("./windowLayout.js");
+const { agentsRect, sidebarRect, stagingRect, trafficLightPosition } =
+	await import("./windowLayout.js");
+const { CHANNELS } = await import("../../ipc/contract.js");
 
 /** The size the fake window reports; see `getContentSize` above. */
 const WINDOW_WIDTH = 1440;
@@ -333,6 +339,92 @@ describe("the shell window's children", () => {
 			shell.layout();
 			shell.focusSurface();
 		}).not.toThrow();
+	});
+});
+
+/**
+ * A content view moved and resized at once shows its old picture at its new
+ * place until its page has drawn at the new size — the conversation 209px
+ * off for up to three frames as the Sidebar collapsed. A change of
+ * arrangement resizes it where nothing of it shows, waits for its page, and
+ * then moves it at that size, which is exact (`docs/motion.md`).
+ */
+describe("the shell window's content views, moved by a change of arrangement", () => {
+	let shell: ShellWindow;
+	const size = { width: WINDOW_WIDTH, height: WINDOW_HEIGHT };
+	const agentsView = () => (shell.agents as unknown as { view: FakeView }).view;
+	const settleAsked = () =>
+		agentsView().sent.filter(([channel]) => channel === CHANNELS.settleLayout);
+	const collapsed = () => ({
+		...shell.layoutState(),
+		sidebar: { width: 248, collapsed: true },
+	});
+
+	beforeEach(() => {
+		shell = newShell();
+		showAgent(shell);
+	});
+
+	it("resizes the view off the window first, and asks its page to say when it has drawn", () => {
+		shell.setLayoutState(collapsed());
+		const target = agentsRect(size, collapsed());
+		expect(shell.isStaged({ kind: "agents" })).toBe(true);
+		expect(agentsView().bounds).toEqual(stagingRect(size, target));
+		const [[, ask]] = settleAsked();
+		expect(ask).toMatchObject({ width: target.width, height: target.height });
+	});
+
+	it("moves it into place at that size once the page has drawn", () => {
+		shell.setLayoutState(collapsed());
+		const [[, ask]] = settleAsked();
+		shell.layoutSettled((ask as { token: number }).token);
+		expect(shell.isStaged({ kind: "agents" })).toBe(false);
+		expect(agentsView().bounds).toEqual(agentsRect(size, collapsed()));
+	});
+
+	it("keeps it waiting through a pass that changes nothing about it", () => {
+		shell.setLayoutState(collapsed());
+		shell.layout();
+		expect(agentsView().bounds).toEqual(
+			stagingRect(size, agentsRect(size, collapsed())),
+		);
+	});
+
+	it("does not wait for a page that does not answer", () => {
+		vi.useFakeTimers();
+		try {
+			shell.setLayoutState(collapsed());
+			vi.advanceTimersByTime(250);
+			expect(agentsView().bounds).toEqual(agentsRect(size, collapsed()));
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("follows a divider being dragged at once", () => {
+		const dragged = {
+			...shell.layoutState(),
+			sidebar: { width: 300, collapsed: false },
+		};
+		shell.setLayoutState(dragged, { live: true });
+		expect(shell.isStaged({ kind: "agents" })).toBe(false);
+		expect(agentsView().bounds).toEqual(agentsRect(size, dragged));
+	});
+
+	it("does not hold back a view that is coming on screen", () => {
+		const fresh = newShell();
+		fresh.setLayoutState({
+			...BASE,
+			sidebar: { width: 248, collapsed: true },
+			surface: { kind: "none" },
+			keyboard: "editor",
+		});
+		fresh.setLayoutState({
+			...BASE,
+			surface: { kind: "agent" },
+			keyboard: "agents",
+		});
+		expect(fresh.isStaged({ kind: "agents" })).toBe(false);
 	});
 });
 

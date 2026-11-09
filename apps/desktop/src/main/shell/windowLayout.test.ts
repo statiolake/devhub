@@ -17,6 +17,8 @@ import {
 	trafficLightPosition,
 	windowLayout,
 	workbenchRect,
+	movesStalePicture,
+	conversationsRect,
 	type LayoutInput,
 	type TooltipPlacement,
 	type LayoutState,
@@ -1114,5 +1116,95 @@ describe("a tooltip beside the Sidebar, never over its rows", () => {
 			(each) => each.identity.kind === "tooltip",
 		);
 		expect(child?.rect.y).toBe(900 - 64 - 4);
+	});
+});
+
+describe("which moves would show a stale picture", () => {
+	it("is a view moved and resized at once, and only that", () => {
+		const at = { x: 248, y: 33, width: 1192, height: 867 };
+		expect(movesStalePicture(at, { ...at, x: 40, width: 1400 })).toBe(true);
+		// Moved at its size: the same frame, drawn elsewhere in the same frame.
+		expect(movesStalePicture(at, { ...at, x: 40 })).toBe(false);
+		// Resized where it stands: its old frame, where it was.
+		expect(movesStalePicture(at, { ...at, width: 1400 })).toBe(false);
+	});
+
+	/**
+	 * Every content view the Sidebar's toggle moves, in every arrangement it
+	 * can be in, the editor area included: each of them is one the window
+	 * holds back (`ShellWindow`).
+	 */
+	it("is what the Sidebar's toggle does to every view right of it", () => {
+		const open = { width: 248, collapsed: false };
+		const shut = { width: 248, collapsed: true };
+		const arrangements: Partial<LayoutState>[] = [
+			{ surface: { kind: "agent" } },
+			{ surface: { kind: "agent" }, conversation: "whole" },
+			{ surface: { kind: "agent" }, conversation: "beside-board" },
+			{ surface: { kind: "split", editorKey: "/a", ratio: 0.5 } },
+			{
+				surface: { kind: "agent" },
+				terminal: { terminalId: "t", share: 0.4 },
+			},
+		];
+		for (const arrangement of arrangements) {
+			const before = state({ ...arrangement, sidebar: open });
+			const after = state({ ...arrangement, sidebar: shut });
+			const label = JSON.stringify(arrangement);
+			expect(
+				movesStalePicture(
+					agentsRect(WINDOW, before),
+					agentsRect(WINDOW, after),
+				),
+				label,
+			).toBe(true);
+			if (arrangement.conversation !== undefined) {
+				expect(
+					movesStalePicture(
+						conversationsRect(WINDOW, before),
+						conversationsRect(WINDOW, after),
+					),
+					label,
+				).toBe(true);
+			}
+			expect(
+				movesStalePicture(
+					workbenchRect(WINDOW, before),
+					workbenchRect(WINDOW, after),
+				),
+				label,
+			).toBe(true);
+		}
+	});
+
+	/**
+	 * A window resized from its edge moves no view that fills the content
+	 * area: each keeps its origin and is resized where it stands. A split's
+	 * Agent half does move, by its share of the change, which a live resize
+	 * follows frame by frame rather than holding back.
+	 */
+	it("is not what a window resize does to a view filling the content area", () => {
+		const wider = { width: 1600, height: 900 };
+		for (const surface of [
+			{ kind: "agent" } as const,
+			{ kind: "editor", editorKey: "/a" } as const,
+		]) {
+			const now = state({ surface });
+			expect(
+				movesStalePicture(agentsRect(WINDOW, now), agentsRect(wider, now)),
+			).toBe(false);
+			expect(
+				movesStalePicture(
+					workbenchRect(WINDOW, now),
+					workbenchRect(wider, now),
+				),
+			).toBe(false);
+		}
+		const split = state({
+			surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
+		});
+		expect(
+			movesStalePicture(agentsRect(WINDOW, split), agentsRect(wider, split)),
+		).toBe(true);
 	});
 });

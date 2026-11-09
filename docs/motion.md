@@ -86,6 +86,36 @@ composer) is placed in the frame the measurement changes in — a
 `ResizeObserver` answer is rendered with `flushSync` — or it trails what it
 stands on by a frame through every resize.
 
+## Views main moves
+
+The window is several pages, each in its own view, and main lays them out
+(`windowLayout.ts`). A view's picture is its page's last frame, drawn for one
+size. Moved at its size, a view lands exactly, in the same frame as every
+other view; resized where it stands, its old picture stays where it was
+until the page catches up. Moved _and_ resized — every content view when the
+Sidebar collapses or expands, the Agent half entering or leaving a split,
+the Orchestrator's conversation beside its board — the old picture is drawn
+at the new place until the page has drawn again: the conversation showed
+209px off for one to three frames.
+
+So a change of arrangement moves such a view in two exact steps
+(`ShellWindow.staged`): it is resized off the window, its page says when it
+has drawn at that size (`settleLayout`, answered by every page's preload),
+and it is then moved to its place at that size. Between the two its place
+is the content area's empty ground for a few frames — never a picture in the
+wrong place — and a page that does not answer within 200 ms is not waited
+for. A divider being dragged and the window being resized are followed
+frame by frame instead: holding a view back at every step would blank it the
+whole way, and a view that fills the content area keeps its origin through a
+window resize, so only a split's Agent half moves there, by its share of
+each step.
+
+Measured on Xvfb at deviceScaleFactor 2, 60 fps screen captures: the
+Sidebar toggled over a conversation drew it 104–209px off for 1–3 frames
+each way before; after, no frame shows a view off its place, and the
+content area is empty for 2–4 frames. The same holds over a split and the
+Orchestrator's board.
+
 ## Reserved space for late content
 
 What will appear later has its room already, at its final size:
@@ -162,12 +192,6 @@ above the end moving after it has landed.
 
 ## Known, not yet fixed
 
-- **The Sidebar collapsing or expanding.** Main lays out every view at
-  once (`windowLayout.ts`), but each renderer repaints at its own pace: for
-  a frame the content view shows its old picture at its new place, about
-  180px off, and then settles. Nothing in a page can fix it; it wants main
-  to hold the new bounds until the pages involved have drawn for them (or a
-  covered transition), and is for the window layout's owner.
 - **Images of unknown size outside thumbnails** (a Markdown image, a file
   embed, a raster preview) are inserted before they are decoded; they
   should be decoded first and inserted with their size.

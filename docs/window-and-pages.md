@@ -58,6 +58,17 @@ and keyed the way every Mac menu is.
 thing that calls `setBounds` or `setVisible` on anything. Nothing else in
 DevHub has an opinion about where a view is.
 
+**A view is moved and resized in two steps when the arrangement changes.**
+A view's picture is its page's last frame, so a view given a new origin and
+a new size at once shows its old picture at its new place until its page
+draws again — the conversation 209px off as the Sidebar collapsed.
+`ShellWindow.layout` resizes such a view off the window first
+(`stagingRect`), and moves it to its place at that size once its page has
+said it drew there (`settleLayout`, answered in every preload by
+`bridge.ts`, or after 200 ms). Which moves those are is
+`movesStalePicture`; a drag and a window resize are followed as they go
+(`setLayoutState`'s `live`). See [`motion.md`](motion.md).
+
 **A `WebContentsView` inside another `WebContentsView` is not painted.** On
 macOS with this Electron a nested view is not composited at all: its renderer
 runs at the display's full rate and reports itself visible, and nothing

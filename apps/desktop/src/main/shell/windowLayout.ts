@@ -1050,3 +1050,43 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	);
 	return children;
 }
+
+/**
+ * Whether moving a view that is on screen from `from` to `to` shows its old
+ * picture in the wrong place.
+ *
+ * A view's picture is its page's last frame, and a frame is drawn for one
+ * size. Moved without being resized, the same frame is drawn at the new
+ * place in the same compositor frame as every other view: the move is exact.
+ * Resized where it stands, the old frame is drawn where it was, clipped or
+ * with a margin, until the page draws at the new size: nothing is anywhere
+ * it was not. Moved *and* resized, the old frame is drawn at the new place
+ * until the page catches up — the Sidebar collapsing drew the whole
+ * conversation 209px to the left of where it had been and of where it was
+ * going, for one to three frames. Only that case is held back
+ * (`ShellWindow.layout`, `docs/motion.md`).
+ */
+export function movesStalePicture(from: LayoutRect, to: LayoutRect): boolean {
+	const moved = from.x !== to.x || from.y !== to.y;
+	const resized = from.width !== to.width || from.height !== to.height;
+	return moved && resized;
+}
+
+/**
+ * Where a view waits, at the size it is going to have, while its page draws
+ * at that size: off the window but for its first pixel in the far corner, as
+ * a parked layer is (`parkedRect`), so it is still a view on screen and still
+ * painting. Once its page has drawn there, it is moved to its place at the
+ * same size, which is exact (`movesStalePicture`).
+ */
+export function stagingRect(
+	windowSize: LayoutSize,
+	size: LayoutSize,
+): LayoutRect {
+	return {
+		x: windowSize.width - 1,
+		y: windowSize.height - 1,
+		width: size.width,
+		height: size.height,
+	};
+}

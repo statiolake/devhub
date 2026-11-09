@@ -20,6 +20,8 @@ import { electron } from "../electron.js";
 import { sendLinksToTheBrowser } from "./externalLinks.js";
 import {
 	keyboardChild,
+	movesStalePicture,
+	stagingRect,
 	terminalExtent,
 	terminalSeam,
 	terminalStacked,
@@ -30,6 +32,7 @@ import {
 	windowLayout,
 	workbenchRect,
 	type ChildIdentity,
+	type LayoutChild,
 	type LayoutInput,
 	type LayoutState,
 } from "./windowLayout.js";
@@ -76,6 +79,13 @@ export interface TerminalNeovimHooks {
 	terminalFocused(terminalId: string): void;
 	overlaid(terminalId: string): OverlaidPanes;
 }
+
+/**
+ * How long a content view waits for its page to draw at its new size before
+ * it is put in its place anyway: a page that is busy, or not there, is not
+ * waited on for longer than a glance (`ShellWindow.staged`).
+ */
+const SETTLE_TIMEOUT_MS = 200;
 
 const NO_TERMINAL_NEOVIMS: TerminalNeovimHooks = {
 	keyboardOverlay: () => undefined,
@@ -160,6 +170,24 @@ export class ShellWindow {
 	private keyboardWaitsForChord = false;
 	/** `keyboardChild`'s answer as of the last `layout()`. */
 	private keyboardAnswer: string | undefined;
+	/**
+	 * Content views held off the window at the size they are about to have,
+	 * until their page says it has drawn at that size (`settleLayout`).
+	 *
+	 * A view moved and resized at once is drawn with its old picture at its
+	 * new place until its page catches up (`movesStalePicture`): the Sidebar
+	 * collapsing showed the conversation 209px off for up to three frames.
+	 * So a change of arrangement does it in two steps that are each exact:
+	 * the view is resized where nothing of it shows (`stagingRect`), and once
+	 * its page has drawn at that size it is moved, at that size, to its place.
+	 * In between its place shows the window's own page under it — the
+	 * content area's empty ground, never a picture in the wrong place.
+	 */
+	private readonly staged = new Map<
+		ChromeView,
+		{ readonly token: number; readonly width: number; readonly height: number }
+	>();
+	private settleTokens = 0;
 	/**
 	 * What the arrangement is, as the model says.
 	 *
@@ -1119,12 +1147,18 @@ export class ShellWindow {
 	 * editor is what is being typed into. In a split those have different
 	 * answers, and they are two fields here.
 	 */
-	setLayoutState(state: LayoutState): void {
+	setLayoutState(
+		state: LayoutState,
+		options: { readonly live?: boolean } = {},
+	): void {
 		const before = JSON.stringify(this.state);
 		if (state.conversation !== "beside-board") this.onBoard = false;
 		this.state = state;
 		if (JSON.stringify(state) === before) return;
-		this.layout();
+		// A drag follows the pointer frame by frame, and holding a view back
+		// at every step would blank it the whole way: only a change of
+		// arrangement is settled (`staged`).
+		this.layout(options.live === true ? "live" : "settle");
 		// Revealing a surface is a request to type into it, and only main can
 		// take the keyboard off the view that had it.
 		this.focusSurface();
@@ -1268,6 +1302,108 @@ export class ShellWindow {
 		};
 	}
 
+	/** The content view a child of the layout is, when it is one. */
+	private contentView(identity: ChildIdentity): ChromeView | undefined {
+		switch (identity.kind) {
+			case "agents":
+				return this.agents;
+			case "conversations":
+				return this.conversations;
+			case "terminal":
+				return this.terminalViews.get(identity.terminalId);
+			case "neovim":
+				return this.editorTerminals.get(identity.editorKey);
+			default:
+				return undefined;
+		}
+	}
+
+	/**
+	 * The layout, with every content view that would show a stale picture
+	 * held at its staging place instead (`staged`).
+	 *
+	 * Only in a `settle` pass does a view start waiting, and only one that is
+	 * on screen now and stays on screen: one being shown was sized while it
+	 * was hidden. A view already waiting goes on waiting through any pass —
+	 * a notice resizing, the window resizing — while the size it waits at is
+	 * still the one it is going to have, and starts again at the new size
+	 * when that has changed.
+	 */
+	private stage(
+		children: readonly LayoutChild[],
+		mode: "live" | "settle",
+	): readonly LayoutChild[] {
+		const size = this.windowSize();
+		const onScreen = new Set<ChromeView>();
+		const placed = children.map((child) => {
+			const view = this.contentView(child.identity);
+			const contents = view?.contents();
+			if (view === undefined || contents === undefined || !child.visible) {
+				return child;
+			}
+			onScreen.add(view);
+			const target = child.rect;
+			const waiting = this.staged.get(view);
+			if (
+				waiting !== undefined &&
+				waiting.width === target.width &&
+				waiting.height === target.height
+			) {
+				return { ...child, rect: stagingRect(size, target) };
+			}
+			if (
+				waiting === undefined &&
+				!(
+					mode === "settle" &&
+					view.isVisible() &&
+					movesStalePicture(view.bounds(), target)
+				)
+			) {
+				return child;
+			}
+			this.settleTokens += 1;
+			const token = this.settleTokens;
+			this.staged.set(view, {
+				token,
+				width: target.width,
+				height: target.height,
+			});
+			contents.send(CHANNELS.settleLayout, {
+				token,
+				width: target.width,
+				height: target.height,
+			});
+			// A page that cannot answer (busy, or gone) is not waited for.
+			setTimeout(() => {
+				this.layoutSettled(token);
+			}, SETTLE_TIMEOUT_MS);
+			return { ...child, rect: stagingRect(size, target) };
+		});
+		for (const view of [...this.staged.keys()]) {
+			if (!onScreen.has(view)) this.staged.delete(view);
+		}
+		return placed;
+	}
+
+	/**
+	 * A page has drawn at the size its view waits at, or stopped being
+	 * waited for: the view goes to its place, at that size, in one move.
+	 */
+	layoutSettled(token: number): void {
+		for (const [view, waiting] of this.staged) {
+			if (waiting.token !== token) continue;
+			this.staged.delete(view);
+			this.layout();
+			return;
+		}
+	}
+
+	/** Whether a content view is held back right now — read by a test. */
+	isStaged(identity: ChildIdentity): boolean {
+		const view = this.contentView(identity);
+		return view !== undefined && this.staged.has(view);
+	}
+
 	/**
 	 * Put every child where the owner says it goes.
 	 *
@@ -1284,11 +1420,11 @@ export class ShellWindow {
 	 * it is in the list because the layout has to be able to say the keyboard
 	 * belongs to it.
 	 */
-	layout(): void {
+	layout(mode: "live" | "settle" = "live"): void {
 		if (this.window.isDestroyed()) {
 			return;
 		}
-		const children = windowLayout(this.layoutInput());
+		const children = this.stage(windowLayout(this.layoutInput()), mode);
 		// Bounds first, and every child that is not drawn hidden, before
 		// anything is shown: a view made visible before it is sized shows its
 		// previous size for a frame.

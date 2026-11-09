@@ -37,6 +37,7 @@ import {
 	type PageBridge,
 	type ProjectionBridge,
 	type RepositoryStatusBridge,
+	type SettleLayoutWire,
 	type OrchestratorBoardBridge,
 	type UsageLimitsBridge,
 	type SshHostWire,
@@ -97,7 +98,44 @@ export function onCurrent<T>(
 	};
 }
 
+/**
+ * Main holding this page's view off the window at a new size until the page
+ * has drawn at it (`ShellWindow.staged`): answered from here, for every page,
+ * so no page can forget it. Not a member of any bridge — nothing in a page
+ * asks or answers it.
+ *
+ * Drawn is: the viewport has the size asked for, and two more frames have
+ * begun since — the one laid out at that size has been handed to the
+ * compositor by then, so the view moved into place shows it, and not the
+ * picture from before. A page that never reaches the size (it was resized
+ * again) says nothing, and main stops waiting by itself.
+ */
+function answerSettleLayout(): void {
+	on<SettleLayoutWire>(CHANNELS.settleLayout, (ask) => {
+		const started = performance.now();
+		const settled = (frames: number) => {
+			if (frames === 0) {
+				ipcRenderer.send(CHANNELS.layoutSettled, ask.token);
+				return;
+			}
+			requestAnimationFrame(() => settled(frames - 1));
+		};
+		const sized = () => {
+			if (
+				window.innerWidth === ask.width &&
+				window.innerHeight === ask.height
+			) {
+				settled(2);
+			} else if (performance.now() - started < 1000) {
+				requestAnimationFrame(sized);
+			}
+		};
+		requestAnimationFrame(sized);
+	});
+}
+
 export function pageBridge(): PageBridge {
+	answerSettleLayout();
 	return {
 		// One way, and it has to be: see `raiseFailure` in `ipc/contract.ts`.
 		raiseFailure: (error: AppError) => {

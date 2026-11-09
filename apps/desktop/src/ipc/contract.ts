@@ -1005,6 +1005,13 @@ export interface WorkbenchAreaWire {
  * to clip its anchor to it: a row scrolled half out of the column has half a
  * rectangle, and a tooltip pointing at the invisible half points at nothing.
  */
+/** What `settleLayout` asks: answer `token` once drawn at this size. */
+export interface SettleLayoutWire {
+	readonly token: number;
+	readonly width: number;
+	readonly height: number;
+}
+
 export interface SidebarAreaWire {
 	readonly x: number;
 	readonly y: number;
@@ -2492,6 +2499,14 @@ export const CHANNELS = {
 	tooltipText: "devhub:tooltip-text",
 	/** The `tooltip` page saying how big the box it drew came out. */
 	tooltipSize: "devhub:tooltip-size",
+	/**
+	 * Main asking a content page to say when it has drawn at the size its
+	 * view is about to have (`SettleLayoutWire`); the view waits off the
+	 * window until it has (`ShellWindow.staged`).
+	 */
+	settleLayout: "devhub:settle-layout",
+	/** A page saying it has drawn at the size `settleLayout` named. */
+	layoutSettled: "devhub:layout-settled",
 	/** "Try Again" on a notice, on its way to the page that owns the boot. */
 	retryApp: "devhub:retry-app",
 	/** A page telling main that a notice has left the screen, and why. */
