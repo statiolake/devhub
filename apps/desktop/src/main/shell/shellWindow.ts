@@ -48,7 +48,7 @@ import { ToastsView } from "./toastsView.js";
 import { TooltipView } from "./tooltipView.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
 import { scrimColor, type ShellPalette } from "../../ipc/palette.js";
-import { NEOVIM_CHANNELS, type NeovimInset } from "../../ipc/neovim.js";
+import { NEOVIM_CHANNELS, type NeovimPlacement } from "../../ipc/neovim.js";
 import {
 	forwardedKey,
 	LeftOption,
@@ -140,9 +140,6 @@ export type ContentFocus =
 	| { readonly kind: "editor" }
 	| { readonly kind: "agents" }
 	| { readonly kind: "terminal"; readonly terminalId: string };
-
-/** An overlay's view that is its pane's cells. */
-const NO_INSET: NeovimInset = { left: 0, top: 0, right: 0, bottom: 0 };
 
 export class ShellWindow {
 	readonly window: Electron.BrowserWindow;
@@ -265,6 +262,8 @@ export class ShellWindow {
 			rect: OverlayRect | undefined;
 			/** Its pane's rectangle when it was last shown (`overlayBounds`). */
 			last: OverlayRect | undefined;
+			/** Where its view was last put in the window. */
+			bounds?: OverlayRect;
 		}
 	>();
 	private terminalNeovims: TerminalNeovimHooks = NO_TERMINAL_NEOVIMS;
@@ -655,7 +654,7 @@ export class ShellWindow {
 		for (const [key, entry] of [...this.overlayViews]) {
 			if (wanted.has(key)) continue;
 			this.overlayViews.delete(key);
-			this.insetSaid.delete(key);
+			this.placementSaid.delete(key);
 			entry.view.dispose(this.window);
 		}
 		for (const view of views) {
@@ -700,10 +699,10 @@ export class ShellWindow {
 					target?.sendInputEvent(forwarded);
 				}
 			});
-			// A page that loads (again) starts with no inset: say it.
+			// A page that loads (again) has not heard where it is: say it.
 			contents?.on("did-finish-load", () => {
 				const entry = this.overlayViews.get(key);
-				if (entry !== undefined) this.sayInset(key, entry, true);
+				if (entry !== undefined) this.sayPlacement(key, entry, true);
 			});
 			this.overlayViews.set(key, {
 				view: page,
@@ -766,12 +765,14 @@ export class ShellWindow {
 	): void {
 		for (const [key, entry] of this.overlayViews) {
 			if (entry.terminalId !== terminalId) continue;
+			const bounds = overlayBounds(rect, entry.rect, entry.last);
 			entry.view.place(
 				this.window,
-				overlayBounds(rect, entry.rect, entry.last),
+				bounds,
 				visible && entry.rect !== undefined,
 			);
-			this.sayInset(key, entry);
+			entry.bounds = bounds;
+			this.sayPlacement(key, entry);
 		}
 		if (page === undefined) return;
 		const overlaid = this.terminalNeovims.overlaid(terminalId);
@@ -783,28 +784,37 @@ export class ShellWindow {
 	}
 
 	/**
-	 * Tell an overlay's page how much of its view is past its pane's cells
-	 * (`NeovimInset`): where it is shown, or was last. Said when it changes,
-	 * and again to a page that loaded (`force`).
+	 * Tell an overlay's page its view is on its pane (`NeovimPlacement`):
+	 * shown there, or hidden where it was last shown — never while it is
+	 * not placed yet or over the whole terminal. With how much of the view
+	 * is past the pane's cells. Said when it changes, and again to a page
+	 * that loaded (`force`).
 	 */
-	private sayInset(
+	private sayPlacement(
 		key: string,
 		entry: {
 			readonly view: ChromeView;
 			readonly rect: OverlayRect | undefined;
 			readonly last: OverlayRect | undefined;
+			readonly bounds?: OverlayRect;
 		},
 		force = false,
 	): void {
-		const inset = (entry.rect ?? entry.last)?.inset ?? NO_INSET;
-		const said = JSON.stringify(inset);
-		if (!force && this.insetSaid.get(key) === said) return;
-		this.insetSaid.set(key, said);
-		entry.view.contents()?.send(NEOVIM_CHANNELS.inset, inset);
+		const rect = entry.rect ?? entry.last;
+		if (rect === undefined || entry.bounds === undefined) return;
+		const placement: NeovimPlacement = {
+			width: entry.bounds.width,
+			height: entry.bounds.height,
+			inset: rect.inset ?? { left: 0, top: 0, right: 0, bottom: 0 },
+		};
+		const said = JSON.stringify(placement);
+		if (!force && this.placementSaid.get(key) === said) return;
+		this.placementSaid.set(key, said);
+		entry.view.contents()?.send(NEOVIM_CHANNELS.placed, placement);
 	}
 
-	/** What each overlay's page was last told by `sayInset`. */
-	private readonly insetSaid = new Map<string, string>();
+	/** What each overlay's page was last told by `sayPlacement`. */
+	private readonly placementSaid = new Map<string, string>();
 
 	/** What each terminal's page was last told by `placeOverlays`. */
 	private readonly overlaidSaid = new Map<string, string>();

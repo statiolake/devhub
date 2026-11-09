@@ -975,6 +975,41 @@ export function clipboardPaste(text: string): [string[], string] {
 	return [normal.split("\n"), "v"];
 }
 
+/**
+ * Each tab's window sizes, as `winrestcmd()` gives them in that tab: a
+ * list of `{ window, command }`, the window one of the tab's own (not a
+ * float), for `LAYOUT_RESTORE_LUA`.
+ */
+const LAYOUT_SAVE_LUA = `
+local saved = {}
+for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+    if vim.api.nvim_win_get_config(win).relative == "" then
+      local cmd = vim.api.nvim_win_call(win, vim.fn.winrestcmd)
+      table.insert(saved, { win, cmd })
+      break
+    end
+  end
+end
+return saved
+`;
+
+/**
+ * `LAYOUT_SAVE_LUA`'s sizes put back, each tab's in that tab. Twice, as
+ * `:help winrestcmd()` asks: a window grown first can hold back the next.
+ */
+const LAYOUT_RESTORE_LUA = `
+for _, entry in ipairs(...) do
+  local win, cmd = entry[1], entry[2]
+  if vim.api.nvim_win_is_valid(win) then
+    pcall(vim.api.nvim_win_call, win, function()
+      vim.cmd(cmd)
+      vim.cmd(cmd)
+    end)
+  end
+end
+`;
+
 /** `g:clipboard`'s copy, as the text this Mac's clipboard gets. */
 export function clipboardCopy(
 	lines: readonly unknown[],
@@ -1051,6 +1086,13 @@ export class NeovimUi {
 		// reloaded) keeps its window grids and believes the new UI has them
 		// too, so it would send only what changes from here. A moment attached
 		// without multigrid frees them; the real attach then gets every cell.
+		// That moment is at half the size, and Neovim fits every tab's windows
+		// into it: growing back spreads the rows anew (a split's upper window
+		// left one row tall), so each tab's sizes are kept here and put back
+		// once attached (`LAYOUT_SAVE_LUA`).
+		const layout = await this.client
+			.request("nvim_exec_lua", [LAYOUT_SAVE_LUA, []])
+			.catch(() => undefined);
 		this.priming = true;
 		try {
 			// At another size, so every window moves or resizes and is placed
@@ -1084,6 +1126,13 @@ export class NeovimUi {
 				[],
 			])
 			.catch(() => undefined);
+		// The sizes the priming attach spread, put back once the command line
+		// has its height again.
+		if (layout !== undefined) {
+			await this.client
+				.request("nvim_exec_lua", [LAYOUT_RESTORE_LUA, [layout]])
+				.catch(() => undefined);
+		}
 		return { version };
 	}
 

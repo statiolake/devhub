@@ -221,6 +221,52 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		},
 	);
 
+	it(
+		"keeps every tab's window sizes when a new UI attaches to a Neovim that had one",
+		{ timeout: 15_000 },
+		async () => {
+			const h = await attached(60, 20);
+			const heights = `return vim.tbl_map(function(tab)
+				return vim.tbl_map(vim.api.nvim_win_get_height, vim.api.nvim_tabpage_list_wins(tab))
+			end, vim.api.nvim_list_tabpages())`;
+			// The upper window small, the lower large, in two tabs; the
+			// second tab's split across, its left window narrow.
+			await h.ui.request("nvim_exec_lua", [
+				"vim.cmd('split | resize 4 | tabnew | vsplit | vertical resize 9 | split | resize 13 | tabfirst')",
+				[],
+			]);
+			const before = (await h.ui.request("nvim_exec_lua", [
+				heights,
+				[],
+			])) as number[][];
+			const widths = `return vim.tbl_map(vim.api.nvim_win_get_width, vim.api.nvim_tabpage_list_wins(vim.api.nvim_list_tabpages()[2]))`;
+			const widthsBefore = await h.ui.request("nvim_exec_lua", [widths, []]);
+			h.ui.client.close();
+			const client = await NeovimClient.connect(lastSocket);
+			const ui = new NeovimUi(client, {
+				read: () => Promise.resolve(""),
+				write: () => undefined,
+			});
+			await ui.attach(
+				{
+					redraw: () => undefined,
+					guiWindows: () => undefined,
+					guiOpen: () => undefined,
+					guiClose: () => undefined,
+					guiSend: () => undefined,
+				},
+				60,
+				20,
+			);
+			expect(before[0]![0]).toBeLessThan(before[0]![1]! / 2);
+			expect(await ui.request("nvim_exec_lua", [heights, []])).toEqual(before);
+			expect(await ui.request("nvim_exec_lua", [widths, []])).toEqual(
+				widthsBefore,
+			);
+			client.close();
+		},
+	);
+
 	it("scrolls the grid as the buffer scrolls", async () => {
 		const h = await attached(40, 10);
 		h.ui.call("nvim_exec_lua", [

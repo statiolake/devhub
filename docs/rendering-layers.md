@@ -287,8 +287,14 @@ Seen while checking the above, not layering bugs but on the same path:
 - After the app is restarted, an editor whose Neovim kept running comes
   back with its windows' sizes changed (a split's upper window one row
   tall): the UI attaches at another size first and Neovim spreads the
-  difference. And a Neovim page reloaded (DevTools) stays blank: it does
-  not attach again.
+  difference. **Fixed** ("Neovim editor: windows keep their sizes through
+  a reattach"): two attaches at another size did it — the priming attach
+  at half the size (its sizes are now kept and put back), and a page that
+  attached before its view was on its pane (it now waits for main's
+  `placed`). Checked in the app: a split at 32 and 8 rows through three
+  restarts, 32 and 8 each time (31 and 8 became 17 and 22 before).
+- A Neovim page reloaded (DevTools) stays blank: it does not attach
+  again.
 - Pixel scrolling in a `:vsplit` (italics and CJK at the window's edge,
   fractional deltas with momentum) was checked frame by frame against a
   reference made of still frames, with software and with GPU

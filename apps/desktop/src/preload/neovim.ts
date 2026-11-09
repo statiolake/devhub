@@ -31,7 +31,7 @@ import {
 	type NeovimGuiWindowWire,
 	type NeovimGuiWindowsWire,
 	type NeovimHostToPage,
-	type NeovimInset,
+	type NeovimPlacement,
 	type NeovimPageEvent,
 	type NeovimRequestResult,
 	type PageToNeovimHost,
@@ -100,12 +100,11 @@ ipcRenderer.on(NEOVIM_CHANNELS.guiEvent, (_event, event: NeovimGuiEvent) => {
 });
 
 // Kept from before the page listens: main says it as the view is placed.
-const NO_INSET: NeovimInset = { left: 0, top: 0, right: 0, bottom: 0 };
-let inset = NO_INSET;
-const insetListeners = new Set<(inset: NeovimInset) => void>();
-ipcRenderer.on(NEOVIM_CHANNELS.inset, (_event, said: NeovimInset) => {
-	inset = said;
-	for (const listener of insetListeners) listener(inset);
+let placement: NeovimPlacement | undefined;
+const placedListeners = new Set<(placement: NeovimPlacement) => void>();
+ipcRenderer.on(NEOVIM_CHANNELS.placed, (_event, said: NeovimPlacement) => {
+	placement = said;
+	for (const listener of placedListeners) listener(said);
 });
 
 /** The port to the Neovim host, and which host it is. */
@@ -232,11 +231,11 @@ const neovim: DevhubNeovimApi = {
 		on("gui-event", (event) => {
 			listener(event.event);
 		}),
-	onInset: (listener) => {
-		insetListeners.add(listener);
-		listener(inset);
+	onPlaced: (listener) => {
+		placedListeners.add(listener);
+		if (placement !== undefined) listener(placement);
 		return () => {
-			insetListeners.delete(listener);
+			placedListeners.delete(listener);
 		};
 	},
 	guiMessage: (message) => {

@@ -91,7 +91,7 @@ import {
 import type {
   NeovimGuiWindowWire,
   NeovimGuiWindowsWire,
-  NeovimInset,
+  NeovimPlacement,
 } from "../../ipc/neovim";
 import type { AppAppearance } from "../../ipc/appShell";
 
@@ -145,15 +145,44 @@ function NeovimSurface({
     kind: "connecting",
   });
   const [generation, setGeneration] = useState(0);
-  // Over a tmux pane, the view reaches the boundary beside it: this much
-  // of it is past the pane's cells, Neovim's ground (`NeovimInset`).
-  const [inset, setInset] = useState<NeovimInset>({
-    left: 0,
-    top: 0,
-    right: 0,
-    bottom: 0,
-  });
-  useEffect(() => bridge.neovim.onInset(setInset), [bridge]);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  // Whether the view is on its pane (`NeovimPlacement`): until it is, its
+  // size is no pane's, and a UI attached at it would have Neovim reshape
+  // its windows. What waits to attach until then.
+  const placed = useRef({ ready: false, waiting: new Set<() => void>() });
+  useEffect(() => {
+    let target: NeovimPlacement | undefined;
+    const check = () => {
+      if (target === undefined) return;
+      if (
+        Math.abs(window.innerWidth - target.width) >= 1 ||
+        Math.abs(window.innerHeight - target.height) >= 1
+      )
+        return;
+      const p = placed.current;
+      p.ready = true;
+      const waiting = [...p.waiting];
+      p.waiting.clear();
+      for (const go of waiting) go();
+    };
+    const off = bridge.neovim.onPlaced((placement) => {
+      target = placement;
+      // Over a tmux pane, the view reaches the boundary beside it: this
+      // much of it is past the pane's cells, Neovim's ground. Set here, not
+      // by a render, so the grid is fitted inside it at the attach.
+      const surface = surfaceRef.current;
+      if (surface) {
+        const { top, right, bottom, left } = placement.inset;
+        surface.style.padding = `${String(top)}px ${String(right)}px ${String(bottom)}px ${String(left)}px`;
+      }
+      check();
+    });
+    window.addEventListener("resize", check);
+    return () => {
+      off();
+      window.removeEventListener("resize", check);
+    };
+  }, [bridge]);
   const [, setTick] = useState(0);
   const [guiContent, setGuiContent] = useState<ReadonlyMap<number, GuiContent>>(
     new Map(),
@@ -324,29 +353,37 @@ function NeovimSurface({
     setDecorations(NO_DECORATIONS);
     setLayers(NO_LAYERS);
     let cancelled = false;
-    const size = editor.fit();
-    void bridge.neovim
-      .attach({ workspaceId, cols: size.cols, rows: size.rows })
-      .then((result) => {
-        if (cancelled) return;
-        if (!result.ok) {
-          // While reconnecting by itself, a refused attach (the host still
-          // unreachable) is one more attempt, until they run out.
-          const again = reconnectAttempt.current > 0;
-          setConnection({
-            kind: "failed",
-            message: result.message,
-            reconnect: again,
-          });
-          return;
-        }
-        reconnectAttempt.current = 0;
-        editor.attached(size);
-        setConnection({ kind: "attached", version: result.version });
-        editor.focus();
-      });
+    const attach = () => {
+      if (cancelled) return;
+      const size = editor.fit();
+      void bridge.neovim
+        .attach({ workspaceId, cols: size.cols, rows: size.rows })
+        .then((result) => {
+          if (cancelled) return;
+          if (!result.ok) {
+            // While reconnecting by itself, a refused attach (the host still
+            // unreachable) is one more attempt, until they run out.
+            const again = reconnectAttempt.current > 0;
+            setConnection({
+              kind: "failed",
+              message: result.message,
+              reconnect: again,
+            });
+            return;
+          }
+          reconnectAttempt.current = 0;
+          editor.attached(size);
+          setConnection({ kind: "attached", version: result.version });
+          editor.focus();
+        });
+    };
+    // Once the view is on its pane, at its size (`NeovimPlacement`).
+    const place = placed.current;
+    if (place.ready) attach();
+    else place.waiting.add(attach);
     return () => {
       cancelled = true;
+      place.waiting.delete(attach);
       unsubscribe();
       offRedraw();
       offEnded();
@@ -623,6 +660,7 @@ function NeovimSurface({
 
   return (
     <div
+      ref={surfaceRef}
       className="neovim-surface"
       style={
         nvim
@@ -630,7 +668,6 @@ function NeovimSurface({
               ["--nvim-editor-ground" as string]: cssColor(
                 nvim.defaults.background,
               ),
-              padding: `${String(inset.top)}px ${String(inset.right)}px ${String(inset.bottom)}px ${String(inset.left)}px`,
               // The type scale of everything DevHub sets in the UI face
               // (`neovim.css`): from the grid's size, so a larger terminal
               // font makes the hovers, toasts, labels and code larger too.

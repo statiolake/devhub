@@ -183,7 +183,13 @@ it runs a Lua snippet (`SETUP_LUA`) that:
 keeps its window grids and assumes a new multigrid UI has them too. So the
 attach is preceded by a moment attached without multigrid (at another size),
 which frees them, and a window Neovim does not place again is placed from the
-layout Lua reports. A Neovim stopped at a prompt is let out of it first.
+layout Lua reports. That moment fits every tab's windows into the other size,
+and growing back spreads the rows anew, so each tab's sizes are kept before it
+(`winrestcmd()`) and put back once attached. The page attaches only once its
+view is on its pane, at the pane's size (main's `devhub:neovim:placed`): a
+view not yet placed, or over the whole terminal, is no pane's size, and a UI
+attached at it reshapes the windows the same way. A Neovim stopped at a
+prompt is let out of it first.
 
 ### The page
 
