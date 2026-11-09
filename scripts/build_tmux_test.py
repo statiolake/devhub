@@ -23,6 +23,7 @@ import re
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -36,6 +37,7 @@ from build_tmux import (
 	TMUX,
 	check_layout,
 	check_system_only,
+	download,
 	pack,
 	release_tag,
 	tarball_name,
@@ -57,6 +59,47 @@ def resolve(template: str, **values: str) -> str:
 	for name, value in values.items():
 		template = template.replace("${" + name + "}", value)
 	return template
+
+
+class Download(unittest.TestCase):
+	"""A server that could not answer now is asked again; any other answer is final."""
+
+	def answers(self, *outcomes):
+		calls = []
+
+		def opener(url):
+			calls.append(url)
+			outcome = outcomes[len(calls) - 1]
+			if isinstance(outcome, Exception):
+				raise outcome
+			return io.BytesIO(outcome)
+
+		return opener, calls
+
+	def gateway(self, code: int = 504) -> urllib.error.HTTPError:
+		return urllib.error.HTTPError("https://x/a", code, "Gateway Time-out", {}, None)
+
+	def test_a_5xx_or_an_unreachable_server_is_asked_again(self) -> None:
+		opener, calls = self.answers(
+			self.gateway(), urllib.error.URLError("reset"), b"bytes"
+		)
+		waits = []
+		with mock.patch("builtins.print"):
+			self.assertEqual(download("https://x/a", wait=waits.append, opener=opener), b"bytes")
+		self.assertEqual(len(calls), 3)
+		self.assertEqual(waits, [2, 4])
+
+	def test_a_4xx_is_final(self) -> None:
+		opener, calls = self.answers(self.gateway(404))
+		with self.assertRaises(urllib.error.HTTPError):
+			download("https://x/a", wait=lambda _: None, opener=opener)
+		self.assertEqual(len(calls), 1)
+
+	def test_it_gives_up_after_four(self) -> None:
+		opener, calls = self.answers(*[self.gateway()] * 4)
+		with mock.patch("builtins.print"), self.assertRaises(urllib.error.HTTPError):
+			download("https://x/a", wait=lambda _: None, opener=opener)
+		self.assertEqual(len(calls), 4)
 
 
 class DownloadTemplate(unittest.TestCase):

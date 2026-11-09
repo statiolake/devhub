@@ -83,6 +83,8 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -272,6 +274,35 @@ def compiler(os_name: str) -> str:
 	return musl
 
 
+DOWNLOAD_ATTEMPTS = 4
+
+
+def download(url: str, wait=time.sleep, opener=urllib.request.urlopen) -> bytes:
+	"""The body of `url`, asked again when the server could not answer now.
+
+	ftp.gnu.org and GitHub's release downloads answer 502, 503 or 504 now and
+	then; one such answer failed a CI job that builds these from source. A
+	5xx or a network error is asked again, three times more, a little later
+	each time; any other answer is final. `fetch` checks what comes back
+	against its pin, so asking again can never hand on different bytes.
+	"""
+	for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+		try:
+			with opener(url) as response:
+				return response.read()
+		except urllib.error.HTTPError as error:
+			if error.code < 500 or attempt == DOWNLOAD_ATTEMPTS:
+				raise
+			said = f"answered {error.code}"
+		except urllib.error.URLError as error:
+			if attempt == DOWNLOAD_ATTEMPTS:
+				raise
+			said = f"could not be reached ({error.reason})"
+		print(f"  {url} {said}; asking again")
+		wait(2 * 2 ** (attempt - 1))
+	raise AssertionError("unreachable")
+
+
 def fetch(source: Pinned, cache: Path) -> Path:
 	"""Download one pinned archive, or reuse the one already verified.
 
@@ -283,8 +314,7 @@ def fetch(source: Pinned, cache: Path) -> Path:
 	archive = cache / source.archive
 	if not archive.exists():
 		print(f"  downloading {source.archive}")
-		with urllib.request.urlopen(source.url) as response:
-			archive.write_bytes(response.read())
+		archive.write_bytes(download(source.url))
 
 	digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 	if digest != source.sha256:

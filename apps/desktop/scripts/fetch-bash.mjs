@@ -32,6 +32,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { download } from "./download.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const repository = join(root, "..", "..");
@@ -100,14 +101,7 @@ if (pin === undefined) {
       .replaceAll("${os}", os)
       .replaceAll("${arch}", cpu);
     console.log(`fetch-bash: ${url}`);
-    const response = await fetch(url);
-    if (!response.ok) {
-      console.error(
-        `fetch-bash: ${url} answered ${response.status} ${response.statusText}`,
-      );
-      process.exit(1);
-    }
-    bytes = Buffer.from(await response.arrayBuffer());
+    bytes = await download("fetch-bash", url);
     if (sha256(bytes) !== pin) {
       console.error(
         `fetch-bash: ${url} hashes to ${sha256(bytes)}; product.json pins ${pin}`,

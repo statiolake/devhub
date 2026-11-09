@@ -28,6 +28,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { download } from "./download.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const product = JSON.parse(readFileSync(join(root, "product.json"), "utf8"));
@@ -77,14 +78,7 @@ const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 let bytes = existsSync(archive) ? readFileSync(archive) : undefined;
 if (bytes === undefined || sha256(bytes) !== pin) {
   console.log(`fetch-neovim: ${url}`);
-  const response = await fetch(url);
-  if (!response.ok) {
-    console.error(
-      `fetch-neovim: ${url} answered ${response.status} ${response.statusText}`,
-    );
-    process.exit(1);
-  }
-  bytes = Buffer.from(await response.arrayBuffer());
+  bytes = await download("fetch-neovim", url);
   if (sha256(bytes) !== pin) {
     console.error(
       `fetch-neovim: ${url} hashes to ${sha256(bytes)}; product.json pins ${pin}`,
