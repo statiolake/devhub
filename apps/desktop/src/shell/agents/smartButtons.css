@@ -99,7 +99,7 @@
 
 /* A line coming and going. It takes its room at once — the box is laid out
    at its final size in the first frame, so what is measured off it (its
-   place on the composer, the transcript's reserve) is final too — and pops
+   place on the composer) is final too — and pops
    in there on the pop spring: up from small, overshooting a little and
    settling; lines arriving together follow one another (`--smart-order`,
    set by the component). It goes quickly, shrinking and fading in its place;

@@ -155,7 +155,7 @@ describe("following the end", () => {
   it("stays at the end when a shrink's scroll is read after something else grew", () => {
     // The send: the composer empties and the "sending" bubble gives way to
     // its echo — the position is clamped up — and before that scroll is read
-    // the Smart Buttons' reserve has grown under the last line. Read as a
+    // a diagram has grown under the last line. Read as a
     // direction, that was the person scrolling up.
     draw(transcriptOf(first));
     const box = geometry(scroller());
@@ -195,7 +195,7 @@ describe("following the end", () => {
         ),
       ),
     ).toBe(true);
-    // A diagram drawn, a picture loaded, the reserve under the last line.
+    // A diagram drawn, a picture loaded, a cut message's Show all.
     box.grow(250);
     resized(transcriptBox());
     expect(box.top).toBe(box.bottom());

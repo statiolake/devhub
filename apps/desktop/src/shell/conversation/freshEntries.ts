@@ -16,6 +16,10 @@
  * it is laid out. React never writes that attribute, so a re-render (every
  * streamed token) leaves it and the animation alone; the animation runs once,
  * when the attribute first applies.
+ *
+ * It answers how many draws have marked an entry fresh, so following the
+ * end can glide to what arrived rather than jump (`followGlide.ts`); call it
+ * before `useFollowScroll`, so the count is read after it was taken.
  */
 
 import { useLayoutEffect, useRef, type RefObject } from "react";
@@ -42,7 +46,8 @@ function entriesIn(nodes: Iterable<Node>, into: Map<string, HTMLElement>) {
 export function useFreshEntries(
   content: RefObject<HTMLElement | null>,
   revision: unknown,
-): void {
+): RefObject<number> {
+  const arrivals = useRef(0);
   const watch = useRef<
     | {
         readonly observer: MutationObserver;
@@ -122,11 +127,15 @@ export function useFreshEntries(
     const echoed = [...removed.keys()].some(
       (id) => id.startsWith("sending:") && !added.has(id),
     );
+    let marked = false;
     for (const child of arrived) {
       if (echoed && child.dataset.kind === "user") continue;
       child.dataset.fresh = "";
+      marked = true;
     }
+    if (marked) arrivals.current += 1;
   }, [content, revision]);
+  return arrivals;
 }
 
 /**

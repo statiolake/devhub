@@ -55,6 +55,7 @@ durations and curves:
 | a small control popping in (Stop, the way back to the end, a check) | `--motion-slower` 320 ms                        | `--ease-pop`      | from `--motion-scale-pop`                                             |
 | something leaving                                                   | `--motion-exit` 140 ms                          | `--ease-exit`     | fades, half a rise, in place                                          |
 | a change of place (FLIP glide)                                      | 240 ms (`GLIDE_MS`)                             | `--ease-standard` | `translate()` only                                                    |
+| a transcript following an entry that arrived (`followGlide.ts`)     | 167 ms (`FOLLOW_GLIDE_MS`)                      | WinUI's point to point `(0.55, 0.55, 0, 1)` | the transcript's `translateY()` only                  |
 | a disclosure opening or closing                                     | `--motion-slow`                                 | `--ease-standard` | its own block size                                                    |
 | panes and Neovim windows as their layout changes (`docs/pane-motion.md`) | 167 ms (zoom 250, a key's step 83, a drag 0; a window or tab switch WinUI's slide, 300 ms) | WinUI's point to point `(0.55, 0.55, 0, 1)` (`paneMotion.ts`) | `translate()` of nested clips and content, `opacity` |
 
@@ -117,6 +118,57 @@ each way before; after, no frame shows a view off its place, and the
 content area is empty for 2–4 frames. The same holds over a split and the
 Orchestrator's board.
 
+## Following new entries
+
+Each entry that arrives in a conversation — a message, a Bash command, a
+tool call, an answer, a request — comes in from below, and the transcript
+following it is shown moving, not jumping. Two motions, one per cause, each
+with a deliberate curve:
+
+- **The entry appears**: `conversation-rise-in`, the arrival every DevHub
+  card and notice makes — it fades in from nothing while rising
+  `--motion-rise` and growing from `--motion-scale-in`, on `--ease-enter`
+  over `--motion-slow` (240 ms). An arrival decelerates: it is fastest when
+  it is least visible and settles gently, so the eye lands on it at rest.
+  Only entries `useFreshEntries` marks rise in: output arriving, a few at a
+  time, never a history loading; and the mark is put on the element once,
+  so text streaming into an entry afterwards never starts it again.
+- **The transcript follows it** (only while it is following the end): the
+  scroll position is set to the end at once — the real `scrollTop`, so the
+  person's next scroll, find and "at the bottom" read the true layout — and
+  the transcript is drawn translated back down by exactly how far the
+  scroll moved, then let go to `none` (FLIP, `followGlide.ts`). The motion
+  is a change of place, so it is the one DevHub's panes make
+  (`docs/pane-motion.md`): WinUI's point to point curve, 167 ms. It starts
+  at speed, so the follow reads as the lines being pushed up by what
+  arrived rather than a pause and a scroll, and stops hard on the layout
+  with no overshoot. It is shorter than the fade, so the entry is in its
+  place while it is still finishing appearing; together the entry slides up
+  from under the composer and fades in.
+
+The rules that keep it exact:
+
+- **Interrupted, it starts where it is drawn.** Entries arriving in quick
+  succession each start a new glide from the transform the running one has
+  at that moment (read off the computed style) plus the new scroll
+  distance, and every glide ends on `none`. Nothing jitters, nothing warps,
+  and the end is the layout to the pixel.
+- **Not following, nothing moves.** A transcript the person has scrolled up
+  in is held by scroll anchoring as before; what arrives rises in at the
+  end, out of view, and "New output" says so.
+- **Streaming is followed by the scroll alone.** An answer growing token by
+  token is not an arrival; the end is followed as it was, under any glide
+  still running.
+- **The glide never lengthens the scroll.** A translated box counts towards
+  its scroller's overflow, so the transcript sits in `.conversation-follow`,
+  which clips its block overflow (`overflow-y: clip`, not a scroll
+  container): what the glide moves past the end is under the composer.
+- **A jump is a jump.** The way back to the end, a send from far up, a pane
+  shown again: any running glide ends on the layout first, and nothing
+  that arrived while the pane was set aside glides when it is shown.
+- **Reduce Motion:** the tokens take the rise and scale to nothing, so an
+  entry only fades, and the follow is the jump it always was.
+
 ## Reserved space for late content
 
 What will appear later has its room already, at its final size:
@@ -126,9 +178,12 @@ What will appear later has its room already, at its final size:
   echo takes its place without moving anything.
 - **What comes and goes with a state keeps its room.** The activity line's
   room is kept while no turn runs (`conversation-activity-slot`); the
-  composer's footer row keeps a line for the context readout; the Smart
-  Buttons' reserve under the transcript is held while the stack stands on
-  the composer, not followed as its lines leave and return.
+  composer's footer row keeps a line for the context readout.
+- **What floats keeps no room.** The Smart Buttons on the composer and the
+  way back to the end float over the transcript's last lines; the
+  transcript ends right above the composer. (A reserve for the buttons,
+  held at the most they had ever taken, was a gap at the foot of every
+  conversation, and was removed.)
 - **A row's parts are there from the row's first frame.** An answer's
   Copy row is drawn with its first block of text, empty or not.
 - **Images have a size before they are decoded.** A thumbnail is a fixed
@@ -165,7 +220,9 @@ A transcript follows its end while it is at the end, and stays exactly
 where it is otherwise (`followScroll.ts`). Scrolled up, the browser's own
 `overflow-anchor` keeps the line being read still while things above it
 change; following, the end is the anchor and `overflow-anchor` is off. New
-output is followed only by the scroll, never by moving entries. Anything
+output is followed by the scroll, shown as one glide of the whole transcript
+when an entry arrived ("Following new entries"); entries never move
+relative to one another. Anything
 that changes the transcript's length without new output (a reserve, a
 status line) must not change it at all — see the reserved-space rules —
 because a followed transcript moves by every pixel of it.
@@ -207,6 +264,11 @@ because a followed transcript moves by every pixel of it.
   drawn, then lands at that size; a drag is followed at once.
 - `apps/desktop/src/shell/agents/orchestratorScreen.test.tsx`: the answer
   composer keeps its quick replies' row while there are none.
+- `apps/desktop/src/shell/conversation/followGlide.test.tsx`: following an
+  entry that arrived glides from where the transcript was seen to `none`,
+  on the point to point curve; an interrupted glide starts from the drawn
+  offset plus the new distance; streaming growth, a transcript scrolled up
+  and Reduce Motion do not glide.
 - `apps/desktop/src/shell/conversation/stability.test.tsx`: the "sending"
   bubble has its echo's structure (so its height), an answer's Copy row is
   there from its first block, the activity line's room is kept, and Copy

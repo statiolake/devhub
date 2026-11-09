@@ -20,8 +20,7 @@
  * entry drawn smaller than the room `content-visibility` kept for it) clamps
  * the position up, and a scroll event is read a frame after the layout it
  * came from — by which time something else may have grown that nothing has
- * followed yet (the Smart Buttons' reserve under the last line, a diagram, a
- * picture, a cut message's Show all). Read as a direction, that was "the
+ * followed yet (a diagram, a picture, a cut message's Show all). Read as a direction, that was "the
  * person scrolled up, away from the end", and the transcript stopped
  * following on every send. So a scroll leaves the end only while the person
  * is scrolling: a wheel or trackpad turned up, a key that scrolls, a press on
@@ -31,10 +30,15 @@
  * transcript is put back at the end.
  *
  * Growth is followed by watching the transcript's border box, padding
- * included (the Smart Buttons' reserve is padding), and the scroller's own
- * box. While following, scroll anchoring is off (`data-following`): the end
+ * included, and the scroller's own box. While following, scroll anchoring is off (`data-following`): the end
  * is the anchor then, and the browser holding some line still would only pull
  * against it.
+ *
+ * Given `arrivals` (`useFreshEntries`), the follow to an entry that arrived
+ * is shown as a glide, not a jump (`followGlide.ts`); the scroll position is
+ * the real one at once either way. Growth that is not an arrival — an answer
+ * streaming in, a picture decoded — is followed as before. A transcript that
+ * is not following is not moved by an arrival at all.
  *
  * A hidden surface (a parked Agent in the pool) has no box, so nothing it
  * reports means anything: its scrolls and resizes are ignored, and where it
@@ -50,6 +54,7 @@ import {
   type RefObject,
 } from "react";
 import { isChunk, topLevelEntry } from "./chunkElements";
+import { followGlide, type FollowGlide } from "./followGlide";
 
 /** How close to the end still counts as the end: sub-pixel scroll positions. */
 export const BOTTOM_SLACK_PX = 2;
@@ -181,18 +186,26 @@ export function useFollowScroll({
   content,
   hidden,
   revision,
+  arrivals,
 }: {
   readonly scroller: RefObject<HTMLElement | null>;
   readonly content: RefObject<HTMLElement | null>;
   readonly hidden: boolean;
   /** Changes whenever the transcript does: new output to follow, or to flag. */
   readonly revision: unknown;
+  /**
+   * Counts the draws in which an entry arrived (`useFreshEntries`), read
+   * after them: a follow in such a draw glides. `content` must then be in a
+   * box that clips its block overflow (`.conversation-follow`).
+   */
+  readonly arrivals?: RefObject<number>;
 }): FollowScroll {
   const [following, setFollowing] = useState(true);
   const [unseen, setUnseen] = useState(false);
   // Read by the observers without re-subscribing them on every change.
   const followingNow = useRef(true);
   const anchor = useRef<Anchor | undefined>(undefined);
+  const glide = useRef<FollowGlide | undefined>(undefined);
 
   const toBottom = useCallback(() => {
     const element = scroller.current;
@@ -215,6 +228,8 @@ export function useFollowScroll({
       throw new Error("the conversation's scroller was not mounted");
     }
     element.toggleAttribute("data-following", followingNow.current);
+    const gliding = followGlide(inner);
+    glide.current = gliding;
     /** Until when a scroll is the person's; a press holds it open. */
     let intentUntil = -Infinity;
     let pressed = false;
@@ -290,7 +305,7 @@ export function useFollowScroll({
     document.addEventListener("keydown", onKey, true);
     const observer = new ResizeObserver(onResize);
     observer.observe(element);
-    // The border box: the Smart Buttons' reserve is padding.
+    // The border box, padding included.
     observer.observe(inner, { box: "border-box" });
     return () => {
       element.removeEventListener("scroll", onScroll);
@@ -304,6 +319,8 @@ export function useFollowScroll({
       window.removeEventListener("touchend", onRelease);
       document.removeEventListener("keydown", onKey, true);
       observer.disconnect();
+      gliding.finish();
+      if (glide.current === gliding) glide.current = undefined;
     };
   }, [scroller, content, toBottom, setFollowingNow]);
 
@@ -311,10 +328,12 @@ export function useFollowScroll({
   // to the end. Otherwise new output is flagged, and a surface coming back
   // from the pool is put back on the entry it was showing.
   const seenRevision = useRef(revision);
+  const seenArrivals = useRef(arrivals?.current);
   const wasHidden = useRef(hidden);
   useLayoutEffect(() => {
     if (hidden) {
       wasHidden.current = true;
+      glide.current?.finish();
       return;
     }
     const element = scroller.current;
@@ -326,15 +345,26 @@ export function useFollowScroll({
     const shown = wasHidden.current;
     seenRevision.current = revision;
     wasHidden.current = false;
+    const counted = arrivals?.current;
+    const newEntry = counted !== seenArrivals.current;
+    seenArrivals.current = counted;
     if (followingNow.current) {
+      const before = element.scrollTop;
       toBottom();
+      // What arrived while the surface was set aside is not news when it is
+      // shown again (`useNoReplayOnShow`): only a draw seen arriving glides.
+      if (newEntry && arrived && !shown) {
+        glide.current?.follow(element.scrollTop - before);
+      }
       return;
     }
     if (shown && anchor.current) restore(element, inner, anchor.current);
     if (arrived) setUnseen(true);
-  }, [revision, hidden, scroller, content, toBottom]);
+  }, [revision, hidden, scroller, content, toBottom, arrivals]);
 
   const jumpToLatest = useCallback(() => {
+    // A jump is a jump: a glide still running ends on the layout first.
+    glide.current?.finish();
     setFollowingNow(true);
     anchor.current = undefined;
     setFollowing(true);

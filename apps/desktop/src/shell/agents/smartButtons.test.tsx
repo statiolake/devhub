@@ -412,26 +412,15 @@ describe("where the box stands", () => {
     expect(box().style.right).toBe("116px");
   });
 
-  it("keeps the GUI transcript clear of it: the transcript ends that much higher", () => {
+  it("floats over the GUI transcript: the transcript keeps no room for it", () => {
     mount({ over: { presentation: "gui" } });
     const surface = document.querySelector<HTMLElement>(
       '[data-surface-key="agent:a-1"]',
     )!;
-    // The box is 24px tall and stands 8px clear of the composer.
-    expect(surface.style.getPropertyValue("--smart-buttons-reserve")).toBe(
-      "32px",
-    );
-    cleanup();
-    // Dragged off the composer, it stands over nothing it must keep clear.
-    mount({
-      over: { presentation: "gui" },
-      stored: { right: 300, bottom: 200 },
-    });
-    expect(
-      document
-        .querySelector<HTMLElement>('[data-surface-key="agent:a-1"]')!
-        .style.getPropertyValue("--smart-buttons-reserve"),
-    ).toBe("");
+    // The person asked for the buttons to float: a reserve under the last
+    // line was a gap at the foot of every conversation.
+    expect(surface.style.getPropertyValue("--smart-buttons-reserve")).toBe("");
+    expect(surface.getAttribute("style") ?? "").not.toContain("reserve");
   });
 
   it("stands in a terminal's bottom right corner", () => {

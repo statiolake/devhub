@@ -350,43 +350,6 @@ export function SmartButtons({
       document.removeEventListener("visibilitychange", hidden);
     };
   }, [pressed]);
-  // On a GUI Agent's composer the stack stands over the transcript's last
-  // lines, so the transcript keeps that much room at its end
-  // (`--smart-buttons-reserve`, read by `conversation.css`) and nothing it
-  // says is ever under a button. Only lines take room: the header alone
-  // stands in the air the transcript already ends with.
-  const spotNow = drag?.to ?? stored;
-  const onComposer =
-    agent.presentation === "gui" &&
-    (spotNow === undefined ||
-      (isAnchoredSpot(spotNow) && spotNow.anchored === "top"));
-  //
-  // The room is held, not followed: once the stack has stood on the
-  // composer, its room stays at the most it has taken until the person moves
-  // the stack off. Lines leave when a turn starts and come back when it ends;
-  // a reserve that went with them took the transcript's end down under a
-  // followed conversation as the turn began and back up as it ended — the
-  // whole transcript moving twice a turn for buttons that were not there.
-  const held = useRef(0);
-  const measuredReserve =
-    onComposer && present.length > 0 && metrics !== undefined
-      ? Math.ceil(metrics.box.height + SPACING.gui.gap)
-      : 0;
-  held.current = onComposer ? Math.max(held.current, measuredReserve) : 0;
-  const reserve = held.current;
-  useLayoutEffect(() => {
-    const surface = own.current?.parentElement?.querySelector<HTMLElement>(
-      `[data-surface-key="agent:${agent.id}"]`,
-    );
-    if (!surface || reserve === 0) return;
-    surface.style.setProperty(
-      "--smart-buttons-reserve",
-      `${String(reserve)}px`,
-    );
-    return () => {
-      surface.style.removeProperty("--smart-buttons-reserve");
-    };
-  }, [agent.id, reserve]);
   if (lines.length === 0 && automatic.length === 0) return null;
 
   const spacing = SPACING[agent.presentation];
@@ -778,8 +741,8 @@ function useMetrics(
       return () => watcher.disconnect();
     }
     // A GUI Agent's queued messages are the transcript's last lines, not
-    // over the composer: the box stands on the composer's own box, and the
-    // transcript keeps the room it takes (`--smart-buttons-reserve`).
+    // over the composer: the box stands on the composer's own box, floating
+    // over the transcript's last lines. The transcript keeps no room for it.
     const measure = () => {
       const paneRect = pane.getBoundingClientRect();
       const boxRect = box.getBoundingClientRect();

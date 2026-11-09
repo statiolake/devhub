@@ -193,6 +193,8 @@ export function ConversationSurface({
 
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
+  // First: what arrived in a draw is known before following the end reads it.
+  const arrivals = useFreshEntries(content, transcript);
   const { following, unseen, jumpToLatest } = useFollowScroll({
     scroller,
     content,
@@ -200,8 +202,8 @@ export function ConversationSurface({
     // parked surface is.
     hidden: hidden || maximized !== undefined,
     revision: transcript,
+    arrivals,
   });
-  useFreshEntries(content, transcript);
   useLayoutEffect(() => {
     if (!hidden) perfProbe("conversation-committed", transcript);
   }, [hidden, transcript]);
@@ -494,43 +496,47 @@ export function ConversationSurface({
                                 tree.unattached.length === 0 ? (
                                   <EmptyTranscript />
                                 ) : null}
-                                <div
-                                  className="conversation-transcript conversation-selectable"
-                                  ref={content}
-                                >
-                                  <ChunkedEntries entries={topLevel} />
-                                  {transcript.sending.map((message) => (
-                                    <SendingView
-                                      key={message.id}
-                                      message={message}
+                                {/* Clips what a follow's glide moves past
+                                    the end (`followGlide.ts`). */}
+                                <div className="conversation-follow">
+                                  <div
+                                    className="conversation-transcript conversation-selectable"
+                                    ref={content}
+                                  >
+                                    <ChunkedEntries entries={topLevel} />
+                                    {transcript.sending.map((message) => (
+                                      <SendingView
+                                        key={message.id}
+                                        message={message}
+                                      />
+                                    ))}
+                                    {transcript.compacting ? (
+                                      <CompactingView />
+                                    ) : null}
+                                    {transcript.limitResume ===
+                                    undefined ? null : (
+                                      <LimitResumeView
+                                        resume={transcript.limitResume}
+                                      />
+                                    )}
+                                    {tree.unattached.map((request) => (
+                                      <div
+                                        className="conversation-entry"
+                                        data-kind="request"
+                                        data-entry-id={`request:${request.id}`}
+                                        key={request.id}
+                                      >
+                                        <RequestCard request={request} />
+                                      </div>
+                                    ))}
+                                    <ActivityLine transcript={transcript} />
+                                    <QueuedMessages
+                                      pending={transcript.pending}
+                                      state={transcript.state}
+                                      reportEdit={reportEdit}
+                                      flushDraft={flushDraft}
                                     />
-                                  ))}
-                                  {transcript.compacting ? (
-                                    <CompactingView />
-                                  ) : null}
-                                  {transcript.limitResume ===
-                                  undefined ? null : (
-                                    <LimitResumeView
-                                      resume={transcript.limitResume}
-                                    />
-                                  )}
-                                  {tree.unattached.map((request) => (
-                                    <div
-                                      className="conversation-entry"
-                                      data-kind="request"
-                                      data-entry-id={`request:${request.id}`}
-                                      key={request.id}
-                                    >
-                                      <RequestCard request={request} />
-                                    </div>
-                                  ))}
-                                  <ActivityLine transcript={transcript} />
-                                  <QueuedMessages
-                                    pending={transcript.pending}
-                                    state={transcript.state}
-                                    reportEdit={reportEdit}
-                                    flushDraft={flushDraft}
-                                  />
+                                  </div>
                                 </div>
                               </div>
                               {following ? null : (

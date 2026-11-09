@@ -228,6 +228,17 @@
   overflow-anchor: none;
 }
 
+/* The transcript's own box in the scroll, clipping its block overflow: what a
+   follow's glide (`followGlide.ts`) translates past the end is under the
+   composer, and must not make the scroll any longer — a translated box
+   counts towards its scroller's overflow, and the end would move down by the
+   glide's offset while it ran. `clip` is not a scroll container, so nothing
+   inside loses its scroller. */
+.conversation-follow {
+  overflow-x: visible;
+  overflow-y: clip;
+}
+
 .conversation-transcript {
   max-width: calc(var(--conversation-measure) + 2 * var(--conversation-gutter));
   box-sizing: border-box;
@@ -237,13 +248,12 @@
 
 /* The conversation's own transcript ends under the composer: its last lines
    are clear of it once followed to the end, and pass under its fade while
-   scrolled. It also keeps the room the Smart Buttons standing on the
-   composer take (`--smart-buttons-reserve`, set by `SmartButtons.tsx`), so
-   no button is ever over what it says. */
-.conversation-body > .conversation-scroll > .conversation-transcript {
-  padding-bottom: calc(
-    var(--space-4) + var(--dock-overlap) + var(--smart-buttons-reserve, 0px)
-  );
+   scrolled. Nothing else is kept under them: the Smart Buttons standing on
+   the composer float over the last lines, as the way back to the end does.
+   (A reserve for them, held at the most they had ever taken, was a gap at
+   the foot of every conversation.) */
+.conversation-body > .conversation-scroll .conversation-transcript {
+  padding-bottom: calc(var(--space-4) + var(--dock-overlap));
 }
 
 /* The transcript is text to read and quote: it is selectable
