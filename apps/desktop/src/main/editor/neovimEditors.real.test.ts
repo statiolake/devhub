@@ -62,6 +62,7 @@ class FakePage implements NeovimPage {
 	readonly id = FakePage.next++;
 	destroyed = false;
 	readonly #destroyed: (() => void)[] = [];
+	readonly #navigated: (() => void)[] = [];
 	isDestroyed(): boolean {
 		return this.destroyed;
 	}
@@ -69,6 +70,12 @@ class FakePage implements NeovimPage {
 	postMessage(): void {}
 	once(_event: "destroyed", listener: () => void): void {
 		this.#destroyed.push(listener);
+	}
+	on(_event: "did-navigate", listener: () => void): void {
+		this.#navigated.push(listener);
+	}
+	reload(): void {
+		for (const listener of this.#navigated) listener();
 	}
 	close(): void {
 		this.destroyed = true;
@@ -153,6 +160,42 @@ describe.skipIf(TEST_NVIM === undefined)("an overlay's UI", () => {
 		await vi.waitFor(async () => {
 			expect(await uiSizes(probe)).toEqual([]);
 		});
+		editors.dispose();
+	});
+
+	it("is let go of when its page loads again, and the page attaches anew at its size", async () => {
+		const { socket, probe } = await startNvim();
+		const ended: string[] = [];
+		const page = new FakePage();
+		const editors = new NeovimEditors({
+			neovims: {} as ManagedNeovims,
+			clipboard: { read: () => Promise.resolve(""), write: () => {} },
+			overlays: {
+				connection: () =>
+					Promise.resolve({
+						socketPath: socket,
+						server: 1,
+						machine: "local" as const,
+					}),
+				attached: () => {},
+				ended: (key: string) => {
+					ended.push(key);
+				},
+			},
+		});
+		const request = { workspaceId: "tnv:1", cols: 40, rows: 6 };
+		await expect(editors.attach(page, request)).resolves.toMatchObject({
+			ok: true,
+		});
+		page.reload();
+		await vi.waitFor(async () => {
+			expect(await uiSizes(probe)).toEqual([]);
+		});
+		await expect(
+			editors.attach(page, { ...request, cols: 80, rows: 20 }),
+		).resolves.toMatchObject({ ok: true });
+		expect(await uiSizes(probe)).toEqual(["80x20"]);
+		expect(ended).toEqual([]);
 		editors.dispose();
 	});
 

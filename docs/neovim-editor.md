@@ -188,8 +188,10 @@ and growing back spreads the rows anew, so each tab's sizes are kept before it
 (`winrestcmd()`) and put back once attached. The page attaches only once its
 view is on its pane, at the pane's size (main's `devhub:neovim:placed`): a
 view not yet placed, or over the whole terminal, is no pane's size, and a UI
-attached at it reshapes the windows the same way. A Neovim stopped at a
-prompt is let out of it first.
+attached at it reshapes the windows the same way. A page that loads again
+lets go of its old UI and its port to the Neovim host, which died with its
+old document, and attaches anew. A Neovim stopped at a prompt is let out of
+it first.
 
 ### The page
 

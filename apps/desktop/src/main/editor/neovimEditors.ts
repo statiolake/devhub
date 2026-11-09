@@ -166,6 +166,14 @@ export class NeovimEditors {
 			page.once("destroyed", () => {
 				this.release(page);
 			});
+			// A page that loads again (a reload) is a new document in the same
+			// web contents, which attaches again: its old UI goes, and so does
+			// its port to the host, which died with the old document — kept,
+			// the host's redraws would go to nobody and the page stay blank.
+			page.on("did-navigate", () => {
+				this.release(page);
+				this.options.host?.pageGone(page);
+			});
 		}
 		const reply = await this.attachTo(page, request);
 		// The page went while it attached: what attached is nobody's.

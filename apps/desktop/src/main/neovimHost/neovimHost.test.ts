@@ -152,6 +152,14 @@ class FakePage implements NeovimHostPage {
 	once(_event: "destroyed", listener: () => void) {
 		this.#destroyed.push(listener);
 	}
+	readonly #navigated: (() => void)[] = [];
+	on(_event: "did-navigate", listener: () => void) {
+		this.#navigated.push(listener);
+	}
+	/** A reload: a new document, which has none of the old one's ports. */
+	reload() {
+		for (const listener of this.#navigated) listener();
+	}
 	destroy() {
 		this.destroyed = true;
 		for (const listener of this.#destroyed.splice(0)) listener();
@@ -326,6 +334,34 @@ describe("a Neovim editor's UI in the Neovim host", () => {
 		expect(
 			page.sent.filter(([name]) => name === NEOVIM_CHANNELS.redraw),
 		).toEqual([]);
+	});
+
+	it("is attached again by a page that reloaded, which is handed a new port its redraws come on", async () => {
+		const w = world();
+		const page = new FakePage(1);
+		await w.editors.attach(page, REQUEST);
+		page.reload();
+		await settle();
+		// The old UI went with the old document.
+		expect(w.last().nvim.closed).toBe(true);
+		await expect(w.editors.attach(page, REQUEST)).resolves.toMatchObject({
+			ok: true,
+		});
+		expect(page.ports).toHaveLength(2);
+		w.last().nvim.send("redraw", [
+			["grid_line", [1, 0, 0, [["b"]]]],
+			["flush", []],
+		]);
+		await settle();
+		expect(page.events).toContainEqual({
+			type: "redraw",
+			workspaceId: WS,
+			batches: [
+				["grid_line", [1, 0, 0, [["b"]]]],
+				["flush", []],
+			],
+		});
+		expect(w.overlays.ended).not.toHaveBeenCalled();
 	});
 
 	it("refuses a call from a page that did not attach the Workspace", async () => {

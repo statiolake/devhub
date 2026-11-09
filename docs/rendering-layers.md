@@ -294,7 +294,11 @@ Seen while checking the above, not layering bugs but on the same path:
   `placed`). Checked in the app: a split at 32 and 8 rows through three
   restarts, 32 and 8 each time (31 and 8 became 17 and 22 before).
 - A Neovim page reloaded (DevTools) stays blank: it does not attach
-  again.
+  again. **Fixed** ("Neovim editor: a reloaded page attaches again"): it
+  did attach, but the host's redraws went to the port its old document
+  had; a page that loads again now lets its UI and its port go, is told
+  where it is again, and attaches with a new port. Checked in the app:
+  two reloads, the split drawn again at its sizes each time.
 - Pixel scrolling in a `:vsplit` (italics and CJK at the window's edge,
   fractional deltas with momentum) was checked frame by frame against a
   reference made of still frames, with software and with GPU

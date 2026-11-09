@@ -63,6 +63,8 @@ export interface NeovimHostPage {
 		transfer: Electron.MessagePortMain[],
 	): void;
 	once(event: "destroyed", listener: () => void): void;
+	/** It loaded again (a reload): a new document, without the old port. */
+	on(event: "did-navigate", listener: () => void): void;
 }
 
 /** What main hears of the UIs in the host. */
@@ -264,6 +266,14 @@ export class NeovimHostClient {
 		]);
 		this.#ports.set(page, { generation: this.#generation, page: id });
 		return id;
+	}
+
+	/**
+	 * The page loaded again: its port went with its old document, so its
+	 * next attach is handed a new one (and the host lets the old one go).
+	 */
+	pageGone(page: NeovimHostPage): void {
+		this.#pageGone(page);
 	}
 
 	#pageGone(page: NeovimHostPage): void {
