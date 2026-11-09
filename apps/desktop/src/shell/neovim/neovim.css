@@ -105,6 +105,48 @@
   inset: 0;
 }
 
+/* A pane while it moves (`GridPainter.motionGroup`, docs/pane-motion.md):
+   two nested clips the surface's size, each moved by a transform, cut it to
+   the rectangle it has now; the content inside them is its grid's parts,
+   moved by a transform too. Nothing is laid out while it moves, and its
+   text is drawn at its final size: never stretched. */
+.nvim-motion,
+.nvim-motion-edges {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.nvim-motion-edges {
+  pointer-events: none;
+}
+
+.nvim-motion-clip,
+.nvim-motion-content {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  will-change: transform;
+}
+
+.nvim-motion-clip {
+  overflow: hidden;
+}
+
+/* A line on a moving pane's edge: one pixel, stretched by its transform
+   (a plain colour, which scales cleanly). */
+.nvim-motion-edge {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
 .nvim-grid {
   position: absolute;
   image-rendering: auto;

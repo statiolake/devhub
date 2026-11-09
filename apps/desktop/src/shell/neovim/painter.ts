@@ -402,6 +402,20 @@ export const PART_Z = {
   boundary: 9,
 } as const;
 
+/**
+ * A moving pane's elements (`GridPainter.motionGroup`): `outer` in the
+ * level, `clipA` cutting left and top, `clipB` right and bottom, `content`
+ * holding the grid's parts; `edges` beside the clips, for the lines the
+ * pane draws on its own edges while it moves.
+ */
+export interface MotionGroup {
+  readonly outer: HTMLDivElement;
+  readonly clipA: HTMLDivElement;
+  readonly clipB: HTMLDivElement;
+  readonly content: HTMLDivElement;
+  readonly edges: HTMLDivElement;
+}
+
 /** What the page lays over a grid, in that grid's clip (`GridPainter.over`). */
 export type OverPart = "riders" | "cursor" | "covers";
 
@@ -462,6 +476,13 @@ export class GridPainter {
   private readonly canvases = new Map<number, GridCanvas>();
   /** One stacking element per `GridBox.z`, by z (`PART_Z`). */
   private readonly levels = new Map<number, HTMLDivElement>();
+  /** Each grid's pane while it moves (`motionGroup`), by grid. */
+  private readonly motion = new Map<number, MotionGroup>();
+  /** Where each part of a grid's was put, to move it into its group and back. */
+  private readonly parts = new Map<
+    HTMLElement,
+    { z: number; part: keyof typeof PART_Z; grid: number }
+  >();
   /** Each grid's clips for what the page lays over it, by grid and part. */
   private readonly overs = new Map<string, OverClip>();
   private lastBoxes: readonly GridBox[] = [];
@@ -635,11 +656,98 @@ export class GridPainter {
     return el;
   }
 
-  /** `el` as part `part` of level `z`, moved there if it was elsewhere. */
-  private put(el: HTMLElement, z: number, part: keyof typeof PART_Z): void {
-    const level = this.level(z);
-    if (el.parentElement !== level) level.append(el);
+  /**
+   * `el` as part `part` of level `z`, moved there if it was elsewhere; a
+   * part of `grid`'s while that grid's pane moves, in its motion group
+   * (`motionGroup`) instead, in the same order.
+   */
+  private put(
+    el: HTMLElement,
+    z: number,
+    part: keyof typeof PART_Z,
+    grid?: number,
+  ): void {
+    const group = grid === undefined ? undefined : this.motion.get(grid);
+    const parent = group?.content ?? this.level(z);
+    if (group !== undefined && group.outer.parentElement !== this.level(z))
+      this.level(z).append(group.outer);
+    if (el.parentElement !== parent) parent.append(el);
     el.style.zIndex = String(PART_Z[part]);
+    if (grid !== undefined) this.parts.set(el, { z, part, grid });
+  }
+
+  /**
+   * A grid's pane while it moves (`docs/pane-motion.md`): its parts — its
+   * ground, its canvas or scroll port, what the page lays over it — in one
+   * element that the surface moves by transforms only. Two nested clips the
+   * surface's size cut its left and top, then its right and bottom; the
+   * content inside carries the parts, still placed in the surface's pixels.
+   * Made at a transition's start, let go at its end (`endMotion`): at rest
+   * the parts are in their level as ever.
+   */
+  motionGroup(grid: number, z: number): MotionGroup {
+    let group = this.motion.get(grid);
+    if (group === undefined) {
+      const make = (className: string) => {
+        const el = document.createElement("div");
+        el.className = className;
+        return el;
+      };
+      group = {
+        outer: make("nvim-motion"),
+        clipA: make("nvim-motion-clip"),
+        clipB: make("nvim-motion-clip"),
+        content: make("nvim-motion-content"),
+        edges: make("nvim-motion-edges"),
+      };
+      group.clipB.append(group.content);
+      group.clipA.append(group.clipB);
+      group.outer.append(group.clipA, group.edges);
+      this.motion.set(grid, group);
+      this.level(z).append(group.outer);
+      for (const [el, at] of this.parts) {
+        if (!el.isConnected) this.parts.delete(el);
+        else if (at.grid === grid && el.parentElement === this.levels.get(at.z))
+          this.put(el, at.z, at.part, grid);
+      }
+    }
+    return group;
+  }
+
+  /** Every pane at rest: the parts back in their levels, the groups gone. */
+  endMotion(): void {
+    if (this.motion.size === 0) return;
+    const groups = [...this.motion.values()];
+    this.motion.clear();
+    for (const [el, at] of this.parts) {
+      if (!el.isConnected) this.parts.delete(el);
+      else if (groups.some((g) => el.parentElement === g.content))
+        this.put(el, at.z, at.part, at.grid);
+    }
+    for (const g of groups) g.outer.remove();
+    this.dropEmptyLevels();
+  }
+
+  /**
+   * A copy of a grid's picture as it is drawn now, at its CSS size: what a
+   * pane showed before its grid was resized, for the rows that leave it
+   * as it moves (`docs/pane-motion.md`).
+   */
+  picture(grid: number): HTMLCanvasElement | undefined {
+    const entry = this.canvases.get(grid);
+    if (entry === undefined || entry.width < 0) return undefined;
+    const copy = document.createElement("canvas");
+    copy.width = entry.canvas.width;
+    copy.height = entry.canvas.height;
+    copy.style.width = entry.canvas.style.width;
+    copy.style.height = entry.canvas.style.height;
+    copy.getContext("2d")?.drawImage(entry.canvas, 0, 0);
+    return copy;
+  }
+
+  /** The grids whose panes are moving now. */
+  moving(): ReadonlySet<number> {
+    return new Set(this.motion.keys());
   }
 
   /**
@@ -708,7 +816,7 @@ export class GridPainter {
     const x = (box.col + left) * cw;
     const y = (box.row + top) * ch;
     const { clip, inner } = entry;
-    this.put(clip, box.z, entry.part);
+    this.put(clip, box.z, entry.part, box.grid);
     clip.style.display = "";
     clip.style.left = `${String(x)}px`;
     clip.style.top = `${String(y)}px`;
@@ -787,8 +895,8 @@ export class GridPainter {
       // scrolling in pixels is in its port, which is.
       const port = this.scrolls.get(box.grid)?.port;
       if (port?.isConnected === true && canvas.parentElement === port)
-        this.put(port, box.z, "grid");
-      else this.put(canvas, box.z, "grid");
+        this.put(port, box.z, "grid", box.grid);
+      else this.put(canvas, box.z, "grid", box.grid);
       // A float's blank border is left out: the canvas is its text area,
       // where Neovim put it (`paintRow` draws the grid shifted by it).
       const crop = cropOf(box);
@@ -1389,7 +1497,7 @@ export class GridPainter {
         el.className = "nvim-pane";
         this.panes.set(pane.grid, el);
       }
-      this.put(el, box.z, "pane");
+      this.put(el, box.z, "pane", pane.grid);
       // Exactly half the column on each side, so the edges of windows
       // split across and down line up whatever is beside them.
       const half = (col: number) =>
@@ -1494,6 +1602,8 @@ export class GridPainter {
       readonly w: number;
       readonly h: number;
       readonly colour: number;
+      /** The grid whose pane it is: in its motion group while it moves. */
+      readonly grid?: number;
     }[],
   ): void {
     const keep = new Set<number>();
@@ -1505,7 +1615,7 @@ export class GridPainter {
         el.className = "nvim-pane";
         this.grounds.set(g.key, el);
       }
-      this.put(el, g.z, "pane");
+      this.put(el, g.z, "pane", g.grid);
       el.style.left = `${String(g.x)}px`;
       el.style.top = `${String(g.y)}px`;
       el.style.width = `${String(g.w)}px`;
