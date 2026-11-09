@@ -417,22 +417,15 @@
   position: relative;
 }
 
-/* `:`, `/`, `?`, `=`: a small chip on its cell, the one mark that differs. */
+/* `:`, `/`, `?`, `=`: plain text on its cell, the box's ink a little dimmed —
+   the one mark that differs, at the inset of everything else in the box. */
 .nvim-cmdline-badge {
   position: absolute;
   top: 0;
   box-sizing: border-box;
   text-align: center;
-  color: var(--secondary, var(--primary));
-}
-
-.nvim-cmdline-badge::before {
-  content: "";
-  position: absolute;
-  inset: 3px -3px;
-  z-index: -1;
-  border-radius: 4px;
-  background: var(--wash, rgb(127 127 127 / 14%));
+  color: inherit;
+  opacity: 0.6;
 }
 
 /* A prompt's own words (`[Y]es, (N)o: `), as Neovim colours a question. */

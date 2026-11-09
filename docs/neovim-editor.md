@@ -580,8 +580,9 @@ z-order and opaque canvas — and where the code still falls short:
   at the bottom, in one bordered box for `:`, `/`, `?`, `=`, an `input()`
   and a prompt alike. The bottom is Neovim's promise that what is typed,
   the answer to it, the mode and the ruler are in one place; one box for
-  all keeps that place and shape whatever is typed, and only the badge
-  before the text (`:`, `/`) differs. The box is a floating surface
+  all keeps that place and shape whatever is typed, and only the mark
+  before the text (`:`, `/`) differs: plain text, the box's ink a little
+  dimmed, no chip around it, at the inset of the rest of the box. The box is a floating surface
   ("Floating surfaces"): `NormalFloat`'s ground and ink, `FloatBorder`'s
   1px line and the floats' corner — the material of the completion menu
   that opens over it — enough to tell typed text from the windows' text

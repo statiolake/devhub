@@ -37,6 +37,35 @@ export function popupmenuPlace(
 }
 
 /**
+ * The command line's completion menu (`ext_popupmenu` on grid -1) against
+ * DevHub's box, not the row Neovim keeps: above the box, ending a gap over
+ * its top, as Neovim's own wildmenu rises from the command line; under it
+ * when there is more room there than above (a box near the top). Never
+ * over the box, whose padding and line are more than the row.
+ */
+export function cmdlineMenuPlace(
+  area: { readonly width: number; readonly height: number },
+  box: { readonly top: number; readonly height: number },
+  anchorLeft: number,
+  cellHeight: number,
+  items: number,
+): { left: number; top: number; maxHeight: number } {
+  const wanted = Math.min(PUM_MAX, items * cellHeight + 2 * PUM_PAD);
+  const above = box.top - 2;
+  const below = area.height - (box.top + box.height) - 2;
+  const left = Math.max(0, Math.min(anchorLeft, area.width - 200));
+  if (above >= wanted || above >= below) {
+    const height = Math.max(0, Math.min(wanted, above));
+    return { left, top: box.top - 2 - height, maxHeight: height };
+  }
+  return {
+    left,
+    top: box.top + box.height + 2,
+    maxHeight: Math.max(0, below),
+  };
+}
+
+/**
  * The command line's box, as `neovim.css` draws it: a hairline (1 px)
  * around the text, at most `BOX_PAD_Y` above and below it (less when the
  * rows kept for it are fewer: it stays inside them), `BOX_MARGIN` clear of

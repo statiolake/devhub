@@ -39,7 +39,7 @@ import {
 import { decorOf } from "./decor";
 import { NeovimEditor } from "./editor";
 import { terminalCellFont } from "./cellFont";
-import { cmdlineUiPos, popupmenuPlace } from "./place";
+import { cmdlineMenuPlace, cmdlineUiPos, popupmenuPlace } from "./place";
 import {
   currentModeInfo,
   msgText,
@@ -949,9 +949,10 @@ function chunksOfMsg(line: readonly MsgChunk[]): Chunks {
 }
 
 /**
- * The badge before the text: `:` for a command, `/` `?` for a search, `=`
+ * The mark before the text: `:` for a command, `/` `?` for a search, `=`
  * for an expression — the one mark that says what is typed, in a box that
- * is otherwise the same for all — or a prompt's own words.
+ * is otherwise the same for all; plain text, no chip around it, at the
+ * box's inset (`neovim.css`) — or a prompt's own words.
  */
 function CmdlineLead({
   line,
@@ -1428,11 +1429,12 @@ function Popupmenu({
   const lead = 3 * cell.width;
   const style: React.CSSProperties = {
     ...(command
-      ? // Over the command line's box, its candidates over the word they
-        // complete (`menu.col` counts `firstc`, a cell before the text).
-        popupmenuPlace(
-          { ...editor.areaSize(), height: bar.top },
-          bar.top,
+      ? // Against the command line's box, never over it, its candidates
+        // over the word they complete (`menu.col` counts `firstc`, a cell
+        // before the text).
+        cmdlineMenuPlace(
+          editor.areaSize(),
+          bar,
           (bar.col - 1 + menu.col) * cell.width - lead,
           cell.height,
           menu.items.length,

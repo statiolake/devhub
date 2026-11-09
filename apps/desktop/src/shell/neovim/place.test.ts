@@ -3,6 +3,7 @@ import {
   BOX_MARGIN,
   BOX_PAD_Y,
   cmdlinePlace,
+  cmdlineMenuPlace,
   cmdlineUiPos,
   popupmenuPlace,
 } from "./place";
@@ -26,6 +27,27 @@ describe("where the completion menu goes", () => {
 
   it("stays inside the right edge", () => {
     expect(popupmenuPlace(area, 100, 790, 16, 5).left).toBe(600);
+  });
+});
+
+describe("where the command line's completion menu goes", () => {
+  const area = { width: 800, height: 600 };
+
+  it("rises from the box's top, never over it", () => {
+    const box = { top: 560, height: 30 };
+    const place = cmdlineMenuPlace(area, box, 50, 16, 3);
+    expect(place.top + place.maxHeight).toBe(558);
+    expect(place.maxHeight).toBe(3 * 16 + 6);
+    // One candidate as well: above, not on the row under the text.
+    const one = cmdlineMenuPlace(area, box, 50, 16, 1);
+    expect(one.top + one.maxHeight).toBeLessThanOrEqual(box.top);
+  });
+
+  it("goes under the box when the room is there", () => {
+    const box = { top: 20, height: 30 };
+    const place = cmdlineMenuPlace(area, box, 50, 16, 5);
+    expect(place.top).toBe(52);
+    expect(place.top).toBeGreaterThanOrEqual(box.top + box.height);
   });
 });
 
