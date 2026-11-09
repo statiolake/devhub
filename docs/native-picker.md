@@ -1,18 +1,218 @@
-# Native picker UI (proposal)
+# Pickers: the quick pick and the editor's picker
 
-Status: proposed, not built; mocked for the person (files, grep and
-buffers pickers in the variant-B float style, light and dark), not picked yet.
+Status: tier 2 built (the quick pick for `vim.ui.select`/`vim.ui.input`,
+behind devhub.nvim's `quick_pick`, and tmux's choosers in the quick pick's
+look); tier 1 designed, not built — the person reviews it first. The rich
+picker's look is the mock of round 1 (files, grep, buffers, variant-B
+floats, light and dark).
 
-A picker is drawn today as the plugin's Neovim floats (snacks: an input, a
-list and a preview window), which DevHub paints as cells in its float frame
-(`neovim-editor.md`, "The page": `floatClusters`, `frameCuts`). What cells
-cannot give: rows taller than a line, a file name in the UI face with its
-directory after it, matched characters as weight rather than a colour run,
-grep hits grouped under their file, flags as words. The idea: keep the
-picker's logic — sources, matching, sorting, actions, keymaps — in Neovim,
-and let DevHub draw the input and the list natively from the picker's state.
+## Two tiers
 
-## What the pickers offer
+Every "which one?" in DevHub is one of two things, and each gets one UI:
+
+1. **The editor's picker** — snacks (or an equivalent): files, grep,
+   buffers, LSP locations. It carries far more than a choice: a preview,
+   counts, toggles, source-specific columns, match positions, multi-select,
+   the person's own keys and actions. It gets a rich native UI of its own,
+   drawn by DevHub from Neovim buffers whose logic stays snacks' (below,
+   "Tier 1"). Forcing it into the quick pick would lose what it is for.
+2. **Everything simple is DevHub's quick pick** — the command palette's
+   control, `Picker` (`shell/components/shell/Picker.tsx`, "the rule": every
+   question that takes a choice among options, or one line of typing, is
+   this control). Neovim's `vim.ui.select` and `vim.ui.input`, tmux's
+   `choose-tree`/`choose-window`/`choose-session`/`find-window` in control
+   mode, and DevHub's own questions (workspaces, commands, themes, Agents,
+   confirmations) — which already were — use it.
+
+## Tier 2: the quick pick
+
+One look and one keyboard model, whoever asks: a header band (what is
+asked, and why), a search field, ranked rows, Return chooses, Escape
+cancels, the arrows and `C-n`/`C-p` move. `PickerParts.tsx` holds the
+pieces (`PickerHeader`, `PickerSearchGlyph`, `PickerRowText`); `Picker` is
+drawn from them, and so is anything that draws the quick pick for state
+that is not its own.
+
+### `vim.ui.select` and `vim.ui.input`
+
+```
+Lua: vim.ui.select(items, opts, on_choice)          (devhub_gui.select)
+  └ gui event "quick_pick" {id, title, question, rows | input}
+     └ the Neovim page ─ NEOVIM_CHANNELS.quickPick ─▶ main: picker.ask()
+                                                       └ modal "quick-pick" (QuickPickSheet → Picker)
+     ◀─ answer (index | text | -1) ─ page ─ nvim_exec_lua devhub_gui._quick_pick_done(id, answer)
+  └ on_choice(item, idx) / on_confirm(text), scheduled; nil on Escape
+```
+
+- **Neovim does not wait.** No `rpcrequest`: the editor stays live behind
+  the sheet and the caller goes on from its callback, as `vim.ui.select`'s
+  contract already says it may. A second question replaces the first (one
+  quick pick at a time; the first is answered `nil`).
+- **Rows** are `format_item`'s text; the matching is the quick pick's own
+  scorer (`model/fuzzy.ts`), as for every DevHub question. An input is the
+  rule's line of typing: the field starts with `default`, and the one row
+  means what was typed.
+- **Opt-in.** devhub.nvim's `setup{ quick_pick = true }` makes
+  `vim.ui.select`/`vim.ui.input` these (`gui.quick_pick()`); off by
+  default until the person approves. `devhub_gui.select`/`input` exist in
+  every DevHub-drawn Neovim and do nothing until called.
+- **Precedence.** snacks (`picker.ui_select`) and dressing replace
+  `vim.ui.select` in their own setup, which may run after devhub.nvim's.
+  With `quick_pick` on, devhub.nvim installs again on `VimEnter` and at
+  every attach (`User DevhubGui`), so in DevHub's GUI DevHub's wins: a
+  simple choice is DevHub's question, drawn as every other one. What it
+  replaced is kept and used outside DevHub (a terminal's Neovim, an SSH
+  TUI), so the person's snacks `ui_select` is still what they get there.
+- **`preview_item`** (after 0.12) is not drawn yet: the quick pick's `aside`
+  could hold the preview buffer's lines in their highlights (as a popup's
+  code is drawn); a select with a preview is closer to tier 1, so it waits
+  for that.
+
+### tmux's choosers
+
+`choose-tree`, `choose-window` (`-w`), `choose-session` (`-s`) and
+`find-window` stay what `docs/terminal-mode.md` says: tmux's semantics,
+kept in the pty host (`ptyHost/control/chooser.ts`) — the tree, the filter,
+which rows are open, what each key does, the template run on Enter. Only
+the drawing changed: `ChooserSheet.tsx` draws the rows the pty host sends
+with the quick pick's parts (header band, search field showing the filter,
+rows with the disclosure, "current" as the accessory), in the place tmux's
+box gives it. The chosen pane is still the painter's grid; the pty host
+puts it `CHOOSER_HEAD_ROWS` (4) under the box's top so the header and the
+field have whole rows. No key and no command changed.
+
+It is mounted in the terminal page, not on the modal layer, because the
+preview is a live grid the terminal's painter draws and the keys are routed
+to the pty host by the terminal (control mode has no Neovim to own them).
+
+`display-menu` stays a menu: its items are chosen by their own letters and
+it opens at the mouse, a pane or the status line (`-x`/`-y`) — a menu, not
+a question with a filter. The quick pick would take its letters for the
+filter.
+
+### Keys: the asymmetry
+
+The quick pick is DevHub UI, not a Neovim buffer. Its keys are DevHub's one
+model (type to filter, arrows, `C-n`/`C-p`, Return, Escape) for every
+question, wherever it came from — so a `vim.ui.select` does not see the
+person's Neovim maps, as Neovim's own `confirm()` does not. That is the
+point of tier 2: muscle memory for simple questions does not depend on who
+asked. tmux's choosers keep tmux's keys, routed to the pty host by the
+terminal, because tmux decides there. Tier 1 is the other way round: the
+editor's picker is Neovim's, so its keys are Neovim's (below).
+
+## Tier 1: the editor's picker (designed, not built)
+
+The person's decisions (round 2): no hidden snacks windows to keep in sync;
+snacks' logic driven as a library from a DevHub-owned frontend; panels
+backed by real Neovim buffers that take keys in Normal mode, as `gui.view`
+and `gui.open{ keyboard = 'neovim' }` do; the query a text field (Insert
+mode); the person's snacks keys as plain buffer-local maps.
+
+### Headless snacks
+
+Read at [882c996] (the dotfiles' lock). A `Snacks.picker` object can live
+without ever opening a window:
+
+- `require('snacks.picker.core.picker').new(opts)` with `find = false`
+  builds the finder, matcher, list, input, preview and layout objects; a
+  `Snacks.win` made with `show = false` opens no window and makes no buffer
+  ([win.lua#L252], `show` at L327), and the layout is made `show = false`
+  too. Nothing opens until `picker:show()`, which the adapter replaces on
+  the instance (`__newindex` is a `rawset`: [picker.lua#L43-L58]).
+- The query is `picker.input.filter.pattern` (or `.search` for a live
+  source) followed by `picker:find({ refresh = false })`, which is exactly
+  what snacks' own `TextChangedI` does ([input.lua#L62-L91]).
+- Results arrive through `picker.list` (`count()`, `get(i)`, `cursor`,
+  `_move(i, true)`); every change goes through `list:render()`, which
+  returns at once without a valid window ([list.lua#L550]) — the one funnel
+  the adapter replaces with its own redraw.
+- A row is `list:format(item)`: text, and extmarks whose `hl_group` names
+  the role (`SnacksPickerDir`, `SnacksPickerFile`, `SnacksPickerMatch` on
+  every matched character); it asks the window's width
+  ([list.lua#L467-L518]), so the adapter lends it the list window's id.
+- Keys are data: each `Snacks.win` normalises its `keys` into `win.keys`
+  (`{ lhs, rhs, mode, desc }`, [win.lua#L273-L312]), and
+  `picker.input.win:execute(name)` runs an action with no window
+  ([win.lua#L340-L372]). Actions read state, not windows: `confirm`/`jump`
+  use `picker:selected()` and `picker.main` ([actions.lua#L35-L60]); the
+  dotfiles' `send_to_rg` reads `picker.input.filter.search` and closes.
+
+### The frontend
+
+```lua
+-- devhub.nvim: lua/devhub/picker.lua (a sketch)
+local P = require('devhub').picker
+P.open(source, opts)        -- source: 'files' | 'grep' | … | a snacks opts table
+-- with setup{ picker = true }, Snacks.picker.pick is routed here in DevHub's GUI,
+-- so <C-e>/<C-f>/<C-t> and lib/grep.lua's opts need no change.
+
+-- What it makes (all real buffers, in floats DevHub draws itself):
+--   query buffer   one line, Insert mode; DevHub draws it as the field
+--   list buffer    one line per item (text + extmarks from list:format),
+--                  cursor line = the selection; DevHub paints it natively
+--                  (rows, icons, match weight, grouping), as gui.view does
+--   preview        a Neovim window (scratch buffer with treesitter, or the
+--                  item's own buffer), drawn as cells
+-- and devhub_gui.picker{ id, query = qwin, list = lwin, preview = pwin,
+--   title, counts, toggles, keys = { { '<CR>', 'open' }, … } }
+-- tells the page which windows make up the panel and what to draw round them.
+```
+
+- **Opens in Insert mode on the query**, as snacks does: the first thing a
+  person does in a file picker is type. `<Esc>` leaves Insert mode into the
+  list (Normal mode); `i`/`a`/`I`/`A` there go back to the field. `<Esc>`
+  or `q` in the list closes.
+- **Keys are buffer-local maps.** `picker.input.win.keys` become Insert-mode
+  maps on the query buffer and `picker.list.win.keys` Normal-mode maps on
+  the list buffer; an action's rhs is `picker.input.win:execute(action)`,
+  a function's is called with the snacks window as snacks does. So the
+  dotfiles' `<C-q>` → `send_to_rg` is an Insert-mode map on the query and
+  works as before. List motions (`list_down`/`up`/`top`/`bottom`,
+  `toggle_focus` on `/`) are left to Neovim's own `j`/`k`/`gg`/`G`/`/`,
+  counts included; `CursorMoved` on the list tells snacks
+  (`list:_move(lnum, true)`). In the query, `list_down` etc. move the list
+  window's cursor.
+- **The list buffer is a page of items** (the first few hundred matched),
+  rewritten as the matcher reports; DevHub does no matching. Its lines and
+  extmarks alone are a usable picker in a plain Neovim, so outside DevHub
+  the same frontend runs as ordinary floats (or the adapter is not
+  installed and snacks draws itself).
+- **The preview stays a Neovim window**: it is an editor's view of a file —
+  treesitter, the real buffer with unsaved edits, folds, diagnostics — which
+  DevHub already draws well; drawing code natively would mean a second
+  highlighter that disagrees with the colorscheme.
+
+### Risks
+
+- Actions that assume snacks' windows — `cycle_win`, `toggle_preview`,
+  `layout_*`, `toggle_maximize`, `preview_scroll_*`, `insert_*` (they write
+  into `input.win.buf`), `toggle_help_*` — need the adapter's own versions
+  or are left unmapped. Others' sources may add more.
+- `list:format` reads the window's width for `resolve` (truncation): the
+  adapter lends `list.win.win` for the call only, or a later snacks may read
+  more of the window.
+- snacks' internals (`list.render`, `list._move`, `win.keys`) are not its
+  public API; a snacks update can move them. The adapter pins to what it
+  checks (`pcall`, a version check) and falls back to snacks' own UI.
+- Insert mode in a buffer DevHub draws as a field: the caret and an IME's
+  preedit must be drawn in the field (as the command line draws them), not
+  at the hidden cell.
+
+### Spike plan
+
+1. devhub.nvim `picker.lua`: headless `files` with the dotfiles' config —
+   query buffer, list buffer, preview window as plain floats (no DevHub
+   drawing yet); `<CR>` and `<C-v>` open, `<Esc>`/`q` close; check
+   `Snacks.picker.resume()` and history still work.
+2. `grep` with `lib/grep.lua`'s opts: live search, `<C-q>` → `send_to_rg`.
+3. DevHub: `devhub_gui.picker` and the page's panel (the mock's rows over
+   the list window, the field over the query window, the frame round all
+   three); checked in the app with the dotfiles' config.
+4. `buffers`, `lsp_references`, multi-select (`<Tab>`), then the person
+   picks whether `Snacks.picker.pick` is routed by default.
+
+## Extension points (round 1)
 
 Read at the commits named (cloned 2026-11-09).
 
@@ -72,94 +272,13 @@ Read at the commits named (cloned 2026-11-09).
   eleven-year-old [#660], and [#35456] (a unified input concept over
   `ui2`, backlog) names none.
 
-## Options
-
-- **(a) A snacks frontend in devhub.nvim.** Hide the list window (and the
-  input) with `hide = true`, keep both alive, and stream snacks' rendered
-  state to a native surface. Keys, focus, matching and actions stay
-  snacks'; DevHub only draws.
-- **(b) Restyle the floats by filetype** (`snacks_picker_list`,
-  `TelescopeResults`) without an adapter. Cheap, and DevHub already frames
-  the cluster as one panel; but rows stay cells — the ceiling is a
-  selection pill and a frame, which is roughly today.
-- **(c) `vim.ui.select` only.** Covers code actions, `z=`, `:tselect` (and
-  previews after 0.12), and any plugin that calls it; but snacks owns
-  files, grep and buffers, and snacks itself takes `vim.ui.select`. Worth
-  having later as the generic case, not as the answer.
-- **(d) A generic picker surface in `devhub_gui`, fed by per-plugin
-  adapters.** (a)'s mechanism split in two: `devhub_gui.picker` knows rows
-  (runs with highlight names and match spans, a selected index, counts,
-  toggles, key hints) and a preview window; a twenty-line adapter per
-  plugin fills it. snacks first; telescope can follow through
-  `create_layout`, `vim.ui.select` through a tiny built-in source.
-
-## Proposal: (d), snacks first
-
-```lua
--- devhub.nvim, in DevHub's GUI only (gui.available())
-require('devhub').setup{ picker = true }     -- vim.g.devhub_native_picker = false keeps cells
-```
-
-The adapter merges into every picker's options (a `config` hook on
-`Snacks.picker`, no fork):
-
-- `win.list.hide = true` and `win.input.hide = true`. The layout is the
-  person's (`custom_default`: 80 % × 90 %, the preview 45 %), so every
-  window keeps its place; the hidden two are simply not drawn.
-- **Input.** The prompt buffer stays the current window, in Insert mode:
-  every map of the person's and of snacks works as before. On
-  `TextChangedI`/`CursorMovedI` Lua sends the line and the cursor's byte
-  column; DevHub draws the field (in the grid's face), its caret and an
-  IME preedit, as it does the command line.
-- **List.** After each `list:render()` (wrapped, or on the list buffer's
-  `on_lines`) Lua sends the visible rows as `list:format()` gave them —
-  text, runs with highlight names resolved to colours, match spans — with
-  `top`, `cursor`, `count()` and the selection. DevHub never matches, sorts
-  or scrolls on its own: it draws the rows snacks wrote.
-- **Page size.** The hidden window's height is no longer seen, so it is
-  the knob for how many items one page holds: DevHub measures how many of
-  its rows fit (24 px rows, grep's file headings) and Lua sets the hidden
-  window's height (and width, which `format` uses to truncate) to it — the
-  `gui.inline` measuring round trip again.
-- **Preview.** Stays a Neovim window: treesitter, the real buffer (unsaved
-  edits), the target line, folds and diagnostics are Neovim's, and DevHub
-  already draws grids well. The native panel is placed round its cells;
-  only the header (a breadcrumb, the line) is DevHub's.
-- **Mouse.** A click is `list:_move(idx, true)`, a double click
-  `confirm`, the wheel `list:scroll`, all over RPC; DevHub waits for the
-  next render.
-- **Chrome.** The variant-B frame, one panel (input band, list, preview, a
-  key-hint row from the input buffer's maps' `desc`). Rows are the
-  `SnacksPicker*` roles in DevHub's type: a file's name in the UI face and
-  its directory after it, matched characters bold, grep hits grouped under
-  their file (a heading DevHub adds above a run of one file's items: not
-  an item, so `j`/`k` never stop on it), buffer flags as words.
-- **Degrading.** Outside DevHub nothing is installed. Any error in the
-  adapter, or a picker whose layout has no list (`hidden`), takes the
-  `hide` off: the person's snacks as cells, framed as today.
-
-Wrinkles found in the source: `pick_win` (and anything calling
-`layout:unhide()`) sets `hide = false` on every window, so the adapter puts
-its two back on `on_update`; `layout.preview = 'main'` and split layouts
-(`sidebar`, the explorer) are left as cells at first.
-
-## Why this over the rest
-
-It is the only option that keeps the person's snacks setup — sources,
-`layouts`, `<C-q>`, `resume` — with zero porting, while removing the cell
-grid from the two parts that read worst as cells (the list and the input).
-It follows the editor's rule: Neovim owns state, layout and keys; DevHub
-paints data. Its seam is public API plus Neovim's own `hide`, not a fork;
-the generic surface (d) leaves room for telescope and `vim.ui.select`
-without making DevHub know a plugin. (b) is a polish of today; (c) misses
-the pickers the person uses; mini.pick and fzf-lua would mean switching
-pickers, and fzf-lua cannot be drawn natively at all.
-
-Before building: a spike in a real DevHub with the dotfiles' config to
-confirm a hidden current input window keeps Insert mode and IME through
-`ext_multigrid`, and that snacks' throttled `render()` is not starved
-while its list window is not redrawn.
-
+[win.lua#L252]: https://github.com/folke/snacks.nvim/blob/882c996cf28183f4d63640de0b4c02ec886d01f2/lua/snacks/win.lua#L252
+[picker.lua#L43-L58]: https://github.com/folke/snacks.nvim/blob/882c996cf28183f4d63640de0b4c02ec886d01f2/lua/snacks/picker/core/picker.lua#L43-L58
+[input.lua#L62-L91]: https://github.com/folke/snacks.nvim/blob/882c996cf28183f4d63640de0b4c02ec886d01f2/lua/snacks/picker/core/input.lua#L62-L91
+[list.lua#L467-L518]: https://github.com/folke/snacks.nvim/blob/882c996cf28183f4d63640de0b4c02ec886d01f2/lua/snacks/picker/core/list.lua#L467-L518
+[win.lua#L273-L312]: https://github.com/folke/snacks.nvim/blob/882c996cf28183f4d63640de0b4c02ec886d01f2/lua/snacks/win.lua#L273-L312
+[win.lua#L340-L372]: https://github.com/folke/snacks.nvim/blob/882c996cf28183f4d63640de0b4c02ec886d01f2/lua/snacks/win.lua#L340-L372
+[actions.lua#L35-L60]: https://github.com/folke/snacks.nvim/blob/882c996cf28183f4d63640de0b4c02ec886d01f2/lua/snacks/picker/actions.lua#L35-L60
 [882c996]: https://github.com/folke/snacks.nvim/tree/882c996cf28183f4d63640de0b4c02ec886d01f2
 [list.lua#L467-L548]: https://github.com/folke/snacks.nvim/blob/882c996cf28183f4d63640de0b4c02ec886d01f2/lua/snacks/picker/core/list.lua#L467-L548
 [list.lua#L233-L299]: https://github.com/folke/snacks.nvim/blob/882c996cf28183f4d63640de0b4c02ec886d01f2/lua/snacks/picker/core/list.lua#L233-L299
