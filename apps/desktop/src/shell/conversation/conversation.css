@@ -1719,14 +1719,20 @@
   display: none;
 }
 
+/* A thumbnail is a tile of one size whatever the picture: its room is
+   there before the picture has been decoded (an image's size is not known
+   until then, and an <img> of no size grew into place a frame later and
+   pushed everything after it down), and the picture is drawn in it at its
+   own size or smaller, never enlarged. */
 .conversation-image > summary > img {
   display: block;
-  max-width: 12em;
-  max-height: 8em;
+  width: 12em;
+  height: 8em;
+  box-sizing: border-box;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-control);
   background: var(--sunken);
-  object-fit: contain;
+  object-fit: scale-down;
 }
 
 .conversation-image[open] > summary {
@@ -1764,8 +1770,8 @@
 }
 
 .conversation-attachment .conversation-image > summary > img {
-  max-width: 6em;
-  max-height: 4em;
+  width: 6em;
+  height: 4em;
 }
 
 .conversation-attachment-remove {
