@@ -46,7 +46,7 @@ import {
 } from "./redraw";
 import { cmdlineLayout, cmdlineLead } from "./cmdline";
 import { ICON_FAMILY, cssColor, fontOf, resolveColors } from "./painter";
-import { familyOf, kindOf, markPath, type Kind } from "./kinds";
+import { CompletionMenu } from "../completion/CompletionMenu";
 import { TabStrip } from "./TabStrip";
 import { InlineImages, Toasts } from "./DecorationViews";
 import {
@@ -1002,30 +1002,6 @@ function CmdlineRow({
   );
 }
 
-/** A completion kind's mark (`kinds.ts`): a cap-height square on the baseline. */
-function KindMark({
-  kind,
-  color,
-}: {
-  readonly kind: Kind | undefined;
-  readonly color: string | undefined;
-}) {
-  if (!kind) return <span className="nvim-pum-mark" />;
-  const mark = markPath(familyOf(kind), 10);
-  return (
-    <svg className="nvim-pum-mark" viewBox="0 0 10 10" aria-hidden="true">
-      <path
-        d={mark.d}
-        fill={mark.fill ? color : "none"}
-        stroke={mark.fill ? "none" : color}
-        strokeWidth={mark.stroke}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 /**
  * `ext_popupmenu`: the completion list, at its anchor cell, in the
  * person's `Pmenu` colours. Words in the editor's face on its rows, so a
@@ -1045,12 +1021,6 @@ function Popupmenu({
   readonly send: (method: string, params: readonly unknown[]) => void;
 }) {
   const menu = state.popupmenu;
-  const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const list = listRef.current;
-    const selected = list?.querySelector<HTMLElement>(".nvim-pum-selected");
-    selected?.scrollIntoView({ block: "nearest" });
-  }, [menu?.selected, menu]);
   if (!menu || menu.items.length === 0) return null;
   const cell = editor.cellMetrics();
   const font = editor.font();
@@ -1090,72 +1060,47 @@ function Popupmenu({
           )),
     font: fontOf(font),
     lineHeight: `${String(cell.height)}px`,
-    ["--nvim-cell" as string]: `${String(cell.width)}px`,
-    ["--nvim-row" as string]: `${String(cell.height)}px`,
-    ["--nvim-label-size" as string]: `${String(font.size - 1)}px`,
+    ["--completion-cell" as string]: `${String(cell.width)}px`,
+    ["--completion-row" as string]: `${String(cell.height)}px`,
+    ["--completion-label-size" as string]: `${String(font.size - 1)}px`,
     ...(colours?.bg !== undefined ? { background: css(colours.bg) } : {}),
     ...(colours?.fg !== undefined ? { color: css(colours.fg) } : {}),
     ...(colours?.selBg !== undefined
-      ? { ["--nvim-pum-sel-bg" as string]: css(colours.selBg) }
+      ? { ["--completion-sel-bg" as string]: css(colours.selBg) }
       : {}),
     ...(colours?.selFg !== undefined
-      ? { ["--nvim-pum-sel-fg" as string]: css(colours.selFg) }
+      ? { ["--completion-sel-fg" as string]: css(colours.selFg) }
       : {}),
     ...(colours?.kind !== undefined
-      ? { ["--nvim-pum-kind" as string]: css(colours.kind) }
+      ? { ["--completion-kind" as string]: css(colours.kind) }
       : {}),
     ...(colours?.extra !== undefined
-      ? { ["--nvim-pum-extra" as string]: css(colours.extra) }
+      ? { ["--completion-extra" as string]: css(colours.extra) }
       : {}),
     ...(colours?.kindSel !== undefined
-      ? { ["--nvim-pum-kind-sel" as string]: css(colours.kindSel) }
+      ? { ["--completion-kind-sel" as string]: css(colours.kindSel) }
       : {}),
     ...(colours?.extraSel !== undefined
-      ? { ["--nvim-pum-extra-sel" as string]: css(colours.extraSel) }
+      ? { ["--completion-extra-sel" as string]: css(colours.extraSel) }
       : {}),
     ...(theme.surface?.muted !== undefined
-      ? { ["--nvim-pum-muted" as string]: css(theme.surface.muted) }
+      ? { ["--completion-muted" as string]: css(theme.surface.muted) }
       : {}),
   };
   return (
-    <div
-      className="nvim-pum"
+    <CompletionMenu
+      items={menu.items.map((item) => ({
+        word: item.word,
+        kind: item.kind,
+        extra: item.menu,
+      }))}
+      selected={menu.selected}
       style={style}
-      role="listbox"
-      ref={listRef}
-      onMouseDown={(event) => {
-        event.preventDefault();
+      kindColour={(kind) => css(theme.kinds?.colours.get(kind))}
+      onChoose={(index) => {
+        send("nvim_select_popupmenu_item", [index, true, false, {}]);
       }}
-    >
-      {menu.items.map((item, index) => {
-        const kind = kindOf(item.kind);
-        const kindColour = kind ? theme.kinds?.colours.get(kind) : undefined;
-        return (
-          <div
-            key={index}
-            role="option"
-            aria-selected={index === menu.selected}
-            className={
-              index === menu.selected
-                ? "nvim-pum-item nvim-pum-selected"
-                : "nvim-pum-item"
-            }
-            onMouseDown={() => {
-              send("nvim_select_popupmenu_item", [index, true, false, {}]);
-            }}
-          >
-            <KindMark kind={kind} color={css(kindColour) ?? "currentcolor"} />
-            <span className="nvim-pum-word">{item.word}</span>
-            {kind || item.kind.trim() !== "" ? (
-              <span className="nvim-pum-kind">{kind ?? item.kind.trim()}</span>
-            ) : null}
-            {item.menu ? (
-              <span className="nvim-pum-menu">{item.menu}</span>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
+    />
   );
 }
 

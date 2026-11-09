@@ -339,101 +339,6 @@
   visibility: hidden;
 }
 
-/*
- * The completion menu (`ext_popupmenu`): a popup in the floats' radius
- * (6 px, `FLOAT_RADIUS`), its rows the editor's line. The selection is a
- * band inset half the radius (3 px) and rounded by the rest (3 px), so its
- * corners are concentric with the menu's. Side padding makes one cell from
- * the menu's edge to the mark; a cell between the mark and the word.
- */
-.nvim-pum {
-  --nvim-pum-inset: 3px;
-
-  position: absolute;
-  z-index: 450;
-  box-sizing: border-box;
-  min-width: calc(var(--nvim-cell) * 20);
-  max-width: 480px;
-  max-height: 280px;
-  padding: var(--nvim-pum-inset);
-  overflow-y: auto;
-  border-radius: 6px;
-  background: var(--raised, var(--surface));
-  color: var(--primary);
-  box-shadow:
-    0 0 0 1px var(--line),
-    0 8px 24px rgb(0 0 0 / 24%);
-  text-autospace: no-autospace;
-  text-spacing-trim: space-all;
-  font-variant-ligatures: none;
-  scrollbar-width: thin;
-  animation: nvim-arrive 90ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.nvim-pum-item {
-  display: flex;
-  align-items: baseline;
-  height: var(--nvim-row);
-  padding: 0 calc(var(--nvim-cell) - var(--nvim-pum-inset));
-  border-radius: calc(6px - var(--nvim-pum-inset));
-  white-space: nowrap;
-}
-
-.nvim-pum-selected {
-  background: var(--nvim-pum-sel-bg, var(--selection));
-  color: var(--nvim-pum-sel-fg, inherit);
-}
-
-/* The kind's mark: a cap-height square on the baseline, centred on its
-   cell, a cell before the word (an empty cell when there is no kind). */
-.nvim-pum-mark {
-  flex: none;
-  width: 1cap;
-  height: 1cap;
-  margin: 0 calc(var(--nvim-cell) * 1.5 - 0.5cap) 0
-    calc(var(--nvim-cell) * 0.5 - 0.5cap);
-  overflow: visible;
-}
-
-.nvim-pum-word {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Labels about the word, in the UI face a step under the editor's size:
-   the kind's name (`PmenuKind`) and the item's source (`PmenuExtra`). */
-.nvim-pum-kind,
-.nvim-pum-menu {
-  flex: none;
-  margin-left: calc(var(--nvim-cell) * 2);
-  font-family:
-    "DevHub Nerd Symbols",
-    -apple-system,
-    BlinkMacSystemFont,
-    "SF Pro Text",
-    sans-serif;
-  font-size: var(--nvim-label-size);
-}
-
-.nvim-pum-kind {
-  color: var(--nvim-pum-kind, var(--nvim-pum-muted, var(--tertiary)));
-}
-
-.nvim-pum-menu {
-  margin-left: var(--nvim-cell);
-  color: var(--nvim-pum-extra, var(--nvim-pum-muted, var(--tertiary)));
-}
-
-.nvim-pum-selected .nvim-pum-kind {
-  color: var(--nvim-pum-kind-sel, var(--nvim-pum-kind, inherit));
-}
-
-.nvim-pum-selected .nvim-pum-menu {
-  color: var(--nvim-pum-extra-sel, var(--nvim-pum-extra, inherit));
-}
-
 .nvim-gui-window {
   position: absolute;
   display: flex;
@@ -502,8 +407,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .nvim-cmdline,
-  .nvim-pum {
+  .nvim-cmdline {
     animation: none;
   }
 

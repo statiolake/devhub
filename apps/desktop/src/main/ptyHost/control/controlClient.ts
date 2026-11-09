@@ -90,6 +90,7 @@ import {
 	promptOf,
 	untilControl,
 	type PromptArgs,
+	type PromptSessionInfo,
 	type PromptStep,
 } from "./prompt.js";
 import {
@@ -363,6 +364,10 @@ export class ControlClient {
 				return;
 			case "mouse":
 				this.#mouse(message);
+				return;
+			case "prompt-complete":
+				if (this.#prompt !== undefined)
+					this.#promptStep(this.#prompt, this.#prompt.choose(message.index));
 				return;
 			case "chooser":
 				if (message.action === "close") this.#chooserStep({ kind: "close" });
@@ -904,7 +909,7 @@ export class ControlClient {
 		const active = this.#activePane();
 		const target = active === undefined ? [] : ["-t", `%${String(active)}`];
 		const texts = args.prompts.flatMap((p) => [p.prompt, p.input]);
-		const [facts, history, paste, completions] = await Promise.all([
+		const [facts, history, paste, completions, windows] = await Promise.all([
 			this.#command([
 				"display-message",
 				"-p",
@@ -915,6 +920,18 @@ export class ControlClient {
 			this.#command(["show-prompt-history", "-T", args.type]),
 			this.#command(["show-buffer"]),
 			this.#readCompletions(),
+			// Every session's windows, for Tab on a `-t` or a target prompt.
+			this.#command([
+				"list-windows",
+				"-a",
+				"-F",
+				[
+					"#{session_id}",
+					"#{session_name}",
+					"#{window_index}",
+					"#{window_name}",
+				].join(FIELD),
+			]),
 		]);
 		if (this.#ended) return;
 		const [keys, separators, ...expanded] = facts.lines.join("\n").split(FIELD);
@@ -939,6 +956,8 @@ export class ControlClient {
 					: [],
 				paste: paste.ok ? paste.lines.join("\n") : undefined,
 				...completions,
+				sessions: windows.ok ? sessionsOf(windows.lines) : [],
+				session: this.#session,
 			},
 		);
 		this.#prompt = session;
@@ -2331,4 +2350,27 @@ function includes(bytes: Uint8Array, needle: Uint8Array): boolean {
 		if (j === needle.length) return true;
 	}
 	return false;
+}
+
+/** `list-windows -a`'s lines, as the prompt's sessions and their windows. */
+function sessionsOf(lines: readonly string[]): PromptSessionInfo[] {
+	const sessions = new Map<
+		string,
+		PromptSessionInfo & { windows: { index: number; name: string }[] }
+	>();
+	for (const line of lines) {
+		const [id, name, index, ...windowName] = line.split(FIELD);
+		if (id === undefined || name === undefined || index === undefined) continue;
+		const session = sessions.get(name) ?? {
+			name,
+			id: Number(id.replace(/^\$/, "")),
+			windows: [],
+		};
+		session.windows.push({
+			index: Number(index),
+			name: windowName.join(FIELD),
+		});
+		sessions.set(name, session);
+	}
+	return [...sessions.values()];
 }

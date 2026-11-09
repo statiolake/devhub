@@ -536,8 +536,7 @@ Open, in order:
   `cat` time are to be measured on the Mac (see "Throughput, profiled").
 - Smaller: a drag or double-click selection in copy mode (tmux takes the
   position from a mouse event a control client cannot send), the mock's
-  0.4 s flash on a prompt-mark copy, completion menus for `-t` targets in
-  the prompt, choose-tree's tags, sort and `-F`, the `#{mouse_word}` items of
+  0.4 s flash on a prompt-mark copy, choose-tree's tags, sort and `-F`, the `#{mouse_word}` items of
   the pane menu.
 - `pnpm install` writing `node-pty: set this to true or false` into
   `pnpm-workspace.yaml`: checked on main with pnpm 11.20.0 and an empty
@@ -648,7 +647,19 @@ it is typed here. What is typed at the bare `:` prompt is looked at first as
 a key's binding is: a popup or a prompt is DevHub's, a command that would
 wait is refused. An error from the command, and a `display-message` to the
 client, are said in the notice, where tmux would put them in its status
-line. tmux's completion menus (`-t` targets, window lists) are not drawn.
+line. Tab completes as tmux's `status_prompt_complete` does: commands and
+aliases, past the first word options and layouts, a `-t`/`-s` word (and the
+`target` prompts) to sessions (`name:`) and then that session's windows,
+`window-target` to the session's window indexes (`list-windows -a`, read as
+the prompt opens). Where tmux would open its menu — several matches and no
+longer common prefix, at most its last ten — DevHub draws it in the
+completion menu the Neovim editor uses (`shell/completion/`, one look across
+DevHub: the words in the terminal's face over the word they complete, the
+kind as a mark and tmux's name for it, a window's name beside it), and it
+takes the keys as tmux's does (`menu_key_cb` with `MENU_TAB`): Tab and Down
+move down and Tab past the last closes it, BTab and Up move up, a digit or
+Enter puts the item in, BSpace, Escape and `q` close it; any other key does
+nothing while it is open. A click puts an item in too.
 
 **`display-menu` is DevHub's** (`main/ptyHost/control/menu.ts`), a binding
 that is one, or one `if-shell -F` that holds one (tmux's right-click binding

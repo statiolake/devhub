@@ -1,0 +1,116 @@
+/*
+ * The completion menu, one look across DevHub (`CompletionMenu.tsx`): the
+ * Neovim editor's (`ext_popupmenu`) and the tmux prompt's in a control-mode
+ * terminal. A popup in the floats' radius (6 px), its rows the editor's
+ * line. The selection is a band inset half the radius (3 px) and rounded by
+ * the rest (3 px), so its corners are concentric with the menu's. Side
+ * padding makes one cell from the menu's edge to the mark; a cell between
+ * the mark and the word. The words are in the terminal's face (Neovim gives
+ * its own editor font inline), so a candidate looks as it will once typed.
+ *
+ * The caller places it and may colour it: `--completion-cell` and
+ * `--completion-row` (a cell's width and a row's height), `--completion-label-size`,
+ * and the colours `--completion-sel-bg`, `--completion-sel-fg`,
+ * `--completion-kind`, `--completion-extra`, `--completion-kind-sel`,
+ * `--completion-extra-sel`, `--completion-muted`.
+ */
+.completion-menu {
+  --completion-inset: 3px;
+
+  position: absolute;
+  z-index: 450;
+  box-sizing: border-box;
+  min-width: calc(var(--completion-cell) * 20);
+  max-width: 480px;
+  max-height: 280px;
+  padding: var(--completion-inset);
+  overflow-y: auto;
+  border-radius: 6px;
+  background: var(--raised, var(--surface));
+  color: var(--primary);
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 8px 24px rgb(0 0 0 / 24%);
+  font-family: var(--font-mono);
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
+  font-variant-ligatures: none;
+  animation: completion-arrive 90ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.completion-menu-item {
+  display: flex;
+  align-items: baseline;
+  height: var(--completion-row);
+  padding: 0 calc(var(--completion-cell) - var(--completion-inset));
+  border-radius: calc(6px - var(--completion-inset));
+  white-space: nowrap;
+}
+
+.completion-menu-selected {
+  background: var(--completion-sel-bg, var(--selection));
+  color: var(--completion-sel-fg, inherit);
+}
+
+/* The kind's mark: a cap-height square on the baseline, centred on its
+   cell, a cell before the word (an empty cell when there is no kind). */
+.completion-menu-mark {
+  flex: none;
+  width: 1cap;
+  height: 1cap;
+  margin: 0 calc(var(--completion-cell) * 1.5 - 0.5cap) 0
+    calc(var(--completion-cell) * 0.5 - 0.5cap);
+  overflow: visible;
+}
+
+.completion-menu-word {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Labels about the word, in the UI face a step under the editor's size:
+   the kind's name and the item's source. */
+.completion-menu-kind,
+.completion-menu-extra {
+  flex: none;
+  margin-left: calc(var(--completion-cell) * 2);
+  font-family:
+    "DevHub Nerd Symbols",
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    sans-serif;
+  font-size: var(--completion-label-size);
+}
+
+.completion-menu-kind {
+  color: var(--completion-kind, var(--completion-muted, var(--tertiary)));
+}
+
+.completion-menu-extra {
+  margin-left: var(--completion-cell);
+  color: var(--completion-extra, var(--completion-muted, var(--tertiary)));
+}
+
+.completion-menu-selected .completion-menu-kind {
+  color: var(--completion-kind-sel, var(--completion-kind, inherit));
+}
+
+.completion-menu-selected .completion-menu-extra {
+  color: var(--completion-extra-sel, var(--completion-extra, inherit));
+}
+
+@keyframes completion-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .completion-menu {
+    animation: none;
+  }
+}

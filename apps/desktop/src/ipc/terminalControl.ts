@@ -248,6 +248,17 @@ export type ControlToPage =
 			readonly confirm: boolean;
 			/** A `-T search` prompt: asked at its pane's foot in copy mode. */
 			readonly search: boolean;
+			/** Tab's menu of completions, while open (`PromptCompletion`). */
+			readonly completion?: {
+				readonly items: readonly {
+					readonly word: string;
+					readonly kind: "command" | "option" | "layout" | "session" | "window";
+					readonly extra?: string;
+				}[];
+				readonly choice: number;
+				/** Where the completed word starts, in characters of `input`. */
+				readonly column: number;
+			};
 	  }
 	| { readonly kind: "prompt-closed" }
 	/**
@@ -373,6 +384,8 @@ export type PageToControl =
 			readonly y: number;
 	  }
 	| { readonly kind: "select-window"; readonly window: number }
+	/** An item of the prompt's completion menu, clicked. */
+	| { readonly kind: "prompt-complete"; readonly index: number }
 	| { readonly kind: "visible"; readonly visible: boolean }
 	| { readonly kind: "ack"; readonly seq: number }
 	| {
@@ -504,6 +517,9 @@ export function validateControlRequest(value: unknown): ControlRequest {
 			break;
 		case "select-window":
 			message = { kind: "select-window", window: count(m.window) };
+			break;
+		case "prompt-complete":
+			message = { kind: "prompt-complete", index: count(m.index, 100) };
 			break;
 		case "visible":
 			if (typeof m.visible !== "boolean")

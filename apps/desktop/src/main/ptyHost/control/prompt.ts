@@ -178,7 +178,34 @@ export interface PromptView {
 	readonly command: boolean;
 	readonly confirm: boolean;
 	readonly search: boolean;
+	/**
+	 * The menu tmux opens on Tab when a word has several completions and no
+	 * longer common prefix (`status_prompt_complete_list_menu`): its items,
+	 * the one the keys are on, and where the word starts, in characters of
+	 * `input`.
+	 */
+	readonly completion?: PromptCompletion;
 }
+
+export interface PromptCompletion {
+	readonly items: readonly {
+		/** What is put in for the word. */
+		readonly word: string;
+		/** tmux's kind of word: command, option, layout, session, window. */
+		readonly kind: CompletionKind;
+		/** A window's name. */
+		readonly extra?: string;
+	}[];
+	readonly choice: number;
+	readonly column: number;
+}
+
+export type CompletionKind =
+	| "command"
+	| "option"
+	| "layout"
+	| "session"
+	| "window";
 
 /** What a key did to the prompt. */
 export type PromptStep =
@@ -199,7 +226,24 @@ export interface PromptEnvironment {
 	/** Words Tab completes to: commands and aliases, then options and layouts. */
 	readonly commands: readonly string[];
 	readonly options: readonly string[];
+	/** The sessions and their windows, for `-t` / `-s` and the target prompts. */
+	readonly sessions: readonly PromptSessionInfo[];
+	/** The client's own session. */
+	readonly session: string;
 }
+
+export interface PromptSessionInfo {
+	readonly name: string;
+	/** Its id without the `$`. */
+	readonly id: number;
+	readonly windows: readonly {
+		readonly index: number;
+		readonly name: string;
+	}[];
+}
+
+/** tmux's menu is at most ten rows (`status_prompt_complete_list_menu`). */
+const MENU_ROWS = 10;
 
 const LAYOUTS = [
 	"even-horizontal",
@@ -290,6 +334,17 @@ export class PromptSession {
 	/** Digits a numeric prompt took past its initial input. */
 	#appended = "";
 	readonly #keys: (readonly string[])[] = [];
+	/** Tab's menu, while it is open: tmux's menu takes every key first. */
+	#menu:
+		| {
+				readonly items: PromptCompletion["items"];
+				/** What each item puts in: `-t` before it, or the whole buffer. */
+				readonly flag: string;
+				readonly whole: boolean;
+				readonly column: number;
+				choice: number;
+		  }
+		| undefined;
 
 	constructor(
 		args: PromptArgs,
@@ -335,7 +390,90 @@ export class PromptSession {
 			command: this.#commandMode,
 			confirm: this.args.command === "confirm-before",
 			search: this.args.type === "search",
+			...(this.#menu === undefined
+				? {}
+				: {
+						completion: {
+							items: this.#menu.items,
+							choice: this.#menu.choice,
+							column: this.#menu.column,
+						},
+					}),
 		};
+	}
+
+	/** A click on the menu's item, as Enter on it. */
+	choose(index: number): PromptStep {
+		const menu = this.#menu;
+		if (menu === undefined || index < 0 || index >= menu.items.length)
+			return { kind: "unchanged" };
+		menu.choice = index;
+		return this.#menuKey(keyOf("Enter"));
+	}
+
+	/**
+	 * tmux's `menu_key_cb` with `MENU_TAB`, for Tab's menu: a digit chooses
+	 * its item, Up / BTab / k and Down / j move (Tab past the last closes),
+	 * Enter puts the item in, BSpace, Escape, C-c, C-g and q close; any other
+	 * key does nothing.
+	 */
+	#menuKey(key: Key): PromptStep {
+		const menu = this.#menu;
+		if (menu === undefined) return { kind: "unchanged" };
+		const count = menu.items.length;
+		const c = charOf(key);
+		const ctrl = (ch: string) => key.ctrl && !key.meta && key.base === ch;
+		const close = (): PromptStep => {
+			this.#menu = undefined;
+			return this.#changed();
+		};
+		if (c !== undefined && c >= "0" && c <= "9" && Number(c) < count) {
+			menu.choice = Number(c);
+			return this.#menuKey(keyOf("Enter"));
+		}
+		const up = () => {
+			menu.choice = menu.choice <= 0 ? count - 1 : menu.choice - 1;
+			return this.#changed();
+		};
+		const down = () => {
+			menu.choice = menu.choice === count - 1 ? 0 : menu.choice + 1;
+			return this.#changed();
+		};
+		if (key.base === "BTab" || key.base === "Up" || c === "k") return up();
+		if (key.base === "Tab" && !key.ctrl && !key.meta)
+			return menu.choice === count - 1 ? close() : down();
+		if (key.base === "Down" || c === "j") return down();
+		if (key.base === "BSpace") return close();
+		if (key.base === "PPage" || ctrl("b")) {
+			menu.choice = Math.max(0, menu.choice - 5);
+			return this.#changed();
+		}
+		if (key.base === "NPage") {
+			menu.choice = Math.min(count - 1, menu.choice + 5);
+			return this.#changed();
+		}
+		if (key.base === "Home" || c === "g") {
+			menu.choice = 0;
+			return this.#changed();
+		}
+		if (key.base === "End" || c === "G") {
+			menu.choice = count - 1;
+			return this.#changed();
+		}
+		if (key.base === "Enter") {
+			const item = menu.items[menu.choice];
+			this.#menu = undefined;
+			if (item === undefined) return this.#changed();
+			const text = `${menu.flag}${item.word}`;
+			if (menu.whole) {
+				this.#buffer = [...text];
+				this.#index = this.#buffer.length;
+			} else this.#replaceWord(text);
+			return this.#changed();
+		}
+		if (key.base === "Escape" || ctrl("c") || ctrl("g") || c === "q")
+			return close();
+		return { kind: "unchanged" };
 	}
 
 	/** The answer to the step, typed into tmux's prompt when all are in. */
@@ -362,6 +500,7 @@ export class PromptSession {
 
 	key(name: string): PromptStep {
 		const key = keyOf(name);
+		if (this.#menu !== undefined) return this.#menuKey(key);
 		const mode = this.args.mode;
 		if (mode === "key") return this.#answered([[name]]);
 		if (mode === "numeric") {
@@ -776,14 +915,8 @@ export class PromptSession {
 		this.#index = idx;
 	}
 
-	/**
-	 * Tab, as tmux's `status_prompt_complete` does for words: commands and
-	 * aliases, and past the first word options and layouts too; one match is
-	 * put in with a space, several by their common prefix. tmux's menus of
-	 * sessions and windows for `-t` and the target types are not drawn.
-	 */
-	#complete(): void {
-		if (this.args.type !== "command" && this.args.type !== "search") return;
+	/** The word the cursor is in, as tmux's `status_prompt_replace_complete` finds it. */
+	#word(): { readonly first: number; readonly last: number } | undefined {
 		const b = this.#buffer;
 		const idx = this.#index === 0 ? 0 : this.#index - 1;
 		let first = idx;
@@ -793,27 +926,156 @@ export class PromptSession {
 		while (last < b.length && !isSpace(b[last])) last++;
 		while (last > 0 && isSpace(b[last])) last--;
 		if (last < b.length) last++;
-		if (last < first) return;
-		const word = b.slice(first, last).join("");
-		if (word === "" || word.startsWith("-t") || word.startsWith("-s")) return;
-		const pool = [
-			...this.#env.commands,
-			...(first === 0 ? [] : [...this.#env.options, ...LAYOUTS]),
-		];
-		const list = [...new Set(pool.filter((w) => w.startsWith(word)))].sort();
-		if (list.length === 0) return;
-		let out: string;
-		if (list.length === 1) out = `${list[0]} `;
-		else {
-			out = list[0];
+		if (last < first) return undefined;
+		return { first, last };
+	}
+
+	#replaceWord(text: string): void {
+		const at = this.#word();
+		if (at === undefined) return;
+		this.#buffer.splice(at.first, at.last - at.first, ...text);
+		this.#index = at.first + [...text].length;
+	}
+
+	/**
+	 * Tab, as tmux's `status_prompt_complete` does: a word is completed to
+	 * commands and aliases, and past the first word to options and layouts
+	 * too; `-t` and `-s` words, and the target prompts, to sessions (`name:`)
+	 * and then a session's windows. One match is put in (a word with a space
+	 * after it), several by their common prefix, and when that adds nothing
+	 * tmux's menu opens: at most its last ten, sorted.
+	 */
+	#complete(): void {
+		const type = this.args.type;
+		const targets = type === "target" || type === "window-target";
+		if (type !== "command" && type !== "search" && !targets) return;
+		const at = this.#word();
+		if (at === undefined) {
+			if (!targets) return;
+		}
+		const first = at?.first ?? this.#index;
+		const word =
+			at === undefined ? "" : this.#buffer.slice(at.first, at.last).join("");
+		if (word === "" && !targets) return;
+		const prefixOf = (list: readonly string[]) => {
+			let out = list[0] ?? "";
 			for (const w of list.slice(1)) {
 				let j = 0;
 				while (j < out.length && j < w.length && out[j] === w[j]) j++;
 				out = out.slice(0, j);
 			}
+			return out;
+		};
+		const put = (out: string | undefined, menu?: () => void) => {
+			if (out !== undefined && out !== word) {
+				if (at === undefined) {
+					this.#buffer.splice(this.#index, 0, ...out);
+					this.#index += [...out].length;
+				} else this.#replaceWord(out);
+				return;
+			}
+			menu?.();
+		};
+		const open = (
+			items: PromptCompletion["items"],
+			flag: string,
+			whole = false,
+		) => {
+			if (items.length <= 1) return;
+			this.#menu = {
+				items,
+				flag,
+				whole,
+				column: first + [...flag].length,
+				choice: 0,
+			};
+		};
+		if (!targets && !word.startsWith("-t") && !word.startsWith("-s")) {
+			const kinds = new Map<string, CompletionKind>();
+			const add = (words: readonly string[], kind: CompletionKind) => {
+				for (const w of words)
+					if (w.startsWith(word) && !kinds.has(w)) kinds.set(w, kind);
+			};
+			add(this.#env.commands, "command");
+			if (first !== 0) {
+				add(this.#env.options, "option");
+				add(LAYOUTS, "layout");
+			}
+			const list = [...kinds.keys()].sort();
+			if (list.length === 0) return;
+			put(list.length === 1 ? `${list[0]} ` : prefixOf(list), () =>
+				open(
+					list
+						.slice(-MENU_ROWS)
+						.map((w) => ({ word: w, kind: kinds.get(w) ?? "command" })),
+					"",
+				),
+			);
+			return;
 		}
-		if (out === word) return;
-		b.splice(first, last - first, ...out);
-		this.#index = first + [...out].length;
+		const flag = targets ? "" : word.slice(0, 2);
+		const s = targets ? word : word.slice(2);
+		const windowsOf = (session: PromptSessionInfo, prefix: string) =>
+			session.windows
+				.filter((w) => String(w.index).startsWith(prefix))
+				.slice(0, MENU_ROWS);
+		if (type === "window-target") {
+			const own = this.#env.sessions.find((x) => x.name === this.#env.session);
+			if (own === undefined) return;
+			const windows = windowsOf(own, s);
+			if (windows.length === 1) {
+				this.#buffer = [...String(windows[0].index)];
+				this.#index = this.#buffer.length;
+				return;
+			}
+			open(
+				windows.map((w) => ({
+					word: String(w.index),
+					kind: "window",
+					extra: w.name,
+				})),
+				"",
+				true,
+			);
+			return;
+		}
+		const colon = s.indexOf(":");
+		if (colon < 0) {
+			const list: string[] = [];
+			for (const x of this.#env.sessions) {
+				if (s === "" || x.name.startsWith(s)) list.push(`${x.name}:`);
+				else if (s.startsWith("$") && String(x.id).startsWith(s.slice(1)))
+					list.push(`$${String(x.id)}:`);
+			}
+			list.sort();
+			if (list.length === 0) return;
+			put(`${flag}${prefixOf(list)}`, () =>
+				open(
+					list.slice(-MENU_ROWS).map((w) => ({ word: w, kind: "session" })),
+					flag,
+				),
+			);
+			return;
+		}
+		if (s.indexOf(".", colon + 1) >= 0) return;
+		const name = s.slice(0, colon);
+		const session = this.#env.sessions.find((x) =>
+			name === "" ? x.name === this.#env.session : x.name === name,
+		);
+		if (session === undefined) return;
+		const windows = windowsOf(session, s.slice(colon + 1));
+		const words = windows.map((w) => `${session.name}:${String(w.index)}`);
+		if (words.length === 1) {
+			put(`${flag}${words[0]}`);
+			return;
+		}
+		open(
+			windows.map((w, i) => ({
+				word: words[i],
+				kind: "window",
+				extra: w.name,
+			})),
+			flag,
+		);
 	}
 }

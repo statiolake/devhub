@@ -8,6 +8,19 @@ const ENV: PromptEnvironment = {
 	paste: "pasted\nsecond line",
 	commands: ["rename-window", "renamew", "resize-pane", "new-window"],
 	options: ["status-keys"],
+	sessions: [
+		{
+			name: "devhub",
+			id: 0,
+			windows: [
+				{ index: 0, name: "nvim" },
+				{ index: 1, name: "api" },
+				{ index: 12, name: "web" },
+			],
+		},
+		{ name: "dotfiles", id: 3, windows: [{ index: 0, name: "zsh" }] },
+	],
+	session: "devhub",
 };
 
 function session(binding: string, env: Partial<PromptEnvironment> = {}) {
@@ -113,10 +126,88 @@ describe("a prompt's keys, as tmux's status line takes them", () => {
 		const s = session("command-prompt");
 		type(s, "r", "e", "Tab");
 		expect(s.view().input).toBe("re");
+		// Nothing longer in common: tmux's menu, which Escape closes.
+		expect(s.view().completion?.items.map((i) => i.word)).toEqual([
+			"rename-window",
+			"renamew",
+			"resize-pane",
+		]);
+		type(s, "Escape");
+		expect(s.view().completion).toBeUndefined();
 		type(s, "n", "Tab");
 		expect(s.view().input).toBe("rename");
 		type(s, "-", "Tab");
 		expect(s.view().input).toBe("rename-window ");
+	});
+
+	it("opens tmux's menu on Tab, moved by Tab and BTab, chosen by Enter or its digit", () => {
+		const s = session("command-prompt");
+		type(s, "r", "e", "Tab");
+		expect(s.view().completion).toMatchObject({ choice: 0, column: 0 });
+		expect(s.view().completion?.items[0]).toEqual({
+			word: "rename-window",
+			kind: "command",
+		});
+		type(s, "Tab", "Tab");
+		expect(s.view().completion?.choice).toBe(2);
+		// A key the menu does not take does nothing while it is open.
+		expect(s.key("x")).toEqual({ kind: "unchanged" });
+		type(s, "BTab", "Enter");
+		// Put in as tmux's menu does: the word, no space after it.
+		expect(s.view()).toMatchObject({ input: "renamew", cursor: 7 });
+		expect(s.view().completion).toBeUndefined();
+		type(s, "C-u", "r", "e", "Tab", "2");
+		expect(s.view().input).toBe("resize-pane");
+		// Tab past the last item closes the menu and keeps the word.
+		type(s, "C-u", "r", "e", "Tab", "Tab", "Tab", "Tab");
+		expect(s.view()).toMatchObject({ input: "re" });
+		expect(s.view().completion).toBeUndefined();
+	});
+
+	it("completes options and layouts past the first word", () => {
+		const s = session("command-prompt");
+		type(s, "s", "e", "t", " ", "s", "t", "Tab");
+		expect(s.view().input).toBe("set status-keys ");
+	});
+
+	it("completes -t to a session, then shows the session's windows", () => {
+		const s = session("command-prompt");
+		type(s, ..."kill-window -td".split(""), "Tab");
+		// devhub: and dotfiles: share no more than "d".
+		expect(s.view().completion?.items).toEqual([
+			{ word: "devhub:", kind: "session" },
+			{ word: "dotfiles:", kind: "session" },
+		]);
+		expect(s.view().completion?.column).toBe(14);
+		type(s, "Enter");
+		expect(s.view().input).toBe("kill-window -tdevhub:");
+		type(s, "1", "Tab");
+		// 1 and 12 both start with 1.
+		expect(s.view().completion?.items).toEqual([
+			{ word: "devhub:1", kind: "window", extra: "api" },
+			{ word: "devhub:12", kind: "window", extra: "web" },
+		]);
+		type(s, "Down", "Enter");
+		expect(s.view().input).toBe("kill-window -tdevhub:12");
+		const one = session("command-prompt");
+		type(one, ..."select-window -tdo".split(""), "Tab");
+		expect(one.view().input).toBe("select-window -tdotfiles:");
+		type(one, "Tab");
+		expect(one.view().input).toBe("select-window -tdotfiles:0");
+	});
+
+	it("shows the windows in a window-target prompt and puts the index in", () => {
+		const s = session(
+			"command-prompt -T window-target { select-window -t '%%' }",
+		);
+		type(s, "Tab");
+		expect(s.view().completion?.items.map((i) => i.word)).toEqual([
+			"0",
+			"1",
+			"12",
+		]);
+		type(s, "End", "Enter");
+		expect(s.view().input).toBe("12");
 	});
 
 	it("takes the vi table when status-keys is vi", () => {

@@ -1026,7 +1026,10 @@ diagnostics and virtual text drawn from extmarks (`ext_hlstate` +
 
 **The completion menu** (round 7, the person's pick). Both menus — DevHub's
 own (`ext_popupmenu`: a native completion, `<C-x><C-o>`) and a plugin's
-float (blink.cmp, nvim-cmp) — say the same things the same way:
+float (blink.cmp, nvim-cmp) — say the same things the same way. DevHub's own
+is `shell/completion/CompletionMenu.tsx`, shared with the tmux prompt of a
+control-mode terminal (`docs/terminal-mode.md`), so completion looks one way
+across DevHub:
 
 - _Candidates_ stay in the editor's face, on the editor's line: a word is
   the text that will land in the buffer, so it looks as it will there. The

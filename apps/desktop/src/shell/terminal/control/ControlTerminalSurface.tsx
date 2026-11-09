@@ -52,6 +52,8 @@ import {
 } from "./paneGrids";
 import type { TerminalSurfaceProps } from "../TerminalSurface";
 import { WindowStrip } from "./WindowStrip";
+import { CompletionMenu } from "../../completion/CompletionMenu";
+import type { Kind } from "../../neovim/kinds";
 
 /**
  * A terminal surface in tmux control mode (`[terminal] tmux_control_mode`,
@@ -93,6 +95,36 @@ function palette256(ansi: readonly number[]): number[] {
     out.push((g << 16) | (g << 8) | g);
   }
   return out;
+}
+
+/**
+ * tmux's kinds of completion (`ptyHost/control/prompt.ts`) as the shared
+ * menu's marks, each in a colour of the theme's 16.
+ */
+const TMUX_KINDS: Record<
+  "command" | "option" | "layout" | "session" | "window",
+  { readonly mark: Kind; readonly ansi: number }
+> = {
+  command: { mark: "Function", ansi: 4 },
+  option: { mark: "Property", ansi: 6 },
+  layout: { mark: "EnumMember", ansi: 3 },
+  session: { mark: "Module", ansi: 5 },
+  window: { mark: "Folder", ansi: 2 },
+};
+
+/** Where the prompt's completion menu is drawn, and what it holds. */
+interface PromptMenu {
+  readonly items: NonNullable<
+    Extract<ControlToPage, { kind: "prompt" }>["completion"]
+  >["items"];
+  readonly choice: number;
+  /** In the shell: the completed word's left edge, the prompt line's top. */
+  readonly x: number;
+  readonly bottom: number;
+  readonly cell: number;
+  readonly row: number;
+  readonly fontSize: number;
+  readonly font: string;
 }
 
 /** A colour tmux names, in the theme's palette: its 16 first, then xterm's. */
@@ -143,6 +175,7 @@ export function ControlTerminalSurface({
   const [notice, setNotice] = useState<string | undefined>();
   const [tabs, setTabs] = useState<ControlView["windows"]>([]);
   const [status, setStatus] = useState<StatusLine | undefined>();
+  const [promptMenu, setPromptMenu] = useState<PromptMenu | undefined>();
   const [shown, setShown] = useState(!hidden);
   if (!hidden && !shown) setShown(true);
   const controllerRef = useRef<{
@@ -150,6 +183,7 @@ export function ControlTerminalSurface({
     visible(on: boolean): void;
     colors(c: ReturnType<typeof colorsOf>): void;
     selectWindow(id: number): void;
+    completePrompt(index: number): void;
     windowMenu(id: number, x: number): void;
     focus(): void;
   } | null>(null);
@@ -434,6 +468,7 @@ export function ControlTerminalSurface({
       promptLine.hidden = prompt === undefined;
       if (prompt === undefined) {
         promptShown = "";
+        setPromptMenu(undefined);
         return;
       }
       // A search from copy mode is asked at the foot of its pane, as wide.
@@ -474,7 +509,19 @@ export function ControlTerminalSurface({
       hint.className = "control-prompt-hint";
       const kbd = (text: string) =>
         Object.assign(document.createElement("kbd"), { textContent: text });
-      if (!prompt.confirm) {
+      if (prompt.completion !== undefined) {
+        // Tab's menu takes the keys, as tmux's does.
+        hint.append(
+          "choose ",
+          kbd("Tab"),
+          kbd("↑"),
+          kbd("↓"),
+          " · put in ",
+          kbd("Enter"),
+          " · close ",
+          kbd("Esc"),
+        );
+      } else if (!prompt.confirm) {
         // What tmux's keys do here, the vi table's in its command mode.
         hint.append(
           "history ",
@@ -490,6 +537,32 @@ export function ControlTerminalSurface({
       // The cursor in view, as tmux scrolls a long line to keep it there.
       const left = caret.offsetLeft - line.offsetLeft;
       line.scrollLeft = Math.max(0, left - line.clientWidth + 2 * width);
+      // Tab's menu over the line, its words over the word they complete
+      // (`CompletionMenu`, the Neovim editor's look).
+      const completion = prompt.completion;
+      if (completion === undefined) setPromptMenu(undefined);
+      else {
+        const label = line.firstElementChild as HTMLElement | null;
+        const x =
+          host.offsetLeft +
+          promptLine.offsetLeft +
+          line.offsetLeft +
+          (label?.offsetWidth ?? 0) +
+          completion.column * width -
+          line.scrollLeft;
+        setPromptMenu({
+          items: completion.items,
+          choice: completion.choice,
+          x,
+          bottom:
+            (shell?.clientHeight ?? 0) -
+            (host.offsetTop + promptLine.offsetTop),
+          cell: width,
+          row: height,
+          fontSize,
+          font: terminalFontStack(appearanceNow?.terminalFontFamily),
+        });
+      }
     };
 
     // A menu (`menu.css`): where tmux would put it, kept inside the panes.
@@ -1100,6 +1173,10 @@ export function ControlTerminalSurface({
         send({ kind: "select-window", window: id });
         input.focus();
       },
+      completePrompt(index) {
+        send({ kind: "prompt-complete", index });
+        input.focus();
+      },
       windowMenu(id, x) {
         input.focus();
         const at = grids.getBoundingClientRect();
@@ -1186,6 +1263,35 @@ export function ControlTerminalSurface({
         role="application"
         aria-label={`${surfaceLabel} terminal`}
       />
+      {promptMenu !== undefined && (
+        <CompletionMenu
+          items={promptMenu.items.map((item) => ({
+            word: item.word,
+            kind: item.kind,
+            mark: TMUX_KINDS[item.kind].mark,
+            ...(item.extra === undefined ? {} : { extra: item.extra }),
+          }))}
+          selected={promptMenu.choice}
+          style={
+            {
+              // The words start three cells in (padding, mark, gap).
+              left: Math.max(0, promptMenu.x - 3 * promptMenu.cell),
+              bottom: promptMenu.bottom + 2,
+              font: `${String(promptMenu.fontSize)}px/${String(promptMenu.row)}px ${promptMenu.font}`,
+              "--completion-cell": `${String(promptMenu.cell)}px`,
+              "--completion-row": `${String(promptMenu.row)}px`,
+              "--completion-label-size": `${String(promptMenu.fontSize - 1)}px`,
+            } as React.CSSProperties
+          }
+          kindColour={(kind) => {
+            const ansi = Object.values(TMUX_KINDS).find(
+              (k) => k.mark === kind,
+            )?.ansi;
+            return ansi === undefined ? undefined : palette?.ansi[ansi];
+          }}
+          onChoose={(index) => controllerRef.current?.completePrompt(index)}
+        />
+      )}
       <WindowStrip
         windows={tabs}
         status={status}
