@@ -1098,20 +1098,32 @@ function fakeRuntime(home: string): Runtime {
 				throw new RuntimeFileError(path, (error as { code?: string }).code);
 			}
 		},
+		// As the real runner does (`childRun.ts`): a script that ends without
+		// reading its input answers with its own status, and only one that
+		// says it succeeded with its input unread has failed to take it.
 		exec: (request) =>
-			new Promise((resolve) => {
+			new Promise((resolve, reject) => {
+				let unread: Error | undefined;
 				const child = execFile(
 					request.argv[0]!,
 					request.argv.slice(1),
 					{ env: request.env as NodeJS.ProcessEnv, encoding: "buffer" },
-					(error, stdout, stderr) =>
+					(error, stdout, stderr) => {
+						if (!error && unread) {
+							reject(unread);
+							return;
+						}
 						resolve({
 							code: error ? ((error as { code?: number }).code ?? 1) : 0,
 							signal: null,
 							stdout,
 							stderr,
-						}),
+						});
+					},
 				);
+				child.stdin!.on("error", (error) => {
+					unread ??= error;
+				});
 				child.stdin!.end(request.stdin ?? Buffer.alloc(0));
 			}),
 	};
