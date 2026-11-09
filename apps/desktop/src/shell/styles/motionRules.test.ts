@@ -18,12 +18,6 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
-/**
- * The terminal and Neovim surfaces follow `docs/pane-motion.md`, a design
- * of these rules for panes; they are held to it when it lands.
- */
-const NOT_YET = [/shell\/terminal\//, /shell\/neovim\//, /shell\/completion\//];
-
 const LAYOUT =
   /\b(?:width|height|min-width|min-height|max-width|max-height|block-size|inline-size|top|left|right|bottom|inset|margin(?:-[a-z]+)?|padding(?:-[a-z]+)?|grid-template-[a-z]+|flex(?:-[a-z]+)?|font-size|line-height|all)\b/;
 
@@ -70,12 +64,10 @@ function block(css: string, start: number): string {
 }
 
 describe("motion", () => {
-  const sheets = stylesheets(ROOT)
-    .filter((path) => !NOT_YET.some((each) => each.test(path)))
-    .map((path) => ({
-      path: path.slice(ROOT.length),
-      css: readFileSync(path, "utf8").replace(/\/\*[\s\S]*?\*\//g, ""),
-    }));
+  const sheets = stylesheets(ROOT).map((path) => ({
+    path: path.slice(ROOT.length),
+    css: readFileSync(path, "utf8").replace(/\/\*[\s\S]*?\*\//g, ""),
+  }));
 
   it("is never a keyframe of a layout property", () => {
     const offending = sheets.flatMap(({ path, css }) =>

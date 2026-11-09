@@ -202,10 +202,11 @@ function surfaceStyle(surface: Surface | undefined): Record<string, string> {
 }
 
 /**
- * A line's time ends with its fade (600 ms, slow enough to go unnoticed)
- * and then its gap closing (300 ms): nothing moves while its text shows.
+ * A line's time ends with its fade (600 ms, slow enough to go unnoticed),
+ * in place; its room closes once, when it is gone: nothing moves while its
+ * text shows, and nothing moves frame by frame after it.
  */
-const LEAVE_MS = 900;
+const LEAVE_MS = 600;
 
 function ToastView({
   toast,

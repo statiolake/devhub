@@ -139,8 +139,13 @@ because a followed transcript moves by every pixel of it.
 
 - `apps/desktop/src/shell/styles/motionRules.test.ts`: no `@keyframes`
   and no `transition` in a DevHub stylesheet moves a layout property,
-  outside the three written exceptions. The terminal and Neovim
-  stylesheets join it with `docs/pane-motion.md`.
+  outside the three written exceptions. The terminal, Neovim and
+  completion stylesheets are held to it too: the Neovim cursor glides by a
+  `translate` from where it was seen to its cell (`glideCursor`), never
+  across a scroll; a notification line rises and fades in at its full
+  height and fades out in place; the completion and tmux menus keep their
+  bar's gutter. Panes moving as a layout changes are
+  `docs/pane-motion.md`'s.
 - `apps/desktop/src/shell/glide.test.tsx`: a glide starts where the
   element was and ends on its place; what is new rises; Reduce Motion moves
   nothing.

@@ -46,6 +46,9 @@
   min-width: 160px;
   max-height: 100%;
   overflow-y: auto;
+  /* The bar's room kept whether it shows or not: a list that grows past
+     its height does not narrow its column (docs/motion.md). */
+  scrollbar-gutter: stable;
   padding: 4px 0;
   border: 1px solid var(--popup-border);
   border-radius: var(--popup-radius);

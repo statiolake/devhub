@@ -203,12 +203,6 @@
   display: block;
 }
 
-.nvim-cursor-glide {
-  transition:
-    left 70ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    top 70ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
 .nvim-cursor-unfocused > canvas {
   visibility: hidden;
 }
@@ -579,12 +573,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .nvim-cursor-glide {
-    transition: none;
-  }
-}
-
 /* devhub_gui.notify, in fidget's spirit (`Toasts`): quiet lines at the
    bottom right on the editor's line pitch, in the UI face at the editor's
    size, in the scheme's own tones; no card and no edge. */
@@ -638,13 +626,10 @@
 
 .nvim-toast-group {
   display: grid;
-  grid-template-rows: 1fr;
   justify-items: end;
   min-width: 0;
   max-width: 100%;
-  transition:
-    opacity 600ms ease-in,
-    grid-template-rows 300ms ease-in-out 600ms;
+  transition: opacity 600ms ease-in;
 }
 
 .nvim-toast-group-body {
@@ -662,9 +647,9 @@
   padding-top: calc(var(--nvim-line, 18px) / 2);
 }
 
-/* Every line of it is leaving: the group goes as one, then its gap. */
+/* Every line of it is leaving: the group fades as one, in place; its room
+   closes once, when it is gone (docs/motion.md). */
 .nvim-toast-group-leaving {
-  grid-template-rows: 0fr;
   opacity: 0;
 }
 
@@ -674,22 +659,20 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--nvim-toast-ink);
-  animation: nvim-toast-enter 240ms ease-out;
+  animation: nvim-toast-enter var(--motion-slow) var(--ease-enter);
 }
 
-/* A line comes in by fading while the lines above move up by its height
-   (the same curve: no jolt); it leaves by fading slowly, and only then
-   does its gap close. */
+/* A line comes in at its full height, so the lines above take their new
+   place once, and it rises into its own and fades in; it leaves by fading
+   slowly in place, and its room closes once, when it is gone. Only
+   transform and opacity move (docs/motion.md): rows growing or shrinking
+   frame by frame moved every line above them each frame. */
 .nvim-toast {
-  display: grid;
-  grid-template-rows: 1fr;
   min-width: 0;
   max-width: 100%;
   pointer-events: auto;
-  animation: nvim-toast-enter 240ms ease-out;
-  transition:
-    opacity 600ms ease-in,
-    grid-template-rows 300ms ease-in-out 600ms;
+  animation: nvim-toast-enter var(--motion-slow) var(--ease-enter);
+  transition: opacity 600ms ease-in;
 }
 
 .nvim-toast-updated {
@@ -697,19 +680,18 @@
 }
 
 .nvim-toast-leaving {
-  grid-template-rows: 0fr;
   opacity: 0;
 }
 
+/* The group fades as one: its lines do not fade twice. */
 .nvim-toast-group-leaving .nvim-toast-leaving {
-  grid-template-rows: 1fr;
   opacity: 1;
 }
 
 @keyframes nvim-toast-enter {
   from {
-    grid-template-rows: 0fr;
     opacity: 0;
+    transform: translateY(var(--motion-rise));
   }
 }
 

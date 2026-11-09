@@ -101,6 +101,8 @@ export interface EditorSettings {
 
 /** How long the cursor's blink takes to fade out or in. */
 const BLINK_FADE_MS = 120;
+/** A cursor's glide from cell to cell (`glideCursor`). */
+const CURSOR_GLIDE_MS = 70;
 
 export class NeovimEditor {
   readonly state: NeovimUiState = initialUiState(themeColors());
@@ -110,6 +112,10 @@ export class NeovimEditor {
   private readonly gridLayer: HTMLDivElement;
   private readonly band: HTMLDivElement;
   private readonly cursor: HTMLDivElement;
+  /** Where the cursor was last placed, shown (`glideCursor`). */
+  private cursorAt: { x: number; y: number } | undefined;
+  /** Its glide under way, if any. */
+  private cursorGlide: Animation | undefined;
   /** The character under a block cursor, painted as the grid paints it. */
   private readonly cursorCell: HTMLCanvasElement;
   private readonly preedit: HTMLCanvasElement;
@@ -841,16 +847,13 @@ export class NeovimEditor {
     if (at === undefined) return;
     const { grid, row, col } = this.state.cursor;
     // Moves glide, briefly — not in Insert mode, where it would trail the
-    // typing — and the stylesheet drops it for reduced motion. Never across
-    // a scroll: the text moves at once (or rides the display's offset, a
-    // transform), and a cursor gliding to its new row meanwhile would be
-    // rows off its cell, so it goes with the text instead; a glide under
-    // way stops where it is going.
+    // typing, nor under reduced motion. Never across a scroll: the text
+    // moves at once (or rides the display's offset, a transform), and a
+    // cursor gliding to its new row meanwhile would be rows off its cell,
+    // so it goes with the text instead; a glide under way stops where it
+    // is going (`glideCursor`).
     const scrolling = scrolled || this.painter.scrollView(grid) !== undefined;
-    this.cursor.classList.toggle(
-      "nvim-cursor-glide",
-      !this.state.mode.name.startsWith("insert") && !scrolling,
-    );
+    const glides = !this.state.mode.name.startsWith("insert") && !scrolling;
     const g = this.state.grids.get(grid);
     const wide = g !== undefined && g.chars[row * g.width + col + 1] === "";
     const attr =
@@ -920,6 +923,7 @@ export class NeovimEditor {
       ? this.painter.over(grid, "cursor")
       : this.gridLayer;
     if (this.cursor.parentElement !== parent) parent.append(this.cursor);
+    this.glideCursor(glides);
     // The IME's candidate window opens at the textarea: keep it on the
     // cursor — the command line's, while the bar is up.
     const ime = this.cmdlineCaret() ?? at;
@@ -927,6 +931,65 @@ export class NeovimEditor {
     this.input.style.top = `${String(ime.y)}px`;
     this.input.style.height = `${String(cell.height)}px`;
     this.placePreedit();
+  }
+
+  /**
+   * The cursor is placed at its cell at once (`left`/`top`, the layout at
+   * rest) and shown gliding there from where it was seen: a `translate`
+   * from that difference to nothing, so it ends on its cell to the pixel
+   * and nothing is laid out frame by frame (docs/motion.md). Where it was
+   * seen is its last place plus how far a glide under way still had it;
+   * `glides` false stops one under way where it is going. The scroll's
+   * ride is the `transform`, apart (`placeCursorScroll`).
+   */
+  private glideCursor(glides: boolean): void {
+    const s = this.cursor.style;
+    const to = { x: parseFloat(s.left) || 0, y: parseFloat(s.top) || 0 };
+    // Hidden (busy, the command line up), it is seen nowhere: it comes
+    // back at its cell.
+    const from =
+      this.cursor.style.display === "none" ? undefined : this.cursorAt;
+    this.cursorAt = this.cursor.style.display === "none" ? undefined : to;
+    const running = this.cursorGlide;
+    // Placed again where it is going (a redraw, a blink): the glide goes on.
+    if (
+      glides &&
+      running !== undefined &&
+      from !== undefined &&
+      from.x === to.x &&
+      from.y === to.y
+    )
+      return;
+    let seen = from;
+    if (running !== undefined && from !== undefined) {
+      const [dx = 0, dy = 0] = getComputedStyle(this.cursor)
+        .translate.split(" ")
+        .map((v) => parseFloat(v) || 0);
+      seen = { x: from.x + dx, y: from.y + dy };
+    }
+    running?.cancel();
+    this.cursorGlide = undefined;
+    if (
+      !glides ||
+      seen === undefined ||
+      typeof this.cursor.animate !== "function" ||
+      matchMedia("(prefers-reduced-motion: reduce)").matches
+    )
+      return;
+    const dx = seen.x - to.x;
+    const dy = seen.y - to.y;
+    if (dx === 0 && dy === 0) return;
+    const glide = this.cursor.animate(
+      [
+        { translate: `${String(dx)}px ${String(dy)}px` },
+        { translate: "0px 0px" },
+      ],
+      { duration: CURSOR_GLIDE_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+    );
+    this.cursorGlide = glide;
+    glide.onfinish = () => {
+      if (this.cursorGlide === glide) this.cursorGlide = undefined;
+    };
   }
 
   /**

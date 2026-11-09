@@ -25,6 +25,9 @@
   max-height: 280px;
   padding: var(--completion-inset);
   overflow-y: auto;
+  /* The bar's room kept whether it shows or not: a list that grows past
+     its height does not narrow its column (docs/motion.md). */
+  scrollbar-gutter: stable;
   border-radius: 6px;
   background: var(--raised, var(--surface));
   color: var(--primary);
