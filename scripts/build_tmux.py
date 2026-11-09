@@ -274,7 +274,7 @@ def compiler(os_name: str) -> str:
 	return musl
 
 
-DOWNLOAD_ATTEMPTS = 4
+DOWNLOAD_ATTEMPTS = 6
 
 
 def download(url: str, wait=time.sleep, opener=urllib.request.urlopen) -> bytes:
@@ -282,9 +282,10 @@ def download(url: str, wait=time.sleep, opener=urllib.request.urlopen) -> bytes:
 
 	ftp.gnu.org and GitHub's release downloads answer 502, 503 or 504 now and
 	then; one such answer failed a CI job that builds these from source. A
-	5xx or a network error is asked again, three times more, a little later
-	each time; any other answer is final. `fetch` checks what comes back
-	against its pin, so asking again can never hand on different bytes.
+	5xx or a network error is asked again, five times more, twice as late
+	each time: about a minute in all, as one spell of 504s outlasted 14 s.
+	Any other answer is final. `fetch` checks what comes back against its
+	pin, so asking again can never hand on different bytes.
 	"""
 	for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
 		try:

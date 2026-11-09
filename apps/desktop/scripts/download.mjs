@@ -4,12 +4,13 @@
  *
  * GitHub's release downloads answer 502, 503 or 504 now and then, and one
  * such answer failed a whole CI job before any test ran. A 5xx or a network
- * error is asked again, three times more, a little later each time; any
- * other answer is final. What comes back is checked against its pin by the
- * caller, so asking again can never hand on different bytes.
+ * error is asked again, five times more, twice as late each time: about a
+ * minute in all, as one spell of 504s outlasted 14 s. Any other answer is
+ * final. What comes back is checked against its pin by the caller, so
+ * asking again can never hand on different bytes.
  */
 
-const ATTEMPTS = 4;
+const ATTEMPTS = 6;
 
 /** The body of `url`, or the process ends with why, under `label`. */
 export async function download(

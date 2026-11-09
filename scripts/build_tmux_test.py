@@ -95,11 +95,11 @@ class Download(unittest.TestCase):
 			download("https://x/a", wait=lambda _: None, opener=opener)
 		self.assertEqual(len(calls), 1)
 
-	def test_it_gives_up_after_four(self) -> None:
-		opener, calls = self.answers(*[self.gateway()] * 4)
+	def test_it_gives_up_after_six(self) -> None:
+		opener, calls = self.answers(*[self.gateway()] * 6)
 		with mock.patch("builtins.print"), self.assertRaises(urllib.error.HTTPError):
 			download("https://x/a", wait=lambda _: None, opener=opener)
-		self.assertEqual(len(calls), 4)
+		self.assertEqual(len(calls), 6)
 
 
 class DownloadTemplate(unittest.TestCase):
