@@ -65,7 +65,8 @@ import {
   type MouseTarget,
   type Sash,
 } from "./mouse";
-import { OptionKeys } from "../surfaces/optionKey";
+import { MetaComposition, OptionKeys } from "../surfaces/optionKey";
+import { BaseKeys, layoutMapSource } from "../surfaces/baseKeys";
 import type { MacOptionIsMeta } from "../../model/macOption";
 
 /** DevHub's theme, for a Neovim that sets no colours of its own. */
@@ -126,7 +127,10 @@ export class NeovimEditor {
   private readonly labelsAsked = new Map<number, string>();
   private readonly listeners = new Set<() => void>();
   private dragging: { button: string; target: MouseTarget } | undefined;
-  private dropComposition = false;
+  /** A Meta dead key's composition, dropped (`surfaces/optionKey.ts`). */
+  private readonly metaComposition = new MetaComposition();
+  /** What each physical key types without Option, for Meta chords. */
+  private readonly baseKeys = new BaseKeys();
   private readonly observer: ResizeObserver;
   private disposed = false;
   /**
@@ -987,15 +991,22 @@ export class NeovimEditor {
   }
 
   private imeEvent(event: ImeEvent): void {
+    if (event.type === "reset") {
+      this.metaComposition.reset();
+    } else if (this.metaComposition.drops(event.type)) {
+      // A Meta key's composition: nothing of it is drawn or sent, and the
+      // textarea is emptied once it is over, which drops the mark.
+      if (event.type === "compositionend") {
+        setTimeout(() => {
+          if (!this.metaComposition.active) this.input.value = "";
+        }, 0);
+      }
+      return;
+    }
     const step = imeStep(this.ime, event);
     this.ime = step.state;
     if (step.commit !== undefined) {
-      if (this.dropComposition) {
-        this.dropComposition = false;
-      } else if (
-        event.type === "input" &&
-        event.inputType === "insertFromPaste"
-      ) {
+      if (event.type === "input" && event.inputType === "insertFromPaste") {
         this.port.call("nvim_paste", [step.commit, true, -1]);
       } else {
         this.send(escapeInputText(step.commit));
@@ -1007,26 +1018,48 @@ export class NeovimEditor {
 
   private bindInput(): void {
     const input = this.input;
+    void this.baseKeys.loadLayout(layoutMapSource());
+    // Option as Meta is by the physical key (`surfaces/baseKeys.ts`) and is
+    // decided before the composition check: Chromium may hand an Option
+    // chord to the input method (a dead key: `key` "Dead", keyCode 229) and
+    // it is still Meta. A composition such a key starts is dropped, and the
+    // keys typed during it are sent here by their physical key.
     input.addEventListener("keydown", (event) => {
       const meta = this.optionKeys.isMeta(this.settings.macOptionIsMeta, event);
-      if (event.isComposing || this.ime.composing) return;
+      const optionMeta = meta && event.altKey;
+      const dropping = this.metaComposition.active;
+      if (!optionMeta && !dropping) {
+        this.baseKeys.learn(event);
+        if (event.isComposing || this.ime.composing || event.keyCode === 229) {
+          this.metaComposition.keydown(false);
+          return;
+        }
+      }
+      // An IME's composition in flight keeps every key, Option's too.
+      if (
+        optionMeta &&
+        !dropping &&
+        (event.isComposing || this.ime.composing)
+      ) {
+        return;
+      }
+      this.metaComposition.keydown(optionMeta);
       // Cmd+V is the menu's Paste, which arrives as an `input` and is
       // handed to `nvim_paste`; Cmd+Q and the chords never get here.
       if (event.metaKey && (event.key === "v" || event.key === "V")) return;
-      const keys = keyToNeovim(event, meta);
-      if (keys === undefined) {
-        // A Meta key whose Option is also a dead key starts a composition
-        // macOS cannot be told not to start: its text is dropped.
-        if (meta && event.altKey) this.dropComposition = true;
-        return;
+      let keys = keyToNeovim(event, meta, this.baseKeys);
+      if (keys === undefined && dropping && !optionMeta) {
+        // A plain key while a Meta dead key's mark is dropped: macOS has
+        // composed it (`ñ`), so it is the physical key's own character.
+        const text = this.baseKeys.base(event.code, event.shiftKey);
+        if (text !== undefined) keys = escapeInputText(text);
       }
+      if (keys === undefined) return;
       event.preventDefault();
-      if (meta) this.dropComposition = true;
       this.send(keys);
     });
     input.addEventListener("keyup", (event) => {
       this.optionKeys.isMeta(this.settings.macOptionIsMeta, event);
-      if (!event.altKey) this.dropComposition = false;
     });
     input.addEventListener("compositionstart", () => {
       this.imeEvent({ type: "compositionstart" });
@@ -1065,6 +1098,8 @@ export class NeovimEditor {
       else if (event.inputType === "historyRedo") menuKey(event, "<D-Z>");
     });
     input.addEventListener("focus", () => {
+      // The input source may have changed while the keys were elsewhere.
+      void this.baseKeys.loadLayout(layoutMapSource());
       this.syncFocus();
     });
     input.addEventListener("blur", () => {

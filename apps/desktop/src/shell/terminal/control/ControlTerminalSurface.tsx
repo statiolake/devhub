@@ -25,7 +25,7 @@ import {
   type ImeEvent,
   type ImeState,
 } from "../../neovim/ime";
-import { OptionKeys } from "../../surfaces/optionKey";
+import { layoutMapSource } from "../../surfaces/baseKeys";
 import {
   activePalette,
   terminalSurfaceStyle,
@@ -48,7 +48,7 @@ import type {
   StatusColor,
   StatusLine,
 } from "../../../ipc/terminalControl";
-import { pasteBytes, sgrMouse, tmuxKey } from "./controlKeys";
+import { pasteBytes, sgrMouse, TerminalKeys } from "./controlKeys";
 import { surfaceBridge } from "../surfaceBridge";
 import "./copyMode.css";
 import {
@@ -290,7 +290,8 @@ export function ControlTerminalSurface({
     const font = () => painter.fontSpec();
     const view = newControlView(live.current.colors);
     view.selection = live.current.colors.selection;
-    const optionKeys = new OptionKeys();
+    const terminalKeys = new TerminalKeys();
+    void terminalKeys.layout.loadLayout(layoutMapSource());
 
     let disposed = false;
     let receipt: TerminalReceipt | undefined;
@@ -1087,20 +1088,20 @@ export function ControlTerminalSurface({
     const markTyped = () => {
       typed = true;
     };
+    // Option as Meta, by the physical key; a Meta dead key's composition
+    // kept from the pane (`TerminalKeys`).
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229) return;
       const setting = live.current.appearance?.terminalMacOptionIsMeta ?? false;
-      const meta = optionKeys.isMeta(setting, event);
-      const key = tmuxKey(event, meta);
+      const key = terminalKeys.keydown(event, setting);
       if (key === undefined) return;
       event.preventDefault();
       markTyped();
       send({ kind: "keys", keys: [key] });
     };
     const onKeyUp = (event: KeyboardEvent) => {
-      optionKeys.isMeta(
-        live.current.appearance?.terminalMacOptionIsMeta ?? false,
+      terminalKeys.keyup(
         event,
+        live.current.appearance?.terminalMacOptionIsMeta ?? false,
       );
     };
     const sendText = (text: string) => {
@@ -1138,6 +1139,17 @@ export function ControlTerminalSurface({
       )}px`;
     };
     const onIme = (event: ImeEvent) => {
+      if (event.type !== "reset" && terminalKeys.drops(event.type)) {
+        // A Meta key's composition: nothing of it is drawn or sent, and the
+        // textarea is emptied once it is over, which drops the mark.
+        if (event.type === "compositionend") {
+          setTimeout(() => {
+            if (!terminalKeys.dropping) input.value = "";
+          }, 0);
+        }
+        return;
+      }
+      if (event.type === "reset") terminalKeys.reset();
       const step = imeStep(ime, event);
       ime = step.state;
       if (step.commit !== undefined) sendText(step.commit);
@@ -1290,6 +1302,10 @@ export function ControlTerminalSurface({
     input.addEventListener("compositionupdate", onCompositionUpdate);
     input.addEventListener("compositionend", onCompositionEnd);
     input.addEventListener("blur", onBlur);
+    // The input source may have changed while the keys were elsewhere.
+    input.addEventListener("focus", () => {
+      void terminalKeys.layout.loadLayout(layoutMapSource());
+    });
     input.addEventListener("input", onInput);
     input.addEventListener("paste", onPaste);
     host.addEventListener("paste", markTyped, true);

@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	CLIENT_LINE_MARK,
 	forwardedKey,
+	LeftOption,
 	isTmuxKey,
 	overlayRect,
 	parseTerminalNeovimReading,
@@ -120,6 +121,31 @@ describe("tmux key names", () => {
 			keyCode: "Up",
 		});
 		expect(forwardedKey(key({ key: "Unidentified" }))).toEqual([]);
+	});
+
+	it("forward an Option chord by its physical key, and the left Option first", () => {
+		// Option+X on a Mac: `key` is what Option made of it.
+		const optionX = key({ key: "≈", code: "KeyX", alt: true });
+		expect(forwardedKey(optionX, true)).toEqual([
+			{ type: "keyDown", keyCode: "Alt", modifiers: ["alt", "left"] },
+			{ type: "keyDown", keyCode: "x", modifiers: ["alt"] },
+			{ type: "keyUp", keyCode: "x", modifiers: ["alt"] },
+		]);
+		// The right Option: no Alt said, so the overlay does not read Meta.
+		expect(forwardedKey(optionX, false).map((one) => one.keyCode)).toEqual([
+			"x",
+			"x",
+		]);
+		const held = new LeftOption();
+		expect(
+			held.note(
+				key({ type: "keyDown", key: "Alt", code: "AltLeft", alt: true }),
+			),
+		).toBe(true);
+		expect(held.note(optionX)).toBe(true);
+		expect(held.note(key({ type: "keyUp", key: "Alt", code: "AltLeft" }))).toBe(
+			false,
+		);
 	});
 });
 

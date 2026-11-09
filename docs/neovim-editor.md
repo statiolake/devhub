@@ -477,7 +477,9 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   line is off the display too, it is where Neovim pins it.
 - `keys.ts` — a `keydown` as key notation: `<C-…>`, `<M-…>` for Option when
   `[terminal] mac_option_is_meta` says it is Meta (left/right tracked as in
-  DevHub's terminals), `<D-…>` for Cmd, named keys, `<lt>` and friends.
+  DevHub's terminals; the base key from `code` through the layout,
+  `surfaces/baseKeys.ts`, so a dead key is `<M-e>` and JIS Option+¥
+  `<M-Bslash>`), `<D-…>` for Cmd, named keys, `<lt>` and friends.
   Printable keys arrive as text (`ime.ts`). `Cmd+Q` and the chords never get
   here: main's key router takes them first, as for every surface.
 - `ime.ts` — the hidden textarea's events as a state machine: the preedit is

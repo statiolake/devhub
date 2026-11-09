@@ -409,6 +409,8 @@ export function controlReading(
 export interface KeyInput {
 	readonly type: string;
 	readonly key: string;
+	/** The physical key (`KeyX`, `AltLeft`). */
+	readonly code?: string;
 	readonly control: boolean;
 	readonly alt: boolean;
 	readonly shift: boolean;
@@ -466,15 +468,63 @@ const FORWARDED_NAMES: Record<string, string> = {
 	" ": "Space",
 };
 
+/** The US-layout key Electron's `sendInputEvent` names for a `code`. */
+function usKeyOfCode(code: string): string | undefined {
+	const letter = /^Key([A-Z])$/.exec(code);
+	if (letter !== null) return letter[1].toLowerCase();
+	const digit = /^Digit([0-9])$/.exec(code);
+	if (digit !== null) return digit[1];
+	const punctuation: Record<string, string> = {
+		Minus: "-",
+		Equal: "=",
+		BracketLeft: "[",
+		BracketRight: "]",
+		Backslash: "\\",
+		Semicolon: ";",
+		Quote: "'",
+		Comma: ",",
+		Period: ".",
+		Slash: "/",
+		Backquote: "`",
+		Space: "Space",
+	};
+	return punctuation[code];
+}
+
+/**
+ * Whether the left Option is down, followed from the key events of one web
+ * contents (`code` `AltLeft`), for `forwardedKey`.
+ */
+export class LeftOption {
+	private down = false;
+
+	note(input: KeyInput): boolean {
+		if (input.code === "AltLeft") {
+			this.down = input.type !== "keyUp";
+		}
+		if (!input.alt) this.down = false;
+		return this.down;
+	}
+}
+
 /**
  * The keystroke a terminal took, as input events to send the overlay that
  * takes the keys from it: a key down, its character, a key up. A key with no
  * name Electron can send is not sent — the overlay has the keys from the
  * next one on.
  */
-export function forwardedKey(input: KeyInput): Electron.KeyboardInputEvent[] {
+export function forwardedKey(
+	input: KeyInput,
+	leftOption = false,
+): Electron.KeyboardInputEvent[] {
+	// An Option chord's `key` is what Option made of it (`≈`), which names no
+	// physical key: the key itself is sent, by its US name, so the overlay
+	// reads its `code` and the layout (`shell/surfaces/baseKeys.ts`).
+	const physical =
+		input.alt && input.code !== undefined ? usKeyOfCode(input.code) : undefined;
 	const keyCode =
 		FORWARDED_NAMES[input.key] ??
+		physical ??
 		([...input.key].length === 1 ? input.key : undefined);
 	if (keyCode === undefined) return [];
 	const modifiers: Electron.KeyboardInputEvent["modifiers"] = [];
@@ -482,9 +532,19 @@ export function forwardedKey(input: KeyInput): Electron.KeyboardInputEvent[] {
 	if (input.control) modifiers.push("control");
 	if (input.alt) modifiers.push("alt");
 	if (input.meta) modifiers.push("meta");
-	const events: Electron.KeyboardInputEvent[] = [
-		{ type: "keyDown", keyCode, modifiers },
-	];
+	const events: Electron.KeyboardInputEvent[] = [];
+	// The left Option is held, and the overlay never saw it go down: it is
+	// told (`AltLeft`), so `mac_option_is_meta = "left"` reads this chord and
+	// the ones after it as Meta. Its key up is the real one, which the
+	// overlay, focused from here on, sees.
+	if (input.alt && leftOption) {
+		events.push({
+			type: "keyDown",
+			keyCode: "Alt",
+			modifiers: ["alt", "left"],
+		});
+	}
+	events.push({ type: "keyDown", keyCode, modifiers });
 	if (
 		[...input.key].length === 1 &&
 		!input.control &&

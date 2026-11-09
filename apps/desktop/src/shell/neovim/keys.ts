@@ -2,9 +2,11 @@
  * A key the person pressed, as Neovim's key notation (`:help key-notation`)
  * for `nvim_input`.
  *
- * Pure: it is handed what a `keydown` says and whether Option is Meta for
- * this key (`surfaces/optionKey.ts` decides that from `[terminal]
- * mac_option_is_meta`, as for DevHub's terminals), and answers the string to
+ * Pure: it is handed what a `keydown` says, whether Option is Meta for this
+ * key (`surfaces/optionKey.ts` decides that from `[terminal]
+ * mac_option_is_meta`, as for DevHub's terminals) and what each physical key
+ * types without Option (`surfaces/baseKeys.ts`: `<M-x>` for Option+X, not
+ * `<M-≈>`; `<M-@>` for Option+@ on JIS), and answers the string to
  * send, or `undefined` for a key that is not Neovim's — a lone modifier, a
  * key the IME is composing, or a printable key that will arrive as text
  * through the input element instead (`ime.ts`).
@@ -13,6 +15,8 @@
  * are taken by main's key router before the page sees them
  * (`main/shell/keyboard.ts`), as for every other surface.
  */
+
+import { BaseKeys } from "../surfaces/baseKeys";
 
 export interface KeyInput {
   readonly key: string;
@@ -56,6 +60,20 @@ const NAMED: Readonly<Record<string, string>> = {
   F12: "F12",
 };
 
+/** Named keys by `code`, for a Meta chord whose `key` Option replaced. */
+const NAMED_CODES: Readonly<Record<string, string>> = {
+  Enter: "CR",
+  NumpadEnter: "CR",
+  Tab: "Tab",
+  Backspace: "BS",
+  Escape: "Esc",
+};
+
+const MODIFIER_CODE = /^(Shift|Control|Alt|Meta|OS)(Left|Right)$|^Lang[0-9]$/;
+
+/** No layout learned: what `code` says, the US layout. */
+const US_ONLY = new BaseKeys();
+
 /** Characters that must be spelled by name inside `<…>` or as text. */
 const SPECIAL_CHARS: Readonly<Record<string, string>> = {
   "<": "lt",
@@ -85,34 +103,6 @@ export function escapeInputText(text: string): string {
   return text.replaceAll("<", "<lt>");
 }
 
-/**
- * The character a key produces with Option *not* applied, for a Meta key:
- * Option+X on a US layout reports `≈`, and Neovim's `<M-x>` wants the `x`.
- * Read from the physical key, so it is the US-layout letter or digit.
- */
-function baseOfCode(code: string, shift: boolean): string | undefined {
-  if (/^Key[A-Z]$/.test(code)) {
-    const letter = code.slice(3);
-    return shift ? letter : letter.toLowerCase();
-  }
-  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
-  const punct: Record<string, string> = {
-    Minus: "-",
-    Equal: "=",
-    BracketLeft: "[",
-    BracketRight: "]",
-    Semicolon: ";",
-    Quote: "'",
-    Comma: ",",
-    Period: ".",
-    Slash: "/",
-    Backslash: "\\",
-    Backquote: "`",
-    Space: " ",
-  };
-  return punct[code];
-}
-
 function wrap(mods: string, key: string): string {
   return mods.length === 0 && key.length === 1
     ? key
@@ -128,11 +118,20 @@ function wrap(mods: string, key: string): string {
 export function keyToNeovim(
   event: KeyInput,
   optionIsMeta: boolean,
+  layout: BaseKeys = US_ONLY,
 ): string | undefined {
-  if (event.isComposing === true || event.key === "Process") return undefined;
-  if (MODIFIER_KEYS.has(event.key) || event.key === "Dead") return undefined;
+  if (MODIFIER_KEYS.has(event.key) || MODIFIER_CODE.test(event.code)) {
+    return undefined;
+  }
   const meta = event.altKey && optionIsMeta;
-  const named = NAMED[event.key];
+  // A Meta chord is the physical key's, even when Chromium handed it to
+  // the input method (a dead key's "Dead", keyCode 229's "Process").
+  if (!meta && (event.isComposing === true || event.key === "Process")) {
+    return undefined;
+  }
+  if (!meta && event.key === "Dead") return undefined;
+  const named =
+    NAMED[event.key] ?? (meta ? NAMED_CODES[event.code] : undefined);
   if (named !== undefined) {
     const mods =
       (event.ctrlKey ? "C-" : "") +
@@ -142,14 +141,29 @@ export function keyToNeovim(
     return `<${mods}${named}>`;
   }
   // One character from here on (`key` is the produced character).
-  if ([...event.key].length !== 1) return undefined;
+  if ([...event.key].length !== 1 && !meta) return undefined;
   if (!event.ctrlKey && !meta && !event.metaKey) {
     // Plain text, Shift and the layout's Option characters included: the
     // input element delivers it. Space too, so `<Space>` mappings see " ".
     return undefined;
   }
   let key = event.key;
-  if (meta) key = baseOfCode(event.code, event.shiftKey) ?? key;
+  if (meta) {
+    const base = layout.base(event.code, event.shiftKey);
+    if (base !== undefined) {
+      key = base;
+    } else {
+      // A key whose Shift this layout has not shown: the key, and Shift.
+      const unshifted = layout.base(event.code, false);
+      if (unshifted !== undefined) {
+        return wrap(
+          (event.ctrlKey ? "C-" : "") + "S-M-" + (event.metaKey ? "D-" : ""),
+          unshifted,
+        );
+      }
+    }
+    if ([...key].length !== 1) return undefined;
+  }
   if (event.ctrlKey && key.length === 1) {
     // `<C-a>` and `<C-A>` are one key to Neovim; Shift is said separately
     // only where it means something (`<C-S-a>` reaches a GUI's mappings).

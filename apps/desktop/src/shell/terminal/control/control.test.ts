@@ -44,8 +44,8 @@ describe("keys by tmux's names", () => {
   it("makes Option Meta only when it is, by the physical key", () => {
     expect(tmuxKey(key("≈", "KeyX", { altKey: true }), true)).toBe("M-x");
     expect(tmuxKey(key("≈", "KeyX", { altKey: true }), false)).toBe("≈");
-    expect(tmuxKey(key("ArrowLeft", "ArrowLeft", { altKey: true }), true)).toBe(
-      "M-Left",
+    expect(tmuxKey(key("ArrowUp", "ArrowUp", { altKey: true }), true)).toBe(
+      "M-Up",
     );
   });
 

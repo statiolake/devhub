@@ -42,6 +42,21 @@ followed from its own keydown and keyup, since a letter's keydown does not say
 which Option is held; one already held when the terminal took focus counts as
 up until it is pressed again. A refused value is `invalid_mac_option_is_meta`.
 
+In tmux control mode, and in the Neovim editor and its overlays, nothing
+encodes for DevHub: a Meta chord is named by its physical key (`code`), read
+through the keyboard layout (`shell/surfaces/baseKeys.ts`: what each key
+typed without Option, learned from plain keydowns, else Chromium's
+`navigator.keyboard.getLayoutMap()`, else US), never by `key`, which is the
+Option character (`≈`, `å`, `∫`, a dead key's `Dead`). So the left Option+X
+is `M-x` to tmux and `<M-x>` to Neovim, Option+Shift+X `M-X`, Option+E
+`M-e`, Option+Up `M-Up`, and on JIS Option+@ `M-@` and Option+¥ `M-\`
+(`M-|` with Shift). A non-letter whose Shift the layout has not shown yet is
+the key and Shift (`M-S-2`). Option+Left and Right are `M-b` and `M-f`,
+Cmd+Left, Right and Backspace `C-a`, `C-e` and `C-u`, Ghostty's bindings as
+in the xterm.js terminal. A key the terminal page hands to a Neovim overlay
+(`forwardedKey`) carries its physical key, and the left Option if it is
+held, which the overlay would not otherwise have seen go down.
+
 A Meta key sends only its `ESC` sequence. Option+N, E, U, I and `` ` `` are dead
 keys on a US layout, and macOS starts their composition before the page sees
 the key, so cancelling the keydown is not enough: the next key would commit
@@ -49,7 +64,10 @@ the mark (Option+N then Option+P used to add `˜π` after `ESC n ESC p`). A
 composition that starts on a Meta key is therefore kept from xterm and its
 text dropped (`shell/surfaces/xtermSession.ts`); one that starts on any other
 key — the right Option under `"left"`, every Option under `false`, an IME — is
-untouched, so Option+E then e is still `é`.
+untouched, so Option+E then e is still `é`. The control-mode terminal and the
+Neovim editor do the same (`MetaComposition` in `optionKey.ts`), and send the
+keys typed while that composition is dropped by their physical key: Option+N
+then Option+P is `M-n`, `M-p`; Option+N then n is `M-n`, `n`.
 
 ```toml
 [terminal]
@@ -443,7 +461,7 @@ picks it by the setting and mounts the other one when it changes.
   colour showed, a dark cursor on a light ground came out light grey.)
 - **Keys.** By tmux's names (`controlKeys.ts`), so the prefix and the
   bindings are tmux's; Option is Meta per `mac_option_is_meta`, by the
-  physical key. Text an IME commits, and a dead key's character, go to the
+  physical key through the layout (`TerminalKeys`; "The Option key" above). Text an IME commits, and a dead key's character, go to the
   active pane as bytes, once per commit; while an IME composes, its preedit
   is drawn at the cursor, underlined, each character on the cells it will
   take (`neovim/ime.ts` and the painter's `paintPreedit`, as in the Neovim

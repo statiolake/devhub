@@ -50,6 +50,7 @@ import { shellThemeIfInstalled } from "./shellTheme.js";
 import { scrimColor, type ShellPalette } from "../../ipc/palette.js";
 import {
 	forwardedKey,
+	LeftOption,
 	type KeyInput,
 	type OverlaidPanes,
 	type OverlayRect,
@@ -570,7 +571,9 @@ export class ShellWindow {
 			this.contentFocused(focus);
 			this.terminalNeovims.terminalFocused(id);
 		});
+		const leftOption = new LeftOption();
 		contents?.on("before-input-event", (event, input) => {
+			const leftHeld = leftOption.note(input);
 			if (this.terminalNeovims.terminalKey(id, input) !== "redirect") return;
 			// A key tmux would only hand to the pane under a Neovim drawn
 			// over it: the overlay takes the keys, this one first.
@@ -581,7 +584,7 @@ export class ShellWindow {
 			);
 			const target = overlay?.view.contents();
 			if (target !== undefined) {
-				for (const forwarded of forwardedKey(input)) {
+				for (const forwarded of forwardedKey(input, leftHeld)) {
 					target.sendInputEvent(forwarded);
 				}
 			}
