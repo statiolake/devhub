@@ -130,6 +130,23 @@ export function terminalInputChunks(
 }
 
 /**
+ * Whether a failed attach is to be made again by itself: one refused as
+ * stale (`stale_target`: a newer attach for the same terminal, the page's
+ * own clients released as it loaded, a provider operation cancelled under
+ * it) while its surface still wants a client is no reason to stop and ask
+ * for a Retry — the terminal is there. A few times, then the error stands.
+ */
+export function retriesAttach(error: unknown, attempts: number): boolean {
+  return (
+    error instanceof TerminalFailure &&
+    error.code === "stale_target" &&
+    attempts < STALE_RETRIES
+  );
+}
+
+export const STALE_RETRIES = 3;
+
+/**
  * The sentence a caught terminal failure is drawn as.
  *
  * A `TerminalFailure` already carries the words the main process chose — the

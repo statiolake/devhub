@@ -475,7 +475,12 @@ picks it by the setting and mounts the other one when it changes.
   again ends within 3 s with nothing typed (a key or a paste, not the
   stream); Retry and every connect put the keys in the terminal when it is
   on screen and nothing outside it has them. A surface never shown is not
-  attached; a hidden one tells its client, which stops sending rows.
+  attached; a hidden one tells its client, which stops sending rows. An
+  attach refused as stale (`stale_target`: a newer attach for the same
+  terminal, the page's clients released as it loaded, a provider operation
+  cancelled under it) while the surface still wants a client is made again
+  by itself, up to three times (`retriesAttach`): it used to stop at "The
+  terminal target is stale." until Retry was clicked.
 - **The window tabs** (`WindowStrip.tsx`, its look `tabs.css` alone; the
   phase 4 mock A, "a pill in the pond"): no line under the panes, 4px of
   space; the active window a faint pill (foreground 10%) with its name bold,

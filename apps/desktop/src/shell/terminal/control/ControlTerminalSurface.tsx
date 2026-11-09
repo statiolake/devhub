@@ -33,6 +33,7 @@ import {
 } from "../theme";
 import {
   createTerminalClient,
+  retriesAttach,
   terminalErrorSummary,
   type TerminalReceipt,
 } from "../client";
@@ -299,6 +300,8 @@ export function ControlTerminalSurface({
     let connectedAt = 0;
     let typed = false;
     let reattachedOnExit = false;
+    /** Attaches refused as stale in a row (`retriesAttach`). */
+    let staleRetries = 0;
     /** Messages for a client being attached: the person's keys meanwhile. */
     let held: PageToControl[] | undefined;
     let pendingChanges: ReturnType<typeof applyControl>[] = [];
@@ -1101,6 +1104,7 @@ export function ControlTerminalSurface({
           return;
         }
         receipt = answer;
+        staleRetries = 0;
         connectedAt = Date.now();
         setConnection("connected");
         setError(undefined);
@@ -1118,6 +1122,14 @@ export function ControlTerminalSurface({
         focusIfUnclaimed();
       } catch (failure: unknown) {
         if (disposed || mine !== serial) return;
+        if (retriesAttach(failure, staleRetries)) {
+          staleRetries += 1;
+          window.setTimeout(() => {
+            if (!disposed && mine === serial) void attach({ onExit });
+          }, 150 * staleRetries);
+          return;
+        }
+        staleRetries = 0;
         setError(terminalErrorSummary(failure));
         setConnection("disconnected");
       }
