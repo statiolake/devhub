@@ -150,7 +150,7 @@ const NODE_TIMERS = {
 const FIELD = "\u001f";
 /** The subscription that says a pane's mode or `@devhub-nvim` changed. */
 const PANE_FACTS = "devhub-pane";
-const PANE_FACTS_FORMAT = `#{pane_in_mode}${FIELD}#{pane_mode}${FIELD}#{@devhub-nvim}`;
+const PANE_FACTS_FORMAT = `#{pane_in_mode}${FIELD}#{pane_mode}${FIELD}#{pane_synchronized}${FIELD}#{@devhub-nvim}`;
 /** The modes DevHub draws on the pane (`copyMode.ts`): window-copy's two. */
 const COPY_MODES = new Set(["copy-mode", "view-mode"]);
 const NAMED = new TextEncoder().encode(NVIM_NAMED_OSC);
@@ -204,6 +204,8 @@ interface Pane {
 	inMode: boolean;
 	/** Which (`#{pane_mode}`). */
 	mode: string;
+	/** `synchronize-panes` is on for it. */
+	synchronized: boolean;
 	/**
 	 * Copy mode as DevHub draws it (`copyMode.ts`): the mode's rows in an
 	 * engine of their own, shown in place of the pane's.
@@ -449,7 +451,7 @@ export class ControlClient {
 		await this.#command([
 			"refresh-client",
 			"-B",
-			`${TABS_SUBSCRIPTION}:@*:${TAB_FORMAT}`,
+			`${TABS_SUBSCRIPTION}:@*:#{window_active}${FIELD}${TAB_FORMAT}`,
 		]);
 		const name = await this.#command([
 			"display-message",
@@ -1782,7 +1784,7 @@ export class ControlClient {
 		const seenPanes = new Set<TmuxId>();
 		const fresh: Pane[] = [];
 		for (const line of panes.lines) {
-			const [paneText, windowText, active, inMode, mode, ...socket] =
+			const [paneText, windowText, active, inMode, mode, sync, ...socket] =
 				line.split(FIELD);
 			const id = parseId(paneText);
 			const windowId = parseId(windowText);
@@ -1794,6 +1796,7 @@ export class ControlClient {
 			if (known !== undefined) {
 				known.window = windowId;
 				known.inMode = inMode === "1";
+				known.synchronized = sync === "1";
 				known.socket = socket.join(FIELD);
 				this.#modeOf(known, mode ?? "");
 				continue;
@@ -1818,6 +1821,7 @@ export class ControlClient {
 				lastCursor: "",
 				inMode: inMode === "1",
 				mode: "",
+				synchronized: sync === "1",
 				copy: undefined,
 				socket: socket.join(FIELD),
 			};
@@ -1987,11 +1991,21 @@ export class ControlClient {
 	#facts(paneId: TmuxId, value: string): void {
 		const pane = this.#panes.get(paneId);
 		if (pane === undefined) return;
-		const [inMode, mode, ...socket] = value.split(FIELD);
+		const [inMode, mode, sync, ...socket] = value.split(FIELD);
 		this.#modeOf(pane, mode ?? "");
-		const next = { inMode: inMode === "1", socket: socket.join(FIELD) };
-		if (next.inMode === pane.inMode && next.socket === pane.socket) return;
+		const next = {
+			inMode: inMode === "1",
+			synchronized: sync === "1",
+			socket: socket.join(FIELD),
+		};
+		if (
+			next.inMode === pane.inMode &&
+			next.synchronized === pane.synchronized &&
+			next.socket === pane.socket
+		)
+			return;
 		pane.inMode = next.inMode;
+		pane.synchronized = next.synchronized;
 		pane.socket = next.socket;
 		this.#postLayout();
 	}
@@ -2092,14 +2106,28 @@ export class ControlClient {
 			width: box.width,
 			height: box.height,
 			active: box.pane === window.activePane,
+			synchronized: this.#panes.get(box.pane)?.synchronized === true,
 		}));
 	}
 
-	/** A window's tab changed (`TABS_SUBSCRIPTION`). */
+	/**
+	 * A window's tab changed (`TABS_SUBSCRIPTION`), or whether it is the
+	 * session's current one: a switch whose notification was overtaken by an
+	 * older listing is put right within tmux's next check.
+	 */
 	#setTab(window: Window, value: string): void {
-		const tab = parseTab(value);
-		if (JSON.stringify(tab) === JSON.stringify(window.tab)) return;
+		const at = value.indexOf(FIELD);
+		const active = value.slice(0, at) === "1";
+		const tab = parseTab(value.slice(at + 1));
+		const switched = active && this.#activeWindow !== window.id;
+		if (!switched && JSON.stringify(tab) === JSON.stringify(window.tab)) return;
 		window.tab = tab;
+		if (switched) {
+			this.#activeWindow = window.id;
+			for (const pane of this.#panes.values())
+				if (pane.window === window.id) pane.all = true;
+			this.#schedule();
+		}
 		this.#postLayout();
 	}
 

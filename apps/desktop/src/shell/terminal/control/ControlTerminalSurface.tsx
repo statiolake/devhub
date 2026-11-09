@@ -37,6 +37,7 @@ import "./copyMode.css";
 import {
   applyControl,
   borders,
+  paneRings,
   newControlView,
   paneAt,
   paneBoxes,
@@ -323,6 +324,18 @@ export function ControlTerminalSurface({
           if (line.vertical)
             el.style.height = `${String(line.length * height)}px`;
           else el.style.width = `${String(line.length * width)}px`;
+          return el;
+        }),
+        ...paneRings(view.panes).map((ring) => {
+          const el = document.createElement("div");
+          el.className = "control-pane-ring";
+          if (ring.active) el.dataset.active = "true";
+          if (ring.synchronized) el.dataset.synchronized = "true";
+          el.style.left = `${String(ring.x * width)}px`;
+          el.style.top = `${String(ring.y * height)}px`;
+          // A pixel more, so its far sides lie on the hairlines as its near ones do.
+          el.style.width = `${String(ring.width * width + 1)}px`;
+          el.style.height = `${String(ring.height * height + 1)}px`;
           return el;
         }),
       );
@@ -1086,6 +1099,11 @@ export function ControlTerminalSurface({
                 "--terminal-foreground": palette.foreground,
                 // A bell is said in the theme's red (ANSI 1).
                 "--terminal-ansi-red": palette.ansi[1],
+                // The active pane's outline: tmux's pane-active-border-style.
+                "--control-active-border": cssOfStatusColor(
+                  status?.activeBorder ?? { index: 2 },
+                  colors.palette,
+                ),
                 "--terminal-selection": palette.selectionBackground,
                 color: palette.foreground,
               }

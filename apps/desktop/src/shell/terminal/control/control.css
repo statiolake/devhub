@@ -30,6 +30,28 @@
   height: 1px;
 }
 
+/* The active pane, gone round on the hairlines in the colour tmux gives its
+   border (pane-active-border-style: by default green, yellow in a mode, red
+   while the panes are synchronized), faint enough to stay out of the way.
+   While synchronize-panes is on, every pane that takes the keys is gone
+   round, the others dashed: what is typed reaches all of them. */
+.control-pane-ring {
+  --control-ring: color-mix(
+    in srgb,
+    var(--control-active-border, currentColor) 60%,
+    transparent
+  );
+
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--control-ring);
+  border-radius: 6px;
+}
+
+.control-pane-ring[data-synchronized="true"]:not([data-active="true"]) {
+  border-style: dashed;
+}
+
 /* The active pane's cursor. Its shape is the program's (`DECSCUSR`):
    0 bar, 1 block, 2 underline, 3 hollow block. */
 .control-cursor {

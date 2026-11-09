@@ -53,6 +53,7 @@ export const STATUS_FORMAT = [
 	"#{T:status-right}",
 	"#{status-left-length}",
 	"#{status-right-length}",
+	"#{E:pane-active-border-style}",
 ].join(FIELD);
 
 /** A format that leads with the window's index, past any style. */
@@ -90,9 +91,18 @@ export function parseTab(value: string): WindowTab | undefined {
 
 /** The status line from `STATUS_FORMAT`'s value. */
 export function parseStatus(value: string): StatusLine | undefined {
-	const [status, position, justify, left, right, leftLength, rightLength] =
-		value.split(FIELD);
+	const [
+		status,
+		position,
+		justify,
+		left,
+		right,
+		leftLength,
+		rightLength,
+		activeBorder,
+	] = value.split(FIELD);
 	if (rightLength === undefined) return undefined;
+	const border = parseStyle(activeBorder ?? "")?.fg;
 	return {
 		shown: status !== "off",
 		position: position === "top" ? "top" : "bottom",
@@ -104,6 +114,7 @@ export function parseStatus(value: string): StatusLine | undefined {
 				: "left",
 		left: limitRuns(trimRuns(statusRuns(left)), Number(leftLength)),
 		right: limitRuns(trimRuns(statusRuns(right)), Number(rightLength)),
+		...(border === undefined ? {} : { activeBorder: border }),
 	};
 }
 

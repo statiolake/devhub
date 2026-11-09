@@ -108,6 +108,12 @@ export interface StatusLine {
 	/** `status-left` / `status-right`, expanded by tmux and trimmed. */
 	readonly left: readonly StatusRun[];
 	readonly right: readonly StatusRun[];
+	/**
+	 * The colour `pane-active-border-style` gives the active pane's border,
+	 * expanded there: tmux's default turns it yellow in a mode and red while
+	 * the panes are synchronized.
+	 */
+	readonly activeBorder?: StatusColor;
 }
 
 export interface PaneBox {
@@ -117,6 +123,8 @@ export interface PaneBox {
 	readonly width: number;
 	readonly height: number;
 	readonly active: boolean;
+	/** `synchronize-panes`: what is typed in the window's active pane goes to it too. */
+	readonly synchronized: boolean;
 }
 
 /**

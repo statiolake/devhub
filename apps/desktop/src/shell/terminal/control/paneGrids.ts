@@ -481,38 +481,119 @@ export function paneAt(
 /**
  * The lines between panes: tmux leaves one cell between neighbours, and
  * DevHub draws a hairline down its middle instead of a character border.
- * In cells: `x`/`y` the gap cell, `length` how far it runs.
+ * Traced cell by cell over the gaps, so lines meet: a gap cell beside a pane
+ * carries a line through it (down it beside a pane to its left or right,
+ * across it beside one above or below), and every gap cell reaches half a
+ * cell towards a neighbour whose line runs towards it — where a line ends on
+ * another (a T) and where four panes meet (a +), the lines join. In cells:
+ * `x`/`y` where it starts (on the gap cell's middle line), `length` how far
+ * it runs; halves are cells too.
  */
 export function borders(
   panes: readonly PaneBox[],
 ): { vertical: boolean; x: number; y: number; length: number }[] {
-  const lines: { vertical: boolean; x: number; y: number; length: number }[] =
-    [];
-  for (const a of panes) {
-    for (const b of panes) {
-      if (b.x === a.x + a.width + 1) {
-        const top = Math.max(a.y, b.y);
-        const bottom = Math.min(a.y + a.height, b.y + b.height);
-        if (bottom > top)
-          lines.push({
-            vertical: true,
-            x: a.x + a.width,
-            y: top,
-            length: bottom - top,
-          });
-      }
-      if (b.y === a.y + a.height + 1) {
-        const left = Math.max(a.x, b.x);
-        const right = Math.min(a.x + a.width, b.x + b.width);
-        if (right > left)
-          lines.push({
-            vertical: false,
-            x: left,
-            y: a.y + a.height,
-            length: right - left,
-          });
-      }
+  if (panes.length < 2) return [];
+  const cols = Math.max(...panes.map((p) => p.x + p.width));
+  const rows = Math.max(...panes.map((p) => p.y + p.height));
+  const pane = new Uint8Array(cols * rows);
+  for (const p of panes)
+    for (let y = p.y; y < p.y + p.height; y++)
+      pane.fill(1, y * cols + p.x, y * cols + p.x + p.width);
+  const inside = (x: number, y: number) =>
+    x >= 0 && y >= 0 && x < cols && y < rows;
+  const isPane = (x: number, y: number) =>
+    inside(x, y) && pane[y * cols + x] === 1;
+  const isGap = (x: number, y: number) =>
+    inside(x, y) && pane[y * cols + x] === 0;
+  // A line down the cell (beside a pane left or right), across it (above or below).
+  const down = (x: number, y: number) =>
+    isGap(x, y) && (isPane(x - 1, y) || isPane(x + 1, y));
+  const across = (x: number, y: number) =>
+    isGap(x, y) && (isPane(x, y - 1) || isPane(x, y + 1));
+  // Each column's and row's covered half-cells, as runs to merge.
+  const vertical = new Map<number, [number, number][]>();
+  const horizontal = new Map<number, [number, number][]>();
+  const add = (
+    map: Map<number, [number, number][]>,
+    at: number,
+    from: number,
+    to: number,
+  ) => {
+    const list = map.get(at) ?? [];
+    list.push([from, to]);
+    map.set(at, list);
+  };
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (!isGap(x, y)) continue;
+      if (down(x, y)) add(vertical, x, y, y + 1);
+      if (across(x, y)) add(horizontal, y, x, x + 1);
+      if (down(x, y - 1)) add(vertical, x, y, y + 0.5);
+      if (down(x, y + 1)) add(vertical, x, y + 0.5, y + 1);
+      if (across(x - 1, y)) add(horizontal, y, x, x + 0.5);
+      if (across(x + 1, y)) add(horizontal, y, x + 0.5, x + 1);
     }
   }
+  const lines: { vertical: boolean; x: number; y: number; length: number }[] =
+    [];
+  const merge = (map: Map<number, [number, number][]>, isVertical: boolean) => {
+    for (const [at, runs] of [...map].sort((a, b) => a[0] - b[0])) {
+      runs.sort((a, b) => a[0] - b[0]);
+      let [start, end] = runs[0];
+      const flush = () =>
+        lines.push(
+          isVertical
+            ? { vertical: true, x: at, y: start, length: end - start }
+            : { vertical: false, x: start, y: at, length: end - start },
+        );
+      for (const [from, to] of runs.slice(1)) {
+        if (from <= end) end = Math.max(end, to);
+        else {
+          flush();
+          [start, end] = [from, to];
+        }
+      }
+      flush();
+    }
+  };
+  merge(vertical, true);
+  merge(horizontal, false);
   return lines;
+}
+
+/**
+ * The outlines over the panes, in cells of the window: the active pane's,
+ * when the window shows more than one (tmux colours that pane's border; a GUI
+ * can go round it), and every synchronized pane's while `synchronize-panes`
+ * is on, since what is typed reaches all of them. Each runs down the middle
+ * of the gap cells around its pane, on the hairlines; at the window's edge,
+ * where tmux leaves no gap, it keeps to the edge.
+ */
+export function paneRings(panes: readonly PaneBox[]): {
+  readonly active: boolean;
+  readonly synchronized: boolean;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}[] {
+  if (panes.length < 2) return [];
+  const cols = Math.max(...panes.map((p) => p.x + p.width));
+  const rows = Math.max(...panes.map((p) => p.y + p.height));
+  return panes
+    .filter((p) => p.active || p.synchronized)
+    .map((p) => {
+      const left = Math.max(0, p.x - 0.5);
+      const top = Math.max(0, p.y - 0.5);
+      const right = Math.min(cols, p.x + p.width + 0.5);
+      const bottom = Math.min(rows, p.y + p.height + 0.5);
+      return {
+        active: p.active,
+        synchronized: p.synchronized,
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+      };
+    });
 }

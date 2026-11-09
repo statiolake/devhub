@@ -3,6 +3,7 @@ import { pasteBytes, sgrMouse, tmuxKey, type KeyLike } from "./controlKeys";
 import {
   applyControl,
   borders,
+  paneRings,
   hlOf,
   newControlView,
   paneAt,
@@ -70,9 +71,33 @@ describe("panes as the painter's grids", () => {
     windows: [{ id: 0, index: 1, name: "zsh", active: true, zoomed: false }],
     window: 0,
     panes: [
-      { pane: 1, x: 0, y: 0, width: 10, height: 5, active: true },
-      { pane: 2, x: 11, y: 0, width: 10, height: 2, active: false },
-      { pane: 3, x: 11, y: 3, width: 10, height: 2, active: false },
+      {
+        pane: 1,
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 5,
+        active: true,
+        synchronized: false,
+      },
+      {
+        pane: 2,
+        x: 11,
+        y: 0,
+        width: 10,
+        height: 2,
+        active: false,
+        synchronized: false,
+      },
+      {
+        pane: 3,
+        x: 11,
+        y: 3,
+        width: 10,
+        height: 2,
+        active: false,
+        synchronized: false,
+      },
     ],
     sessionPanes: [1, 2, 3].map((pane) => ({
       pane,
@@ -135,12 +160,49 @@ describe("panes as the painter's grids", () => {
     expect(paneAt(view, 10, 1)).toBeUndefined();
   });
 
-  it("draws a hairline in each gap tmux leaves between panes", () => {
+  it("draws a hairline in each gap tmux leaves between panes, joined where they meet", () => {
+    // A T: the line under the right two panes starts on the one beside them.
     expect(borders(layout.panes)).toEqual([
-      { vertical: true, x: 10, y: 0, length: 2 },
-      { vertical: true, x: 10, y: 3, length: 2 },
-      { vertical: false, x: 11, y: 2, length: 10 },
+      { vertical: true, x: 10, y: 0, length: 5 },
+      { vertical: false, x: 10.5, y: 2, length: 10.5 },
     ]);
+  });
+
+  it("crosses where four panes meet", () => {
+    const box = (pane: number, x: number, y: number) => ({
+      pane,
+      x,
+      y,
+      width: 4,
+      height: 3,
+      active: false,
+      synchronized: false,
+    });
+    expect(
+      borders([box(1, 0, 0), box(2, 5, 0), box(3, 0, 4), box(4, 5, 4)]),
+    ).toEqual([
+      { vertical: true, x: 4, y: 0, length: 7 },
+      { vertical: false, x: 0, y: 3, length: 9 },
+    ]);
+  });
+
+  it("draws nothing for one pane", () => {
+    expect(borders([layout.panes[0]])).toEqual([]);
+  });
+
+  it("goes round the active pane on the hairlines, and round every synchronized one", () => {
+    expect(paneRings(layout.panes)).toEqual([
+      { active: true, synchronized: false, x: 0, y: 0, width: 10.5, height: 5 },
+    ]);
+    const synced = layout.panes.map((p) => ({ ...p, synchronized: true }));
+    expect(paneRings(synced).map((r) => [r.x, r.y, r.width, r.height])).toEqual(
+      [
+        [0, 0, 10.5, 5],
+        [10.5, 0, 10.5, 2.5],
+        [10.5, 2.5, 10.5, 2.5],
+      ],
+    );
+    expect(paneRings([layout.panes[0]])).toEqual([]);
   });
 
   it("draws faint ink half way to its ground and hidden ink as the ground", () => {

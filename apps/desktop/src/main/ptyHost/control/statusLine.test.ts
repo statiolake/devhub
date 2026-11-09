@@ -167,4 +167,15 @@ describe("the status line as data", () => {
 				?.left,
 		).toEqual([{ text: "abc" }]);
 	});
+
+	it("reads the active pane's border colour as tmux expanded it there", () => {
+		const status = (style: string) =>
+			parseStatus(["on", "bottom", "left", "", "", "10", "40", style].join(F))
+				?.activeBorder;
+		// tmux's default, expanded: green, red while synchronized.
+		expect(status("fg=green")).toEqual({ index: 2 });
+		expect(status("fg=red")).toEqual({ index: 1 });
+		expect(status("fg=#5a9e78,bold")).toEqual({ rgb: 0x5a9e78 });
+		expect(status("default")).toBeUndefined();
+	});
 });
