@@ -894,8 +894,8 @@ owns the state, the layout and the keys; DevHub only paints, and what it
 paints is **data**. A config describes content as declarative components
 (`shell/neovim/components.ts`: types, the checks a payload passes, and the
 layout decisions, pure and unit-tested; `ComponentView.tsx` draws them):
-`stack`/`hstack` (gap, padding, alignment, a raised `card`, a left `accent`
-bar, a ground, an indent), `text` runs, `markdown` (GFM, fenced code
+`stack`/`hstack` (gap, padding, alignment, a raised `card`, an `accent`
+ring (its edge in the accent's colour; no side stripe), a ground, an indent), `text` runs, `markdown` (GFM, fenced code
 coloured by the conversation view's highlighter, links opened in the
 browser), `badge`, `kbd`, `button`, a tri-state `checkbox`, `progress`, a
 Nerd Font `icon`, an `avatar`, `spacer`/`divider`, `sparkline`, a small line
@@ -1377,8 +1377,8 @@ across DevHub:
 buttons — the person preferred it to a flat band with quiet key hints).
 Round 7 took away the coloured, thicker stripe on its left: the state is
 the label in its header (and in the panel's list), so the stripe said it
-twice and broke the card's one border. No other DevHub card drew one; a
-plugin's own `ui.card{ accent = … }` still can.
+twice and broke the card's one border. No DevHub surface draws one; a
+plugin's own `ui.card{ accent = … }` rings the card in its colour instead.
 
 **Toward a GUI editor: what still looks like a terminal.**
 

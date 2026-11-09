@@ -737,7 +737,9 @@
 }
 
 /* One escalation: a row with a second line, like a Sidebar row with its
-   branch. The lane's ink is a two-pixel rule at its leading edge. */
+   branch. Its lane is said by the lane's heading (its dot, its name), not by
+   a coloured rule at the row's leading edge: DevHub draws no side stripes
+   on rounded rows. */
 .orchestrator-card {
   position: relative;
   display: flex;
@@ -745,25 +747,13 @@
   flex-direction: column;
   gap: 2px;
   box-sizing: border-box;
-  padding: 6px var(--space-2) 6px 14px;
+  padding: 6px var(--space-2);
   border: 0;
   border-radius: var(--radius-row);
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
-}
-
-.orchestrator-card::before {
-  position: absolute;
-  top: 7px;
-  bottom: 7px;
-  left: 4px;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--lane-ink);
-  content: "";
-  opacity: 0.7;
 }
 
 .orchestrator-card:hover {

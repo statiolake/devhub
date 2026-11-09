@@ -149,8 +149,20 @@
   overflow: hidden;
 }
 
+/* A plugin's `accent`: the stack's one edge, all the way round, in the
+   accent's colour — not a thicker coloured line down its left side, which
+   DevHub draws nowhere. A card keeps its shadow under the ring. */
 .nvc-accent {
-  border-left: 3px solid transparent;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px
+    color-mix(in srgb, var(--nvc-accent, currentcolor) 60%, transparent);
+}
+
+.nvc-card.nvc-accent {
+  box-shadow:
+    0 0 0 1px
+      color-mix(in srgb, var(--nvc-accent, currentcolor) 60%, transparent),
+    0 6px 18px rgb(0 0 0 / 18%);
 }
 
 .nvc-text {

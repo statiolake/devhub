@@ -151,7 +151,9 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
         ...(node.align ? { alignItems: ALIGN[node.align] } : {}),
         ...(node.justify ? { justifyContent: JUSTIFY[node.justify] } : {}),
         ...(node.indent !== undefined ? { marginLeft: node.indent } : {}),
-        ...(accent ? { borderLeftColor: accent } : {}),
+        // The accent rings the stack in its colour (`.nvc-accent`): never a
+        // stripe down one side of a rounded box.
+        ...(accent ? ({ "--nvc-accent": accent } as CSSProperties) : {}),
         ...(ground ? { background: ground } : {}),
       };
       const className = [
