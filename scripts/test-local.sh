@@ -326,13 +326,13 @@ provision() {
 # --- the stages -------------------------------------------------------------
 stage_vitest() {
 	prepare_test_user || return 1
-	(cd apps/desktop && pnpm run build:nvim) || return 1
+	(cd apps/desktop && pnpm run build:nvim && pnpm run build:bash) || return 1
 	(cd apps/desktop && as_test_user node_modules/.bin/vitest run)
 }
 
 stage_pty() {
 	prepare_test_user || return 1
-	(cd apps/desktop && pnpm run build:nvim) || return 1
+	(cd apps/desktop && pnpm run build:nvim && pnpm run build:bash) || return 1
 	(cd apps/desktop && as_test_user test/terminal/run-under-electron.sh)
 }
 

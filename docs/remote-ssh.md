@@ -187,26 +187,21 @@ installed at
 ~/.devhub-server/bash/<version>/bin/bash
 ```
 
-**Only where it is needed, and only for the Agent.** When DevHub starts a
-Claude Agent on a host — a terminal one or a GUI one, and when a terminal one
-is restarted — it first asks the host, under its login environment, for the
-shell Claude Code would find: `$SHELL` if it is a bash or a zsh, else `zsh` or
-`bash` by `command -v`, else `/bin`, `/usr/bin`, `/usr/local/bin`,
-`/opt/homebrew/bin` (`main/runtime/agentShell.ts`). A host with one is left as
-it is and nothing is installed. A host with neither gets the delivered bash,
-and that Agent's process — and only it — gets `CLAUDE_CODE_SHELL` and `SHELL`
-pointing at it. The login shell, tmux's `default-shell` and every terminal stay
-busybox `sh`. A profile that sets either variable itself keeps its own. A found
-shell is remembered for the connection; "none" is asked again at the next
-Agent's start, so a bash installed meanwhile is used. On this Mac nothing
-changes: it has zsh.
+**Always, and only for the Agent.** DevHub runs only the binaries it carries
+or delivers (`docs/bundled-binaries.md`), so when it starts a Claude Agent on a
+host — a terminal one or a GUI one, and when a terminal one is restarted — it
+installs this bash there (once per version) whatever bash or zsh the host has
+of its own, and that Agent's process — and only it — gets `CLAUDE_CODE_SHELL`
+and `SHELL` pointing at it (`main/runtime/agentShell.ts`). The login shell,
+tmux's `default-shell` and every terminal stay the person's. A profile that
+sets either variable itself keeps its own. On this Mac the same rule holds
+with the bash inside the app (`out/bash`, `build:bash`).
 
 **When there is none to be had** — an architecture DevHub publishes no bash for
 (only `linux-x64` and `linux-arm64` are), a release that is not there, no route
 from this Mac for the download — the Agent does not start, and its row says, in
-DevHub's words, which host, why, and the fix: install bash on the host (with
-Entware on a Synology, `opkg install bash`, with `/opt/bin` on the login
-`PATH`), after which DevHub finds it and uses it instead.
+DevHub's words, which host and why. DevHub does not fall back to a bash or zsh
+installed on the host.
 
 **Published as its own release**, `bash-<version>`, built by
 `scripts/build_bash.py` (which reuses `build_tmux.py`'s fetching, pinning,
@@ -446,11 +441,11 @@ source run started by `apps/desktop/scripts/dev.sh` will do. In order:
 9. A host with no `tmux`: git, the branch and the Issue row still work, and
    only the terminal and the Agent refuse, with the sentence naming `tmux` and
    the host.
-10. A host with neither bash nor zsh (a Synology NAS): a Claude Agent starts,
-    `~/.devhub-server/bash/<version>/bin/bash --version` answers there, and
-    `tr '\0' '\n' < /proc/<pid>/environ | grep SHELL` for the CLI shows both
-    `SHELL` and `CLAUDE_CODE_SHELL` pointing at it — while a terminal on the
-    same host still runs busybox `sh`.
+10. Any host, a Synology NAS with busybox alone among them: a Claude Agent
+    starts, `~/.devhub-server/bash/<version>/bin/bash --version` answers there,
+    and `tr '\0' '\n' < /proc/<pid>/environ | grep SHELL` for the CLI shows
+    both `SHELL` and `CLAUDE_CODE_SHELL` pointing at it — while a terminal on
+    the same host still runs the person's own shell.
 
 ## Two facts about running one by hand
 

@@ -35,6 +35,8 @@ import { RollingTally } from "../diagnostics/rollingTally.js";
 import { runBounded } from "../terminal/command.js";
 import { openPty, type Pty, type PtyPlan } from "../terminal/pty.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
+import { bundledBash, bundledBashMissing } from "./bundledBash.js";
+import { claudeShellEnvironment } from "./agentShell.js";
 import { openByteStream } from "./byteStream.js";
 import { resolveExecutable } from "../shell/runtimes.js";
 import { launchEnvironment } from "../shell/loginEnvironment.js";
@@ -219,11 +221,17 @@ export class LocalRuntime implements Runtime {
 	}
 
 	/**
-	 * Nothing: this Mac has zsh, and Claude Code finds it by itself. A person's
-	 * own `SHELL` is theirs, and DevHub has no shell of its own here to offer.
+	 * DevHub's own bash (`out/bash`, `bundledBash.ts`) as `CLAUDE_CODE_SHELL`
+	 * and `SHELL`, for the Agent's process alone: Claude Code runs its Bash
+	 * tool in the bash DevHub carries, never in whatever bash or zsh the PATH
+	 * happens to have (`docs/bundled-binaries.md`). The person's own login
+	 * shell, tmux's `default-shell` and every terminal keep theirs.
 	 */
 	claudeShell(): Promise<Readonly<Record<string, string>>> {
-		return Promise.resolve({});
+		const bash = bundledBash();
+		if (bash === undefined)
+			return Promise.reject(new Error(bundledBashMissing()));
+		return Promise.resolve(claudeShellEnvironment(bash));
 	}
 
 	/**

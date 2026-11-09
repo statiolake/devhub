@@ -261,9 +261,9 @@ export interface SshRuntimeOptions {
 	 */
 	readonly tmux?: ToolDelivery;
 	/**
-	 * Where the bash DevHub installs on this host comes from, should it have
-	 * neither bash nor zsh for Claude Code (`agentShell.ts`). Injected for the
-	 * same reason as `tmux`.
+	 * Where the bash DevHub installs on this host comes from: the shell every
+	 * Claude Agent there runs in (`agentShell.ts`). Injected for the same
+	 * reason as `tmux`.
 	 */
 	readonly bash?: ToolDelivery;
 	/** Where the `devhub` command DevHub installs on this host comes from. */

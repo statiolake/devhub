@@ -1,6 +1,6 @@
 /**
  * What DevHub says about itself: its names, where it keeps its tools on a
- * host, and the tmux, bash, Node and Neovim releases it installs there.
+ * host, and the tmux, bash and Neovim releases it installs there.
  *
  * One file, `product.json` beside `out/` — `apps/desktop/product.json` in a
  * checkout, `Contents/Resources/app/product.json` in the packaged app, where
@@ -22,7 +22,7 @@ export interface DevhubProduct {
 	readonly tmuxVersion?: string;
 	readonly tmuxDownloadUrlTemplate?: string;
 	readonly tmuxDownloadSha256?: Readonly<Record<string, string>>;
-	/** The bash a host with neither bash nor zsh gets, for Claude Code. */
+	/** The bash Claude Code runs in: delivered to hosts, and in the app here (`out/bash`). */
 	readonly bashVersion?: string;
 	readonly bashDownloadUrlTemplate?: string;
 	readonly bashDownloadSha256?: Readonly<Record<string, string>>;

@@ -300,11 +300,11 @@ describe("restarting a terminal Agent", () => {
 });
 
 /**
- * The shell Claude Code insists on (`runtime/agentShell.ts`): asked of the
- * Agent's machine, and what it answers goes into that Agent's environment
- * and nobody else's.
+ * The shell Claude Code runs in (`runtime/agentShell.ts`): DevHub's bash,
+ * asked of the Agent's machine, and what it answers goes into that Agent's
+ * environment and nobody else's.
  */
-describe("a Claude Agent on a machine with neither bash nor zsh", () => {
+describe("a Claude Agent runs on DevHub's bash", () => {
 	it("runs a terminal claude on DevHub's bash, for its own process", async () => {
 		const { adapter, launchAgent } = wired(() =>
 			Promise.resolve(ON_DELIVERED_BASH),

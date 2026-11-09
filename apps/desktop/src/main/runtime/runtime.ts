@@ -520,12 +520,12 @@ export interface Runtime {
 
 	/**
 	 * What a Claude Agent started on this machine adds to its environment for
-	 * the shell Claude Code insists on — bash or zsh (`agentShell.ts`).
-	 *
-	 * Empty where the machine has one, which is this Mac always. On a host with
-	 * neither, DevHub's own delivered bash as `CLAUDE_CODE_SHELL` and `SHELL`,
-	 * for that Agent's process alone. Rejects, with a sentence naming the
-	 * machine, the reason and the fix, when there is no shell to be had.
+	 * the shell Claude Code runs its Bash tool in: DevHub's own bash as
+	 * `CLAUDE_CODE_SHELL` and `SHELL`, for that Agent's process alone — the
+	 * one in the app here (`bundledBash.ts`), the delivered one on a host
+	 * (`agentShell.ts`). Never a bash or zsh found on the machine
+	 * (`docs/bundled-binaries.md`). Rejects, with a sentence naming the
+	 * machine, the reason and the fix, when DevHub's bash cannot be had.
 	 */
 	claudeShell(): Promise<Readonly<Record<string, string>>>;
 

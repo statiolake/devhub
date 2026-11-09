@@ -39,6 +39,14 @@ runs:
         go-version-file: cli/go.mod
         cache-dependency-path: cli/go.mod
 
+    # The bash the app carries (`build:bash`, docs/bundled-binaries.md): on
+    # macOS it is compiled from the pinned source, once per pin.
+    - name: Restore the bundled bash
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/devhub/bash
+        key: bash-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_bash.py', 'scripts/build_tmux.py', 'apps/desktop/product.json') }}
+
     - name: Install JavaScript dependencies
       if: inputs.install == 'true'
       shell: bash

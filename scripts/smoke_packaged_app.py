@@ -141,6 +141,8 @@ def check_app_layout(app_dir: Path, platform_name: str) -> list[str]:
 		faults.append("out/nvim/bin/nvim is missing or not executable: no editor can start")
 	if not (app_dir / "out" / "nvim" / "share" / "nvim" / "runtime").is_dir():
 		faults.append("out/nvim/share/nvim/runtime is missing: Neovim has no runtime")
+	if not os.access(app_dir / "out" / "bash" / "bin" / "bash", os.X_OK):
+		faults.append("out/bash/bin/bash is missing or not executable: no Claude Agent can start")
 	product_file = app_dir / "product.json"
 	product = json.loads(product_file.read_text()) if product_file.is_file() else {}
 	if not product.get("commit"):
@@ -249,6 +251,30 @@ def exercise_neovim(app_dir: Path) -> str | None:
 	if not Path(runtime).resolve().is_relative_to((app_dir / "out" / "nvim").resolve()):
 		return f"the bundled Neovim's runtime is {runtime}, outside the app"
 	print(f"    the bundled Neovim {version} ran, its runtime {runtime}")
+	return None
+
+
+def exercise_bash(app_dir: Path) -> str | None:
+	"""Run `out/bash/bin/bash -c` with nothing inherited; None, or what was wrong.
+
+	The shell every Claude Agent runs in (`docs/bundled-binaries.md`): it must
+	be the pinned bash, and run from inside the app with no PATH at all."""
+	bash = app_dir / "out" / "bash" / "bin" / "bash"
+	pinned = json.loads((app_dir / "product.json").read_text()).get("bashVersion")
+	try:
+		result = subprocess.run(
+			[str(bash), "--norc", "--noprofile", "-c", 'printf %s "$BASH_VERSION"'],
+			env={},
+			stdin=subprocess.DEVNULL,
+			capture_output=True,
+			text=True,
+			timeout=30,
+		)
+	except (OSError, subprocess.TimeoutExpired) as error:
+		return f"the bundled bash did not run: {error}"
+	if result.returncode != 0 or not result.stdout.startswith(f"{pinned}("):
+		return f"the bundled bash answered {result.stdout!r} (exit {result.returncode}); product.json pins {pinned}"
+	print(f"    the bundled bash {result.stdout} ran")
 	return None
 
 
@@ -391,8 +417,8 @@ def smoke(app: Path, timeout: float, settle: float = 5.0) -> int:
 		for fault in faults:
 			print(f"    {fault}", file=sys.stderr)
 		return 1
-	print("    Resources/app has its entry, its dependencies, its helpers, its wasm and its Neovim")
-	problem = exercise_neovim(app / "Contents" / "Resources" / "app")
+	print("    Resources/app has its entry, its dependencies, its helpers, its wasm, its Neovim and its bash")
+	problem = exercise_neovim(app / "Contents" / "Resources" / "app") or exercise_bash(app / "Contents" / "Resources" / "app")
 	if problem is not None:
 		print(f"    {problem}", file=sys.stderr)
 		return 1
@@ -411,8 +437,8 @@ def smoke_layout(repo: Path, app_dir: Path, timeout: float, settle: float, elect
 		for fault in faults:
 			print(f"    {fault}", file=sys.stderr)
 		return 1
-	print("    the layout has its entry, its dependencies, its wasm and its Neovim")
-	problem = exercise_neovim(app_dir)
+	print("    the layout has its entry, its dependencies, its wasm, its Neovim and its bash")
+	problem = exercise_neovim(app_dir) or exercise_bash(app_dir)
 	if problem is not None:
 		print(f"    {problem}", file=sys.stderr)
 		return 1

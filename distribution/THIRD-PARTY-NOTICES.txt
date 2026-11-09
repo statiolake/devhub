@@ -24,6 +24,11 @@ Shipped application components
 * libghostty-vt 1.0.0, Ghostty's terminal core, compiled to WebAssembly from
   the `vt-1.0.0` tag (`scripts/build_libghostty_vt.py`) — MIT; see
   `licenses/Ghostty-MIT.txt`.
+* GNU bash 5.3 with its official patches (5.3.20), built by
+  `scripts/build_bash.py` and carried as `Resources/app/out/bash/bin/bash`,
+  the shell Claude Agents run in — GPL-3.0-or-later; its licence text ships
+  beside it, `Resources/app/out/bash/licenses/bash.txt`, and its source is
+  the pinned GNU release `scripts/build_bash.py` names.
 * js-base64 3.9.3 — BSD 3-Clause; see `licenses/js-base64-BSD-3-Clause.txt`.
   `@xterm/addon-clipboard` depends on it, and the App Shell bundle carries it.
 * minimist 1.2.8, toml-eslint-parser 1.0.3 and eslint-visitor-keys 5.0.1 — MIT.

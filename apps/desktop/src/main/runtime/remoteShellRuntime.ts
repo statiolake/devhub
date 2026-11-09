@@ -99,13 +99,7 @@ import {
 	type HostTool,
 	type ToolDelivery,
 } from "./toolDelivery.js";
-import {
-	agentShellProbe,
-	claudeShellDecision,
-	needsDeliveredBash,
-	parseAgentShellProbe,
-	type DeliveredBash,
-} from "./agentShell.js";
+import { deliveredClaudeShell, type DeliveredBash } from "./agentShell.js";
 
 /**
  * The prefix every message composed into a remote script carries.
@@ -463,8 +457,6 @@ export abstract class RemoteShellRuntime {
 	#tmux: Promise<TmuxProgram> | undefined;
 	#bash: Promise<string> | undefined;
 	#nvim: Promise<string> | undefined;
-	/** The bash or zsh this machine was found to have; see `probeAgentShell`. */
-	#agentShell: string | undefined;
 
 	/**
 	 * `$HOME` on that machine, and the check that it is a machine DevHub speaks.
@@ -744,67 +736,14 @@ export abstract class RemoteShellRuntime {
 	}
 
 	/**
-	 * The environment a Claude Agent on this machine adds to its own, for the
-	 * shell Claude Code insists on (`agentShell.ts`).
-	 *
-	 * Empty when the machine has a bash or a zsh. When it has neither, DevHub's
-	 * own bash — delivered like tmux, under `~/.devhub-server/bash/<version>` —
-	 * as `CLAUDE_CODE_SHELL` and `SHELL`, for that Agent's process only. When
-	 * that bash cannot be had either, a throw whose sentence names the machine,
-	 * the reason and what to install, so the Agent's start fails with that
-	 * rather than with Claude Code's own "No suitable shell found".
+	 * The environment a Claude Agent on this machine adds to its own: DevHub's
+	 * own bash — delivered like tmux, under `~/.devhub-server/bash/<version>`
+	 * — as `CLAUDE_CODE_SHELL` and `SHELL`, for that Agent's process only,
+	 * whatever shells the host has (`agentShell.ts`). When that bash cannot
+	 * be had, a throw whose sentence names the machine and the reason.
 	 */
 	async claudeShell(): Promise<Readonly<Record<string, string>>> {
-		const found = await this.probeAgentShell();
-		let delivered: DeliveredBash | undefined;
-		if (needsDeliveredBash(found)) delivered = await this.#deliveredBash();
-		const decision = claudeShellDecision(this.machineName, found, delivered);
-		switch (decision.kind) {
-			case "host":
-				return {};
-			case "delivered":
-				return decision.environment;
-			case "refused":
-				throw new Error(decision.message);
-		}
-	}
-
-	/**
-	 * The bash or zsh Claude Code would find on this machine by itself, or
-	 * `undefined` for none.
-	 *
-	 * Asked under the login environment, because `$SHELL` and `PATH` are what
-	 * the CLI reads and the login environment is what it runs in. A shell that
-	 * was found is remembered for the life of this runtime: it is one round
-	 * trip, and a machine does not lose its bash. "None" is not remembered, so
-	 * a person who installs one (`opkg install bash`) has it used at the next
-	 * Agent's start rather than at the next DevHub's.
-	 *
-	 * Protected so that a test can stand in a machine with neither: the one
-	 * this suite runs on always has one.
-	 */
-	protected async probeAgentShell(): Promise<string | undefined> {
-		if (this.#agentShell !== undefined) return this.#agentShell;
-		const { login } = await this.describeRemote();
-		const result = await this.run({
-			argv: ["/bin/sh", "-c", agentShellProbe()],
-			env: login,
-			deadline: OperationDeadline.in(PROBE_TIMEOUT_MS),
-			cancel: new CancellationToken(),
-			limits: PROBE_LIMITS,
-		});
-		// The probe always exits 0, so anything else is the connection's
-		// failure — and taking it for "no shell" would install a bash on a
-		// machine that has one.
-		if (result.code !== 0) {
-			throw new Error(
-				`DevHub could not ask ${this.machineName} which shells it has: ` +
-					lastLine(result.stderr.toString("utf8")),
-			);
-		}
-		const found = parseAgentShellProbe(result.stdout.toString("utf8"));
-		this.#agentShell = found;
-		return found;
+		return deliveredClaudeShell(this.machineName, await this.#deliveredBash());
 	}
 
 	/** DevHub's bash on this machine, installed once; tried again after a failure. */
@@ -1252,7 +1191,7 @@ export abstract class RemoteShellRuntime {
 				`cd -- ${shellQuote(gitDirectory)} 2>/dev/null || { echo gone; exit 0; }`,
 				`{ printf 'HEAD '; cat HEAD 2>/dev/null; printf '\\npacked-refs ';`,
 				`  cat packed-refs 2>/dev/null; printf '\\n';`,
-				`  find refs -type f -exec sh -c 'for f do printf "%s " "$f"; cat -- "$f"; done' sh {} + 2>/dev/null;`,
+				`  find refs -type f -exec /bin/sh -c 'for f do printf "%s " "$f"; cat -- "$f"; done' sh {} + 2>/dev/null;`,
 				`} | cksum`,
 			].join("\n"),
 		);

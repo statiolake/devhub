@@ -76,9 +76,9 @@ export interface RuntimeProfile {
 	 */
 	readonly tmux: ToolDelivery;
 	/**
-	 * Where the bash DevHub installs on a host with neither bash nor zsh comes
-	 * from — for Claude Code, which will not start without one of the two
-	 * (`agentShell.ts`). Beside `tmux` and for the same reasons.
+	 * Where the bash DevHub installs on a host comes from: the shell every
+	 * Claude Agent there runs in, whatever the host has (`agentShell.ts`).
+	 * Beside `tmux` and for the same reasons.
 	 */
 	readonly bash: ToolDelivery;
 	/**

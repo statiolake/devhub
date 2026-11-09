@@ -65,9 +65,9 @@ Decide: bash ──> Build: bash linux-x64, linux-arm64 ──> Publish: bash re
   after the tests pass.
 - **tmux** is independent of everything above: it is built, once, when the
   version pinned in `scripts/build_tmux.py` has no release yet.
-- **bash** is the same again for the static bash Claude Code gets on a host
-  with neither bash nor zsh (`scripts/build_bash.py`, release
-  `bash-<version>`). Each publish job writes the tarballs' digests to its
+- **bash** is the same again for the static bash every Claude Agent on a
+  Linux host runs in, and the Linux app carries (`scripts/build_bash.py`,
+  release `bash-<version>`; `docs/bundled-binaries.md`). Each publish job writes the tarballs' digests to its
   summary in the form `apps/desktop/product.json` takes them
   (`tmuxDownloadSha256`, `bashDownloadSha256`).
 

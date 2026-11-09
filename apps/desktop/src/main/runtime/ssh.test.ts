@@ -1214,12 +1214,9 @@ describe("the tmux DevHub installs on a host", () => {
 });
 
 /**
- * The shell Claude Code gets on a host (`agentShell.ts`), by the same install
- * as tmux.
- *
- * The machine these run on has a bash, so a host with neither is stood in by
- * overriding the probe and nothing else: the delivery, the unpack and the
- * question asked of what came out are the real ones.
+ * The shell Claude Code gets on a host (`agentShell.ts`): DevHub's bash, by
+ * the same install as tmux, whatever shells the host has of its own. The
+ * machine these run on has a bash, and it is not the one given.
  */
 describe("the bash DevHub installs for Claude Code on a host", () => {
 	let remoteHome: string;
@@ -1270,17 +1267,8 @@ describe("the bash DevHub installs for Claude Code on a host", () => {
 		};
 	}
 
-	/** A host whose probe found neither bash nor zsh. */
-	class BareHost extends SshRuntime {
-		probes = 0;
-		protected override probeAgentShell(): Promise<string | undefined> {
-			this.probes += 1;
-			return Promise.resolve(undefined);
-		}
-	}
-
-	function bareHost(bash: ToolDelivery | undefined): BareHost {
-		return new BareHost({
+	function bareHost(bash: ToolDelivery | undefined): SshRuntime {
+		return new SshRuntime({
 			host: "nas.example.com",
 			controlDirectory: control,
 			sshPath: join(bin, "ssh"),
@@ -1292,21 +1280,6 @@ describe("the bash DevHub installs for Claude Code on a host", () => {
 
 	const installed = () => `${remoteHome}/.devhub-server/bash/5.3.20/bin/bash`;
 
-	// This machine has a bash, so the real probe finds it and nothing is
-	// delivered: a host with its own is left as it is.
-	it("adds nothing on a host with a bash of its own", async () => {
-		const runtime = new SshRuntime({
-			host: "build-box.example.com",
-			controlDirectory: control,
-			sshPath: join(bin, "ssh"),
-			localEnvironment: { ...FAKE_ENVIRONMENT, HOME: remoteHome },
-			tmux: FAKE_TMUX,
-			bash: bashDelivery(() => Promise.reject(new Error("not asked"))),
-		});
-		expect(await runtime.claudeShell()).toEqual({});
-		expect(asked).toEqual([]);
-	});
-
 	it("unpacks it under ~/.devhub-server/bash/<version> and names it for that Agent", async () => {
 		const runtime = bareHost(bashDelivery((p) => bashTarball(p)));
 		expect(await runtime.claudeShell()).toEqual({
@@ -1314,18 +1287,15 @@ describe("the bash DevHub installs for Claude Code on a host", () => {
 			SHELL: installed(),
 		});
 		expect((await stat(installed())).mode & 0o111).toBeGreaterThan(0);
-		// Once per machine: a second Agent asks the probe again (a bash the
-		// person installed meanwhile would be theirs to use) but downloads
-		// nothing.
+		// Once per machine: a second Agent downloads nothing.
 		await runtime.claudeShell();
 		expect(asked).toHaveLength(1);
-		expect(runtime.probes).toBe(2);
 		// And a second DevHub finds the install and asks for no tarball.
 		await bareHost(bashDelivery((p) => bashTarball(p))).claudeShell();
 		expect(asked).toHaveLength(1);
 	});
 
-	it("refuses with the host, the reason and the fix when there is no bash for it", async () => {
+	it("refuses with the host and the reason when there is no bash for it", async () => {
 		const runtime = bareHost(
 			bashDelivery(() =>
 				Promise.reject(new Error("github.com answered 404 Not Found")),
@@ -1333,11 +1303,10 @@ describe("the bash DevHub installs for Claude Code on a host", () => {
 		);
 		const refusal = runtime.claudeShell();
 		await expect(refusal).rejects.toThrow(
-			/Claude Code needs bash or zsh on nas\.example\.com/u,
+			/Claude Code on nas\.example\.com runs in DevHub's own bash/u,
 		);
 		await expect(refusal).rejects.toThrow(/could not get the bash 5\.3\.20/u);
 		await expect(refusal).rejects.toThrow(/404 Not Found/u);
-		await expect(refusal).rejects.toThrow(/opkg install bash/u);
 	});
 
 	it("refuses when what came out will not run there", async () => {

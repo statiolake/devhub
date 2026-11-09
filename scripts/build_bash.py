@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
-"""Build the bash DevHub installs on a host that has neither bash nor zsh.
+"""Build the bash DevHub runs Claude Code in: on every host, and inside the app.
 
-Claude Code will not start without one of the two. It takes `$SHELL` if that
-is a bash or a zsh, then looks for zsh and bash on `PATH` and in the usual
-directories, and accepts `CLAUDE_CODE_SHELL` only when it names a bash or a
-zsh; busybox `sh` is not accepted, and what the CLI says instead — "No suitable
-shell found. Claude CLI requires a Posix shell environment" — is a sentence the
-owner of a Synology NAS can do nothing with: there is no package manager, no
-sudo and no route to the internet.
-
-So DevHub publishes a bash the same way it publishes tmux (`build_tmux.py`,
-whose helpers this script uses and whose conventions it keeps), and installs
-it the same way, into the user's own home directory, on first need:
+Claude Code runs its Bash tool in a bash or a zsh (`CLAUDE_CODE_SHELL`, else
+`$SHELL`, else whichever it finds on `PATH`), and DevHub runs only the binaries
+it carries or delivers, never whatever happens to be installed
+(docs/bundled-binaries.md). So DevHub publishes a bash the same way it
+publishes tmux (`build_tmux.py`, whose helpers this script uses and whose
+conventions it keeps), and installs it the same way, into the user's own home
+directory, on a Claude Agent's first start on that host:
 
     ~/.devhub-server/bash/<version>/bin/bash
 
-and only on a host with neither shell, and only for Claude Agents: DevHub sets
-`CLAUDE_CODE_SHELL` and `SHELL` to it for that Agent's process. The login
-shell, tmux's `default-shell` and every terminal stay what they were. See
+DevHub sets `CLAUDE_CODE_SHELL` and `SHELL` to it for that Agent's process
+only. The login shell, tmux's `default-shell` and every terminal stay the
+person's. The app carries the same bash as `out/bash` (`build:bash`,
+`apps/desktop/scripts/fetch-bash.mjs`): on Linux the published tarball, on
+macOS this script's `darwin-arm64` build, which links only libSystem. See
 `apps/desktop/src/main/runtime/agentShell.ts` and docs/remote-ssh.md, "bash
 for Claude Code".
 

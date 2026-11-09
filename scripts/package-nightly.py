@@ -27,8 +27,9 @@ about and Node's own resolver finds every dependency in every process.
                                     node-pty with this platform's prebuild only
 
 `out/vt/ghostty-vt.wasm` (libghostty-vt, the control-mode terminal's engine),
-`out/native/` (DevHub's helpers) and `out/nvim/` (the Neovim DevHub runs,
-Neovim's own release, fetched by `build:nvim`) travel inside `out/`.
+`out/native/` (DevHub's helpers), `out/nvim/` (the Neovim DevHub runs,
+Neovim's own release, fetched by `build:nvim`) and `out/bash/` (the bash
+Claude Agents run in, `build:bash`) travel inside `out/`.
 
 Usage:
     scripts/package-nightly.py [--out-dir DIR] [--zip] [--zip-name NAME]
@@ -110,6 +111,7 @@ def check_inputs() -> None:
 		DESKTOP_DIR / "out" / "preload" / "shell.js",
 		DESKTOP_DIR / "out" / "vt" / "ghostty-vt.wasm",
 		DESKTOP_DIR / "out" / "nvim" / "bin" / "nvim",
+		DESKTOP_DIR / "out" / "bash" / "bin" / "bash",
 		DESKTOP_DIR / "out" / "cli" / "SHA256SUMS",
 		DESKTOP_DIR / "dist" / "shell" / "index.html",
 	):
@@ -366,6 +368,13 @@ def sign_neovim(app: Path) -> None:
 	print(f"    {len(programs)} signed, {directory_size(root) / 1e6:.0f} MB")
 
 
+def sign_bash(app: Path) -> None:
+	"""Sign the bash in `out/bash` as the Neovim beside it is signed."""
+	program = app / "Contents" / "Resources" / "app" / "out" / "bash" / "bin" / "bash"
+	run(["codesign", "--force", "--sign", "-", str(program)])
+	print(f"    signed, {program.stat().st_size / 1e6:.1f} MB")
+
+
 def node_platform() -> str:
 	machine = os.uname().machine
 	arch = "arm64" if machine in ("arm64", "aarch64") else "x64"
@@ -454,6 +463,9 @@ def main() -> int:
 
 	step("Neovim")
 	sign_neovim(app)
+
+	step("bash")
+	sign_bash(app)
 
 	step("ad-hoc signature")
 	# Ad hoc is not notarisation: the first launch of a downloaded zip still

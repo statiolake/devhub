@@ -10,11 +10,10 @@
  *   one it found. tmux's control output differs between versions in ways that
  *   surface as an Agent whose output is subtly wrong rather than as an error
  *   (`docs/remote-ssh.md`, `scripts/build_tmux.py`).
- * - **bash**, for Claude Code only, and only where the host has neither bash
- *   nor zsh. Claude Code refuses to start without one of the two — busybox `sh`
- *   is not accepted — and the host this exists for, a Synology NAS with no
- *   package manager and no sudo, has neither (`scripts/build_bash.py`,
- *   `agentShell.ts`).
+ * - **bash**, the shell every Claude Agent on the host runs in
+ *   (`CLAUDE_CODE_SHELL`), whatever bash or zsh the host has of its own:
+ *   DevHub runs only what it carries or delivers (`scripts/build_bash.py`,
+ *   `agentShell.ts`, `docs/bundled-binaries.md`).
  * - **devhub**, the `devhub` command a host's panes and Agents run (`cli/`,
  *   Go, `docs/devhub-cli.md`): from inside the app, built with it, so a
  *   host holds the command of the DevHub that connects to it.
