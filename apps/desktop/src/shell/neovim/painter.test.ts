@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  PART_Z,
-  gridBlends,
-  isOwnGround,
-  mixColors,
-  parseGuifont,
-} from "./painter";
+import { PART_Z, gridBlends, mixColors, parseGuifont } from "./painter";
 
 describe("guifont", () => {
   it("is a CSS family list and a size", () => {
@@ -34,21 +28,6 @@ describe("winblend", () => {
   });
 });
 
-describe("a window's own ground", () => {
-  it("is Normal's, NormalNC's or a column's, never what lies over the text", () => {
-    expect(isOwnGround(undefined)).toBe(true);
-    expect(isOwnGround({ groups: ["Comment"] })).toBe(true);
-    expect(isOwnGround({ background: 1, groups: ["NormalNC"] })).toBe(true);
-    expect(isOwnGround({ background: 1, groups: ["SignColumn"] })).toBe(true);
-    expect(isOwnGround({ background: 1, groups: ["DiffText"] })).toBe(false);
-    expect(
-      isOwnGround({ background: 1, groups: ["CursorLine", "NormalNC"] }),
-    ).toBe(false);
-    expect(isOwnGround({ background: 1, groups: ["Visual"] })).toBe(false);
-    expect(isOwnGround({ reverse: true })).toBe(false);
-  });
-});
-
 describe("a leaf canvas's alpha", () => {
   const hl = new Map([
     [1, { background: 0xffffff }],
@@ -71,6 +50,7 @@ describe("a level's parts", () => {
       .sort(([, a], [, b]) => a - b)
       .map(([part]) => part);
     expect(order).toEqual([
+      "pane",
       "shadow",
       "frames",
       "grid",
@@ -79,6 +59,7 @@ describe("a level's parts", () => {
       "cursor",
       "covers",
       "labels",
+      "boundary",
     ]);
   });
 

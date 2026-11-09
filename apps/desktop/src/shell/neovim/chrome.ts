@@ -37,6 +37,13 @@ export interface PaintTheme {
    * groups, and their kind icons (blink.cmp's `kind_icons`) glyph to kind.
    */
   readonly kinds?: KindTheme;
+  /**
+   * Each window's own grounds, by window id: its `Normal` and `NormalNC`
+   * as its `winhighlight` maps them (`windowGround`).
+   */
+  readonly grounds?: ReadonlyMap<number, { normal?: number; nc?: number }>;
+  /** `WinSeparator`'s colour: the boundary between panes. */
+  readonly separator?: number;
 }
 
 export interface KindTheme {
@@ -95,14 +102,23 @@ local blink = package.loaded['blink.cmp.config']
 if type(blink) == 'table' and type(blink.appearance) == 'table' and type(blink.appearance.kind_icons) == 'table' then
   out.kind_icons = blink.appearance.kind_icons
 end
+out.grounds = {}
+local function bg(name)
+  local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
+  return ok and hl.bg or nil
+end
 for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
   out.wins[tostring(win)] = vim.wo[win].fillchars
+  local map = {}
+  for from, to in vim.wo[win].winhighlight:gmatch('([^,:]+):([^,]+)') do map[from] = to end
+  out.grounds[tostring(win)] = { normal = bg(map.Normal or 'Normal'), nc = bg(map.NormalNC or 'NormalNC') }
 end
 return out`;
 
 export const THEME_GROUPS: readonly string[] = [
   "Normal",
   "NormalFloat",
+  "WinSeparator",
   "Comment",
   "DiagnosticInfo",
   "DiagnosticWarn",
@@ -175,8 +191,23 @@ export function themeOf(answer: unknown): PaintTheme {
     if (fg !== undefined) colours.set(kind, fg);
   }
   const icons = iconKinds(record(out["kind_icons"]) ?? {});
+  const grounds = new Map<number, { normal?: number; nc?: number }>();
+  for (const [win, value] of Object.entries(record(out["grounds"]) ?? {})) {
+    const id = Number(win);
+    const g = record(value);
+    if (!Number.isInteger(id) || !g) continue;
+    const normal = typeof g["normal"] === "number" ? g["normal"] : undefined;
+    const nc = typeof g["nc"] === "number" ? g["nc"] : undefined;
+    grounds.set(id, {
+      ...(normal !== undefined ? { normal } : {}),
+      ...(nc !== undefined ? { nc } : {}),
+    });
+  }
+  const separator = colour("WinSeparator", "fg");
   return {
     fillchars,
+    grounds,
+    ...(separator !== undefined ? { separator } : {}),
     winFillchars,
     cmdheight,
     ...(surfaceEntries.length > 0
@@ -217,63 +248,43 @@ export function sameTheme(a: PaintTheme, b: PaintTheme): boolean {
     JSON.stringify([...(a.kinds?.colours ?? [])]) ===
       JSON.stringify([...(b.kinds?.colours ?? [])]) &&
     JSON.stringify([...(a.kinds?.icons ?? [])]) ===
-      JSON.stringify([...(b.kinds?.icons ?? [])])
+      JSON.stringify([...(b.kinds?.icons ?? [])]) &&
+    JSON.stringify([...(a.grounds ?? [])]) ===
+      JSON.stringify([...(b.grounds ?? [])]) &&
+    a.separator === b.separator
   );
 }
 
-/** The colour most of `bgs` have. */
-function commonest(bgs: readonly number[]): number | undefined {
-  const counts = new Map<number, number>();
-  let best: number | undefined;
-  let most = 0;
-  for (const bg of bgs) {
-    const n = (counts.get(bg) ?? 0) + 1;
-    counts.set(bg, n);
-    if (n > most) {
-      most = n;
-      best = bg;
-    }
-  }
-  return best;
-}
-
-/** The background a grid's cell is drawn in. */
-export type BgOf = (grid: number, index: number) => number;
-
-/** A vertical separator's cell of grid 1, between what is either side. */
-export interface Separator {
-  readonly row: number;
+/**
+ * A boundary between windows side by side: a run of grid 1's column `col`
+ * from row `top` to `bottom` (exclusive) with a window on its left or right
+ * and none on it. Neovim keeps that column (a TUI's separator, drawn in
+ * cells); a GUI shows two panes and the edge between them, as VS Code and
+ * Zed do: each window's pane takes the half of the column on its side and
+ * a hairline is drawn on their shared edge. Worked out from the windows'
+ * places and sizes only, never from what is drawn in the column.
+ */
+export interface Boundary {
   readonly col: number;
-  /** The grounds on each side of it. */
-  readonly left: number;
-  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
 }
 
-/**
- * Whether a window's cell is drawn in the window's own ground (its
- * `Normal`, its sign column's), not in a highlight laid over a line or a
- * region of its text (a diff's, the cursor line's, Visual's).
- */
-export type IsGround = (grid: number, index: number) => boolean;
+/** Each window's pane: its grid's cells and the half columns it takes. */
+export interface Pane {
+  readonly grid: number;
+  readonly win: number;
+  /** A boundary on its left, or on its right, that it reaches into. */
+  readonly left: boolean;
+  readonly right: boolean;
+}
 
-/**
- * The cells of grid 1 in a column right of a window or left of one, and
- * the grounds either side: a window's is its own ground (`isGround`), the
- * colour most of those of its cells next to the column have (its `Normal`,
- * its sign column's), else of those anywhere in it — never a highlight laid
- * over its text, so a cursor line does not bleed into it, and what scrolls past
- * (a diff hunk taller than half the window) does not recolour it: the
- * separator is the windows' edge, which scrolling never touches; elsewhere
- * (a status line beside) that cell's. The separator's two halves continue
- * what is beside them and only its line is left between.
- */
-export function separatorsOf(
+/** Grid 1's boundaries between the windows `boxes` lays out, and the panes. */
+export function boundariesOf(
   boxes: readonly GridBox[],
   width: number,
   height: number,
-  bgOf: BgOf,
-  isGround: IsGround = () => true,
-): Separator[] {
+): { boundaries: Boundary[]; panes: Pane[] } {
   const windows = boxes.filter((box) => !box.float && box.win !== undefined);
   const at = (row: number, col: number) =>
     windows.find(
@@ -283,64 +294,51 @@ export function separatorsOf(
         b.col <= col &&
         col < b.col + b.width,
     );
-  // A window's ground along its first and last columns.
-  const edges = new Map<number, { first: number; last: number }>();
-  const edgeOf = (box: GridBox) => {
-    let edge = edges.get(box.grid);
-    if (!edge) {
-      let whole: number | null | undefined = null;
-      const anywhere = () => {
-        if (whole !== null) return whole;
-        const own: number[] = [];
-        for (let i = 0; i < box.width * box.height; i += 1)
-          if (isGround(box.grid, i)) own.push(bgOf(box.grid, i));
-        whole = commonest(own);
-        return whole;
-      };
-      // The ground at a column, else anywhere in the window, else (no cell
-      // in its own ground: a hunk filling it) the column's commonest.
-      const at = (col: number) => {
-        const all: number[] = [];
-        const own: number[] = [];
-        for (let row = 0; row < box.height; row += 1) {
-          const i = row * box.width + col;
-          const bg = bgOf(box.grid, i);
-          all.push(bg);
-          if (isGround(box.grid, i)) own.push(bg);
-        }
-        return commonest(own) ?? anywhere() ?? commonest(all) ?? 0;
-      };
-      edge = { first: at(0), last: at(box.width - 1) };
-      edges.set(box.grid, edge);
-    }
-    return edge;
-  };
   const columns = new Set<number>();
   for (const box of windows) {
     if (box.col + box.width < width) columns.add(box.col + box.width);
     if (box.col > 0) columns.add(box.col - 1);
   }
-  const out: Separator[] = [];
+  const boundaries: Boundary[] = [];
   for (const col of [...columns].sort((a, b) => a - b)) {
-    for (let row = 0; row < height; row += 1) {
-      if (at(row, col)) continue;
-      const l = at(row, col - 1);
-      const r = at(row, col + 1);
-      if (!l && !r) continue;
-      out.push({
-        row,
-        col,
-        left: l ? edgeOf(l).last : bgOf(1, row * width + col - 1),
-        right: r ? edgeOf(r).first : bgOf(1, row * width + col + 1),
-      });
+    let top: number | undefined;
+    for (let row = 0; row <= height; row += 1) {
+      const on =
+        row < height &&
+        !at(row, col) &&
+        (at(row, col - 1) !== undefined || at(row, col + 1) !== undefined);
+      if (on && top === undefined) top = row;
+      if (!on && top !== undefined) {
+        boundaries.push({ col, top, bottom: row });
+        top = undefined;
+      }
     }
   }
-  return out;
+  const beside = (box: GridBox, col: number) =>
+    boundaries.some(
+      (b) => b.col === col && b.top <= box.row && box.row < b.bottom,
+    );
+  const panes = windows.map((box) => ({
+    grid: box.grid,
+    win: box.win ?? 0,
+    left: beside(box, box.col - 1),
+    right: beside(box, box.col + box.width),
+  }));
+  return { boundaries, panes };
 }
 
-/** A separator's character: a vertical line, light or heavy, or `|`. */
-export function isSeparatorLine(c: string): boolean {
-  return c === "│" || c === "┃" || c === "|" || c === "║";
+/**
+ * A window's ground, as its own highlights state it: its `Normal` (through
+ * `winhighlight`), or its `NormalNC` while it is not the current window.
+ */
+export function windowGround(
+  theme: PaintTheme,
+  win: number,
+  current: boolean,
+): number | undefined {
+  const g = theme.grounds?.get(win);
+  if (!g) return undefined;
+  return current ? g.normal : (g.nc ?? g.normal);
 }
 
 /**

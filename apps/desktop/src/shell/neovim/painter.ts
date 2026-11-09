@@ -53,12 +53,12 @@ import {
   fillChosen,
   fillerStart,
   floatScrollbars,
+  boundariesOf,
   isEndOfBuffer,
-  isSeparatorLine,
   sameTheme,
-  separatorsOf,
+  windowGround,
+  type Boundary,
   type PaintTheme,
-  type Separator,
 } from "./chrome";
 import {
   WHEEL_IDLE_MS,
@@ -179,26 +179,6 @@ export function mixColors(rgb: number, under: number, percent: number): number {
     return Math.round(a + (b - a) * t) << shift;
   };
   return channel(16) | channel(8) | channel(0);
-}
-
-/**
- * Highlights laid over a window's rows or a region of its text — they
- * scroll with the text, so a window's ground is never taken from them.
- */
-const OVER_TEXT =
-  /^(Diff(Add|Change|Delete|Text)|CursorLine(Nr|Sign|Fold)?|CursorColumn|ColorColumn|Visual(NOS)?|Search|CurSearch|IncSearch|Substitute|Folded|QuickFixLine|MatchParen)$/;
-
-/**
- * Whether a cell in `attr` is drawn in its window's own ground, or in a
- * column's that runs the window's height (its sign or number column's):
- * not in a diff's, the cursor line's, Visual's, a match's or any highlight
- * laid over the text, nor reversed (`separatorsOf`).
- */
-export function isOwnGround(attr: HlAttr | undefined): boolean {
-  if (attr === undefined) return true;
-  if (attr.reverse === true) return false;
-  if (attr.background === undefined) return true;
-  return !(attr.groups ?? []).some((g) => OVER_TEXT.test(g));
 }
 
 /**
@@ -396,24 +376,28 @@ function radii(corners: FloatCorners, r: number): string {
  * Where each part of a level stacks inside it: declared, so that nothing
  * depends on which element happened to be appended last. A level is one
  * element per `GridBox.z` (`GridPainter.level`): the windows' at 1, each
- * float zindex's at 100 + zindex, a tmux popup's at its own. Inside it the
+ * float zindex's at 100 + zindex, a tmux popup's at its own. Inside it a
+ * window's pane (its ground out to the boundaries beside it), the
  * shadow under a panel of floats, then a framed float's ring and lines, then
  * the grids (a canvas, or a window's scroll port), then what rides a grid's
  * text (inline images, cards, line decorations), then what lies over a grid
  * (a winbar held while the text scrolls, lines sliding into place), then the
  * cursor, then what covers a grid's cells whole (a GUI window, a view),
- * then a frame's title and footer. Riders, the cursor and covers are the
+ * then a frame's title and footer, then the boundaries between the
+ * windows' panes (`placePanes`). Riders, the cursor and covers are the
  * page's, each in its grid's own clipping element (`GridPainter.over`).
  */
 export const PART_Z = {
-  shadow: 0,
-  frames: 1,
-  grid: 2,
-  riders: 3,
-  over: 4,
-  cursor: 5,
-  covers: 6,
-  labels: 7,
+  pane: 0,
+  shadow: 1,
+  frames: 2,
+  grid: 3,
+  riders: 4,
+  over: 5,
+  cursor: 6,
+  covers: 7,
+  labels: 8,
+  boundary: 9,
 } as const;
 
 /** What the page lays over a grid, in that grid's clip (`GridPainter.over`). */
@@ -525,9 +509,15 @@ export class GridPainter {
     end: number;
     align: "left" | "right";
   }[] = [];
-  /** Grid 1's columns between two windows (`separatorsOf`). */
-  private separators: readonly Separator[] = [];
-  private separatorsKey = "";
+  /** Grid 1's columns between windows side by side (`boundariesOf`). */
+  private boundaries: readonly Boundary[] = [];
+  private boundariesKey = "";
+  /** Each window's pane, by grid; the boundaries' hairlines and stubs. */
+  private readonly panes = new Map<number, HTMLDivElement>();
+  private chrome: HTMLDivElement[] = [];
+  private chromeKey = "";
+  /** The window the cursor was last in, for `NormalNC`. */
+  private currentWin: number | undefined;
   /** The row's cells whose glyph is not drawn (`~`, a filler's `-`). */
   private readonly skip = new Set<number>();
   private dpr: number;
@@ -763,7 +753,7 @@ export class GridPainter {
     }
     const corners = this.placeClusters(state, shown);
     const scrollbars = floatScrollbars(state, shown);
-    this.placeSeparators(state, shown);
+    this.placePanes(state, shown);
     for (const box of shown) {
       const grid = state.grids.get(box.grid);
       if (!grid) continue;
@@ -1330,33 +1320,153 @@ export class GridPainter {
   }
 
   /**
-   * The window separators and the grounds on their sides; when those
-   * changed (a split, `NormalNC` on the window left), grid 1's rows they
-   * were and are on are repainted.
+   * The windows as panes with a boundary between them, as a GUI shows them
+   * (VS Code, Zed), not a TUI's separator column drawn in cells: each
+   * window's pane is an element under its grid, in its own ground (its
+   * `Normal`, or `NormalNC` when not current, as its highlights state them),
+   * reaching half into the column a boundary has beside it; the boundary is
+   * a hairline element on the edge they share, in `WinSeparator`'s colour,
+   * over the windows' level. All from the windows' places, sizes and
+   * highlights: grid 1's cells in the column are not drawn (`paintRow`), and
+   * nothing a window scrolls or redraws touches them. A status line drawn
+   * as a line beside a boundary meets it (a stub to the hairline).
    */
-  private placeSeparators(
-    state: NeovimUiState,
-    boxes: readonly GridBox[],
-  ): void {
+  private placePanes(state: NeovimUiState, boxes: readonly GridBox[]): void {
     const base = state.grids.get(1);
-    const separators = separatorsOf(
+    const { boundaries, panes } = boundariesOf(
       boxes,
       base?.width ?? 0,
       base?.height ?? 0,
-      (grid, index) => {
-        const g = state.grids.get(grid);
-        const attr = state.hl.get(g?.hls[index] ?? 0);
-        return resolveColors(attr, state.defaults).bg;
-      },
-      (grid, index) =>
-        isOwnGround(state.hl.get(state.grids.get(grid)?.hls[index] ?? 0)),
     );
-    const key = JSON.stringify(separators);
-    if (key === this.separatorsKey) return;
-    const dirty = state.grids.get(1)?.dirty;
-    for (const sep of [...this.separators, ...separators]) dirty?.add(sep.row);
-    this.separators = separators;
-    this.separatorsKey = key;
+    // Grid 1's rows a boundary leaves or reaches are painted again (their
+    // cells in it are not drawn).
+    const key = JSON.stringify(boundaries);
+    if (key !== this.boundariesKey) {
+      const dirty = base?.dirty;
+      for (const b of [...this.boundaries, ...boundaries])
+        for (let row = b.top; row < b.bottom; row += 1) dirty?.add(row);
+      this.boundaries = boundaries;
+      this.boundariesKey = key;
+    }
+    const cursorWin = state.gridWins.get(state.cursor.grid);
+    if (cursorWin !== undefined) this.currentWin = cursorWin;
+    const { width: cw, height: ch } = this.metrics;
+    // The hairline in a column: where grid 1 draws a `│` there (the same
+    // shapes as its `┴` below it), so they meet.
+    const line = (col: number) => {
+      const shape = glyphShapes(
+        "│",
+        { x: col * cw, y: 0, w: cw, h: ch },
+        this.dpr,
+        this.font.size,
+      )?.find((p) => p.kind === "rect");
+      const w = shape?.kind === "rect" ? shape.w : 1 / this.dpr;
+      const x =
+        shape?.kind === "rect"
+          ? shape.x
+          : Math.round((col + 0.5) * cw * this.dpr) / this.dpr;
+      return { x, w };
+    };
+    const onScreen = new Set<number>();
+    for (const pane of panes) {
+      const box = boxes.find((b) => b.grid === pane.grid);
+      if (!box) continue;
+      onScreen.add(pane.grid);
+      let el = this.panes.get(pane.grid);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "nvim-pane";
+        this.panes.set(pane.grid, el);
+      }
+      this.put(el, box.z, "pane");
+      // Exactly half the column on each side, so the edges of windows
+      // split across and down line up whatever is beside them.
+      const half = (col: number) =>
+        Math.round((col + 0.5) * cw * this.dpr) / this.dpr;
+      const left = pane.left ? half(box.col - 1) : box.col * cw;
+      const right = pane.right
+        ? half(box.col + box.width)
+        : (box.col + box.width) * cw;
+      el.style.left = `${String(left)}px`;
+      el.style.top = `${String(box.row * ch)}px`;
+      el.style.width = `${String(right - left)}px`;
+      el.style.height = `${String(box.height * ch)}px`;
+      const ground =
+        windowGround(this.theme, pane.win, pane.win === this.currentWin) ??
+        state.defaults.background;
+      el.style.background = cssColor(ground);
+    }
+    for (const [grid, el] of this.panes) {
+      if (onScreen.has(grid)) continue;
+      el.remove();
+      this.panes.delete(grid);
+    }
+    // The hairlines, and the stubs where a status line drawn as a line
+    // (grid 1's own row, not a window's) runs into one from the side.
+    const colour = this.theme.separator ?? state.defaults.foreground;
+    const pieces: { x: number; y: number; w: number; h: number; c: number }[] =
+      [];
+    const inWindow = (row: number, col: number) =>
+      boxes.some(
+        (b) =>
+          !b.float &&
+          b.win !== undefined &&
+          b.row <= row &&
+          row < b.row + b.height &&
+          b.col <= col &&
+          col < b.col + b.width,
+      );
+    for (const b of boundaries) {
+      const { x, w } = line(b.col);
+      pieces.push({
+        x,
+        y: b.top * ch,
+        w,
+        h: (b.bottom - b.top) * ch,
+        c: colour,
+      });
+      if (!base) continue;
+      for (let row = b.top; row < b.bottom; row += 1) {
+        for (const dc of [-1, 1]) {
+          const col = b.col + dc;
+          if (col < 0 || col >= base.width || inWindow(row, col)) continue;
+          const i = row * base.width + col;
+          const arms = boxArms(base.chars[i] ?? "");
+          if (!arms || arms.e === 0 || arms.w === 0 || arms.n !== 0) continue;
+          const shape = glyphShapes(
+            "─",
+            { x: col * cw, y: row * ch, w: cw, h: ch },
+            this.dpr,
+            this.font.size,
+          )?.find((p) => p.kind === "rect");
+          if (shape?.kind !== "rect") continue;
+          const from = dc < 0 ? col * cw + cw : x + w;
+          const to = dc < 0 ? x : col * cw;
+          pieces.push({
+            x: Math.min(from, to),
+            y: shape.y,
+            w: Math.abs(to - from),
+            h: shape.h,
+            c: resolveColors(state.hl.get(base.hls[i] ?? 0), state.defaults).fg,
+          });
+        }
+      }
+    }
+    const chromeKey = JSON.stringify(pieces);
+    if (chromeKey === this.chromeKey) return;
+    this.chromeKey = chromeKey;
+    for (const el of this.chrome) el.remove();
+    this.chrome = pieces.map((p) => {
+      const el = document.createElement("div");
+      el.className = "nvim-boundary";
+      el.style.left = `${String(p.x)}px`;
+      el.style.top = `${String(p.y)}px`;
+      el.style.width = `${String(p.w)}px`;
+      el.style.height = `${String(p.h)}px`;
+      el.style.background = cssColor(p.c);
+      this.put(el, 1, "boundary");
+      return el;
+    });
   }
 
   /** A float scrollbar's thumb (`floatScrollbars`) as a thin rounded bar. */
@@ -1801,8 +1911,12 @@ export class GridPainter {
       this.paintGround(ctx, state, box, grid.chars, base, run, y);
     }
     if (band) ctx.restore();
-    if (box.grid === 1) this.paintSeparators(ctx, state, grid, base, row, y);
     this.skip.clear();
+    // Grid 1's cells in a boundary's column are the panes' and the
+    // hairline's (`placePanes`): not drawn.
+    if (box.grid === 1)
+      for (const b of this.boundaries)
+        if (b.top <= row && row < b.bottom) this.skip.add(b.col);
     if (!box.float && box.grid !== 1) this.paintFiller(ctx, state, box, row, y);
     if (
       !box.float &&
@@ -2177,61 +2291,6 @@ export class GridPainter {
 
   private wordsFont(attr: HlAttr | undefined, size: number): string {
     return `${attr?.italic === true ? "italic " : ""}${attr?.bold === true ? "bold " : ""}${String(size)}px ${ICON_FAMILY}, ${UI_FAMILY}`;
-  }
-
-  /**
-   * A window separator's cell (a vertical line, `│` by default) as the two
-   * windows meeting: each half in the ground of the window on its side, the
-   * line (drawn over, a device pixel or so) alone between them, as editor
-   * groups meet. A blank separator (`vert: `) is a band by choice: left.
-   */
-  private paintSeparators(
-    ctx: CanvasRenderingContext2D,
-    state: NeovimUiState,
-    grid: {
-      readonly chars: readonly string[];
-      readonly hls: ArrayLike<number>;
-    },
-    base: number,
-    row: number,
-    y: number,
-  ): void {
-    const { width: cw, height: ch } = this.metrics;
-    const { chars } = grid;
-    const across = (c: string) => {
-      const arms = boxArms(c);
-      return arms !== undefined && arms.e > 0 && arms.w > 0 && arms.n === 0;
-    };
-    for (const sep of this.separators) {
-      if (sep.row !== row) continue;
-      if (!isSeparatorLine(chars[base + sep.col] ?? "")) continue;
-      const x = sep.col * cw;
-      const mid = Math.round((x + cw / 2) * this.dpr) / this.dpr;
-      ctx.fillStyle = cssColor(sep.left);
-      ctx.fillRect(x, y, mid - x, ch);
-      ctx.fillStyle = cssColor(sep.right);
-      ctx.fillRect(mid, y, x + cw - mid, ch);
-      // A status line drawn as a line (`─`, a person's `stl:`) beside it
-      // meets the separator's line instead of stopping half a cell short.
-      for (const [dc, stub] of [
-        [-1, "╴"],
-        [1, "╶"],
-      ] as const) {
-        const next = base + sep.col + dc;
-        if (!across(chars[next] ?? "")) continue;
-        const fg = resolveColors(
-          state.hl.get(grid.hls[next] ?? 0),
-          state.defaults,
-        ).fg;
-        const shapes = glyphShapes(
-          stub,
-          { x, y, w: cw, h: ch },
-          this.dpr,
-          this.font.size,
-        );
-        if (shapes) this.paintShapes(ctx, shapes, fg);
-      }
-    }
   }
 
   /**

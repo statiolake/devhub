@@ -998,3 +998,11 @@
 :where(.nvim-clip-inner > *) {
   pointer-events: auto;
 }
+
+/* A window's pane and the boundary between panes (`placePanes`): a GUI's
+   panes with an edge between them, not a TUI's separator column. */
+.nvim-pane,
+.nvim-boundary {
+  position: absolute;
+  pointer-events: none;
+}

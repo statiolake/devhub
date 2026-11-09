@@ -78,6 +78,21 @@ What follows the rule in code:
     it completes.
   - **preedit**: the IME's composition, at the cursor or in the command
     line: the text going in is over everything that could cover it.
+- Panes and boundaries (`chrome.ts` `boundariesOf`, `painter.ts`
+  `placePanes`): Neovim keeps a cell column between windows side by side,
+  and a TUI can only draw a `│` in it; a GUI shows panes with an edge
+  between them (VS Code's editor groups, Zed's panes). Each window's pane
+  is an element under its grid (`PART_Z.pane`) in the window's own ground
+  as its highlights state it (`Normal`, `NormalNC` when not current, through
+  `winhighlight`), reaching exactly half into the column on each side —
+  not some pixels of padding — so the edges of windows split across and
+  down line up whatever their neighbours. The boundary is one hairline
+  element on the shared edge (`PART_Z.boundary`), in `WinSeparator`'s
+  colour, worked out from the windows' places and sizes. Grid 1's cells in
+  the column are not drawn. A status line row is the horizontal bar: a
+  boundary ending on it meets its `┴` (grid 1 draws it on the same
+  pixels), and a status line drawn as a line beside a boundary runs into
+  it (a stub element).
 - `gridBlends` (`painter.ts`): a leaf canvas has alpha only while one of its
   cells blends (`winblend`); every other grid, floats and tmux popups
   included, is opaque.
@@ -170,8 +185,12 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 - `painter.ts:1621, 2004-2051` (`paintSeparators`): the window separator's
   two halves and its line are painted into grid 1's canvas, and grid 1's
   rows are repainted when the separators change. Grid 1 is also shared by
-  every window's status line (Neovim's multigrid puts them there). **Open**:
-  separators as elements over grid 1.
+  every window's status line (Neovim's multigrid puts them there). The
+  stub that joins a status line to the separator read grid 1's cells
+  beside the column, which under a window are stale: a split closed
+  earlier left a `─` there, drawn as a tick across the separator (seen in
+  the app after `:only | vsplit`). **Fixed** ("Neovim editor: windows are
+  panes with a boundary between them"): panes and boundaries (above).
 - The control surface's separators and outlines are elements
   (`ControlTerminalSurface.tsx:459-510`): follows the rule.
 
@@ -181,8 +200,10 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   half of a separator takes the commonest own ground of the window beside
   it, read from that window's cells. a7ea595f kept it from following what
   scrolls; a window whose own-ground cells change mid-scroll (right-aligned
-  virtual text with a background at its edge) can still flip it. **Open**:
-  a window should state its ground and the separator take that.
+  virtual text with a background at its edge) can still flip it. **Fixed**
+  (with the above): a pane's ground is its window's `Normal`/`NormalNC`
+  as asked of Neovim (`THEME_LUA`'s `grounds`, `windowGround`);
+  `separatorsOf` and a7ea595f's `isOwnGround` are gone.
 - `painter.ts:2245-2256` (`bandOf`) reads a float row's neighbours to find
   the float's ground: its own grid, so within the rule.
 
@@ -207,7 +228,7 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 1. ~~Declared overlay tiers~~ fixed: bands.
 2. ~~Cursor and riders inside their window's layer~~ fixed: their grid's
    clip.
-3. Separators as elements, from grounds the windows state.
+3. ~~Separators as elements~~ fixed: panes and boundaries.
 4. `underFrames` replaced by a clip of the framed floats.
 5. The control surface's z table; prompt over a popup.
 6. Device-pixel snapping of labels, hairlines and outlines.

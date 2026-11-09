@@ -297,15 +297,24 @@ z-order and opaque canvas — and where the code still falls short:
   - Selections and search matches are their highlight's own fill, square
     and continuous: the whole cell, `linespace` included, with no seam
     between cells or rows (a terminal's grid shows one).
-  - A window separator's cell is drawn as the two sides meeting
-    (`separatorsOf`): each half in the ground beside it, its line between.
-    A window's ground there is its own (`Normal`, `NormalNC`, its sign or
-    number column's: `isOwnGround`), never a highlight laid over its text
-    (a diff's, the cursor line's, Visual's), so nothing scrolling past
-    recolours the separator. It took the commonest colour of the window's
-    edge, and a diff hunk taller than half the window turned the whole
-    half DiffText's beside unchanged lines, then flipped it back mid-scroll
-    (seen in the app: the border's colour jumping while the text glided).
+  - Windows side by side are panes with a boundary between them, as VS
+    Code and Zed show editor groups — not a separator column drawn in
+    cells, which is a TUI's artefact of the cell grid (`boundariesOf`,
+    `placePanes`; docs/rendering-layers.md, "Panes and boundaries"). Each
+    window's pane is an element under its grid in its own ground (its
+    `Normal`, or `NormalNC` when it is not current, through its
+    `winhighlight`: `windowGround`), reaching exactly half into the
+    column beside it, so the edges of windows split across and down line
+    up; the boundary is a hairline element on the shared edge in
+    `WinSeparator`'s colour. All from the windows' places and highlights:
+    grid 1's cells in the column are not drawn, and nothing a window
+    scrolls or redraws touches them. A status line drawn as a line (`─`, a
+    person's `stl:`) beside a boundary meets it; where the boundary ends on
+    a status line, that line's own junction (`┴`) is drawn by grid 1 on the
+    same pixels. Earlier rounds painted the column into grid 1's canvas
+    with each half in the commonest colour of the window beside it, which
+    a diff hunk scrolling past flipped, and read grid 1's stale cells under
+    a window for the stubs (a stray tick left over from an earlier split).
   - The `~` past the end of a buffer (in `EndOfBuffer`) is not drawn while
     the window's `fillchars` has no `eob:` of the person's
     (`isEndOfBuffer`); a `:setlocal fillchars` is seen at once
@@ -1413,15 +1422,10 @@ before them (no frame falls back to cells).
 Candidates, by visual impact and then by compatibility risk (the
 least risky first within a band):
 
-1. _Window separators_ (`│` in a whole cell column) — done: each half of
-   the column is drawn in the ground of what is beside it (a window's
-   commonest colour along that edge — its `Normal`, `NormalNC`, sign
-   column — so a cursor line does not bleed in; a status line's cell
-   where one is), and the line, already a device pixel or so through the
-   middle, is all that is left between: splits meet edge to edge like
-   editor groups. A status line drawn as a line beside it (`─`, a
-   person's `stl:`) meets that line instead of stopping half a cell short.
-   A blank separator (`vert: `) is a band by choice and stays one. Clicks and drags on the column stay Neovim's.
+1. _Window separators_ (`│` in a whole cell column) — done, as panes
+   with a boundary (above): each window's pane takes half the column, a
+   hairline is their shared edge, splits meet edge to edge like editor
+   groups. Clicks and drags on the column stay Neovim's (the sash).
 2. ~~_Statusline and winbar as cell rows_~~ — round 1 drew a status line
    as a bar of its commonest colour with the other runs as rounded pills
    and Powerline's separators turned into gaps. Taken back in round 5: it

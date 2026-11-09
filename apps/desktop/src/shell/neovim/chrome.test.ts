@@ -6,7 +6,8 @@ import {
   fillerStart,
   floatScrollbars,
   isEndOfBuffer,
-  separatorsOf,
+  boundariesOf,
+  windowGround,
   sameTheme,
   themeOf,
 } from "./chrome";
@@ -35,7 +36,7 @@ describe("the surface notifications wear", () => {
   });
 });
 
-describe("a window separator", () => {
+describe("windows side by side", () => {
   const box = (
     grid: number,
     row: number,
@@ -53,67 +54,51 @@ describe("a window separator", () => {
     win: 1000 + grid,
   });
 
-  it("takes each side's ground from the window there, else grid 1", () => {
+  it("are panes with a boundary in the column between them", () => {
     // Window 2 left (rows 0–3), window 3 right (rows 0–1) over its status
-    // line on row 2 and window 4 (row 3); the column is 5.
-    const LEFT = 0x111111;
-    const RIGHT = 0x222222;
-    const STATUS = 0x333333;
-    const CURSORLINE = 0x444444;
-    const bgOf = (grid: number, index: number) =>
-      grid === 1
-        ? STATUS
-        : grid === 2
-          ? index === 4
-            ? CURSORLINE
-            : LEFT
-          : RIGHT;
-    const seps = separatorsOf(
+    // line on row 2 and window 4 (row 3); the column is 5. Grid 1 is 10 by
+    // 5: row 4 is the status lines'.
+    const { boundaries, panes } = boundariesOf(
       [box(2, 0, 0, 5, 4), box(3, 0, 6, 4, 2), box(4, 3, 6, 4, 1)],
       10,
       5,
-      bgOf,
     );
-    expect(seps).toEqual([
-      { row: 0, col: 5, left: LEFT, right: RIGHT },
-      { row: 1, col: 5, left: LEFT, right: RIGHT },
-      { row: 2, col: 5, left: LEFT, right: STATUS },
-      { row: 3, col: 5, left: LEFT, right: RIGHT },
+    expect(boundaries).toEqual([{ col: 5, top: 0, bottom: 4 }]);
+    expect(panes).toEqual([
+      { grid: 2, win: 1002, left: false, right: true },
+      { grid: 3, win: 1003, left: true, right: false },
+      { grid: 4, win: 1004, left: true, right: false },
     ]);
   });
-  it("keeps a window's own ground while a diff hunk scrolls past it", () => {
-    // Window 2 (rows 0–9, 6 columns) left of the column, window 3 right of
-    // it. A hunk 7 rows tall in DiffChange scrolls up through window 2: at
-    // every offset the separator is the same, the window's Normal beside it,
-    // as the commonest colour of its edge alone (DiffChange from offset 0 to
-    // 3) was not.
-    const NORMAL_L = 0x111111;
-    const NORMAL_R = 0x222222;
-    const HUNK = 0x553300;
-    const SIGNS = 0x050505;
-    const boxes = [box(2, 0, 0, 6, 10), box(3, 0, 7, 3, 10)];
-    const at = (top: number) => {
-      const hunk = (row: number) => row >= top && row < top + 7;
-      const bgOf = (grid: number, index: number) => {
-        if (grid !== 2) return grid === 3 && index % 3 === 0 ? SIGNS : NORMAL_R;
-        return hunk(Math.floor(index / 6)) ? HUNK : NORMAL_L;
-      };
-      const isGround = (grid: number, index: number) =>
-        grid !== 2 || !hunk(Math.floor(index / 6));
-      return separatorsOf(boxes, 10, 10, bgOf, isGround);
-    };
-    const still = at(9);
-    for (let top = 8; top >= -7; top -= 1) expect(at(top)).toEqual(still);
-    expect(still[0]).toEqual({ row: 0, col: 6, left: NORMAL_L, right: SIGNS });
-    // A window its hunk fills, no cell of its own ground left: the hunk's.
-    const filled = separatorsOf(
-      boxes,
+
+  it("are worked out from where the windows are, whatever scrolls in them", () => {
+    // A 4-way split: the boundary runs beside each pair of windows; the
+    // status lines' row crosses it (its junction is the status line's).
+    const { boundaries } = boundariesOf(
+      [
+        box(2, 0, 0, 4, 2),
+        box(3, 3, 0, 4, 2),
+        box(4, 0, 5, 5, 2),
+        box(5, 3, 5, 5, 2),
+      ],
       10,
-      10,
-      (grid) => (grid === 2 ? HUNK : NORMAL_R),
-      (grid) => grid !== 2,
+      6,
     );
-    expect(filled[0]?.left).toBe(HUNK);
+    expect(boundaries).toEqual([
+      { col: 4, top: 0, bottom: 2 },
+      { col: 4, top: 3, bottom: 5 },
+    ]);
+  });
+
+  it("are each in its own ground: Normal, or NormalNC when not current", () => {
+    const theme = themeOf({
+      groups: {},
+      grounds: { "1002": { normal: 1, nc: 2 }, "1003": { normal: 3 } },
+    });
+    expect(windowGround(theme, 1002, true)).toBe(1);
+    expect(windowGround(theme, 1002, false)).toBe(2);
+    expect(windowGround(theme, 1003, false)).toBe(3);
+    expect(windowGround(theme, 1009, false)).toBeUndefined();
   });
 });
 
