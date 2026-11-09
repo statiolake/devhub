@@ -913,7 +913,9 @@ mouse still work.
 There is no ring drawn around the window. A DOM overlay in the window's own
 page is behind every child view, which is to say hidden exactly when there
 is something to say — so an unread Agent is announced by the _window_: a Dock
-badge, and a critical bounce while DevHub is not in front. See
+badge (on Linux, the launcher's count where the desktop shows one), and only
+that. The Dock does not bounce and the window does not flash, in front or
+not: the person found a bounce for every finished turn too noisy. See
 `main/shell/windowAttention.ts`.
 
 ## Drag regions belong to the window's own page

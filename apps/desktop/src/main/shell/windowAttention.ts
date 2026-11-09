@@ -15,19 +15,19 @@
  * worse, a rectangle that takes clicks (Electron 42 has no per-view
  * `setIgnoreMouseEvents`, measured — see `toastsView.ts`).
  *
- * So the signal moves out of the window's contents and onto the window. macOS
- * already has one way to say this, and it is the way every other application
- * says it:
+ * So the signal moves out of the window's contents and onto the window, as
+ * the one standing mark every other application uses:
  *
- * - **A Dock badge** while anything is waiting. It is a standing mark, visible
- *   whether or not DevHub is the front application and whether or not its
- *   window is on screen at all — which the DOM glow never was.
- * - **A critical Dock bounce** while anything is waiting *and* the window is
- *   not focused. `NSCriticalRequest` bounces until the application is
- *   activated, which is the same "until you look" lifetime the breathing had,
- *   and it is cancelled the moment the reason goes. It is deliberately not
- *   raised while the window already has focus: the person is looking at DevHub,
- *   and the badge is enough.
+ * - **A Dock badge** while anything is waiting. It is visible whether or not
+ *   DevHub is the front application and whether or not its window is on
+ *   screen at all — which the DOM glow never was. On Linux it is the launcher
+ *   count (`app.setBadgeCount`), where the desktop shows one.
+ *
+ * Nothing moves or flashes. A critical Dock bounce while the window was not
+ * focused used to go with the badge; the person found it too noisy for an
+ * Agent that has simply finished, and it is gone. There is no Linux urgency
+ * hint (`flashFrame`) either, for the same reason. The event itself — a
+ * notification and a sound — is `agentNotifications.ts`.
  *
  * The retract rule is unchanged and is still one rule computed in one place:
  * the signal holds while some Agent is unread and the selection is not that
@@ -57,11 +57,9 @@ export function wantsAttention(snapshot: AppSnapshotWire): boolean {
 	);
 }
 
-/** As much of macOS's Dock as this needs, so a test can be the other half. */
+/** As much of the Dock as this needs, so a test can be the other half. */
 export interface AttentionDock {
 	setBadge(text: string): void;
-	bounce(type: "critical" | "informational"): number;
-	cancelBounce(id: number): void;
 }
 
 /**
@@ -82,12 +80,10 @@ const BADGE = "●";
  * `PickerView.reposition` has, and for the same reason: an attention signal
  * raised by an event and retracted by a different event is two rules that can
  * disagree, and the one that survives a disagreement is the one that leaves
- * the Dock bouncing at nothing.
+ * a badge on nothing.
  */
 export class WindowAttention {
 	private wanted = false;
-	private focused = false;
-	private bouncing: number | undefined;
 	private badged = false;
 
 	constructor(private readonly dock: AttentionDock) {}
@@ -98,55 +94,27 @@ export class WindowAttention {
 		this.apply();
 	}
 
-	/** The window came forward or went away. */
-	windowFocusChanged(focused: boolean): void {
-		this.focused = focused;
-		this.apply();
-	}
-
 	private apply(): void {
-		if (this.wanted !== this.badged) {
-			this.dock.setBadge(this.wanted ? BADGE : "");
-			this.badged = this.wanted;
-		}
-		// Bouncing at somebody who is already looking at the window is noise,
-		// and it is noise macOS will not stop on its own: a critical request
-		// bounces until the *application* is activated, and DevHub is already
-		// the active application.
-		const shouldBounce = this.wanted && !this.focused;
-		if (shouldBounce && this.bouncing === undefined) {
-			this.bouncing = this.dock.bounce("critical");
-			return;
-		}
-		if (!shouldBounce && this.bouncing !== undefined) {
-			this.dock.cancelBounce(this.bouncing);
-			this.bouncing = undefined;
-		}
+		if (this.wanted === this.badged) return;
+		this.dock.setBadge(this.wanted ? BADGE : "");
+		this.badged = this.wanted;
 	}
 }
 
 /**
- * The real Dock, where there is one.
+ * The real Dock, or the Linux launcher's count.
  *
- * `app.dock` is macOS only. On every other platform there is nothing here to
- * talk to, and the honest answer is a signal that does nothing rather than a
- * second implementation of it — DevHub is a Mac application, and this is the
- * one place that is allowed to be true.
+ * `app.dock` is macOS only, and takes the bullet. Elsewhere the badge is a
+ * count, and Electron sets it where the desktop has a launcher that shows one
+ * (Unity's protocol); one Agent or more waiting is `1`, as the bullet is one
+ * fact. Nothing here bounces or flashes the window.
  */
 export function platformDock(): AttentionDock {
 	const dock = electron.app.dock;
-	if (!dock) {
-		return {
-			setBadge: () => undefined,
-			bounce: () => -1,
-			cancelBounce: () => undefined,
-		};
-	}
+	if (dock) return { setBadge: (text) => dock.setBadge(text) };
 	return {
-		setBadge: (text) => dock.setBadge(text),
-		bounce: (type) => dock.bounce(type),
-		cancelBounce: (id) => {
-			if (id >= 0) dock.cancelBounce(id);
+		setBadge: (text) => {
+			electron.app.setBadgeCount(text === "" ? 0 : 1);
 		},
 	};
 }

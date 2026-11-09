@@ -3,8 +3,8 @@
  *
  * Watches the projection for an Agent that was working and has settled into
  * idle (its turn is over) or waiting (permission or input), and says so once.
- * The Dock badge and bounce (`windowAttention.ts`) are the standing signal;
- * this is the event: a notification and a sound.
+ * The Dock badge (`windowAttention.ts`) is the standing signal; this is the
+ * event: a notification and a sound.
  *
  * Rules, all here and all testable without Electron:
  * - Only at work -> idle/waiting fires. At work is `working` or `background`

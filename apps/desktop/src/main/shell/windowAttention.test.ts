@@ -5,9 +5,8 @@
  * is where it is drawn. It used to be a breathing ring in the App Shell page's
  * DOM, and a `WebContentsView` paints above that document — so the signal was
  * hidden for as long as there was an editor on screen, which is most of a
- * session. It is the window that says it now, and these are the two things
- * that has to keep true: the rule retracts, and nobody is bounced at while
- * they are already looking.
+ * session. It is the window that says it now — a badge, and only a badge —
+ * and the rule retracts.
  */
 
 import { describe, expect, it } from "vitest";
@@ -43,17 +42,11 @@ function snapshot(options: {
 
 function dock() {
 	const calls: string[] = [];
-	let next = 1;
 	return {
 		calls,
 		dock: {
 			setBadge: (text: string) =>
 				calls.push(`badge:${text === "" ? "-" : text}`),
-			bounce: (type: "critical" | "informational") => {
-				calls.push(`bounce:${type}`);
-				return next++;
-			},
-			cancelBounce: (id: number) => calls.push(`cancel:${id}`),
 		},
 	};
 }
@@ -83,7 +76,6 @@ describe("how the window says it", () => {
 	it("badges the Dock while something is waiting, and only while", () => {
 		const { calls, dock: fake } = dock();
 		const attention = new WindowAttention(fake);
-		attention.windowFocusChanged(true);
 		attention.observe(snapshot({ unreadAgentId: "a" }));
 		expect(calls).toEqual(["badge:●"]);
 		attention.observe(snapshot({}));
@@ -96,46 +88,16 @@ describe("how the window says it", () => {
 		attention.observe(snapshot({ unreadAgentId: "a" }));
 		attention.observe(snapshot({ unreadAgentId: "a" }));
 		attention.observe(snapshot({ unreadAgentId: "b" }));
-		expect(calls.filter((call) => call.startsWith("badge:"))).toEqual([
-			"badge:●",
-		]);
-	});
-
-	/**
-	 * A critical bounce runs until the *application* is activated. Raising one
-	 * while DevHub is already the front application is a bounce macOS will not
-	 * stop on its own, at somebody who is looking at the thing it is about.
-	 */
-	it("does not bounce at a window that already has the focus", () => {
-		const { calls, dock: fake } = dock();
-		const attention = new WindowAttention(fake);
-		attention.windowFocusChanged(true);
-		attention.observe(snapshot({ unreadAgentId: "a" }));
 		expect(calls).toEqual(["badge:●"]);
 	});
 
-	it("bounces once the window goes away, and stops when it comes back", () => {
-		const { calls, dock: fake } = dock();
-		const attention = new WindowAttention(fake);
-		attention.windowFocusChanged(true);
-		attention.observe(snapshot({ unreadAgentId: "a" }));
-		attention.windowFocusChanged(false);
-		expect(calls).toEqual(["badge:●", "bounce:critical"]);
-		attention.windowFocusChanged(true);
-		expect(calls).toEqual(["badge:●", "bounce:critical", "cancel:1"]);
-	});
-
-	it("stops bouncing when the reason goes, not only when the window returns", () => {
-		const { calls, dock: fake } = dock();
-		const attention = new WindowAttention(fake);
-		attention.windowFocusChanged(false);
-		attention.observe(snapshot({ unreadAgentId: "a" }));
-		attention.observe(snapshot({}));
-		expect(calls).toEqual([
-			"badge:●",
-			"bounce:critical",
-			"badge:-",
-			"cancel:1",
-		]);
+	/**
+	 * The Dock bounced while DevHub was not in front, and the person found it
+	 * too noisy: the badge is the whole signal, and the fake Dock has no way to
+	 * bounce or flash at all.
+	 */
+	it("asks for nothing but the badge", () => {
+		const { dock: fake } = dock();
+		expect(Object.keys(fake)).toEqual(["setBadge"]);
 	});
 });

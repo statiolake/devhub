@@ -2745,10 +2745,6 @@ export class AppController {
 	}
 
 	windowFocusChanged(focused: boolean): void {
-		// Whether the window is in front decides how loudly an unread Agent is
-		// announced — a badge either way, a Dock bounce only while the person
-		// is somewhere else. See `windowAttention.ts`.
-		this.attention.windowFocusChanged(focused);
 		this.shellFocused = focused;
 		// Coming back to the window is a reason to look at the repositories
 		// again, and the trigger DevHub was missing: a person leaves for a
