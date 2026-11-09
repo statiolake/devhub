@@ -489,9 +489,7 @@ export function paneAt(
  * `x`/`y` where it starts (on the gap cell's middle line), `length` how far
  * it runs; halves are cells too.
  */
-export function borders(
-  panes: readonly PaneBox[],
-): { vertical: boolean; x: number; y: number; length: number }[] {
+export function borders(panes: readonly PaneBox[]): BorderLine[] {
   if (panes.length < 2) return [];
   const cols = Math.max(...panes.map((p) => p.x + p.width));
   const rows = Math.max(...panes.map((p) => p.y + p.height));
@@ -534,8 +532,7 @@ export function borders(
       if (across(x + 1, y)) add(horizontal, y, x + 0.5, x + 1);
     }
   }
-  const lines: { vertical: boolean; x: number; y: number; length: number }[] =
-    [];
+  const lines: BorderLine[] = [];
   const merge = (map: Map<number, [number, number][]>, isVertical: boolean) => {
     for (const [at, runs] of [...map].sort((a, b) => a[0] - b[0])) {
       runs.sort((a, b) => a[0] - b[0]);
@@ -561,39 +558,110 @@ export function borders(
   return lines;
 }
 
-/**
- * The outlines over the panes, in cells of the window: the active pane's,
- * when the window shows more than one (tmux colours that pane's border; a GUI
- * can go round it), and every synchronized pane's while `synchronize-panes`
- * is on, since what is typed reaches all of them. Each runs down the middle
- * of the gap cells around its pane, on the hairlines; at the window's edge,
- * where tmux leaves no gap, it keeps to the edge.
- */
-export function paneRings(panes: readonly PaneBox[]): {
-  readonly active: boolean;
-  readonly synchronized: boolean;
+/** A line between panes (`borders`), in cells of the window. */
+export interface BorderLine {
+  readonly vertical: boolean;
   readonly x: number;
   readonly y: number;
-  readonly width: number;
-  readonly height: number;
-}[] {
+  readonly length: number;
+}
+
+/** A piece of a pane's outline (`paneOutlines`): the active pane's or not. */
+export interface OutlineLine extends BorderLine {
+  readonly active: boolean;
+}
+
+/**
+ * The active pane's outline, when the window shows more than one pane (tmux
+ * colours that pane's border), and every synchronized pane's while
+ * `synchronize-panes` is on, since what is typed reaches all of them: the
+ * hairlines on the pane's sides, as `borders` draws them, each reaching
+ * half a cell past the pane's corner to the middle of the gap, where the
+ * side across it runs. A side on the window's edge has no gap and no line,
+ * as in tmux. Square, not rounded: a separator that runs on past a corner
+ * (a T, a +) has to pass through the corner's point, which a rounded corner
+ * leaves either as a stub beside the curve or as a gap in the line.
+ * Synchronized panes' sides come first and the active pane's last, so where
+ * they share one the active pane's is drawn over.
+ */
+export function paneOutlines(panes: readonly PaneBox[]): OutlineLine[] {
   if (panes.length < 2) return [];
   const cols = Math.max(...panes.map((p) => p.x + p.width));
   const rows = Math.max(...panes.map((p) => p.y + p.height));
-  return panes
-    .filter((p) => p.active || p.synchronized)
-    .map((p) => {
-      const left = Math.max(0, p.x - 0.5);
-      const top = Math.max(0, p.y - 0.5);
-      const right = Math.min(cols, p.x + p.width + 0.5);
-      const bottom = Math.min(rows, p.y + p.height + 0.5);
-      return {
-        active: p.active,
-        synchronized: p.synchronized,
+  const lines: OutlineLine[] = [];
+  const outlined = [
+    ...panes.filter((p) => p.synchronized && !p.active),
+    ...panes.filter((p) => p.active),
+  ];
+  for (const p of outlined) {
+    const active = p.active;
+    const right = p.x + p.width;
+    const bottom = p.y + p.height;
+    const top = p.y > 0 ? p.y - 0.5 : 0;
+    const left = p.x > 0 ? p.x - 0.5 : 0;
+    const down = (bottom < rows ? bottom + 0.5 : rows) - top;
+    const across = (right < cols ? right + 0.5 : cols) - left;
+    if (p.x > 0)
+      lines.push({ vertical: true, x: p.x - 1, y: top, length: down, active });
+    if (right < cols)
+      lines.push({ vertical: true, x: right, y: top, length: down, active });
+    if (p.y > 0)
+      lines.push({
+        vertical: false,
         x: left,
-        y: top,
-        width: right - left,
-        height: bottom - top,
-      };
-    });
+        y: p.y - 1,
+        length: across,
+        active,
+      });
+    if (bottom < rows)
+      lines.push({
+        vertical: false,
+        x: left,
+        y: bottom,
+        length: across,
+        active,
+      });
+  }
+  return lines;
+}
+
+/**
+ * `borders` less where an outline runs (`paneOutlines`): the outline is
+ * that stretch of the separator, recoloured, not a second line beside it.
+ */
+export function plainBorders(
+  lines: readonly BorderLine[],
+  outlines: readonly BorderLine[],
+): BorderLine[] {
+  const out: BorderLine[] = [];
+  for (const line of lines) {
+    const at = line.vertical ? line.x : line.y;
+    const from = line.vertical ? line.y : line.x;
+    const cuts = outlines
+      .filter(
+        (o) => o.vertical === line.vertical && (o.vertical ? o.x : o.y) === at,
+      )
+      .map((o) => {
+        const start = o.vertical ? o.y : o.x;
+        return [start, start + o.length] as const;
+      })
+      .sort((a, b) => a[0] - b[0]);
+    let start = from;
+    const end = from + line.length;
+    const keep = (a: number, b: number) => {
+      if (b <= a) return;
+      out.push(
+        line.vertical
+          ? { vertical: true, x: line.x, y: a, length: b - a }
+          : { vertical: false, x: a, y: line.y, length: b - a },
+      );
+    };
+    for (const [a, b] of cuts) {
+      if (b <= start || a >= end) continue;
+      keep(start, Math.min(a, end));
+      start = Math.max(start, b);
+    }
+    keep(start, end);
+  }
+  return out;
 }

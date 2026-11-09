@@ -367,14 +367,33 @@ picks it by the setting and mounts the other one when it changes.
   ground). Between panes tmux leaves one cell; a hairline runs down its
   middle, traced cell by cell over the gaps so lines meet where a line ends
   on another (a T) and where four panes meet (a +). With more than one pane
-  shown, the active one is gone round on the hairlines (1 px, 6 px corners,
-  60%) in the colour `pane-active-border-style` gives it, expanded at that
-  pane: tmux's default is green, yellow in a mode and red while the panes
-  are synchronized. While `synchronize-panes` is on (`pane_synchronized`),
-  every pane that takes the keys is gone round too, the others dashed: what
-  is typed reaches all of them, which tmux's own border never showed. The active pane's cursor takes the program's shape. The theme's
-  colours are sent to the engines (the 16 ANSI colours, the cube and the
-  greys), and its foreground and background are the painter's defaults.
+  shown, the active one is outlined by the separators on its sides
+  (`paneOutlines`): those stretches are drawn 2 px in the colour
+  `pane-active-border-style` gives it (60% on the ground), expanded at that
+  pane, and not drawn again as hairlines; tmux's default is green, yellow
+  in a mode and red while the panes are synchronized. Each stretch runs on
+  to the middle of the gap at the pane's corner, so the corners are square
+  and the hairlines that continue past them (a T, a +) start there. Square,
+  not rounded: a separator that goes on past a corner passes through the
+  corner's point, so a rounded outline left a hairline stub beside its
+  curve. A side on the window's edge has no separator and no outline, as in
+  tmux. While `synchronize-panes` is on (`pane_synchronized`), every pane
+  that takes the keys is outlined too, the others dashed: what is typed
+  reaches all of them, which tmux's own border never showed. Hairlines and
+  outlines are opaque mixes on the ground, so a crossing is not darker.
+  The theme's colours are sent to the engines (the 16 ANSI colours, the
+  cube and the greys), and its foreground and background are the painter's
+  defaults. Each pane is an opaque canvas: text on a canvas with alpha is
+  set grayscale (on macOS without CoreText's font smoothing, thinner and
+  lighter than xterm.js', which draws its glyphs on their ground); see
+  `painter.ts`.
+- **Cursor.** The active pane's cursor takes the program's shape
+  (`DECSCUSR`) and colour (OSC 12, until OSC 112), else the theme's
+  `cursor`; a block holds its character painted as the row paints it
+  (`paintCursorCell`, the Neovim editor's), in the theme's `cursor_text`,
+  as Ghostty and xterm.js draw it. Without the keyboard it is a hollow
+  block. (It was a `difference` blend of `cursor` over the text: neither
+  colour showed, a dark cursor on a light ground came out light grey.)
 - **Keys.** By tmux's names (`controlKeys.ts`), so the prefix and the
   bindings are tmux's; Option is Meta per `mac_option_is_meta`, by the
   physical key. Text an IME commits, and a dead key's character, go to the
@@ -503,9 +522,7 @@ measured before anything is changed.
   under Xvfb (below); to be measured again on the person's Mac, where
   xterm.js draws with WebGL and both composite on the GPU, before the
   xterm.js path is deleted.
-- `faint` is drawn mixed, not with a font weight; the cursor is a block
-  over the text (difference blend), not the text drawn in the cursor's
-  colour as Neovim's is.
+- `faint` is drawn mixed, not with a font weight.
 
 ### Handoff: where phases 3 and 4 start
 

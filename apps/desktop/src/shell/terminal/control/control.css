@@ -15,11 +15,26 @@
   pointer-events: none;
 }
 
+/* The hairlines and outlines are opaque mixes on the terminal's ground, not
+   translucent ink: where two cross (a +, an outline's corner) a translucent
+   colour would be laid twice and show a darker dot. */
+.control-borders {
+  --control-hairline: color-mix(
+    in srgb,
+    var(--terminal-foreground, var(--text)) 22%,
+    var(--terminal-background, transparent)
+  );
+  --control-outline: color-mix(
+    in srgb,
+    var(--control-active-border, var(--terminal-foreground, var(--text))) 60%,
+    var(--terminal-background, transparent)
+  );
+}
+
 .control-border-v,
 .control-border-h {
   position: absolute;
-  background: color-mix(in srgb, currentColor 22%, transparent);
-  color: var(--terminal-foreground, var(--text));
+  background: var(--control-hairline);
 }
 
 .control-border-v {
@@ -30,26 +45,31 @@
   height: 1px;
 }
 
-/* The active pane, gone round on the hairlines in the colour tmux gives its
-   border (pane-active-border-style: by default green, yellow in a mode, red
-   while the panes are synchronized), faint enough to stay out of the way.
-   While synchronize-panes is on, every pane that takes the keys is gone
-   round, the others dashed: what is typed reaches all of them. */
-.control-pane-ring {
-  --control-ring: color-mix(
-    in srgb,
-    var(--control-active-border, currentColor) 60%,
-    transparent
-  );
-
+/* The active pane's outline: the separators on its sides, in the colour
+   tmux gives its border (pane-active-border-style: by default green, yellow
+   in a mode, red while the panes are synchronized) and 2px, square where
+   they meet (`paneOutlines`). While synchronize-panes is on, the other panes
+   that take the keys are outlined dashed: what is typed reaches all of
+   them. */
+.control-outline {
   position: absolute;
-  box-sizing: border-box;
-  border: 1px solid var(--control-ring);
-  border-radius: 6px;
+  background: var(--control-outline);
 }
 
-.control-pane-ring[data-synchronized="true"]:not([data-active="true"]) {
-  border-style: dashed;
+.control-outline:not([data-active="true"])[data-vertical="true"] {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--control-outline) 0 4px,
+    var(--control-hairline) 4px 7px
+  );
+}
+
+.control-outline:not([data-active="true"])[data-vertical="false"] {
+  background: repeating-linear-gradient(
+    to right,
+    var(--control-outline) 0 4px,
+    var(--control-hairline) 4px 7px
+  );
 }
 
 /* The active pane's cursor, in the program's colour (OSC 12) or the

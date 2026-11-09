@@ -56,7 +56,8 @@ import {
   borders,
   gridOf,
   POPUP_GRID,
-  paneRings,
+  paneOutlines,
+  plainBorders,
   newControlView,
   paneAt,
   paneBoxes,
@@ -449,8 +450,18 @@ export function ControlTerminalSurface({
       const boxes = paneBoxes(view).filter((box) => !clear.has(box.grid));
       painter.paint(view.state, merged, boxes, merged.layout);
       drawHoles(cut);
+      // The separators, and the active (and synchronized) panes' outlines
+      // as stretches of them, recoloured and thicker (`paneOutlines`).
+      const outlines = paneOutlines(view.panes);
+      const totalWidth = view.cols * width;
+      const totalHeight = view.rows * height;
+      // An outline is 2px, on the hairline's middle where that is on whole
+      // device pixels; each piece runs on over the corner it shares with
+      // the next, so the corners are square and filled.
+      const thick = 2;
+      const shift = (window.devicePixelRatio || 1) >= 2 ? 0.5 : 0;
       lines.replaceChildren(
-        ...borders(view.panes).map((line) => {
+        ...plainBorders(borders(view.panes), outlines).map((line) => {
           const el = document.createElement("div");
           el.className = line.vertical
             ? "control-border-v"
@@ -462,16 +473,37 @@ export function ControlTerminalSurface({
           else el.style.width = `${String(line.length * width)}px`;
           return el;
         }),
-        ...paneRings(view.panes).map((ring) => {
+        ...outlines.map((line) => {
           const el = document.createElement("div");
-          el.className = "control-pane-ring";
-          if (ring.active) el.dataset.active = "true";
-          if (ring.synchronized) el.dataset.synchronized = "true";
-          el.style.left = `${String(ring.x * width)}px`;
-          el.style.top = `${String(ring.y * height)}px`;
-          // A pixel more, so its far sides lie on the hairlines as its near ones do.
-          el.style.width = `${String(ring.width * width + 1)}px`;
-          el.style.height = `${String(ring.height * height + 1)}px`;
+          el.className = "control-outline";
+          if (line.active) el.dataset.active = "true";
+          el.dataset.vertical = String(line.vertical);
+          const along = (from: number, to: number, total: number) => {
+            const a = from > 0 ? from - shift : 0;
+            const b = to < total ? to - shift + thick : total;
+            return [a, b - a] as const;
+          };
+          if (line.vertical) {
+            const [top, length] = along(
+              line.y * height,
+              (line.y + line.length) * height,
+              totalHeight,
+            );
+            el.style.left = `${String((line.x + 0.5) * width - shift)}px`;
+            el.style.top = `${String(top)}px`;
+            el.style.width = `${String(thick)}px`;
+            el.style.height = `${String(length)}px`;
+          } else {
+            const [left, length] = along(
+              line.x * width,
+              (line.x + line.length) * width,
+              totalWidth,
+            );
+            el.style.left = `${String(left)}px`;
+            el.style.top = `${String((line.y + 0.5) * height - shift)}px`;
+            el.style.width = `${String(length)}px`;
+            el.style.height = `${String(thick)}px`;
+          }
           return el;
         }),
       );

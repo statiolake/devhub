@@ -3,11 +3,12 @@ import { pasteBytes, sgrMouse, tmuxKey, type KeyLike } from "./controlKeys";
 import {
   applyControl,
   borders,
-  paneRings,
   hlOf,
   newControlView,
   paneAt,
   paneBoxes,
+  paneOutlines,
+  plainBorders,
 } from "./paneGrids";
 
 const key = (k: string, code = "", mods: Partial<KeyLike> = {}): KeyLike => ({
@@ -190,19 +191,53 @@ describe("panes as the painter's grids", () => {
     expect(borders([layout.panes[0]])).toEqual([]);
   });
 
-  it("goes round the active pane on the hairlines, and round every synchronized one", () => {
-    expect(paneRings(layout.panes)).toEqual([
-      { active: true, synchronized: false, x: 0, y: 0, width: 10.5, height: 5 },
+  it("outlines the active pane on its separators, which are not drawn again under it", () => {
+    const outlines = paneOutlines(layout.panes);
+    // The pane on the left: its one side with a gap, down the whole window.
+    expect(outlines).toEqual([
+      { vertical: true, x: 10, y: 0, length: 5, active: true },
     ]);
+    expect(plainBorders(borders(layout.panes), outlines)).toEqual([
+      { vertical: false, x: 10.5, y: 2, length: 10.5 },
+    ]);
+    expect(paneOutlines([layout.panes[0]])).toEqual([]);
+  });
+
+  it("reaches the middle of a + from the active pane's corner, the rest of the cross plain", () => {
+    const box = (pane: number, x: number, y: number) => ({
+      pane,
+      x,
+      y,
+      width: 4,
+      height: 3,
+      active: pane === 1,
+      synchronized: false,
+    });
+    const panes = [box(1, 0, 0), box(2, 5, 0), box(3, 0, 4), box(4, 5, 4)];
+    const outlines = paneOutlines(panes);
+    expect(outlines).toEqual([
+      { vertical: true, x: 4, y: 0, length: 3.5, active: true },
+      { vertical: false, x: 0, y: 3, length: 4.5, active: true },
+    ]);
+    expect(plainBorders(borders(panes), outlines)).toEqual([
+      { vertical: true, x: 4, y: 3.5, length: 3.5 },
+      { vertical: false, x: 4.5, y: 3, length: 4.5 },
+    ]);
+  });
+
+  it("outlines every synchronized pane, the active one last", () => {
     const synced = layout.panes.map((p) => ({ ...p, synchronized: true }));
-    expect(paneRings(synced).map((r) => [r.x, r.y, r.width, r.height])).toEqual(
-      [
-        [0, 0, 10.5, 5],
-        [10.5, 0, 10.5, 2.5],
-        [10.5, 2.5, 10.5, 2.5],
-      ],
-    );
-    expect(paneRings([layout.panes[0]])).toEqual([]);
+    const outlines = paneOutlines(synced);
+    expect(
+      outlines.map((o) => [o.vertical, o.x, o.y, o.length, o.active]),
+    ).toEqual([
+      [true, 10, 0, 2.5, false],
+      [false, 10.5, 2, 10.5, false],
+      [true, 10, 2.5, 2.5, false],
+      [false, 10.5, 2, 10.5, false],
+      [true, 10, 0, 5, true],
+    ]);
+    expect(plainBorders(borders(synced), outlines)).toEqual([]);
   });
 
   it("draws faint ink half way to its ground and hidden ink as the ground", () => {
