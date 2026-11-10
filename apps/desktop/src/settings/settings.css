@@ -234,11 +234,13 @@ body {
   /* The control is 22px tall and the label is a line of 13px text, so the two
      only look aligned when the label is nudged onto the control's baseline. */
   padding-top: 3px;
+  min-width: 0;
   text-align: right;
   color: var(--primary);
-  /* The column is sized for the longest label; a label that would still wrap
-     is a label that is too long, not a row that is two lines tall. */
-  white-space: nowrap;
+  /* The column is sized for a noun, and a longer label wraps under itself
+     inside it, balanced, rather than running out of the column's left edge
+     and being cut there ("hen an Agent needs me"). */
+  text-wrap: balance;
 }
 
 .sf-value {
