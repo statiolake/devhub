@@ -220,6 +220,16 @@ interface Pane {
 	window: TmuxId;
 	/** Waiting for its `capture-pane`: its `%output` until then is in the capture. */
 	syncing: boolean;
+	/**
+	 * While syncing, the `%output` that came after the capture's answer:
+	 * tmux's notices and its answers come in one stream, and output that
+	 * follows the answer in the same read is handled before the code that
+	 * awaited the answer runs. It is not in the capture, so it is written
+	 * after it (`#sync`).
+	 */
+	afterCapture: Uint8Array[] | undefined;
+	/** The latest `#sync` asked for; an earlier one leaves the pane to it. */
+	syncs: number;
 	/** Changed since it was last sent. */
 	dirty: boolean;
 	/** Send every row next time: it was hidden, resynchronised or resized. */
@@ -281,6 +291,14 @@ export class ControlClient {
 	#flushTimer: unknown;
 	#refreshing = false;
 	#refreshAgain = false;
+	/**
+	 * How many notices have changed the windows in place (a layout, a name,
+	 * the active pane or window): a listing asked for before one of them is
+	 * older than what it would overwrite (`#readStructure`).
+	 */
+	#structureChanges = 0;
+	/** Listings in a row found older than a notice, and read again. */
+	#staleListings = 0;
 	#ended = false;
 	#colors:
 		| { foreground: number; background: number; palette?: readonly number[] }
@@ -533,7 +551,10 @@ export class ControlClient {
 				const pane = this.#panes.get(event.pane);
 				if (pane === undefined) return;
 				if (includes(event.data, NAMED)) void this.#readFacts(pane.id);
-				if (pane.syncing) return;
+				if (pane.syncing) {
+					pane.afterCapture?.push(event.data);
+					return;
+				}
 				pane.vt.write(event.data);
 				pane.dirty = true;
 				this.#schedule();
@@ -548,6 +569,7 @@ export class ControlClient {
 					window.layout = event.layout;
 					window.visible = event.visible;
 					window.zoomed = event.flags.includes("Z");
+					this.#structureChanges += 1;
 					this.#sizePanes(window);
 					this.#postLayout();
 					this.#schedule();
@@ -559,6 +581,7 @@ export class ControlClient {
 			case "window-pane-changed": {
 				const window = this.#windows.get(event.window);
 				if (window !== undefined) window.activePane = event.pane;
+				this.#structureChanges += 1;
 				this.#postLayout();
 				return;
 			}
@@ -573,6 +596,7 @@ export class ControlClient {
 					return;
 				}
 				this.#activeWindow = event.window;
+				this.#structureChanges += 1;
 				for (const pane of this.#panes.values())
 					if (pane.window === event.window) pane.all = true;
 				this.#postLayout();
@@ -581,6 +605,7 @@ export class ControlClient {
 			case "window-renamed": {
 				const window = this.#windows.get(event.window);
 				if (window !== undefined) window.name = event.name;
+				this.#structureChanges += 1;
 				this.#postLayout();
 				return;
 			}
@@ -1936,13 +1961,26 @@ export class ControlClient {
 		);
 	}
 
-	/** Write a command; its answer is the next reply of this client's. */
+	/**
+	 * Write a command; its answer is the next reply of this client's.
+	 * `answered` runs the moment the answer is read, before the notices that
+	 * came after it in the same read, which the awaiting code would see only
+	 * once they had been handled.
+	 */
 	#command(
 		words: readonly string[],
+		answered?: () => void,
 	): Promise<{ ok: boolean; lines: readonly string[] }> {
 		if (this.#ended) return Promise.resolve({ ok: false, lines: [] });
 		return new Promise((resolve) => {
-			this.#replies.push(resolve);
+			this.#replies.push(
+				answered === undefined
+					? resolve
+					: (reply) => {
+							answered();
+							resolve(reply);
+						},
+			);
 			try {
 				this.#o.process.write(`${commandLine(words)}\n`);
 			} catch {
@@ -1974,21 +2012,29 @@ export class ControlClient {
 	}
 
 	async #readStructure(): Promise<void> {
-		const windows = await this.#command([
-			"list-windows",
-			"-F",
+		// The notices that changed the windows by the time the listing was
+		// read: it says what they did; any after it are newer than it.
+		let changes = this.#structureChanges;
+		const windows = await this.#command(
 			[
-				"#{session_name}",
-				"#{window_id}",
-				"#{window_index}",
-				"#{window_active}",
-				"#{window_zoomed_flag}",
-				"#{window_layout}",
-				"#{window_visible_layout}",
-				TAB_FORMAT,
-				"#{window_name}",
-			].join(FIELD),
-		]);
+				"list-windows",
+				"-F",
+				[
+					"#{session_name}",
+					"#{window_id}",
+					"#{window_index}",
+					"#{window_active}",
+					"#{window_zoomed_flag}",
+					"#{window_layout}",
+					"#{window_visible_layout}",
+					TAB_FORMAT,
+					"#{window_name}",
+				].join(FIELD),
+			],
+			() => {
+				changes = this.#structureChanges;
+			},
+		);
 		const panes = await this.#command([
 			"list-panes",
 			"-s",
@@ -1998,6 +2044,17 @@ export class ControlClient {
 			),
 		]);
 		if (!windows.ok || !panes.ok || this.#ended) return;
+		// The listing is applied once the panes' is in too: a notice that came
+		// after it (a zoom's layout, a rename) was applied at once and is
+		// newer than the listing, which would undo it until something else had
+		// the windows read again. Such a listing is read again instead, a few
+		// times at most before it is taken anyway.
+		if (changes !== this.#structureChanges && this.#staleListings < 5) {
+			this.#staleListings += 1;
+			this.#refreshAgain = true;
+			return;
+		}
+		this.#staleListings = 0;
 		const seenWindows = new Set<TmuxId>();
 		for (const line of windows.lines) {
 			const [session, idText, index, active, zoomed, layout, visible, ...rest] =
@@ -2069,6 +2126,8 @@ export class ControlClient {
 				vt,
 				window: windowId,
 				syncing: true,
+				afterCapture: undefined,
+				syncs: 0,
 				dirty: false,
 				all: true,
 				lastCursor: "",
@@ -2097,6 +2156,7 @@ export class ControlClient {
 	/** Read a pane's state from tmux into its engine (see the file's comment). */
 	async #sync(pane: Pane): Promise<void> {
 		pane.syncing = true;
+		const sync = ++pane.syncs;
 		const target = `%${String(pane.id)}`;
 		const state = await this.#command([
 			"display-message",
@@ -2121,17 +2181,17 @@ export class ControlClient {
 		const fields = (state.lines[0] ?? "").split(FIELD);
 		const alternate = fields[3] === "1";
 		const history = alternate ? 0 : (this.#o.scrollback ?? 2000);
-		const capture = await this.#command([
-			"capture-pane",
-			"-p",
-			"-e",
-			"-N",
-			"-t",
-			target,
-			"-S",
-			String(-history),
-		]);
+		const capture = await this.#command(
+			["capture-pane", "-p", "-e", "-N", "-t", target, "-S", String(-history)],
+			// What came before the answer is in it; what comes after is kept.
+			() => {
+				pane.afterCapture = [];
+			},
+		);
 		if (this.#ended || this.#panes.get(pane.id) !== pane) return;
+		// A later reading is under way: its capture is newer, and the output
+		// kept is what follows that one.
+		if (pane.syncs !== sync) return;
 		const width = Number(fields[10]);
 		const height = Number(fields[11]);
 		if (width > 0 && height > 0) pane.vt.resize(width, height);
@@ -2139,6 +2199,8 @@ export class ControlClient {
 		pane.vt.write(
 			new TextEncoder().encode(restoreSequence(capture.lines, fields)),
 		);
+		for (const data of pane.afterCapture ?? []) pane.vt.write(data);
+		pane.afterCapture = undefined;
 		pane.syncing = false;
 		pane.dirty = true;
 		pane.all = true;
@@ -2411,6 +2473,14 @@ export class ControlClient {
 	#postLayout(): void {
 		if (this.#ended) return;
 		this.#tellSockets();
+		// Nothing to say until the windows are read: a notice that comes
+		// first (a rename, the status line's subscription) would post a
+		// layout whose current window is none of its windows.
+		if (
+			this.#activeWindow === undefined ||
+			!this.#windows.has(this.#activeWindow)
+		)
+			return;
 		const windows = [...this.#windows.values()]
 			.sort((a, b) => a.index - b.index)
 			.map((w) => ({
