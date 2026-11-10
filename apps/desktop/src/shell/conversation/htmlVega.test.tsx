@@ -87,6 +87,16 @@ const SPEC = JSON.stringify({
 });
 
 describe("a vega-lite block", () => {
+  beforeAll(async () => {
+    // Vega and Vega-Lite are chunks of their own, imported the first time a
+    // chart asks (`vegaLite.ts`), and importing them is most of a first
+    // chart's time: a quarter of a second here alone, more than the second a
+    // `findBy` waits under a whole suite's load. They are imported once, so
+    // they are imported here, by drawing a chart, and what a case below waits
+    // for is its own chart and not the libraries.
+    expect(await renderVegaLite(SPEC, COPY_THEME)).toMatchObject({ ok: true });
+  });
+
   it("is known by its fence and its file", () => {
     expect(previewKindOfFence("vega-lite", SPEC)?.id).toBe("vega-lite");
     expect(previewKindOfFence("vegalite", SPEC)?.id).toBe("vega-lite");
