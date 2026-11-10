@@ -38,7 +38,8 @@
  * - `pid`    the host's own pid, written (atomically) once `in` is open: the
  *            host is ready when this exists.
  * - `cli`    the running CLI's pid, written (atomically) each time the host
- *            starts it. What DevHub stops to have the CLI started again.
+ *            starts it, before the CLI's mark or output is in `out`. What
+ *            DevHub stops to have the CLI started again.
  * - `version` written before `pid`: `3`, a host whose `again` is the CLI's
  *            whole argv in words of any number of lines (`ARGV_WORDS`). A
  *            `2` (an earlier DevHub's) reads `again` one word per line, so it
@@ -52,7 +53,8 @@
  *            with. With it, `again.mark`: the lines the host
  *            appends to `out` between the two CLIs' output, so the journal
  *            itself says where the one ended and the other began. The host
- *            removes both when it starts the CLI again.
+ *            removes `again` and renames the mark `again.now` when it starts
+ *            the CLI again, and removes that once the mark is in `out`.
  * - `exit`   written (atomically) once, when the host is over (the CLI ended
  *            with no `again` waiting): the CLI's exit status as a decimal (128 + n for a signal, as `sh` reports it),
  *            or the word `host` when the host itself could not start the CLI
@@ -91,6 +93,9 @@ export function argvWords(argv: readonly string[]): string {
 /** `$0` of the host, so that `ps` on any machine says what it is. */
 export const HOST_NAME = "devhub-agent-host";
 
+/** `$0` of the shell a CLI is started through, for the moment before it is the CLI. */
+const CLI_NAME = "devhub-agent-cli";
+
 /**
  * The host itself. `$1` is the state directory; the rest is the CLI's argv.
  *
@@ -99,7 +104,15 @@ export const HOST_NAME = "devhub-agent-host";
  * the spot, before the `||` could say why.
  *
  * The CLI runs as an asynchronous command the host waits for, so that its pid
- * is known (`cli`) and DevHub can stop it to have it started again. It stays
+ * is known (`cli`) and DevHub can stop it to have it started again. It is
+ * started through a `sh` that writes its own pid to `cli`, then the mark of a
+ * start again, and only then `exec`s the CLI under that same pid: so `cli`
+ * names the CLI before the mark or anything the CLI says is in the journal,
+ * and a restart asked for the moment either is seen stops this CLI and not
+ * the one before it. (Written by the host after `&`, it raced the CLI's own
+ * first line.) A CLI it cannot find it runs rather than `exec`s, so that the
+ * shell says so in its own words and status, 127, as for any command: a
+ * failed `exec` says 126 when a directory on the `PATH` is not searchable. It stays
  * in the host's process group, so tmux's hang-up on Stop reaches it as it
  * reached the CLI in the foreground. `again` makes its own positional
  * parameters, which a function has, the argv DevHub wrote: each start's argv
@@ -119,11 +132,19 @@ printf '3\\n' >"$D/version" || refuse "cannot record the host's version in $D/ve
 { printf '%s\\n' "$$" >"$D/pid.new" && mv -f "$D/pid.new" "$D/pid"; } ||
   refuse "cannot record the host's pid in $D/pid"
 run() {
-  "$@" <&3 3<&- >>"$D/out" &
+  /bin/sh -c '{ printf "%s\\n" "$$" >"$1/cli.new" && mv -f "$1/cli.new" "$1/cli"; } || exit 70
+[ ! -f "$1/again.now" ] || { cat "$1/again.now" && rm -f "$1/again.now"; } || exit 70
+shift
+command -v -- "$1" >/dev/null 2>&1 || { "$@"; exit; }
+exec "$@"' ${CLI_NAME} "$D" "$@" <&3 3<&- >>"$D/out" &
   c=$!
-  { printf '%s\\n' "$c" >"$D/cli.new" && mv -f "$D/cli.new" "$D/cli"; } ||
-    { kill "$c"; refuse "cannot record the CLI's pid in $D/cli"; }
   wait "$c"
+  s=$?
+  [ "$(cat "$D/cli" 2>/dev/null)" = "$c" ] ||
+    refuse "cannot record the CLI's pid in $D/cli"
+  [ ! -f "$D/again.now" ] ||
+    refuse "cannot write the CLI's new start into the journal $D/out"
+  return "$s"
 }
 again() {
   set --
@@ -141,9 +162,9 @@ $l"
   done <"$D/again" || bad=1
   [ -z "$bad" ] ||
     refuse "cannot read the arguments to start the CLI again with from $D/again"
-  cat "$D/again.mark" >>"$D/out" ||
-    refuse "cannot write the CLI's new start into the journal $D/out"
-  rm -f "$D/again" "$D/again.mark"
+  mv -f "$D/again.mark" "$D/again.now" ||
+    refuse "cannot take the CLI's new start from $D/again.mark"
+  rm -f "$D/again"
   run "$@"
 }
 run "$@"

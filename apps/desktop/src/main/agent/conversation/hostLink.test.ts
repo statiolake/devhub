@@ -17,7 +17,7 @@
  * only the transport differs.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
 	existsSync,
 	mkdirSync,
@@ -101,6 +101,43 @@ afterEach(() => {
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
+
+/**
+ * Whether `pid` is a process that is still running: not gone, and not a
+ * zombie. The CLI is the host's child, so a hang-up that ends both leaves the
+ * CLI an orphan, dead but not yet reaped until its new parent (init, or
+ * whatever reaper the machine has) gets to it — and `kill(pid, 0)` answers
+ * for a zombie as it does for a live process. Some inits reap only every
+ * second or two.
+ */
+function running(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+	} catch {
+		return false;
+	}
+	let stat: string;
+	try {
+		stat = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {
+			encoding: "utf8",
+		}).trim();
+	} catch {
+		// `ps` exits non-zero when there is no such process: it went between
+		// the two looks.
+		return false;
+	}
+	return stat.length > 0 && !stat.startsWith("Z");
+}
+
+/** Wait for `pid` to stop running, for as long as `withinMs`; whether it did. */
+async function stopsRunning(pid: number, withinMs: number): Promise<boolean> {
+	const until = Date.now() + withinMs;
+	while (running(pid)) {
+		if (Date.now() >= until) return false;
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	return true;
+}
 
 /** Read lines until `done` says so, and leave the iterator open. */
 async function readUntil(
@@ -318,6 +355,34 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			expect(await link.ending()).toMatchObject({ kind: "exited", code: 3 });
 		}, 20_000);
 
+		it("stops the CLI that started again, however soon after its mark the next restart comes", async () => {
+			const directory = stateDirectory();
+			startHost(directory);
+			const link = new HostLink(make(), directory);
+			const lines = link.lines(0, new CancellationToken());
+			await readUntil(lines, (seen) => seen.length === 1);
+
+			// The mark is how a caller learns the CLI started again, so a
+			// restart may follow it at once: before the new CLI has said
+			// anything, and it must stop that CLI, not the one before it.
+			for (let round = 1; round <= 20; round += 1) {
+				const mark = `{"mark":${String(round)}}`;
+				await link.restart({ file: "/bin/sh", args: [FAKE_AGENT] }, [mark]);
+				await readUntil(lines, (seen) => seen.at(-1)?.line === mark);
+			}
+			await link.write('{"after":"five"}', 0);
+			const rest = await readUntil(
+				lines,
+				(seen) => seen.at(-1)?.line === '{"echo":{"after":"five"}}',
+			);
+			// Each CLI said hello or was stopped first; nothing else came between.
+			expect(
+				rest.filter((each) => each.line !== '{"type":"hello","argc":0}'),
+			).toHaveLength(1);
+			const cli = Number(readFileSync(join(directory, "cli"), "utf8"));
+			expect(running(cli)).toBe(true);
+		}, 20_000);
+
 		it("puts a mark of many lines in the journal whole, in order, before the CLI started again", async () => {
 			const directory = stateDirectory();
 			startHost(directory);
@@ -476,7 +541,9 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			expect(existsSync(join(directory, "exit"))).toBe(false);
 			// The CLI runs beside the host, not in its place, and the hang-up reaches it too.
 			const cli = Number(readFileSync(join(directory, "cli"), "utf8"));
-			expect(() => process.kill(cli, 0)).toThrow();
+			expect(await stopsRunning(cli, 5_000), `the CLI ${String(cli)}`).toBe(
+				true,
+			);
 			const refused = await failureOf(link.write('{"after":"death"}', 0));
 			expect(refused.code, refused.message).toBe("host_gone");
 			expect(refused.message).toContain("nothing is reading its input");
@@ -512,8 +579,16 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			const directory = stateDirectory();
 			startHost(directory);
 			const link = new HostLink(make(), directory);
-			const lines = link.lines(0, new CancellationToken());
+			const first = link.lines(0, new CancellationToken());
 			await link.write('{"fake":"count","n":5}', 0);
+			await readUntil(first, (so) => so.length === 6);
+			await first.return(undefined);
+			// The stream's watchdog compares the journal's size with the last it
+			// measured, once a second; a journal that grew and shrank between
+			// two of its looks shrank from a size it never saw. A stream opened
+			// on the whole journal has measured it before following it, so the
+			// truncation below is one it has seen the far side of.
+			const lines = link.lines(0, new CancellationToken());
 			const seen = await readUntil(lines, (so) => so.length === 6);
 
 			truncateSync(join(directory, "out"), 0);
