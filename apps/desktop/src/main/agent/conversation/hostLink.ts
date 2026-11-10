@@ -146,6 +146,28 @@ function lastLine(buffer: Buffer): string {
 	return lines[lines.length - 1] ?? "";
 }
 
+/**
+ * What a journal stream said about why it stopped: its own last sentence
+ * (`say` in `STREAM_SCRIPT`), else the last line of its stderr. The stream
+ * shares its stderr with the `tail -f` it runs, and GNU `tail` says "file
+ * truncated" of its own accord when the journal shrinks, in its own time:
+ * before the watchdog's sentence or, on a loaded machine, after it, as the
+ * watchdog stops it, and even around it: `tail` writes its `tail: ` and
+ * the rest of its line apart, and the stream's one write can land
+ * between the two. So the sentence is looked for anywhere in a line.
+ */
+function streamSaid(buffer: Buffer): string {
+	const own = `${STREAM_NAME}: `;
+	const said = buffer
+		.toString("utf8")
+		.split("\n")
+		.flatMap((line) => {
+			const at = line.lastIndexOf(own);
+			return at < 0 ? [] : [line.slice(at).trim()];
+		});
+	return said[said.length - 1] ?? lastLine(buffer);
+}
+
 function describe(failure: unknown): string {
 	return failureText(failure);
 }
@@ -539,7 +561,9 @@ export class HostLink {
 		stderr: Buffer,
 		offset: number,
 	): HostLinkFailure {
-		const said = lastLine(stderr);
+		// The three it stops with itself are in its own words; anything else
+		// (ssh's 255, a signal) in whatever said so last.
+		const said = streamSaid(stderr);
 		switch (code) {
 			case STREAM_EXIT.truncated:
 				return new HostLinkFailure(
@@ -559,12 +583,14 @@ export class HostLink {
 					`${said}${this.#runtime.where}`,
 					offset,
 				);
-			default:
+			default: {
+				const last = lastLine(stderr);
 				return new HostLinkFailure(
 					"stream_lost",
-					`the journal of the Agent host in ${this.#directory}${this.#runtime.where} stopped (${code === null ? `signal ${String(signal)}` : `exit ${String(code)}`})${said.length === 0 ? "" : `: ${said}`}`,
+					`the journal of the Agent host in ${this.#directory}${this.#runtime.where} stopped (${code === null ? `signal ${String(signal)}` : `exit ${String(code)}`})${last.length === 0 ? "" : `: ${last}`}`,
 					offset,
 				);
+			}
 		}
 	}
 }
