@@ -1231,7 +1231,15 @@ export abstract class RemoteShellRuntime {
 	async #installLauncher(
 		spec: TerminalLauncherSpec,
 	): Promise<TerminalLauncher> {
-		const { program } = await this.#installTool(this.delivery("devhub"));
+		// The same install as a pane's `nvim` copies (`devhubProgram`): one,
+		// whichever asks first.
+		this.#devhub ??= this.#installTool(this.delivery("devhub")).then(
+			({ program }) => program,
+		);
+		const program = await this.#devhub.catch((failure: unknown) => {
+			this.#devhub = undefined;
+			throw failure;
+		});
 		const paths = remoteTerminalPaths({
 			home: await this.home(),
 			controlSocketPath: spec.controlSocketPath,
