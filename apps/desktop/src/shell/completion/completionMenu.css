@@ -28,9 +28,12 @@
   max-height: 280px;
   padding: var(--completion-inset);
   overflow-y: auto;
-  /* The bar's room kept whether it shows or not: a list that grows past
-     its height does not narrow its column (docs/motion.md). */
-  scrollbar-gutter: stable;
+  /* No room kept for a bar: the written exception to docs/motion.md's
+     gutter rule. A row is a cell-aligned band, inset alike on both sides;
+     a kept gutter made it 2px from the left edge and 12px from the right
+     on every menu, the one seen most. The cost is paid only past sixteen
+     candidates, where the bar comes and the column narrows by its width. */
+  scrollbar-gutter: auto;
   border: 1px solid var(--float-line);
   border-radius: var(--float-radius);
   background: var(--float-ground);

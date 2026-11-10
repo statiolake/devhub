@@ -105,4 +105,18 @@ describe("motion", () => {
     );
     expect(offending).toEqual([]);
   });
+
+  /*
+   * A scrollbar never takes room it did not have: a list that can grow
+   * keeps the bar's gutter. The one list that gives up the gutter on
+   * purpose says so with `scrollbar-gutter: auto`, and only it may: the
+   * completion menu, whose rows are bands inset alike on both sides, and
+   * which narrows by the bar only past sixteen candidates.
+   */
+  it("gives up a scrollbar's gutter only in the written exception", () => {
+    const giving = sheets
+      .filter(({ css }) => /scrollbar-gutter\s*:\s*auto\b/.test(css))
+      .map(({ path }) => path);
+    expect(giving).toEqual(["shell/completion/completionMenu.css"]);
+  });
 });

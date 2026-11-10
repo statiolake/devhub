@@ -294,7 +294,14 @@ What will appear later has its room already, at its final size:
   no room to keep for one — compact mode's rail, one 26px entry in a 40px
   pane — no bar is drawn and the pointer grows the rail into the floating
   Sidebar, which has its gutter (`tokens.css`; guarded in
-  `scrollbars.test.ts`).
+  `scrollbars.test.ts`). Two written exceptions, both menus whose rows
+  are bands inset alike on both sides, where a kept gutter would be a
+  strip down the right that every row stops short of: tmux's menus
+  (`menu.css`), whose items are fixed while one is open, so it never
+  grows past its height; and the completion menu (`completionMenu.css`),
+  which can, but only past sixteen candidates — then its column narrows
+  by the bar once, a cost taken so that the menu seen most is symmetric
+  every other time.
 - **Skeletons equal the content.** A loading state is the height of what
   loads into it, or the place is empty until the content is ready.
 
@@ -330,8 +337,10 @@ because a followed transcript moves by every pixel of it.
   completion stylesheets are held to it too: the Neovim cursor glides by a
   `translate` from where it was seen to its cell (`glideCursor`), never
   across a scroll; a notification line rises and fades in at its full
-  height and fades out in place; the completion and tmux menus keep their
-  bar's gutter. Panes moving as a layout changes are
+  height and fades out in place. The same test holds the gutter rule's
+  completion-menu exception to its place: `scrollbar-gutter: auto`, the
+  declaration that gives the gutter up on purpose, is written in
+  `completionMenu.css` and nowhere else. Panes moving as a layout changes are
   `docs/pane-motion.md`'s, held by `paneMotion.test.ts`,
   `controlMotion.test.ts` and `windowMotion.test.ts`: every transition
   ends on the resting placement exactly.
