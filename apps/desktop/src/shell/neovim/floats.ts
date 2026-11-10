@@ -227,7 +227,7 @@ export interface FramedMember {
    * there is no line, the two grounds meet (a cell between them filled).
    */
   readonly ruled?: boolean;
-  /** The sides a title or footer is on: a line shared there runs through it. */
+  /** The sides a title or footer is on: a line shared there is that side's. */
   readonly labelled?: Readonly<Partial<Record<Side, boolean>>>;
 }
 
@@ -309,8 +309,9 @@ function lineMiddle(m: FramedMember, side: Side): number {
 /**
  * Where the line `m` and `o` share on `m`'s `side` runs (its middle). When
  * both have a border there, their two border cells are fused into one
- * line: through the middle of the one that holds a title or footer — a
- * list's title under an input sits on the line between them — else at the
+ * line: where the one that holds a title or footer has it — along that
+ * row's outer edge (`frameBands`), so a list's title under an input is in
+ * the row under the line between them — else at the
  * middle of the two cells together, the edge they share, leaning to
  * neither. A border beside none, through the border; two without one meet
  * half way, ground to ground.

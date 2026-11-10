@@ -217,7 +217,8 @@
 
 /*
  * A framed float's title or footer (`frame.ts`): its cells as Neovim sent
- * them, in the grid's face, on its line — the line broken under them.
+ * them, in the grid's face, inside the frame, centred on their row (the
+ * line along the row's outer edge, unbroken), on a small rounded tab.
  */
 .nvim-frame-labels {
   position: absolute;
@@ -231,6 +232,10 @@
   display: flex;
   white-space: pre;
   overflow: hidden;
+}
+
+.nvim-frame-labels > .nvim-frame-label-tab {
+  position: absolute;
 }
 
 .nvim-frame-label > span {

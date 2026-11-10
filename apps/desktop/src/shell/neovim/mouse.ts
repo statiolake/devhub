@@ -79,14 +79,7 @@ function insideFrame(
 ): boolean {
   const frame = box.frame;
   if (!frame) return false;
-  const g = frameGeometry(
-    frame.margins,
-    box,
-    cell,
-    1,
-    0,
-    frameBands(frame, box.width),
-  );
+  const g = frameGeometry(frame.margins, box, cell, 1, 0, frameBands(frame));
   const near = (d: number) => d >= -1 && d <= 1;
   const overlap = (a0: number, a1: number, b0: number, b1: number) =>
     Math.max(a0, b0) < Math.min(a1, b1);

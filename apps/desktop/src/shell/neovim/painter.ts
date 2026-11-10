@@ -79,11 +79,13 @@ import {
 } from "./smoothScroll";
 import {
   SIDES,
+  distinctGround,
   frameBands,
   frameGeometry,
   lineWidth,
-  type FrameBands,
   labelBox,
+  labelFillsSide,
+  labelTab,
   type FrameLabel,
   type FrameSide,
   type Side,
@@ -541,6 +543,12 @@ interface OverClip {
   readonly part: OverPart;
 }
 
+/**
+ * A label's tab when its title keeps the float's ground: the title's ink
+ * this many percent over the frame's ground, a faint tint either scheme.
+ */
+const TAB_TINT = 12;
+
 /** One ground under a panel of floats (`placeClusters`). */
 interface Piece {
   readonly x: number;
@@ -559,11 +567,22 @@ interface Piece {
   readonly z?: number;
 }
 
-/** A title or footer on a frame's line: its cells, as Neovim sent them. */
+/**
+ * A title or footer inside its frame: its cells, as Neovim sent them, and
+ * the tab behind them (`labelTab`).
+ */
 interface Label {
   readonly x: number;
   readonly w: number;
   readonly cy: number;
+  readonly tab?: {
+    readonly x: number;
+    readonly y: number;
+    readonly w: number;
+    readonly h: number;
+    readonly radius: number;
+    readonly background: string;
+  };
   readonly runs: readonly {
     text: string;
     cells: number;
@@ -2234,7 +2253,7 @@ export class GridPainter {
     // Every framed member's shape first: a float under framed ones, in
     // its cluster or another, is clipped by theirs (`cutClip`).
     const panels = floatClusters(shown).map((cluster) => {
-      const framed: (FramedMember & { box: GridBox; bands: FrameBands })[] = [];
+      const framed: (FramedMember & { box: GridBox })[] = [];
       // A menu's scrollbar beside it is in its frame: the line along the
       // scrollbar's outer edge (`scrollbarLine`).
       const bars = cluster.members
@@ -2250,7 +2269,7 @@ export class GridPainter {
           this.metrics,
           this.dpr,
           radius,
-          box.frame ? frameBands(box.frame, box.width) : {},
+          box.frame ? frameBands(box.frame) : {},
         );
         const barEdge = scrollbarLine(m.rect, bars);
         framed.push({
@@ -2261,7 +2280,6 @@ export class GridPainter {
           labelled: Object.fromEntries(
             (box.frame?.labels ?? []).map((l) => [l.side, true]),
           ),
-          bands: box.frame ? frameBands(box.frame, box.width) : {},
           geometry:
             barEdge === undefined
               ? geometry
@@ -2350,17 +2368,34 @@ export class GridPainter {
           ...(blend > 0 ? { hole: this.textArea(member.box, piece) } : {}),
         });
         for (const label of frame?.labels ?? []) {
-          labels.push(
-            this.label(
-              state,
-              label,
-              labelBox(
+          if (!frame) break;
+          // A tab behind the text, unless the label is its side's band (a
+          // pager's header): the title's own ground where it chose one (a
+          // pill), else its ink 12 % over the ground.
+          const tab = labelFillsSide(label, frame, member.box.width)
+            ? undefined
+            : labelTab(
                 label,
                 member.box,
                 member.geometry,
                 this.metrics,
-                member.bands,
-              ),
+                this.dpr,
+                radius,
+              );
+          const ink = label.runs.find((r) => r.text.trim() !== "");
+          const own = label.runs.find(
+            (r) =>
+              r.text.trim() !== "" && distinctGround(colors(r.hl).bg, ground),
+          );
+          const tabGround = own
+            ? colors(own.hl).bg
+            : mixColors(ground, colors(ink?.hl ?? 0).fg, TAB_TINT);
+          labels.push(
+            this.label(
+              state,
+              label,
+              labelBox(label, member.box, this.metrics),
+              tab ? { ...tab, ground: tabGround, frame: ground } : undefined,
             ),
           );
         }
@@ -2429,6 +2464,18 @@ export class GridPainter {
         labels.length > 0 ? document.createElement("div") : undefined;
       if (over) over.className = "nvim-frame-labels";
       for (const label of labels) {
+        if (label.tab) {
+          const t = label.tab;
+          const tab = document.createElement("div");
+          tab.className = "nvim-frame-label-tab";
+          tab.style.left = px(t.x);
+          tab.style.top = px(t.y);
+          tab.style.width = px(t.w);
+          tab.style.height = px(t.h);
+          tab.style.borderRadius = px(t.radius);
+          tab.style.background = t.background;
+          over?.append(tab);
+        }
         const tag = document.createElement("div");
         tag.className = "nvim-frame-label";
         tag.style.left = px(label.x);
@@ -2525,23 +2572,55 @@ export class GridPainter {
     return mixColors(ground, look.ink, 18);
   }
 
-  /** A title or footer's cells, in their highlights, at `at`. */
+  /**
+   * A title or footer's cells, in their highlights, at `at`, on `tab`. On a
+   * tab a cell's ground shows only where it is neither the frame's nor the
+   * tab's (a second pill in one title); a band's cells keep theirs.
+   */
   private label(
     state: NeovimUiState,
     label: FrameLabel,
     at: { x: number; w: number; cy: number },
+    tab:
+      | {
+          x: number;
+          y: number;
+          w: number;
+          h: number;
+          radius: number;
+          /** The tab's ground, and the frame's round it. */
+          ground: number;
+          frame: number;
+        }
+      | undefined,
   ): Label {
     const colors = (hl: number) =>
       resolveColors(hl ? state.hl.get(hl) : undefined, state.defaults);
+    const own = (bg: number) =>
+      tab === undefined || (bg !== tab.ground && bg !== tab.frame);
     return {
       x: at.x,
       w: at.w,
       cy: at.cy,
+      ...(tab
+        ? {
+            tab: {
+              x: tab.x,
+              y: tab.y,
+              w: tab.w,
+              h: tab.h,
+              radius: tab.radius,
+              background: cssColor(tab.ground),
+            },
+          }
+        : {}),
       runs: label.runs.map((run) => ({
         text: run.text,
         cells: run.cells,
         color: cssColor(colors(run.hl).fg),
-        background: cssColor(colors(run.hl).bg),
+        background: own(colors(run.hl).bg)
+          ? cssColor(colors(run.hl).bg)
+          : "transparent",
         font: fontOf(this.font, state.hl.get(run.hl)),
       })),
     };

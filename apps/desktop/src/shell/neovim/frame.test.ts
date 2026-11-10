@@ -4,9 +4,15 @@ import {
   floatLabelsOf,
   frameBands,
   frameGeometry,
+  distinctGround,
   insideRounded,
   labelBox,
+  labelFillsSide,
+  labelTab,
+  lineWidth,
+  TAB_GAP,
   type FloatFrame,
+  type FrameLabel,
 } from "./frame";
 import { cutClip, frameCuts, framePieces, type FramedMember } from "./floats";
 import { hitTest } from "./mouse";
@@ -251,15 +257,23 @@ describe("where a frame's line is", () => {
     expect(Math.abs(drift / n)).toBeLessThan(0.1);
   });
 
-  it("puts a title's cells on its line, where Neovim gave them", () => {
+  it("moves a titled side's line to its row's outer edge, the title inside, centred on its row", () => {
     const frame = frameOf(rounded);
-    const geo = frameGeometry(frame.margins, place, cell, 2, 4);
+    const bands = frameBands(frame);
+    expect(bands).toEqual({ top: true });
+    const geo = frameGeometry(frame.margins, place, cell, 2, 4, bands);
+    // The top line along the title row's outer edge; the other sides half a
+    // cell out, as ever.
+    expect(geo.y).toBe(place.row * cell.height);
+    expect(geo.y + geo.h - geo.widths.bottom / 2).toBe(5 * 20 + 10);
+    expect(geo.x + geo.widths.left / 2).toBe(4 * 8 - 4);
     const label = frame.labels[0];
     if (!label) throw new Error("no label");
-    expect(labelBox(label, place, geo, cell)).toEqual({
+    // Its cells where Neovim gave them, centred on its row.
+    expect(labelBox(label, place, cell)).toEqual({
       x: (3 + 3) * 8,
       w: 7 * 8,
-      cy: geo.y + 0.5,
+      cy: (place.row + 0.5) * cell.height,
     });
   });
 
@@ -279,7 +293,7 @@ describe("where a frame's line is", () => {
     }).frame;
     if (!frame) throw new Error("no frame");
     const at = { row: 3, col: 3, width: 22, height: 3 };
-    const bands = frameBands(frame, at.width);
+    const bands = frameBands(frame);
     expect(bands).toEqual({ top: true, bottom: true });
     const geo = frameGeometry(frame.margins, at, cell, 2, 4, bands);
     // The line on the rows' outer edges: the whole box is inside it.
@@ -288,14 +302,124 @@ describe("where a frame's line is", () => {
     // Each band centred on its row, inside the line.
     const [top, bottom] = frame.labels;
     if (!top || !bottom) throw new Error("no labels");
-    expect(labelBox(top, at, geo, cell, bands).cy).toBe(
-      (at.row + 0.5) * cell.height,
-    );
-    expect(labelBox(bottom, at, geo, cell, bands).cy).toBe(
+    expect(labelBox(top, at, cell).cy).toBe((at.row + 0.5) * cell.height);
+    expect(labelBox(bottom, at, cell).cy).toBe(
       (at.row + at.height - 0.5) * cell.height,
     );
-    // A title with line left beside it is on its line, as ever.
-    expect(frameBands(frameOf(rounded), place.width)).toEqual({});
+    // Its whole side: drawn as its cells, no tab; a title with line left
+    // beside it is not.
+    expect(labelFillsSide(top, frame, at.width)).toBe(true);
+    expect(labelFillsSide(bottom, frame, at.width)).toBe(true);
+    const files = frameOf(rounded);
+    expect(labelFillsSide(files.labels[0]!, files, place.width)).toBe(false);
+  });
+
+  describe("a label's tab", () => {
+    // `width` cells, the label's text at `col` (its blanks included).
+    const labelOf = (
+      side: "top" | "bottom",
+      col: number,
+      text: string,
+    ): FrameLabel => ({
+      side,
+      col,
+      cells: text.length,
+      runs: [{ text, hl: 7, cells: text.length }],
+    });
+    const at = { row: 3, col: 5, width: 30, height: 6 };
+    const positions = [
+      { name: "left", col: 1, text: " Left title " },
+      { name: "centre", col: 9, text: " Centred " },
+      { name: "right", col: 16, text: " Right side " },
+    ] as const;
+    for (const dpr of [1, 1.5, 2, 3]) {
+      for (const c of [
+        { width: 8, height: 20 },
+        { width: 7.7, height: 18.3 },
+      ]) {
+        for (const side of ["top", "bottom"] as const) {
+          for (const p of positions) {
+            it(`hugs a ${side} label at the ${p.name}, inside the line, at DPR ${String(dpr)}, a ${String(c.width)}x${String(c.height)} cell`, () => {
+              const label = labelOf(side, p.col, p.text);
+              const bands = { [side]: true } as const;
+              const geo = frameGeometry(ALL, at, c, dpr, 4, bands);
+              const tab = labelTab(label, at, geo, c, dpr, 4);
+              if (!tab) throw new Error("no tab");
+              const on = (v: number) =>
+                Math.abs(v * dpr - Math.round(v * dpr)) < 1e-6;
+              for (const v of [tab.x, tab.y, tab.x + tab.w, tab.y + tab.h])
+                expect(on(v)).toBe(true);
+              // Across: the text (its blanks left out) and half a cell each
+              // side, within half a device pixel.
+              const ink0 = (at.col + p.col + 1) * c.width;
+              const ink1 = (at.col + p.col + p.text.length - 1) * c.width;
+              expect(
+                Math.abs(tab.x - (ink0 - c.width / 2)),
+              ).toBeLessThanOrEqual(0.5 / dpr + 1e-9);
+              expect(
+                Math.abs(tab.x + tab.w - (ink1 + c.width / 2)),
+              ).toBeLessThanOrEqual(0.5 / dpr + 1e-9);
+              // Down: in the label's row, clear of the line by TAB_GAP,
+              // centred on the row (and the text) within a device pixel.
+              const row = side === "top" ? at.row : at.row + at.height - 1;
+              const rowTop = row * c.height;
+              const rowBottom = rowTop + c.height;
+              const line = lineWidth(dpr);
+              if (side === "top") {
+                // The line along the row's outer edge.
+                expect(geo.y).toBeCloseTo(Math.round(rowTop * dpr) / dpr, 9);
+                expect(tab.y).toBeGreaterThanOrEqual(
+                  geo.y + line + TAB_GAP - 0.5 / dpr - 1e-9,
+                );
+              } else {
+                expect(geo.y + geo.h).toBeCloseTo(
+                  Math.round(rowBottom * dpr) / dpr,
+                  9,
+                );
+                expect(tab.y + tab.h).toBeLessThanOrEqual(
+                  geo.y + geo.h - line - TAB_GAP + 0.5 / dpr + 1e-9,
+                );
+              }
+              expect(tab.y).toBeGreaterThanOrEqual(rowTop);
+              expect(tab.y + tab.h).toBeLessThanOrEqual(rowBottom);
+              const box = labelBox(label, at, c);
+              expect(Math.abs(tab.y + tab.h / 2 - box.cy)).toBeLessThanOrEqual(
+                1 / dpr + 1e-9,
+              );
+              // Most of the row: taller than the text's half, never past it.
+              expect(tab.h).toBeGreaterThan(c.height / 2);
+              expect(tab.radius).toBeLessThanOrEqual(tab.h / 2);
+              expect(tab.radius).toBe(4);
+            });
+          }
+        }
+      }
+    }
+
+    it("stays inside the frame's sides for a title without blanks", () => {
+      const cell = { width: 8, height: 20 };
+      const label = labelOf("top", 1, "Files");
+      const geo = frameGeometry(ALL, at, cell, 2, 4, { top: true });
+      const tab = labelTab(label, at, geo, cell, 2, 4);
+      if (!tab) throw new Error("no tab");
+      expect(tab.x).toBeGreaterThanOrEqual(geo.x + geo.widths.left + TAB_GAP);
+    });
+
+    it("has none for a label of blanks", () => {
+      const cell = { width: 8, height: 20 };
+      const geo = frameGeometry(ALL, at, cell, 2, 4, { top: true });
+      expect(labelTab(labelOf("top", 1, "   "), at, geo, cell, 2, 4)).toBe(
+        undefined,
+      );
+    });
+  });
+
+  it("tells a title's own ground (a pill) from the float's", () => {
+    expect(distinctGround(0x202122, 0x202122)).toBe(false);
+    // A step off, as a scheme's FloatTitle a shade from NormalFloat.
+    expect(distinctGround(0x26272a, 0x202122)).toBe(false);
+    expect(distinctGround(0x2f6fd6, 0x202122)).toBe(true);
+    expect(distinctGround(0x2f6fd6, 0xf8f8f8)).toBe(true);
   });
 
   it("tells inside from outside along a rounded corner", () => {
@@ -376,33 +500,36 @@ describe("a panel of framed floats", () => {
     expect(i ? i.y + i.h : 0).toBe(l?.y);
   });
 
-  it("runs the line two members share through the row that holds a title", () => {
+  it("runs the line two members share along the edge of the row that holds a title", () => {
     // A picker's input over its list, the list's title in its top border
-    // (snacks' "Results"): the line through that row's middle, the title
-    // on it, not on the edge between the two border rows.
+    // (snacks' "Results"): the line along that row's outer edge, the edge
+    // between the input's border row and it, the title in the row under it.
     const input = member(4, { row: 0, col: 0, width: 10, height: 3 }, true, 2);
+    const rect = { row: 3, col: 0, width: 10, height: 7 };
     const list = {
-      ...member(5, { row: 3, col: 0, width: 10, height: 7 }, true, 2),
+      grid: 5,
+      rect,
+      ruled: true,
       labelled: { top: true },
+      geometry: frameGeometry(ALL, rect, cell, 2, 4, { top: true }),
     };
     const [i, l] = framePieces([input, list], 2);
     expect(i?.draw.bottom).toBe(true);
     expect(l?.draw.top).toBe(false);
-    // The line [69.5, 70.5]: the input's piece reaches its far side, the
+    // The line [60, 61]: the input's piece reaches its far side, the
     // list's ground starts there.
-    expect(i ? i.y + i.h : 0).toBe(70.5);
-    expect(l?.y).toBe(70.5);
-    expect(
-      labelBox(
-        { side: "top", col: 1, cells: 7, runs: [] },
-        { row: 3, col: 0, width: 10, height: 7 },
-        list.geometry,
-        cell,
-      ).cy,
-    ).toBe(70);
+    expect(i ? i.y + i.h : 0).toBe(61);
+    expect(l?.y).toBe(61);
+    const title = { side: "top", col: 1, cells: 9, runs: [] } as const;
+    expect(labelBox(title, rect, cell).cy).toBe(70);
     // No title: at the middle of the two border rows together, the edge
     // they share (60): the line [59.5, 60.5].
-    const [i2, l2] = framePieces([input, { ...list, labelled: {} }], 2);
+    const bare = {
+      ...list,
+      labelled: {},
+      geometry: frameGeometry(ALL, rect, cell, 2, 4),
+    };
+    const [i2, l2] = framePieces([input, bare], 2);
     expect(i2 ? i2.y + i2.h : 0).toBe(60.5);
     expect(l2?.y).toBe(60.5);
   });
@@ -422,7 +549,10 @@ describe("a panel of framed floats", () => {
       rect,
       ruled: true,
       ...(labelled ? { labelled } : {}),
-      geometry: frameGeometry(ALL, rect, odd, dpr, 4),
+      geometry: frameGeometry(ALL, rect, odd, dpr, 4, {
+        ...(labelled?.top === true ? { top: true } : {}),
+        ...(labelled?.bottom === true ? { bottom: true } : {}),
+      }),
     });
     const cases = [
       { name: "side by side", across: "x" },
@@ -463,14 +593,14 @@ describe("a panel of framed floats", () => {
             const size = stacked ? odd.height : odd.width;
             const edge = (stacked ? second.row : second.col) * size;
             const titled = stacked && t.label !== undefined;
-            // Through the titled row's middle; else the edge the two cells
-            // share.
+            const line = (1 / dpr) * Math.max(1, Math.round(dpr));
+            // Along the titled row's outer edge, inside it; else the edge
+            // the two cells share.
             const want = !titled
               ? edge
               : t.label === "first"
-                ? edge - size / 2
-                : edge + size / 2;
-            const line = (1 / dpr) * Math.max(1, Math.round(dpr));
+                ? edge - line / 2
+                : edge + line / 2;
             // The upper or left one draws it, its piece to the line's far
             // side; the other's ground starts there: no strip, no gap.
             expect(stacked ? p.draw.bottom : p.draw.right).toBe(true);
@@ -489,20 +619,32 @@ describe("a panel of framed floats", () => {
               Math.round(want * dpr - w / 2),
             );
             if (titled) {
-              // The title sits on the line.
+              // The title is in its row, past the line, its tab clear of it.
               const owner = t.label === "first" ? a : b;
-              const box = labelBox(
-                {
-                  side: t.label === "first" ? "bottom" : "top",
-                  col: 1,
-                  cells: 5,
-                  runs: [],
-                },
+              const label: FrameLabel = {
+                side: t.label === "first" ? "bottom" : "top",
+                col: 1,
+                cells: 7,
+                runs: [{ text: " Title ", hl: 7, cells: 7 }],
+              };
+              const box = labelBox(label, owner.rect, odd);
+              const row =
+                t.label === "first"
+                  ? owner.rect.row + owner.rect.height - 1
+                  : owner.rect.row;
+              expect(box.cy).toBeCloseTo((row + 0.5) * odd.height, 9);
+              const tab = labelTab(
+                label,
                 owner.rect,
                 owner.geometry,
                 odd,
+                dpr,
+                4,
               );
-              expect(box.cy).toBeCloseTo((start + end) / 2, 9);
+              if (!tab) throw new Error("no tab");
+              if (t.label === "first")
+                expect(tab.y + tab.h).toBeLessThanOrEqual(start + 1e-9);
+              else expect(tab.y).toBeGreaterThanOrEqual(end - 1e-9);
             }
           });
         }
@@ -569,9 +711,13 @@ describe("a click on a framed float", () => {
       row: 1,
       col: 0,
     });
-    // Above the top line: behind; below it, the float.
-    expect(hitTest([base, box], cell, 6 * 8, 2 * 20 + 3).grid).toBe(1);
-    expect(hitTest([base, box], cell, 6 * 8, 2 * 20 + 15).grid).toBe(4);
+    // Below the bottom line: behind; above it, the float.
+    expect(hitTest([base, box], cell, 6 * 8, 5 * 20 + 15).grid).toBe(1);
+    expect(hitTest([base, box], cell, 6 * 8, 5 * 20 + 5).grid).toBe(4);
+    // The title's row is inside its line, along the row's outer edge: all
+    // of it the float's.
+    expect(hitTest([base, box], cell, 6 * 8, 2 * 20 + 1).grid).toBe(4);
+    expect(hitTest([base, box], cell, 6 * 8, 2 * 20 - 1).grid).toBe(1);
     // The text area.
     expect(hitTest([base, box], cell, 5 * 8 + 2, 3 * 20 + 2)).toEqual({
       grid: 4,

@@ -8,7 +8,8 @@
  * border's cells, half a cell from the text — the float's edge, nothing of
  * the cells outside it drawn, the windows behind showing there — with the
  * border's own ground inside it. A title and footer are the cells Neovim
- * put in the border, on the line where Neovim put them.
+ * put in the border, in the columns Neovim put them, inside the frame on a
+ * small tab.
  *
  * - `analyzeFrame` reads the border cells (where `win_viewport_margins`
  *   says they are) and answers the frame they make: each side's character
@@ -19,14 +20,15 @@
  *   pixels: centred on the middle of the border's cells, half a cell
  *   outside the text area on every side, a border or not (a float without
  *   one is padded as much, outside its cells).
- * - `labelBox` is where a title or footer sits: on its line, over the
- *   cells Neovim gave it.
- * - A label that takes its whole side (`frameBands`: a pager's header with
- *   its count at the right end, a footer of keys across) is no label on a
- *   line but a band — the line has no length of its own left there. Its
- *   side's line goes round it, along the outer edge of its row, so the
- *   band is inside the frame with the text, not a strip sticking out of
- *   it half a row.
+ * - A side with a title or footer is a band (`frameBands`): its line goes
+ *   along the outer edge of the label's row, not through its middle, and
+ *   the label sits inside the frame, centred on its row, the line unbroken
+ *   — nothing of it over what is behind the float, nothing of the line
+ *   under it. The other sides' lines stay half a cell out. A pager's header
+ *   across its whole side is the same band.
+ * - `labelBox` is where a title or footer's text sits: centred on its row,
+ *   over the cells Neovim gave it; `labelTab` the small rounded tab behind
+ *   it, hugging its text, inside the line.
  */
 
 import type { Grid, Margins } from "./redraw.js";
@@ -250,16 +252,30 @@ export function analyzeFrame(
   return { frame: { margins, sides, corners, labels: found } };
 }
 
-/** The sides whose label is a band: it takes every cell between the corners. */
+/**
+ * The sides a title or footer is on: bands, their line along the outer edge
+ * of the label's row, the label inside it (`frameGeometry`, `labelBox`).
+ */
 export type FrameBands = Readonly<Partial<Record<"top" | "bottom", true>>>;
 
-export function frameBands(frame: FloatFrame, width: number): FrameBands {
-  const inner = width - frame.margins.left - frame.margins.right;
+export function frameBands(frame: FloatFrame): FrameBands {
   const out: Partial<Record<"top" | "bottom", true>> = {};
-  for (const label of frame.labels)
-    if (label.col === frame.margins.left && label.cells === inner)
-      out[label.side] = true;
+  for (const label of frame.labels) out[label.side] = true;
   return out;
+}
+
+/**
+ * Whether `label` takes every cell between its side's corners (a pager's
+ * header with its count at the right end, a footer of keys across): a band
+ * of its own, drawn as its cells are, with no tab behind it.
+ */
+export function labelFillsSide(
+  label: FrameLabel,
+  frame: FloatFrame,
+  width: number,
+): boolean {
+  const inner = width - frame.margins.left - frame.margins.right;
+  return label.col === frame.margins.left && label.cells === inner;
 }
 
 export interface FrameGeometry {
@@ -336,7 +352,7 @@ export function frameGeometry(
   const { width: cw, height: ch } = cell;
   const m = margins;
   const line = lineWidth(dpr);
-  // A band's side: the line inside the row's outer edge, round the band.
+  // A labelled side: the line inside the row's outer edge, round the label.
   const middles = {
     left: (place.col + m.left) * cw - cw / 2,
     right: (place.col + place.width - m.right) * cw + cw / 2,
@@ -364,35 +380,102 @@ export function frameGeometry(
   };
 }
 
-/** Where a label sits: centred on its line, over the cells Neovim gave it. */
+/** Where a label sits: centred on its row, over the cells Neovim gave it. */
 export interface LabelBox {
   /** Its cells' span, CSS pixels. */
   readonly x: number;
   readonly w: number;
-  /** The middle of its line. */
+  /** The middle of its row. */
   readonly cy: number;
 }
 
 export function labelBox(
   label: FrameLabel,
   place: CellPlace,
-  geometry: FrameGeometry,
   cell: CellSize,
-  bands: FrameBands = {},
 ): LabelBox {
-  // A band is centred on its row, inside the line that goes round it.
-  const cy = bands[label.side]
-    ? label.side === "top"
+  const cy =
+    label.side === "top"
       ? (place.row + 0.5) * cell.height
-      : (place.row + place.height - 0.5) * cell.height
-    : label.side === "top"
-      ? geometry.y + geometry.widths.top / 2
-      : geometry.y + geometry.h - geometry.widths.bottom / 2;
+      : (place.row + place.height - 0.5) * cell.height;
   return {
     x: (place.col + label.col) * cell.width,
     w: label.cells * cell.width,
     cy,
   };
+}
+
+/** A label's tab: past its text, cells across (`labelTab`). */
+export const TAB_PAD = 0.5;
+/** Between a tab and the line, and the tab and the row's inner edge, CSS px. */
+export const TAB_GAP = 1;
+
+/** The small rounded tab behind a label's text, in CSS pixels. */
+export interface LabelTab {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  readonly radius: number;
+}
+
+/**
+ * The tab behind a title or footer's text: its ink (the label's own blanks
+ * left out) and `TAB_PAD` cells each side, across; down, its row inside the
+ * line, `TAB_GAP` from the line and as much from the row's inner edge, so
+ * it is centred on the row and the text; on whole device pixels, rounded
+ * `radius` (at most half its height), never past the frame's sides.
+ * `undefined` for a label of blanks only.
+ */
+export function labelTab(
+  label: FrameLabel,
+  place: CellPlace,
+  geometry: FrameGeometry,
+  cell: CellSize,
+  dpr: number,
+  radius: number,
+): LabelTab | undefined {
+  const text = label.runs.map((r) => r.text).join("");
+  const lead = text.length - text.trimStart().length;
+  const trail = text.length - text.trimEnd().length;
+  if (lead === text.length) return undefined;
+  const snap = (v: number) => Math.round(v * dpr) / dpr;
+  const box = labelBox(label, place, cell);
+  const pad = TAB_PAD * cell.width;
+  const minX = geometry.x + geometry.widths.left + TAB_GAP;
+  const maxX = geometry.x + geometry.w - geometry.widths.right - TAB_GAP;
+  const x0 = snap(Math.max(minX, box.x + lead * cell.width - pad));
+  const x1 = snap(
+    Math.min(maxX, box.x + (label.cells - trail) * cell.width + pad),
+  );
+  // From the line's inner edge, the same inset at both ends of the row.
+  const rowTop = box.cy - cell.height / 2;
+  const rowBottom = box.cy + cell.height / 2;
+  const inset =
+    label.side === "top"
+      ? Math.max(0, geometry.y + geometry.widths.top - rowTop) + TAB_GAP
+      : Math.max(
+          0,
+          rowBottom - (geometry.y + geometry.h - geometry.widths.bottom),
+        ) + TAB_GAP;
+  const y0 = snap(rowTop + inset);
+  const y1 = snap(rowBottom - inset);
+  const h = y1 - y0;
+  return { x: x0, y: y0, w: x1 - x0, h, radius: Math.min(radius, h / 2) };
+}
+
+/**
+ * Whether a title's own ground is one it chose (a pill), not the float's:
+ * its luminance more than `DISTINCT_GROUND` (of 255) off the frame's
+ * ground. DevHub's scheme and most others give `FloatTitle` the float's
+ * ground, a cell's way of saying "inside the border".
+ */
+export const DISTINCT_GROUND = 12;
+
+export function distinctGround(bg: number, ground: number): boolean {
+  const lum = (c: number) =>
+    0.2126 * ((c >> 16) & 255) + 0.7152 * ((c >> 8) & 255) + 0.0722 * (c & 255);
+  return Math.abs(lum(bg) - lum(ground)) > DISTINCT_GROUND;
 }
 
 /** Whether `(x, y)` is inside a rounded rectangle. */

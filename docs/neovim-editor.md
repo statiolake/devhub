@@ -260,7 +260,7 @@ one layer model and pane motion.
   `win_viewport_margins`; its line is centred on the middle of the border's
   cells, across and down, on whole device pixels rounded to the nearest
   (`lineSpan`: no floor or ceil, so no ratio or row height moves it one
-  way), the title's text centred on it; nothing of the cells outside it drawn — the windows behind show there,
+  way); nothing of the cells outside it drawn — the windows behind show there,
   and a click there goes to them. A float without a border is padded as
   much outside its cells; a panel where such a float is next to the
   cursor's row (a completion menu under the line being typed) is drawn
@@ -274,9 +274,26 @@ one layer model and pane motion.
   a bordered float's is, its text still on whole cells (`clearEdges`; a
   panel that cannot clear both edges of an axis, or was moved off the
   cursor's row, stays on that axis). The `title` and
-  `footer` are the cells Neovim put in the border, its blanks too, on the
-  line where Neovim put them (`title_pos`/`footer_pos`), the line broken
-  under them: the page asks `nvim_win_get_config` when a border holds
+  `footer` are the cells Neovim put in the border, its blanks too, in the
+  columns Neovim put them (`title_pos`/`footer_pos`), inside the frame:
+  a side with one is a band (`frameBands`), its line moved to the outer
+  edge of the label's row, unbroken, the text centred on the row — nothing
+  of it over what is behind the float (a title on the line, half above
+  it, sat on the editor's text, a box of its ground sticking out of the
+  frame; the person chose this from three mocks: a legend breaking the
+  line, a halo, this). Behind the text a small rounded tab (`labelTab`):
+  the text's ink, its own blanks left out, and half a cell each side,
+  across; down, its row inside the line, 1px from the line and from the
+  row's inner edge, centred on the text; rounded as the floats' corner,
+  on whole device pixels. Its ground is the title's own where it chose
+  one (a pill: a ground more than 12 of 255 in luminance off the frame's,
+  `distinctGround`), else the title's ink 12 % over the frame's ground — a
+  faint tint, the same in light and dark, even when `FloatTitle`'s ground
+  is the float's (DevHub's scheme's). A label across its whole side (the
+  `:messages` pager's header and footer) is a band with no tab, its cells
+  drawn in their grounds. The other sides' lines stay half a cell out,
+  so a titled side has a row more inside the line. The page asks
+  `nvim_win_get_config` when a border holds
   text, and when the config does not explain that text the float is
   drawn cell for cell, as Neovim drew it. A float that opens with text in
   its border is drawn once its answer has come (`LabelAsks`: the flush
@@ -293,8 +310,9 @@ one layer model and pane motion.
   corners rounded; a float alone is a panel of one, and one with
   `winblend` gets none. The edge members with borders share is drawn once
   (`framePieces`), the two border cells that touch fused into one line:
-  through the middle of the one that holds a title or footer there (a
-  list's title under the input sits on the line), else at the middle of
+  where the one that holds a title or footer there has it, along that
+  row's outer edge (a list's title under the input is in the row under
+  the line between them, the preview's title beside it), else at the middle of
   the two cells together — the edge they share, leaning to neither side
   — on the nearest whole device pixel, each member's ground meeting the
   line from its side; members without one meet ground to ground, a one-cell seam between them filled
@@ -679,7 +697,7 @@ A Neovim float:
 - half a cell of padding between the line and the text, in the border's
   ground (without a border, the float's own, outside its cells);
 - its content as-is: monospace cells, a title or footer the cells Neovim
-  put in the border, on the line; no header band, no UI-font title, no
+  put in the border, inside the line on a faint tab; no header band, no UI-font title, no
   rounded selection band, nothing grown into a blank border;
 - the line's colour is the border's `FloatBorder` ink where it names one,
   else the float's ground 18 % toward its ink (a config that links
