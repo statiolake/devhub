@@ -69,6 +69,8 @@ export interface StackNode extends Common {
   readonly bg?: string | undefined;
   /** Indent from the left, in pixels (a tree's depth). */
   readonly indent?: number | undefined;
+  /** Rounded corners: a chip (a ground of its own round a label). */
+  readonly round?: boolean | undefined;
 }
 
 export interface TextNode extends Common {
@@ -82,6 +84,8 @@ export interface TextNode extends Common {
   /** Wrap long text; otherwise one line, cut with an ellipsis. */
   readonly wrap?: boolean | undefined;
   readonly upper?: boolean | undefined;
+  /** Only `hl`'s colour: not its weight or slant (a `Comment` that is italic). */
+  readonly ink?: boolean | undefined;
 }
 
 export interface MarkdownNode extends Common {
@@ -191,6 +195,33 @@ export interface ChartNode extends Common {
   readonly height?: number | undefined;
 }
 
+/**
+ * A hairline through the middle of the row it is in (a footer's `─`), in
+ * its group's foreground; with `grow`, as long as the room left.
+ */
+export interface LineNode extends Common {
+  readonly type: "line";
+  readonly hl?: string | undefined;
+}
+
+/** What a slot shows: filled by the page from Neovim's redraw, per key. */
+export type SlotKind = "position" | "mode" | "showcmd";
+
+/**
+ * A value that changes at every key, filled by the page from Neovim's own
+ * redraw (no Lua runs for it): the cursor's place in its window
+ * (`win_viewport`; `format` with `%l` line, `%c` column, `%L` lines, `%p`
+ * percent), the mode (`mode_change`) or the pending command
+ * (`msg_showcmd`).
+ */
+export interface SlotNode extends Common {
+  readonly type: "slot";
+  readonly slot: SlotKind;
+  readonly format?: string | undefined;
+  readonly hl?: string | undefined;
+  readonly ink?: boolean | undefined;
+}
+
 export interface ImageNode extends Common {
   readonly type: "image";
   /** `data:image/…` (Lua reads a path into one) or `https:`. */
@@ -214,7 +245,9 @@ export type ComponentNode =
   | DividerNode
   | SparklineNode
   | ChartNode
-  | ImageNode;
+  | ImageNode
+  | LineNode
+  | SlotNode;
 
 export type ComponentType = ComponentNode["type"];
 
@@ -267,6 +300,7 @@ function oneOf<T extends string>(
 const SIZES = ["xs", "sm", "md", "lg"] as const;
 const ALIGNS = ["start", "center", "end", "baseline", "stretch"] as const;
 const JUSTIFIES = ["start", "center", "end", "between"] as const;
+const SLOTS = ["position", "mode", "showcmd"] as const;
 
 function common(r: Rec): Common {
   return {
@@ -388,6 +422,7 @@ export function parseNode(
         accent: str(r, "accent"),
         bg: str(r, "bg"),
         indent: num(r, "indent", 0, 400),
+        round: bool(r, "round"),
       };
     }
     case "text": {
@@ -412,6 +447,7 @@ export function parseNode(
         hl: str(r, "hl"),
         wrap: bool(r, "wrap"),
         upper: bool(r, "upper"),
+        ink: bool(r, "ink"),
       };
     }
     case "markdown": {
@@ -530,6 +566,20 @@ export function parseNode(
         series,
         width: num(r, "width", 16, 2000),
         height: num(r, "height", 16, 600),
+      };
+    }
+    case "line":
+      return { ...base, type: "line", hl: str(r, "hl") };
+    case "slot": {
+      const slot = oneOf(r, "slot", SLOTS);
+      if (slot === undefined) return undefined;
+      return {
+        ...base,
+        type: "slot",
+        slot,
+        format: str(r, "format"),
+        hl: str(r, "hl"),
+        ink: bool(r, "ink"),
       };
     }
     case "image": {

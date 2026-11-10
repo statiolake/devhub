@@ -43,6 +43,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
+import { Footers } from "./FooterViews";
+import { applyStatuslineEvent, NO_STATUSLINE } from "./statusline";
 import { decorOf } from "./decor";
 import { NeovimEditor } from "./editor";
 import { terminalCellFont } from "./cellFont";
@@ -412,6 +414,7 @@ export function NeovimSurface({
         .get(message.id)
         ?.contentWindow?.postMessage({ devhubGui: message.message }, "*");
     });
+    let statusline = NO_STATUSLINE;
     const offEvent = bridge.neovim.onGuiEvent((event) => {
       if (event.workspaceId !== workspaceId) return;
       // Where Lua placed something is counted from the rows its window had
@@ -463,6 +466,13 @@ export function NeovimSurface({
         editor.refreshTheme();
         return;
       }
+      if (event.kind === "statusline") {
+        // What each status line row shows: drawn in it by the painter
+        // (`placeFooters`) and, for a tree, by `Footers`.
+        statusline = applyStatuslineEvent(statusline, event.payload);
+        editor.setStatusline(statusline);
+        return;
+      }
       if (LAYER_EVENTS.has(event.kind)) {
         setLayers((before) =>
           applyLayerEvent(before, event.kind, event.payload, rowsOf),
@@ -475,6 +485,9 @@ export function NeovimSurface({
     });
     setDecorations(NO_DECORATIONS);
     setLayers(NO_LAYERS);
+    // Grid 1 is not drawn: every status line row is Neovim's cells until
+    // Lua says otherwise.
+    editor.setStatusline(statusline);
     let cancelled = false;
     const attach = () => {
       if (cancelled) return;
@@ -971,6 +984,19 @@ export function NeovimSurface({
                 />
               </>
             ) : null}
+            <Footers
+              footers={editor.footers()}
+              state={nvim}
+              tree={(key) => editor.footerTree(key)}
+              mono={`${ICON_FAMILY}, ${fontFamily ? `${fontFamily}, ` : ""}monospace`}
+              openLink={openLink}
+              lua={(fn, args) => {
+                send("nvim_exec_lua", [
+                  "local M = package.loaded['devhub_gui']; local fn = ...; if M and M[fn] then M[fn](select(2, ...)) end",
+                  [fn, ...args],
+                ]);
+              }}
+            />
             <CmdwinFrame editor={editor} cmdwin={decorations.cmdwin} />
             <CmdlineBand state={nvim} editor={editor} />
             <Cmdline

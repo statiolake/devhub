@@ -14,6 +14,16 @@ import { frameBands, frameGeometry, insideRounded } from "./frame";
 import { frameCuts, inFrameCells } from "./floats";
 import type { GridBox } from "./redraw";
 
+/**
+ * What on the page takes its own presses and wheel, not Neovim: a GUI
+ * window, a view (framed or not), a card, a popup, the notifications, and
+ * a node of a footer that runs Lua (`on_click`). Every other press on a
+ * footer is Neovim's, on grid 1's cell under it (a status line drag
+ * resizes, a click moves to the window, a `%@` region runs).
+ */
+export const GUI_OWNED =
+  ".nvim-gui-window, .nvim-popup, .nvim-view, .nvim-inline-card, .nvim-view-frame, .nvim-toasts, .nvim-footer [data-action]";
+
 export interface CellMetrics {
   readonly width: number;
   readonly height: number;

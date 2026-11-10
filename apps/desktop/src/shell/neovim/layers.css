@@ -411,3 +411,27 @@
 .nvc-icon {
   font-family: var(--nvim-grid-font);
 }
+
+/* A line through the row (`ui.line`): in a footer at the height of the
+   boundaries' `─` (`--nvim-footer-line-y`), so a boundary ending beside it
+   meets it; elsewhere through the middle. */
+.nvc-line {
+  position: relative;
+  align-self: stretch;
+  flex: 0 0 8px;
+  min-width: 8px;
+}
+
+.nvc-line::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--nvim-footer-line-y, calc(50% - 0.5px));
+  height: var(--nvim-footer-line-h, 1px);
+  background: var(--nvc-line);
+}
+
+.nvc-slot {
+  font-variant-numeric: tabular-nums;
+}

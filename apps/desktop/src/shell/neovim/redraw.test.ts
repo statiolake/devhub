@@ -484,3 +484,51 @@ describe("claimFloats", () => {
     expect(claimFloats(boxes, new Set())).toEqual(boxes);
   });
 });
+
+describe("a screen Neovim draws on grid 1 (`:intro`)", () => {
+  const setup = () => {
+    const state = initialUiState();
+    applyRedraw(state, [
+      ["grid_resize", [1, 20, 6], [2, 20, 5]],
+      ["win_pos", [2, 1000, 0, 0, 20, 5]],
+      ["grid_line", [1, 5, 0, [["[No Name]", 1]]]],
+      ["flush", []],
+    ]);
+    return state;
+  };
+
+  it("is shown from the flush that cleared grid 1 and wrote inside a window, until a window is drawn", () => {
+    const state = setup();
+    expect(state.screen).toBe(false);
+    // :intro: grid 1 cleared, its text where the window is, no window drawn.
+    const changes = applyRedraw(state, [
+      ["grid_clear", [1]],
+      ["grid_line", [1, 2, 4, [["N", 1], ["V"], ["I"], ["M"]]]],
+      ["flush", []],
+    ]);
+    expect(state.screen).toBe(true);
+    expect(changes.grids.has(1)).toBe(true);
+    // A key: Neovim draws its windows again (grid 1's text is left there).
+    applyRedraw(state, [
+      ["grid_line", [2, 0, 0, [["x", 1]]]],
+      ["flush", []],
+    ]);
+    expect(state.screen).toBe(false);
+  });
+
+  it("is not a status line drawn, nor a clear that draws a window too", () => {
+    const state = setup();
+    applyRedraw(state, [
+      ["grid_line", [1, 5, 0, [["[No Name] [+]", 1]]]],
+      ["flush", []],
+    ]);
+    expect(state.screen).toBe(false);
+    applyRedraw(state, [
+      ["grid_clear", [1]],
+      ["grid_line", [1, 2, 4, [["x", 1]]]],
+      ["grid_line", [2, 0, 0, [["x", 1]]]],
+      ["flush", []],
+    ]);
+    expect(state.screen).toBe(false);
+  });
+});

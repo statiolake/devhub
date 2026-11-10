@@ -110,6 +110,13 @@
   inset: 0;
 }
 
+/* The notifications' level is over every other: it lets the pointer
+   through (its toasts take none either), so a press on what is under it —
+   a footer's, a view's or a card's node — is that node's. */
+.nvim-level.nvim-ambient {
+  pointer-events: none;
+}
+
 /* A pane while it moves (`GridPainter.motionGroup`, docs/pane-motion.md):
    two nested clips the surface's size, each moved by a transform, cut it to
    the rectangle it has now; the content inside them is its grid's parts,
@@ -1077,5 +1084,52 @@
 .nvim-pane,
 .nvim-boundary {
   position: absolute;
+  pointer-events: none;
+}
+
+/* Grid 1 is not drawn: the editor's ground where it was (`placeGround`). */
+.nvim-ground {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* A status line row (`placeFooters`, docs/neovim-editor.md, "Status
+   lines"): Neovim's cells of it, or a tree in the UI face a step under the
+   editor's size, centred down the row. A press on it that no node takes
+   is Neovim's (grid 1's cell: a drag resizes, a click moves to the
+   window), so it lets the layer's handler have it. */
+.nvim-footer {
+  position: absolute;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.nvim-footer-cells {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.nvim-footer-tree {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+  font-family: var(--nvim-ui-font);
+  font-size: var(--nvim-label-size, 11px);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.nvim-footer-tree > * {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nvim-footer-edge {
+  position: absolute;
+  left: 0;
+  right: 0;
   pointer-events: none;
 }

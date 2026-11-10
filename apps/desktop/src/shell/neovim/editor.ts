@@ -71,11 +71,13 @@ import {
   sashAt,
   type MouseTarget,
   type Sash,
+  GUI_OWNED,
 } from "./mouse";
 import { MetaComposition, OptionKeys } from "../surfaces/optionKey";
 import { BaseKeys, layoutMapSource } from "../surfaces/baseKeys";
 import type { MacOptionIsMeta } from "../../model/macOption";
 import { WindowMotion } from "./windowMotion";
+import type { Footer, Statusline } from "./statusline";
 import {
   glideFrames,
   inkPlace,
@@ -890,6 +892,29 @@ export class NeovimEditor {
   }
 
   /**
+   * What Lua says each status line row shows (its `statusline` event):
+   * grid 1 is drawn no more, each row is a footer (`placeFooters`).
+   */
+  setStatusline(statusline: Statusline): void {
+    if (!this.painter.setStatusline(statusline)) return;
+    if (this.frame === 0) {
+      this.frame = requestAnimationFrame(() => {
+        this.frame = 0;
+        this.paint();
+      });
+    }
+  }
+
+  /** The status line rows as last painted, and where a tree goes in one. */
+  footers(): readonly Footer[] {
+    return this.painter.footers();
+  }
+
+  footerTree(key: string): HTMLElement {
+    return this.painter.footerTree(key);
+  }
+
+  /**
    * Where each window's decorations are (Lua's `decor` event): the rows of
    * the windows whose changed are painted again on the next frame.
    */
@@ -1620,9 +1645,8 @@ export class NeovimEditor {
     // notifications are DevHub's: their own clicks and wheel (all but the
     // popup are in the grids' layer).
     const ownedByGui = (event: Event) =>
-      (event.target as HTMLElement).closest(
-        ".nvim-gui-window, .nvim-popup, .nvim-view, .nvim-inline-card, .nvim-view-frame, .nvim-toasts",
-      ) !== null || forwardedToFrame(event);
+      (event.target as HTMLElement).closest(GUI_OWNED) !== null ||
+      forwardedToFrame(event);
     // A framed view (gui.view{ frame }) lies over its float, under the levels
     // of the floats above it (its preview's): a level takes the event, so it
     // is handed to the frame's element under the pointer, unless a grid is

@@ -248,6 +248,14 @@ export interface NeovimUiState {
   /** Messages for the page to route (`messages.ts`), oldest first. */
   messages: MessageEvent[];
   tabline: { current: number; tabs: readonly TabState[] } | undefined;
+  /**
+   * Neovim draws a screen of its own on grid 1, over its windows, and
+   * waits for a key (`:intro`): grid 1 is drawn over the windows until
+   * Neovim draws its windows again (`screenOf`).
+   */
+  screen: boolean;
+  /** This flush so far: grid 1 cleared, a window drawn (`screenOf`). */
+  readonly pass: { cleared: boolean; windows: boolean };
 }
 
 /** What one batch changed, for the painter. */
@@ -334,6 +342,8 @@ export function initialUiState(
     ruler: [],
     messages: [],
     tabline: undefined,
+    screen: false,
+    pass: { cleared: false, windows: false },
   };
 }
 
@@ -598,6 +608,34 @@ function gridScroll(
   changes.grids.add(grid.id);
 }
 
+/**
+ * Whether grid 1 shows a screen of Neovim's own at this flush: Neovim
+ * cleared grid 1 and drew text inside its windows' places without
+ * drawing any window (`:intro`, waiting for a key) — with
+ * `ext_multigrid` Neovim never draws there otherwise; it stays so until
+ * a flush draws a window again, which Neovim does once the key comes.
+ */
+export function screenOf(state: NeovimUiState): boolean {
+  if (state.pass.windows) return false;
+  if (!state.pass.cleared) return state.screen;
+  const grid = state.grids.get(1);
+  if (!grid) return false;
+  for (const w of state.windows.values()) {
+    const p = w.placement;
+    if (p.kind !== "window" || w.hidden) continue;
+    for (let row = p.row; row < p.row + p.height && row < grid.height; row += 1)
+      for (
+        let col = p.col;
+        col < p.col + p.width && col < grid.width;
+        col += 1
+      ) {
+        const c = grid.chars[row * grid.width + col];
+        if (c !== undefined && c !== " " && c !== "") return true;
+      }
+  }
+  return false;
+}
+
 /** Fold one `redraw` notification's batches into `state`. */
 export function applyRedraw(
   state: NeovimUiState,
@@ -661,10 +699,13 @@ function applyEvent(
     }
     case "grid_line":
       gridLine(state, changes, args);
+      if (num(args[0]) !== 1 && state.gridWins.has(num(args[0])))
+        state.pass.windows = true;
       return;
     case "grid_clear": {
       const grid = state.grids.get(num(args[0]));
       if (!grid) return;
+      if (grid.id === 1) state.pass.cleared = true;
       grid.chars.fill(" ");
       grid.hls.fill(0);
       for (let row = 0; row < grid.height; row += 1) grid.dirty.add(row);
@@ -825,9 +866,21 @@ function applyEvent(
     case "set_title":
       state.title = str(args[0]);
       return;
-    case "flush":
+    case "flush": {
       changes.flushed = true;
+      const screen = screenOf(state);
+      if (screen !== state.screen) {
+        state.screen = screen;
+        const grid1 = state.grids.get(1);
+        for (let row = 0; row < (grid1?.height ?? 0); row += 1)
+          grid1?.dirty.add(row);
+        changes.grids.add(1);
+        changes.layout = true;
+      }
+      state.pass.cleared = false;
+      state.pass.windows = false;
       return;
+    }
     case "popupmenu_show": {
       const items = Array.isArray(args[0]) ? (args[0] as unknown[]) : [];
       state.popupmenu = {

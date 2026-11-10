@@ -33,6 +33,8 @@ function fakePainter() {
   const painter = {
     cell: () => cell,
     picture: () => undefined,
+    footerOf: () => undefined,
+    footerPicture: () => undefined,
     groundOf: () => undefined,
     hairline: () => 0.5,
     hideBoundaries: () => undefined,

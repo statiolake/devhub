@@ -27,6 +27,7 @@ import {
   type Size,
 } from "./components";
 import { formatKeys } from "../../model/keyNotation";
+import { formatPosition, modeLabel } from "./statusline";
 
 export interface ComponentTheme {
   readonly hl: HlTable;
@@ -38,6 +39,23 @@ export interface ComponentTheme {
   readonly mono: string;
   readonly openLink: (url: string) => void;
   readonly onAction: (action: number) => void;
+  /**
+   * What the slots show (`SlotNode`), from Neovim's redraw: a footer's
+   * window's cursor, the mode, the pending command. None: blank.
+   */
+  readonly slots?: Slots | undefined;
+}
+
+export interface Slots {
+  readonly position?:
+    | {
+        readonly curline: number;
+        readonly curcol: number;
+        readonly lineCount: number;
+      }
+    | undefined;
+  readonly mode?: string | undefined;
+  readonly showcmd?: string | undefined;
 }
 
 const Theme = createContext<ComponentTheme | undefined>(undefined);
@@ -78,9 +96,10 @@ function bgOf(hl: HlTable, name: string | undefined): string | undefined {
   return rgb !== undefined ? rgbCss(rgb) : undefined;
 }
 
-function runStyle(attrs: HlAttrs | undefined): CSSProperties {
+function runStyle(attrs: HlAttrs | undefined, ink = false): CSSProperties {
   if (!attrs) return {};
   const fg = attrs.reverse === true ? attrs.bg : attrs.fg;
+  if (ink) return fg !== undefined ? { color: rgbCss(fg) } : {};
   return {
     ...(fg !== undefined ? { color: rgbCss(fg) } : {}),
     ...(attrs.bold === true ? { fontWeight: 600 } : {}),
@@ -213,6 +232,7 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
         // stripe down one side of a rounded box.
         ...(accent ? ({ "--nvc-accent": accent } as CSSProperties) : {}),
         ...(ground ? { background: ground } : {}),
+        ...(node.round === true ? { borderRadius: 4 } : {}),
       };
       const className = [
         node.type === "stack" ? "nvc-stack" : "nvc-hstack",
@@ -234,7 +254,10 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
     case "text": {
       const style: CSSProperties = {
         ...grow,
-        ...runStyle(node.hl !== undefined ? hl.get(node.hl) : undefined),
+        ...runStyle(
+          node.hl !== undefined ? hl.get(node.hl) : undefined,
+          node.ink === true,
+        ),
         ...(node.size ? { fontSize: FONT_SIZE[node.size] } : {}),
         ...(node.bold === true ? { fontWeight: 600 } : {}),
       };
@@ -517,6 +540,50 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
               )}
             </span>
           ) : null}
+        </span>
+      );
+    }
+    case "line":
+      return (
+        <span
+          className="nvc-line"
+          style={{
+            ...(node.grow === true ? { flex: "1 1 0" } : {}),
+            ...({
+              "--nvc-line":
+                fgOf(hl, node.hl) ?? fgOf(hl, "WinSeparator") ?? "currentColor",
+            } as CSSProperties),
+          }}
+          {...title}
+          {...extra}
+        />
+      );
+    case "slot": {
+      const slots = theme.slots;
+      const value =
+        node.slot === "position"
+          ? slots?.position
+            ? formatPosition(node.format, slots.position)
+            : ""
+          : node.slot === "mode"
+            ? slots?.mode !== undefined
+              ? modeLabel(slots.mode)
+              : ""
+            : (slots?.showcmd ?? "");
+      return (
+        <span
+          className={`nvc-text nvc-slot nvc-slot-${node.slot}`}
+          style={{
+            ...grow,
+            ...runStyle(
+              node.hl !== undefined ? hl.get(node.hl) : undefined,
+              node.ink === true,
+            ),
+          }}
+          {...title}
+          {...extra}
+        >
+          {value}
         </span>
       );
     }

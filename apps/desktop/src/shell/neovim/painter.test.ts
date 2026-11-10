@@ -68,8 +68,10 @@ describe("a level's parts", () => {
       "over",
       "cursor",
       "covers",
+      "footer",
       "labels",
       "boundary",
+      "screen",
     ]);
   });
 

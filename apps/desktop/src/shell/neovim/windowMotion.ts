@@ -6,10 +6,10 @@
  * screen.
  *
  * Each window moves as one group (`GridPainter.motionGroup`): its pane, its
- * grid (or scroll port), what rides it and its cursor, and its status line,
- * a strip of grid 1's row under it drawn at the clip's foot. A window that
- * is gone is its last picture, and its old status line, covered as its
- * neighbours grow over it. Its content's origin follows its text: the rows
+ * grid (or scroll port), what rides it and its cursor, and its footer (the
+ * element drawn in its status line row, `placeFooters`) at the clip's foot,
+ * as wide as the clip. A window that is gone is its last picture, and a
+ * copy of its footer, covered as its neighbours grow over it. Its content's origin follows its text: the rows
  * `topline` moved (`win_viewport`, before and after) are rows the content
  * moved, so a window that kept its cursor line in view by scrolling moves
  * its lines with the edge rather than under it.
@@ -148,7 +148,8 @@ export class WindowMotion {
         readonly transition: Transition<number>;
         /** Where each moving grid is laid out (its first cell at rest). */
         readonly laid: ReadonlyMap<number, { x: number; y: number }>;
-        readonly strips: ReadonlyMap<number, HTMLCanvasElement>;
+        /** Each moving window's footer; a gone one's, a copy. */
+        readonly footers: ReadonlyMap<number, HTMLElement>;
         /** Gone windows' last pictures. */
         readonly pictures: ReadonlyMap<number, HTMLCanvasElement>;
         readonly grounds: ReadonlyMap<number, string>;
@@ -239,10 +240,10 @@ export class WindowMotion {
         : new Map<number, Place>(seen.rests);
     const goneKeys = [...shown.keys()].filter((g) => !windows.has(g));
     const m = this.motion;
-    // A gone window is its last picture and its last status line: kept
-    // from the transition before, or copied now, before this flush draws.
+    // A gone window is its last picture and its last footer: kept from
+    // the transition before, or copied now, before this flush draws.
     const pictures = new Map<number, HTMLCanvasElement>();
-    const strips = new Map<number, HTMLCanvasElement>();
+    const footers = new Map<number, HTMLElement>();
     const laid = new Map<number, { x: number; y: number }>();
     const grounds = new Map<number, string>();
     for (const grid of goneKeys) {
@@ -250,12 +251,15 @@ export class WindowMotion {
       const rest = seen.rests.get(grid);
       const picture = m?.pictures.get(grid) ?? this.painter.picture(grid);
       if (picture !== undefined) pictures.set(grid, picture);
-      const strip =
-        m?.strips.get(grid) ??
-        (box !== undefined && rest?.status === true
-          ? this.statusStrip(box, cell, rest)
-          : undefined);
-      if (strip !== undefined) strips.set(grid, strip);
+      // A copy: the live footer, which this flush takes away, is the
+      // painter's (and its tree the page's), never carried off.
+      const kept = m?.footers.get(grid);
+      const footer = kept?.classList.contains("nvim-footer-picture")
+        ? kept
+        : rest?.status === true
+          ? this.painter.footerPicture(grid)
+          : undefined;
+      if (footer !== undefined) footers.set(grid, footer);
       const at =
         box !== undefined
           ? { x: box.col * cell.width, y: box.row * cell.height }
@@ -312,8 +316,9 @@ export class WindowMotion {
       const ground = this.painter.groundOf(grid);
       if (ground !== undefined) grounds.set(grid, ground);
       if (rest?.status === true) {
-        const strip = this.statusStrip(box, cell, rest);
-        if (strip !== undefined) strips.set(grid, strip);
+        // Its footer, in its group's clip (`GridPainter.put`).
+        const footer = this.painter.footerOf(grid);
+        if (footer !== undefined) footers.set(grid, footer);
       }
       const rows = leaving.get(grid);
       if (rows !== undefined) {
@@ -332,8 +337,10 @@ export class WindowMotion {
       picture.style.top = `${String(at.y)}px`;
       this.painter.motionGroup(grid, 1).content.append(picture);
     }
-    for (const [grid, strip] of strips)
-      this.painter.motionGroup(grid, 1).clipB.append(strip);
+    for (const [grid, footer] of footers) {
+      if (windows.has(grid)) continue;
+      this.painter.motionGroup(grid, 1).clipB.append(footer);
+    }
     // The floats anchored to a moving window, carried by its track.
     const carried = new Map<
       string,
@@ -367,7 +374,7 @@ export class WindowMotion {
     this.motion = {
       transition,
       laid,
-      strips,
+      footers,
       pictures,
       grounds,
       size: { width: this.root.clientWidth, height: this.root.clientHeight },
@@ -380,26 +387,6 @@ export class WindowMotion {
       riders,
     };
     this.frame(now);
-  }
-
-  /** The row of grid 1 under a window: its status line, as drawn now. */
-  private statusStrip(
-    box: GridBox,
-    cell: { readonly width: number; readonly height: number },
-    rest: WindowRest,
-  ): HTMLCanvasElement | undefined {
-    const w = rest.rect.right - box.col * cell.width;
-    const strip = this.painter.picture(1, {
-      x: box.col * cell.width,
-      y: (box.row + box.height) * cell.height,
-      w: Math.ceil(w / cell.width) * cell.width,
-      h: cell.height,
-    });
-    if (strip === undefined) return undefined;
-    strip.className = "nvim-grid nvim-motion-status";
-    strip.style.left = "0px";
-    strip.style.top = "0px";
-    return strip;
   }
 
   /** Each moving window where it is at `now`; at rest once the time is up. */
@@ -427,13 +414,12 @@ export class WindowMotion {
         m.grounds.get(grid) ?? "",
       );
       const r = place.rect;
-      // The status line at the clip's foot, from the content's left.
-      const strip = m.strips.get(grid);
-      if (strip !== undefined) {
-        strip.style.transform = `translate(${String(place.x - (r.right - m.size.width))}px, ${String(m.size.height - ch)}px)`;
-      }
+      // The footer at the clip's foot, as wide as the clip (in the clip's
+      // inner element, whose bottom right is the clip's).
+      const footer = m.footers.get(grid);
+      if (footer !== undefined) placeFooter(footer, r, m.size, ch);
       // The boundaries on its sides, down its text rows.
-      const status = strip !== undefined ? ch : 0;
+      const status = footer !== undefined ? ch : 0;
       while (group.edges.childElementCount < 2) {
         const el = document.createElement("div");
         el.className = "nvim-motion-edge";
@@ -503,6 +489,28 @@ export class WindowMotion {
   dispose(): void {
     this.stop();
   }
+}
+
+/**
+ * A footer at the foot of its pane's clip `r` while the pane moves: in the
+ * clip's inner element (`clipB`, the surface's size, its bottom right on
+ * the clip's), from the clip's left, as wide as it, its row the clip's
+ * last.
+ */
+export function placeFooter(
+  footer: HTMLElement,
+  r: {
+    readonly left: number;
+    readonly right: number;
+    readonly bottom: number;
+  },
+  size: { readonly width: number; readonly height: number },
+  ch: number,
+): void {
+  footer.style.left = "0px";
+  footer.style.top = "0px";
+  footer.style.width = `${String(Math.max(0, r.right - r.left))}px`;
+  footer.style.transform = `translate(${String(r.left - r.right + size.width)}px, ${String(size.height - ch)}px)`;
 }
 
 /** What changed between two frames' windows, or nothing to move. */

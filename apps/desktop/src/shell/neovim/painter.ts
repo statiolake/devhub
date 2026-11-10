@@ -79,6 +79,13 @@ import {
   type ScrollView,
 } from "./smoothScroll";
 import {
+  footersOf,
+  nativeCells,
+  NO_STATUSLINE,
+  type Footer,
+  type Statusline,
+} from "./statusline";
+import {
   SIDES,
   distinctGround,
   frameBands,
@@ -364,7 +371,33 @@ interface GridCanvas {
   readonly opaque: boolean;
 }
 
+/**
+ * A status line row's element (`placeFooters`): the row's cells copied from
+ * grid 1, or the tree the page draws in `tree`, and the hairline under a
+ * default footer.
+ */
+interface FooterElements {
+  readonly el: HTMLDivElement;
+  readonly cells: HTMLCanvasElement;
+  readonly tree: HTMLDivElement;
+  readonly edge: HTMLDivElement;
+  /** Its place at rest, in the editor's pixels. */
+  rest: { x: number; y: number; w: number; h: number };
+  /** What its cells were copied for, to copy them again only on a change. */
+  copied: string;
+}
+
 const NO_CROP = { top: 0, right: 0, bottom: 0, left: 0 } as const;
+
+/** A footer at its place at rest (`placeFooters`). */
+function restFooter(f: FooterElements): void {
+  const { x, y, w, h } = f.rest;
+  f.el.style.left = `${String(x)}px`;
+  f.el.style.top = `${String(y)}px`;
+  f.el.style.width = `${String(w)}px`;
+  f.el.style.height = `${String(h)}px`;
+  f.el.style.transform = "";
+}
 
 /** How far past an editor's grid 1 its ground reaches (`setReach`), in CSS pixels. */
 export interface Reach {
@@ -491,8 +524,11 @@ export const PART_Z = {
   over: 5,
   cursor: 6,
   covers: 7,
-  labels: 8,
-  boundary: 9,
+  footer: 8,
+  labels: 9,
+  boundary: 10,
+  /** Grid 1 over the windows, while Neovim shows a screen on it (`:intro`). */
+  screen: 11,
 } as const;
 
 /**
@@ -722,6 +758,25 @@ export class GridPainter {
   private gridReach: ReadonlyMap<number, Bleed> = new Map();
   /** Each window's pane, by grid; the boundaries' hairlines and stubs. */
   private readonly panes = new Map<number, HTMLDivElement>();
+  /** Each window's pane's left and right edges as placed, by grid. */
+  private readonly paneEdges = new Map<
+    number,
+    { left: number; right: number }
+  >();
+  /**
+   * Grid 1 is not drawn: what Lua says of the status line rows
+   * (`setStatusline`) is drawn in them, the editor's ground under the rest.
+   * Off for a painter whose grid 1 is not a Neovim's (tmux's panes).
+   */
+  private footersOn = false;
+  private statusline: Statusline = NO_STATUSLINE;
+  /** The status line rows of this layout, as last placed (`placeFooters`). */
+  private footerList: readonly Footer[] = [];
+  private readonly footerEls = new Map<string, FooterElements>();
+  /** Grid 1's cells a tree footer is drawn over: not read as cells. */
+  private native: ReadonlySet<number> = new Set();
+  /** The editor's ground, under everything grid 1 would have covered. */
+  private ground: HTMLDivElement | undefined;
   private chrome: HTMLDivElement[] = [];
   private boundariesHidden = false;
   /** Grounds of panes laid out by someone else (`placeGrounds`), by key. */
@@ -861,7 +916,14 @@ export class GridPainter {
       grid === undefined
         ? undefined
         : (this.motion.get(grid) ?? this.carrierOf(grid, z));
-    const parent = group?.content ?? this.level(z);
+    // A footer moves at its pane's clip's foot (`WindowMotion`), not with
+    // its content.
+    const parent =
+      group === undefined
+        ? this.level(z)
+        : part === "footer"
+          ? group.clipB
+          : group.content;
     if (group !== undefined && group.outer.parentElement !== this.level(z))
       this.level(z).append(group.outer);
     if (el.parentElement !== parent) parent.append(el);
@@ -941,10 +1003,16 @@ export class GridPainter {
     this.carried.clear();
     for (const [el, at] of this.parts) {
       if (!el.isConnected) this.parts.delete(el);
-      else if (groups.some((g) => el.parentElement === g.content))
+      else if (
+        groups.some(
+          (g) => el.parentElement === g.content || el.parentElement === g.clipB,
+        )
+      )
         this.put(el, at.z, at.part, at.grid);
     }
     for (const g of groups) g.outer.remove();
+    // Footers moved at their clip's foot are placed at rest again.
+    for (const f of this.footerEls.values()) restFooter(f);
     this.dropEmptyLevels();
   }
 
@@ -1145,7 +1213,9 @@ export class GridPainter {
     const shapes = new Map<number, FrameShape>();
     const scrollbars = floatScrollbars(state, shown);
     this.placeClusters(state, shown, cuts, shapes, scrollbars);
+    const footers = this.footersOn ? this.layoutFooters(state, shown) : [];
     this.placePanes(state, shown);
+    let grid1Painted = false;
     for (const box of shown) {
       const grid = state.grids.get(box.grid);
       if (!grid) continue;
@@ -1175,7 +1245,14 @@ export class GridPainter {
       const port = this.scrolls.get(box.grid)?.port;
       if (port?.isConnected === true && canvas.parentElement === port)
         this.put(port, box.z, "grid", box.grid);
-      else this.put(canvas, box.z, "grid", box.grid);
+      else if (box.grid === 1 && this.footersOn) {
+        // Grid 1 is not drawn: its cells are kept for the status line rows
+        // drawn as cells (`placeFooters`), and drawn over the windows only
+        // while Neovim shows a screen of its own on it (`:intro`).
+        if (state.screen) this.put(canvas, 1, "screen");
+        else this.put(canvas, box.z, "grid");
+        canvas.style.visibility = state.screen ? "" : "hidden";
+      } else this.put(canvas, box.z, "grid", box.grid);
       // A float's blank border is left out: the canvas is its text area,
       // where Neovim put it (`paintRow` draws the grid shifted by it).
       const crop = cropOf(box);
@@ -1256,6 +1333,7 @@ export class GridPainter {
       // ends at once, so what is drawn is never behind Neovim.
       if (moved !== undefined || fresh || all) this.endSlide(box.grid);
       for (const row of rows) this.paintRow(entry, state, box, row);
+      if (box.grid === 1 && (rows.length > 0 || fresh)) grid1Painted = true;
       grid.dirty.clear();
       // Rows repainted under a slide (the cursor line's highlight, a
       // blame text) go on sliding as they are now.
@@ -1271,8 +1349,242 @@ export class GridPainter {
       }
       if (smooth) this.placeScroll(state, box);
     }
+    if (this.footersOn) {
+      this.placeGround(state);
+      this.placeFooters(state, footers, grid1Painted || all);
+    }
     this.placeOvers(state, boxes);
     this.dropEmptyLevels();
+  }
+
+  /**
+   * Draw grid 1 no more: each status line row is a footer
+   * (`placeFooters`), as Lua's `statusline` event says, the rest the
+   * editor's ground. Answers whether it changed.
+   */
+  setStatusline(statusline: Statusline): boolean {
+    const changed = !this.footersOn || statusline !== this.statusline;
+    this.footersOn = true;
+    this.statusline = statusline;
+    return changed;
+  }
+
+  /** The status line rows of the layout last painted. */
+  footers(): readonly Footer[] {
+    return this.footerList;
+  }
+
+  /**
+   * The element a footer's tree is drawn in (the page's portal): made
+   * before it is placed, placed with the row.
+   */
+  footerTree(key: string): HTMLElement {
+    return this.footerElements(key).tree;
+  }
+
+  /** A window's footer, as the window's motion carries it. */
+  footerOf(grid: number): HTMLElement | undefined {
+    const f = this.footerList.find((one) => one.grid === grid);
+    const els = f && this.footerEls.get(f.key);
+    return els && els.el.isConnected ? els.el : undefined;
+  }
+
+  /**
+   * A copy of a window's footer as drawn now (its cells copied as
+   * pixels): what a window that goes shows as it is covered.
+   */
+  footerPicture(grid: number): HTMLElement | undefined {
+    const el = this.footerOf(grid);
+    if (el === undefined) return undefined;
+    const copy = el.cloneNode(true) as HTMLElement;
+    const from = el.querySelector("canvas");
+    const to = copy.querySelector("canvas");
+    if (from && to) to.getContext("2d")?.drawImage(from, 0, 0);
+    copy.classList.add("nvim-footer-picture");
+    return copy;
+  }
+
+  private footerElements(key: string): FooterElements {
+    let els = this.footerEls.get(key);
+    if (!els) {
+      const el = document.createElement("div");
+      el.className = "nvim-footer";
+      el.dataset.footer = key;
+      const cells = document.createElement("canvas");
+      cells.className = "nvim-footer-cells";
+      const tree = document.createElement("div");
+      tree.className = "nvim-footer-tree";
+      const edge = document.createElement("div");
+      edge.className = "nvim-footer-edge";
+      el.append(cells, tree, edge);
+      els = {
+        el,
+        cells,
+        tree,
+        edge,
+        rest: { x: 0, y: 0, w: 0, h: 0 },
+        copied: "",
+      };
+      this.footerEls.set(key, els);
+    }
+    return els;
+  }
+
+  /**
+   * The status line rows of this layout (`footersOf`), and the grid-1
+   * cells under tree footers, which the boundaries do not read as cells.
+   */
+  private layoutFooters(
+    state: NeovimUiState,
+    boxes: readonly GridBox[],
+  ): Footer[] {
+    const base = state.grids.get(1);
+    const W = base?.width ?? 0;
+    const cursorWin = state.gridWins.get(state.cursor.grid);
+    const footers = base
+      ? footersOf(
+          boxes,
+          { width: W, height: base.height },
+          {
+            laststatus:
+              this.statusline.laststatus ?? this.theme.laststatus ?? 2,
+            cmdheight: this.theme.cmdheight,
+            current: cursorWin ?? this.currentWin,
+            statusline: this.statusline,
+          },
+        )
+      : [];
+    this.native = nativeCells(footers, W);
+    this.footerList = footers;
+    return footers;
+  }
+
+  /** The editor's ground where grid 1 is, out to its reach. */
+  private placeGround(state: NeovimUiState): void {
+    const base = state.grids.get(1);
+    if (!base) return;
+    const { width: cw, height: ch } = this.metrics;
+    const r = this.reach;
+    if (!this.ground) {
+      this.ground = document.createElement("div");
+      this.ground.className = "nvim-ground";
+    }
+    this.put(this.ground, 0, "pane");
+    Object.assign(this.ground.style, {
+      left: `${String(-r.left)}px`,
+      top: `${String(-r.top)}px`,
+      width: `${String(base.width * cw + r.left + r.right)}px`,
+      height: `${String(base.height * ch + r.top + r.bottom)}px`,
+      background: cssColor(state.defaults.background),
+    });
+  }
+
+  /**
+   * Each status line row's footer, in the row Neovim keeps, out to the
+   * hairlines beside it (its pane's edges): a tree footer's ground is its
+   * window's `StatusLine` (`StatusLineNC` when not current), and a default
+   * footer has a hairline under it; a cells footer is grid 1's row, copied
+   * from its canvas when it was painted again. A window's footer is a part
+   * of its pane: it moves with it (`WindowMotion`).
+   */
+  private placeFooters(
+    state: NeovimUiState,
+    footers: readonly Footer[],
+    grid1Painted: boolean,
+  ): void {
+    const base = state.grids.get(1);
+    if (!base) return;
+    const { width: cw, height: ch } = this.metrics;
+    const r = this.reach;
+    const dpr = this.dpr;
+    const keep = new Set<string>();
+    const line = (row: number) => {
+      const shape = glyphShapes(
+        "─",
+        { x: 0, y: row * ch, w: cw, h: ch },
+        dpr,
+        this.font.size,
+      )?.find((p) => p.kind === "rect");
+      return shape?.kind === "rect"
+        ? { y: shape.y - row * ch, h: shape.h }
+        : { y: Math.round(ch * 0.5 * dpr) / dpr, h: 1 / dpr };
+    };
+    const separator = cssColor(
+      this.theme.separator ?? state.defaults.foreground,
+    );
+    const source = this.canvases.get(1);
+    for (const f of footers) {
+      keep.add(f.key);
+      const els = this.footerElements(f.key);
+      const edges =
+        f.grid !== undefined ? this.paneEdges.get(f.grid) : undefined;
+      const x0 = edges?.left ?? (f.col === 0 ? -r.left : f.col * cw);
+      const x1 =
+        edges?.right ??
+        (f.col + f.width >= base.width
+          ? base.width * cw + r.right
+          : (f.col + f.width) * cw);
+      const y = f.row * ch;
+      const h = ch + (f.row === base.height - 1 ? r.bottom : 0);
+      els.rest = { x: x0, y, w: x1 - x0, h };
+      this.put(els.el, 1, "footer", f.grid);
+      if (!this.motion.has(f.grid ?? -1)) restFooter(els);
+      const { el, cells, tree, edge } = els;
+      el.dataset.kind = f.entry.kind;
+      el.classList.toggle("nvim-footer-current", f.current);
+      if (f.entry.kind === "cells") {
+        cells.style.display = "";
+        tree.style.display = "none";
+        edge.style.display = "none";
+        el.style.background = "";
+        const key = `${String(x0)},${String(y)},${String(x1 - x0)},${String(h)},${String(dpr)}`;
+        if (source && (grid1Painted || key !== els.copied)) {
+          els.copied = key;
+          const w = x1 - x0;
+          cells.width = Math.max(1, Math.round(w * dpr));
+          cells.height = Math.max(1, Math.round(h * dpr));
+          cells.style.width = `${String(w)}px`;
+          cells.style.height = `${String(h)}px`;
+          const b = source.bleed;
+          cells
+            .getContext("2d")
+            ?.drawImage(
+              source.canvas,
+              Math.round((x0 + b.l) * dpr),
+              Math.round((y + b.t) * dpr),
+              cells.width,
+              cells.height,
+              0,
+              0,
+              cells.width,
+              cells.height,
+            );
+        }
+        continue;
+      }
+      els.copied = "";
+      cells.style.display = "none";
+      tree.style.display = "";
+      const hl = f.entry.hl;
+      const ground =
+        hl.get(f.current ? "StatusLine" : "StatusLineNC")?.bg ??
+        hl.get("Normal")?.bg ??
+        state.defaults.background;
+      el.style.background = cssColor(ground);
+      const at = line(f.row);
+      el.style.setProperty("--nvim-footer-line-y", `${String(at.y)}px`);
+      el.style.setProperty("--nvim-footer-line-h", `${String(at.h)}px`);
+      edge.style.display = f.entry.edge ? "" : "none";
+      edge.style.height = `${String(this.hairline())}px`;
+      edge.style.background = separator;
+      // Its bottom on the row's, the reach below the last row left out.
+      edge.style.bottom = `${String(h - ch)}px`;
+    }
+    for (const [key, els] of this.footerEls) {
+      if (keep.has(key)) continue;
+      els.el.remove();
+      this.footerEls.delete(key);
+    }
   }
 
   /**
@@ -1907,6 +2219,7 @@ export class GridPainter {
     };
     const onScreen = new Set<number>();
     this.bleeds.clear();
+    this.paneEdges.clear();
     for (const pane of panes) {
       const box = boxes.find((b) => b.grid === pane.grid);
       if (!box) continue;
@@ -1931,6 +2244,7 @@ export class GridPainter {
       el.style.top = `${String(top)}px`;
       el.style.width = `${String(right - left)}px`;
       el.style.height = `${String(bottom - top)}px`;
+      this.paneEdges.set(pane.grid, { left, right });
       const ground =
         windowGround(this.theme, pane.win, pane.win === this.currentWin) ??
         state.defaults.background;
@@ -1959,16 +2273,36 @@ export class GridPainter {
           col < b.col + b.width,
       );
     const armsAt = (row: number, col: number) =>
-      base && row >= 0 && row < H && col >= 0 && col < W && !inWindow(row, col)
+      base &&
+      row >= 0 &&
+      row < H &&
+      col >= 0 &&
+      col < W &&
+      !inWindow(row, col) &&
+      !this.native.has(row * W + col)
         ? boxArms(base.chars[row * W + col] ?? "")
         : undefined;
+    // A footer drawing a line through its row (`ui.line`) beside a column.
+    const lineFooterAt = (row: number, col: number) =>
+      this.footerList.some(
+        (f) =>
+          f.row === row &&
+          f.entry.kind === "tree" &&
+          f.entry.line &&
+          (f.col - 1 === col || f.col + f.width === col),
+      );
     for (const line of lines) {
       let from = line.vertical ? line.y : line.x;
       let to = from + line.length;
       if (line.vertical) {
-        // Ending on a junction a status line draws (`┴`, `┬`): on its line.
+        // Ending on a junction a status line draws (`┴`, `┬`), or beside a
+        // footer whose line runs through its row: on its line.
         const last = armsAt(Math.ceil(to) - 1, line.x);
-        if (Number.isInteger(to) && last && last.s === 0 && last.n !== 0)
+        if (
+          Number.isInteger(to) &&
+          ((last && last.s === 0 && last.n !== 0) ||
+            lineFooterAt(Math.ceil(to) - 1, line.x))
+        )
           to -= 0.5;
         const first = armsAt(Math.floor(from), line.x);
         if (Number.isInteger(from) && first && first.n === 0 && first.s !== 0)
@@ -2716,7 +3050,9 @@ export class GridPainter {
     // is grounded half and half, each half as the cell beside it (a status
     // line's, where the windows' panes do not reach), so each region's
     // ground goes on to the line.
-    if (box.grid === 1)
+    // While Neovim shows a screen of its own on grid 1 (`:intro`), all of it
+    // is drawn as Neovim drew it.
+    if (box.grid === 1 && !state.screen)
       for (let c = 0; c < grid.width; c += 1) {
         const i = base + c;
         if (!this.gaps.has(i)) continue;
