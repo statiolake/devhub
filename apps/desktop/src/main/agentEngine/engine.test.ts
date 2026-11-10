@@ -11,7 +11,7 @@ import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationEvent } from "../../model/conversation.js";
 import type { AgentId } from "../../model/domain.js";
 import type { ConversationHost } from "../agent/conversation/conversation.js";
@@ -527,7 +527,16 @@ describe("an engine that ends", () => {
 });
 
 describe("a failure crossing the wire", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	it("keeps its class, its words and, for the host link, its code and offset", () => {
+		// A clock that has moved on each time it is read, as it may between
+		// any two lines on a loaded machine: what crossed is the failure as
+		// it was made, not one made again now.
+		let now = 1_700_000_000_000;
+		vi.spyOn(Date, "now").mockImplementation(() => (now += 1));
 		const link = errorFromWire(
 			structuredClone(
 				errorToWire(new HostLinkFailure("stream_lost", "gone", 120)),
@@ -535,11 +544,10 @@ describe("a failure crossing the wire", () => {
 		);
 		expect(link).toBeInstanceOf(HostLinkFailure);
 		expect(link).toMatchObject({ code: "stream_lost", offset: 120 });
-		const refused = errorFromWire(
-			structuredClone(errorToWire(new ConversationRefused("Not now."))),
-		);
+		const sent = new ConversationRefused("Not now.");
+		const refused = errorFromWire(structuredClone(errorToWire(sent)));
 		expect(refused).toBeInstanceOf(ConversationRefused);
-		expect(refused).toEqual(new ConversationRefused("Not now."));
+		expect(refused).toEqual(sent);
 		const plain = errorFromWire(
 			structuredClone(errorToWire(new TypeError("odd"))),
 		);

@@ -24,13 +24,22 @@ type ConversationFailureCode = Extract<
 	| "sessions_unreadable"
 >;
 
+/**
+ * How a failure is made: its cause, and — for one made again on the far side
+ * of a wire (`agentEngine/protocol.ts`) — the moment the first was made, which
+ * is when it happened. Without one it happened now.
+ */
+export interface ConversationFailureOptions extends ErrorOptions {
+	readonly timestampMs?: number;
+}
+
 abstract class ConversationFailure extends NamedFailure {
 	constructor(
 		code: ConversationFailureCode,
 		reason: string,
-		options?: ErrorOptions,
+		{ timestampMs, ...options }: ConversationFailureOptions = {},
 	) {
-		super(withDetail(errorWireAt(code), reason), options);
+		super(withDetail(errorWireAt(code, timestampMs), reason), options);
 	}
 }
 
@@ -39,16 +48,16 @@ abstract class ConversationFailure extends NamedFailure {
  * and `reason` says what to do instead.
  */
 export class ConversationRefused extends ConversationFailure {
-	constructor(reason: string) {
-		super("conversation_refused", reason);
+	constructor(reason: string, options?: ConversationFailureOptions) {
+		super("conversation_refused", reason, options);
 		this.name = "ConversationRefused";
 	}
 }
 
 /** The conversation stopped while, or before, it was doing what it was asked. */
 export class ConversationStopped extends ConversationFailure {
-	constructor(reason: string) {
-		super("conversation_stopped", reason);
+	constructor(reason: string, options?: ConversationFailureOptions) {
+		super("conversation_stopped", reason, options);
 		this.name = "ConversationStopped";
 	}
 }
@@ -61,8 +70,8 @@ export class ConversationStopped extends ConversationFailure {
  * (`portRefusal`).
  */
 export class SessionNotResumable extends ConversationFailure {
-	constructor(reason: string) {
-		super("conversation_not_resumable", reason);
+	constructor(reason: string, options?: ConversationFailureOptions) {
+		super("conversation_not_resumable", reason, options);
 		this.name = "SessionNotResumable";
 	}
 }
@@ -73,7 +82,7 @@ export class SessionNotResumable extends ConversationFailure {
  * is not in the shape the CLI writes.
  */
 export class SessionsUnreadable extends ConversationFailure {
-	constructor(reason: string, options?: ErrorOptions) {
+	constructor(reason: string, options?: ConversationFailureOptions) {
 		super("sessions_unreadable", reason, options);
 		this.name = "SessionsUnreadable";
 	}

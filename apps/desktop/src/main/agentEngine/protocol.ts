@@ -270,11 +270,18 @@ export type EngineToPage =
 /** `[agentId, revision, event]`, as the page folds it. */
 export type EngineEvent = readonly [AgentId, number, ConversationEvent];
 
-const NAMED: Readonly<Record<string, (reason: string) => NamedFailure>> = {
-	ConversationRefused: (reason) => new ConversationRefused(reason),
-	ConversationStopped: (reason) => new ConversationStopped(reason),
-	SessionNotResumable: (reason) => new SessionNotResumable(reason),
-	SessionsUnreadable: (reason) => new SessionsUnreadable(reason),
+/** Made again with the moment the first was made: a failure crossing is not a new one. */
+const NAMED: Readonly<
+	Record<string, (reason: string, timestampMs: number) => NamedFailure>
+> = {
+	ConversationRefused: (reason, timestampMs) =>
+		new ConversationRefused(reason, { timestampMs }),
+	ConversationStopped: (reason, timestampMs) =>
+		new ConversationStopped(reason, { timestampMs }),
+	SessionNotResumable: (reason, timestampMs) =>
+		new SessionNotResumable(reason, { timestampMs }),
+	SessionsUnreadable: (reason, timestampMs) =>
+		new SessionsUnreadable(reason, { timestampMs }),
 };
 
 export function errorToWire(error: unknown): ErrorWire {
@@ -303,7 +310,7 @@ export function errorFromWire(wire: ErrorWire): Error {
 		case "named": {
 			const make = NAMED[wire.name];
 			if (make !== undefined && typeof wire.wire.detail === "string")
-				return make(wire.wire.detail);
+				return make(wire.wire.detail, wire.wire.timestampMs);
 			const failure = new NamedFailure(wire.wire);
 			failure.name = wire.name;
 			return failure;
