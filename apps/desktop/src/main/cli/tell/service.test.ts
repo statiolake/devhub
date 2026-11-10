@@ -423,8 +423,15 @@ class FakePorts implements TellPorts {
 		}));
 		return Promise.resolve();
 	}
-	openWorkspace(path: string, machine: string, worktree?: string) {
-		this.calls.push(`open ${path} ${machine} ${worktree ?? "-"}`);
+	openWorkspace(
+		path: string,
+		machine: string,
+		worktree?: string,
+		openedBy?: "orchestrator",
+	) {
+		this.calls.push(
+			`open ${path} ${machine} ${worktree ?? "-"}${openedBy === undefined ? "" : ` by ${openedBy}`}`,
+		);
 		return Promise.resolve("w1");
 	}
 	createAgent(workspaceId: string, profileId: string, presentation?: string) {
@@ -883,6 +890,27 @@ describe("devhub --tell, in the app", () => {
 		);
 		expect(ports.calls).toEqual(["open /src/app ssh:box 12-fix"]);
 		expect(answer.data).toEqual({ workspaceId: "w1", root: "/src/app" });
+	});
+
+	it("opens a workspace as the orchestrator's when its side asks, the person's otherwise", async () => {
+		const { service, ports } = setup();
+		const helper = "local\tscratch\tbbbb2222-0000";
+		await service.run(
+			{ verb: "workspace-open", path: "/src/a" },
+			callerFromOrigin(helper),
+		);
+		await ports.setAgentManaged("bbbb2222-0000", true);
+		await service.run(
+			{ verb: "workspace-open", path: "/src/b" },
+			callerFromOrigin(helper),
+		);
+		await service.run({ verb: "workspace-open", path: "/src/c" }, undefined);
+		expect(ports.calls).toEqual([
+			"open /src/a local -",
+			"managed bbbb2222-0000 true",
+			"open /src/b local - by orchestrator",
+			"open /src/c local -",
+		]);
 	});
 
 	it("starts an agent, names it and queues its prompt", async () => {

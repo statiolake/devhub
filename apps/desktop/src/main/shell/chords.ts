@@ -53,6 +53,7 @@ import type {
 	WorkspaceWire,
 } from "../../ipc/appShell.js";
 import {
+	sidebarOrder,
 	sidebarWorkspaces,
 	type TabOf,
 	tabOrder,
@@ -229,18 +230,13 @@ export type ChordEffect =
 	  };
 
 /**
- * The Orchestrator row's Workspace, Scratch, then the workspaces in sidebar
- * order. See `sidebarWorkspaces`.
+ * The Orchestrator row's Workspace, the Workspaces under it, Scratch, then
+ * the workspaces in sidebar order. See `sidebarOrder`.
  */
 function orderedWorkspaces(
 	snapshot: AppSnapshotWire,
 ): readonly WorkspaceWire[] {
-	const { orchestrator, scratch, rows } = sidebarWorkspaces(snapshot);
-	return [
-		...(orchestrator === undefined ? [] : [orchestrator]),
-		scratch,
-		...rows,
-	];
+	return sidebarOrder(sidebarWorkspaces(snapshot));
 }
 
 function scratchContext(snapshot: AppSnapshotWire): NavigationContext {
@@ -249,7 +245,9 @@ function scratchContext(snapshot: AppSnapshotWire): NavigationContext {
 
 /**
  * Scratch, then the workspaces in sidebar order. What a digit names (0 is
- * Scratch); the Orchestrator row has `Cmd+Q Shift+O` and no digit.
+ * Scratch); the Orchestrator row has `Cmd+Q Shift+O` and no digit, and
+ * neither have the Workspaces under it (`sidebarWorkspaces`' `managed`): the
+ * digits are the person's own places, and the orchestrator's come and go.
  */
 function sidebarEntries(
 	snapshot: AppSnapshotWire,

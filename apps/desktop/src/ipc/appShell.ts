@@ -1182,6 +1182,12 @@ export interface WorkspaceWire {
 	 */
 	readonly lastAgentId?: string;
 	/**
+	 * `"orchestrator"`: the orchestrator's side opened it (`Workspace.openedBy`),
+	 * so the Sidebar draws it under the Orchestrator row, in its lane, and it
+	 * takes no digit. Absent for a folder the person opened.
+	 */
+	readonly openedBy?: "orchestrator";
+	/**
 	 * What the Workspace's own terminals are doing, in an Agent's terms:
 	 * `working` while a command runs in any of its tmux panes, and `unread`
 	 * (always `idle`) while one finished unseen. Absent when there is nothing
@@ -1266,7 +1272,9 @@ export function workspaceById(
  * names cannot come to disagree. A snapshot whose Scratch is not among its
  * Workspaces is a broken snapshot, and it throws.
  */
-export function sidebarWorkspaces<W extends { readonly id: string }>(snapshot: {
+export function sidebarWorkspaces<
+	W extends { readonly id: string; readonly openedBy?: string | undefined },
+>(snapshot: {
 	readonly workspaces: readonly W[];
 	readonly scratchWorkspaceId: string;
 	readonly orchestratorWorkspaceId?: string | undefined;
@@ -1274,6 +1282,13 @@ export function sidebarWorkspaces<W extends { readonly id: string }>(snapshot: {
 	readonly scratch: W;
 	/** The Orchestrator row's Workspace, drawn as that row, above Scratch. */
 	readonly orchestrator: W | undefined;
+	/**
+	 * The Workspaces the orchestrator's side opened (`openedBy`), in the
+	 * order they arrive in: drawn under the Orchestrator row, in their lanes
+	 * (`orchestratorLanes.ts`), never among `rows`.
+	 */
+	readonly managed: readonly W[];
+	/** The person's: the rows below Scratch, and what the digits count. */
 	readonly rows: readonly W[];
 } {
 	const scratch = snapshot.workspaces.find(
@@ -1292,13 +1307,35 @@ export function sidebarWorkspaces<W extends { readonly id: string }>(snapshot: {
 						workspace.id === snapshot.orchestratorWorkspaceId &&
 						workspace !== scratch,
 				);
+	const rest = snapshot.workspaces.filter(
+		(workspace) => workspace !== scratch && workspace !== orchestrator,
+	);
 	return {
 		scratch,
 		orchestrator,
-		rows: snapshot.workspaces.filter(
-			(workspace) => workspace !== scratch && workspace !== orchestrator,
-		),
+		managed: rest.filter((workspace) => workspace.openedBy === "orchestrator"),
+		rows: rest.filter((workspace) => workspace.openedBy !== "orchestrator"),
 	};
+}
+
+/**
+ * Every Workspace in the order main walks the Sidebar: the Orchestrator
+ * row's, the Workspaces under it, Scratch, then the person's rows. The one
+ * list `Cmd+Q N`/`]`, the tab picker, the Task Manager and a close's landing
+ * read, so none of them can leave a Workspace out.
+ */
+export function sidebarOrder<W>(parts: {
+	readonly scratch: W;
+	readonly orchestrator: W | undefined;
+	readonly managed: readonly W[];
+	readonly rows: readonly W[];
+}): readonly W[] {
+	return [
+		...(parts.orchestrator === undefined ? [] : [parts.orchestrator]),
+		...parts.managed,
+		parts.scratch,
+		...parts.rows,
+	];
 }
 /**
  * One row of the Sidebar's tree: a Workspace's own row, or one of its Agents.

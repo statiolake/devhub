@@ -94,6 +94,7 @@ import {
   type WorkspaceWire,
   type TerminalPaletteWire,
   type TerminalThemeWire,
+  sidebarOrder,
   sidebarWorkspaces,
 } from "../ipc/appShell.js";
 import { isPaletteColor } from "../ipc/palette.js";
@@ -461,16 +462,13 @@ export function drawnWorkspaceOrder(
   snapshot: AppSnapshot,
   repositoryOf: RepositoryOf,
 ): readonly WorkspaceId[] {
-  const { orchestrator, scratch, rows } = sidebarWorkspaces({
-    workspaces: drawnWorkspaces(snapshot, repositoryOf),
-    scratchWorkspaceId: snapshot.scratchWorkspaceId,
-    orchestratorWorkspaceId: snapshot.orchestratorWorkspaceId,
-  });
-  return [
-    ...(orchestrator === undefined ? [] : [orchestrator]),
-    scratch,
-    ...rows,
-  ].map((workspace) => workspace.id);
+  return sidebarOrder(
+    sidebarWorkspaces({
+      workspaces: drawnWorkspaces(snapshot, repositoryOf),
+      scratchWorkspaceId: snapshot.scratchWorkspaceId,
+      orchestratorWorkspaceId: snapshot.orchestratorWorkspaceId,
+    }),
+  ).map((workspace) => workspace.id);
 }
 
 export function snapshotWire(
@@ -501,6 +499,9 @@ export function snapshotWire(
     ...(workspace.lastAgentId === undefined
       ? {}
       : { lastAgentId: workspace.lastAgentId }),
+    ...(workspace.openedBy === undefined
+      ? {}
+      : { openedBy: workspace.openedBy }),
     ...(workspace.terminals.status === "idle" &&
     workspace.terminals.unread === undefined
       ? {}

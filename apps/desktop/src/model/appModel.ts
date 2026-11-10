@@ -23,6 +23,7 @@ import {
   rootParentComponents,
   sameContext,
   Workspace,
+  type WorkspaceOpener,
   type AgentControlState,
   type AgentFailure,
   type AgentId,
@@ -241,6 +242,8 @@ export interface WorkspaceSnapshot {
   readonly lastAgentId: AgentId | undefined;
   /** What its own terminals are doing. See `terminalActivity.ts`. */
   readonly terminals: TerminalActivity;
+  /** Who opened it, when not the person. See `Workspace.openedBy`. */
+  readonly openedBy: WorkspaceOpener | undefined;
 }
 
 /**
@@ -2318,6 +2321,7 @@ export class AppModel {
       canCreateAgent: workspace.canCreateAgent,
       lastAgentId: this.lastAgentIn(workspace.id),
       terminals: workspace.terminals.activity,
+      openedBy: workspace.openedBy,
       agents: workspace.agents.map((agent) => ({
         id: agent.id,
         workspaceId: agent.workspaceId,

@@ -1659,6 +1659,12 @@ function sameWorkspaceState(
  * `issueNumberFromBranch`, which is now the only way a workspace is linked to
  * an Issue.
  */
+/**
+ * Who opened a Workspace, when it was not the person: only the orchestrator,
+ * so far. See `Workspace.openedBy`.
+ */
+export type WorkspaceOpener = "orchestrator";
+
 export class Workspace {
   private readonly agentList: Agent[] = [];
   /** Its own terminals' panes. In memory only — see `terminalActivity.ts`. */
@@ -1675,6 +1681,20 @@ export class Workspace {
   /** See `WorkspaceClose`. In memory only; a launch starts every close idle. */
   private closeValue: WorkspaceClose = CLOSE_IDLE;
 
+  /**
+   * Who opened it, when that was the orchestrator: its provenance, written
+   * once — when the orchestrator's side (`devhub --tell workspace open`,
+   * `issue assign`, from the orchestrator agent or an agent it manages)
+   * opens a folder that was not open — and kept with the Workspace in
+   * `state.json` (`opened_by`). The Sidebar draws such a Workspace under the
+   * Orchestrator row, in its lane, for as long as it is open: whoever's
+   * agents are in it later (`docs/orchestrator.md`, "The orchestrator's
+   * work in the Sidebar"). A folder the person opened never carries it, and
+   * nothing takes it away: a Workspace's provenance is a fact about how it
+   * came, not a state.
+   */
+  private openedByValue: WorkspaceOpener | undefined = undefined;
+
   clone(): Workspace {
     const copy = new Workspace(
       this.id,
@@ -1684,6 +1704,7 @@ export class Workspace {
       this.stateValue,
     );
     copy.closeValue = this.closeValue;
+    copy.openedByValue = this.openedByValue;
     copy.terminalPanes = this.terminalPanes.clone();
     for (const agent of this.agentList) {
       copy.agentList.push(agent.clone());
@@ -1732,6 +1753,18 @@ export class Workspace {
 
   get close(): WorkspaceClose {
     return this.closeValue;
+  }
+
+  /** See `openedByValue`. */
+  get openedBy(): WorkspaceOpener | undefined {
+    return this.openedByValue;
+  }
+
+  /** Record who opened it. True when that changed anything. */
+  setOpenedBy(opener: WorkspaceOpener | undefined): boolean {
+    if (this.openedByValue === opener) return false;
+    this.openedByValue = opener;
+    return true;
   }
 
   get agents(): readonly Agent[] {

@@ -304,6 +304,11 @@ export interface IssueAssignRequest {
 	 * copy on disk rather than stop. Without it a failed fetch is the answer.
 	 */
 	readonly offline: boolean;
+	/**
+	 * The orchestrator's side asked (`TellService.openedBy`): a folder this
+	 * opens is drawn under the Orchestrator row (`Workspace.openedBy`).
+	 */
+	readonly openedBy?: "orchestrator";
 }
 
 /**
@@ -417,11 +422,16 @@ export interface TellPorts {
 	};
 	/** The enabled Issue actions, in Assign Issue's order. */
 	issueActions(): readonly TellIssueAction[];
-	/** Open (or select) the folder; answers the workspace's id. */
+	/**
+	 * Open (or select) the folder; answers the workspace's id. `openedBy`:
+	 * the orchestrator's side asked, so a folder this adds is its
+	 * (`Workspace.openedBy`); one open already is left as it is.
+	 */
 	openWorkspace(
 		path: string,
 		machine: string,
 		worktree?: string,
+		openedBy?: "orchestrator",
 	): Promise<string>;
 	/** Start an Agent; answers its id. */
 	createAgent(
@@ -1281,6 +1291,23 @@ export class TellService {
 		return this.agent(id);
 	}
 
+	/**
+	 * Who a folder this command opens is opened by (`Workspace.openedBy`):
+	 * the orchestrator, when the caller is the orchestrator agent or an agent
+	 * it manages (a helper it started, `--managed`) — its side of the work;
+	 * nobody in particular (the person) for any other caller.
+	 */
+	private openedBy(): "orchestrator" | undefined {
+		if (this.callerIsOrchestrator()) return "orchestrator";
+		const id = this.caller?.agentId;
+		if (id === undefined || this.caller?.paneless === true) return undefined;
+		const agent = this.ports
+			.workspaces()
+			.flatMap((workspace) => workspace.agents)
+			.find((one) => one.id === id);
+		return agent?.managed === true ? "orchestrator" : undefined;
+	}
+
 	/** Whether the caller is the orchestrator agent itself. */
 	private callerIsOrchestrator(): boolean {
 		const id = this.caller?.agentId;
@@ -2052,7 +2079,12 @@ export class TellService {
 	): Promise<TellAnswer> {
 		// The path is a path on the machine the asking `devhub` runs on.
 		const machine = caller?.machine ?? "local";
-		const id = await this.ports.openWorkspace(path, machine, worktree);
+		const id = await this.ports.openWorkspace(
+			path,
+			machine,
+			worktree,
+			this.openedBy(),
+		);
 		const workspace = this.ports.workspaces().find((each) => each.id === id);
 		return {
 			message: `Workspace ${id} is open at ${workspace?.root ?? path}.`,
@@ -2411,6 +2443,7 @@ export class TellService {
 			presentation: command.presentation,
 			...(command.name === undefined ? {} : { name: command.name.trim() }),
 			offline: command.offline === true,
+			...(this.openedBy() === undefined ? {} : { openedBy: "orchestrator" }),
 		});
 		if (assigned.agentId !== undefined && command.managed === true)
 			await this.ports.setAgentManaged(assigned.agentId, true);

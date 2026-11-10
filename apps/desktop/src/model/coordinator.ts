@@ -502,6 +502,8 @@ export class AppCoordinator {
    * selected (`IntentFocus`). Cleared when the operation ends either way.
    */
   private readonly unfocused = new Set<OperationId>();
+  /** Opens the orchestrator's side asked for (`open_folder`'s `openedBy`). */
+  private readonly orchestratorOpens = new Set<OperationId>();
   /**
    * The folder opens asked for with `reason: "explicit"`: the Workspace each
    * selects is a place in Back and Forward's history at once
@@ -732,6 +734,7 @@ export class AppCoordinator {
       case "open_folder":
         if (intent.focus === "none") this.unfocused.add(id);
         else if (intent.reason === "explicit") this.explicitOpens.add(id);
+        if (intent.openedBy === "orchestrator") this.orchestratorOpens.add(id);
         return this.beginWorkspaceResolution(intent.location, id);
       case "new_window": {
         if (intent.path !== undefined) {
@@ -1564,6 +1567,7 @@ export class AppCoordinator {
     this.requestedPresentations.delete(id);
     this.unfocused.delete(id);
     this.explicitOpens.delete(id);
+    this.orchestratorOpens.delete(id);
     this.resolvedProfiles.delete(id);
     this.launchProfiles.delete(id);
     this.replacedByLaunch.delete(id);
@@ -1641,6 +1645,11 @@ export class AppCoordinator {
       (workspace) =>
         workspace.state.kind === "available" && workspace.key === key,
     );
+    // Only a Workspace this open adds is the orchestrator's: one that was open
+    // already is the person's, and stays where they had it.
+    const openedBy = this.orchestratorOpens.delete(token.operationId)
+      ? ("orchestrator" as const)
+      : undefined;
     if (existing) {
       const beforeRevision = this.model.snapshot().revision;
       const reason = this.openReason(token.operationId);
@@ -1661,15 +1670,15 @@ export class AppCoordinator {
       this.emit({ kind: "noop" });
       return { kind: "noop", snapshot };
     }
-    this.model.addWorkspace(
-      new Workspace(
-        workspaceId,
-        resolved.location,
-        resolved.selectedPath,
-        undefined,
-        AVAILABLE,
-      ),
+    const added = new Workspace(
+      workspaceId,
+      resolved.location,
+      resolved.selectedPath,
+      undefined,
+      AVAILABLE,
     );
+    added.setOpenedBy(openedBy);
+    this.model.addWorkspace(added);
     // Opening a folder is choosing it, new or not — the branch above says the
     // same of one that was open already. Nothing else selects it: a workbench
     // DevHub builds for a Workspace does not report itself back. Unless the

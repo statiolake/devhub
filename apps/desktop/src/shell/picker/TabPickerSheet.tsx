@@ -16,7 +16,7 @@
 import { useMemo } from "react";
 import { Picker, type PickerItem } from "../components/shell/Picker";
 import { usePicker } from "./PickerContext";
-import { sidebarWorkspaces } from "../../ipc/appShell";
+import { sidebarOrder, sidebarWorkspaces } from "../../ipc/appShell";
 
 const EMPTY: readonly never[] = [];
 
@@ -37,12 +37,7 @@ export function TabPickerSheet({ onDismiss }: TabPickerSheetProps) {
   // counts entries in (`sidebarWorkspaces`). Scratch is named "Scratch" by main.
   const workspaces = useMemo(() => {
     if (state.status !== "ready") return EMPTY;
-    const { orchestrator, scratch, rows } = sidebarWorkspaces(state.snapshot);
-    return [
-      ...(orchestrator === undefined ? [] : [orchestrator]),
-      scratch,
-      ...rows,
-    ];
+    return sidebarOrder(sidebarWorkspaces(state.snapshot));
   }, [state]);
 
   const items = useMemo((): readonly PickerItem[] => {

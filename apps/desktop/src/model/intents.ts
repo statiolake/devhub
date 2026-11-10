@@ -24,6 +24,7 @@ import type {
   CloseInspectionProjection,
   DiagnosticCode,
   DisplayPath,
+  WorkspaceOpener,
   NavigationContext,
   SurfacePresentation,
   RuntimeHealth,
@@ -355,6 +356,12 @@ export type UserIntent =
       readonly location: RequestedWorkspaceLocation;
       /** `"none"`: open it without selecting it (`IntentFocus`). */
       readonly focus?: IntentFocus;
+      /**
+       * `"orchestrator"`: the orchestrator's side asked (`Workspace.openedBy`).
+       * Recorded only on a Workspace this open adds; one that was open already
+       * is the person's and stays so.
+       */
+      readonly openedBy?: WorkspaceOpener;
       /**
        * `"explicit"`: the Workspace it selects is a place for Back and
        * Forward at once (`NavigationReason`). Meaningless with `focus: "none"`,

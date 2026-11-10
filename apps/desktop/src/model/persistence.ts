@@ -563,6 +563,13 @@ export interface WorkspaceStateRecord {
    * workspace's first Agent, which is its rule with nothing remembered.
    */
   last_agent_id?: string;
+  /**
+   * Who opened it, when not the person: `"orchestrator"` for a folder the
+   * orchestrator's side opened (`Workspace.openedBy`); absent for every
+   * other. An older DevHub ignores the key, and its file has none: every
+   * Workspace it wrote is the person's, which is what it was.
+   */
+  opened_by?: "orchestrator";
   lifecycle: WorkspaceLifecycleRecord;
   agents: AgentStateRecord[];
   /**
@@ -1397,6 +1404,7 @@ export function hydrateModel(
           AVAILABLE,
         ),
     );
+    workspace.setOpenedBy(record.opened_by);
     return { record, where, workspace };
   });
   const scratch =
@@ -1594,6 +1602,9 @@ export function stateFromSnapshot(
       location: locationRecord(workspace.location),
       repository_id: workspace.repositoryId,
       last_agent_id: workspace.lastAgentId,
+      ...(workspace.openedBy === undefined
+        ? {}
+        : { opened_by: workspace.openedBy }),
       lifecycle: lifecycleFrom(workspace.state),
       agents: workspace.agents.map((agent) => ({
         agent_id: agent.id,
@@ -2182,6 +2193,13 @@ function decodeWorkspaceRecord(
     last_agent_id: decodeOptional(object["last_agent_id"], (entry) =>
       decodeString(at("last_agent_id"), entry),
     ),
+    ...(object["opened_by"] === undefined
+      ? {}
+      : {
+          opened_by: decodeMember(at("opened_by"), object["opened_by"], [
+            "orchestrator",
+          ] as const),
+        }),
     lifecycle: decodeLifecycle(at("lifecycle"), object["lifecycle"]),
     agents: decodeArray(at("agents"), object["agents"]).map((entry, index) =>
       decodeAgentRecord(`${at("agents")}[${index}]`, entry),

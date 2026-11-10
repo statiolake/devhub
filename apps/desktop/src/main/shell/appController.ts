@@ -73,6 +73,7 @@ import {
 	type CloseDiagnosticWire,
 	type NoticeRetiredWire,
 	type ReplayWire,
+	sidebarOrder,
 	sidebarWorkspaces,
 } from "../../ipc/appShell.js";
 import { placeWorkspaceBelow } from "../../model/workspaceOrder.js";
@@ -123,6 +124,7 @@ import {
 	type CloseInspectionInputs,
 	type Workspace,
 	type WorkspaceId,
+	type WorkspaceOpener,
 	type WorkspaceLocation,
 } from "../../model/domain.js";
 import { readSshHosts } from "./sshHosts.js";
@@ -3984,14 +3986,10 @@ export class AppController {
 	 */
 	taskManagerSnapshot(): Promise<TaskSnapshotWire> {
 		const shell = shellWindow();
-		const { orchestrator, scratch, rows } = sidebarWorkspaces(this.snapshot());
+		const ordered = sidebarOrder(sidebarWorkspaces(this.snapshot()));
 		return takeTaskReading({
 			workspaces: () =>
-				[
-					...(orchestrator === undefined ? [] : [orchestrator]),
-					scratch,
-					...rows,
-				].map((workspace) => {
+				ordered.map((workspace) => {
 					return {
 						id: workspace.id,
 						label: workspace.label,
@@ -6523,6 +6521,8 @@ export class AppController {
 	private async openFolderUnfocused(
 		location: RequestedWorkspaceLocation,
 		placement: WorkspacePlacement = "automatic",
+		/** The orchestrator's side asked: see `Workspace.openedBy`. */
+		openedBy?: WorkspaceOpener,
 	): Promise<WorkspaceId> {
 		const anchor =
 			placement === "below-selection" ? this.placementAnchor() : undefined;
@@ -6533,6 +6533,7 @@ export class AppController {
 			type: "open_folder",
 			location,
 			focus: "none",
+			...(openedBy === undefined ? {} : { openedBy }),
 		});
 		const sameMachine = (workspace: Workspace): boolean =>
 			workspace.location.kind === location.kind &&
@@ -8096,7 +8097,7 @@ export class AppController {
 						label: action.display_name,
 						template: action.template,
 					})),
-			openWorkspace: async (path, machine, worktree) => {
+			openWorkspace: async (path, machine, worktree, openedBy) => {
 				const place: WorkspacePlaceWire = machine.startsWith("ssh:")
 					? { kind: "ssh", host: machine.slice("ssh:".length), path }
 					: { kind: "local", path };
@@ -8120,8 +8121,13 @@ export class AppController {
 					};
 				}
 				// An Agent asking (`devhub --tell workspace open`), not a person: in
-				// the Sidebar, and nothing selected, shown or focused.
-				return this.openFolderUnfocused(requestedLocation(target));
+				// the Sidebar, and nothing selected, shown or focused — under the
+				// Orchestrator row when the orchestrator's side asked.
+				return this.openFolderUnfocused(
+					requestedLocation(target),
+					"automatic",
+					openedBy,
+				);
 			},
 			createAgent: async (workspaceId, profileId, presentation) => {
 				const before = this.modelAgentIds();
@@ -8705,7 +8711,11 @@ export class AppController {
 		if (request.editorOnly) {
 			// The folder in the Sidebar, as `workspace open` puts it there.
 			return {
-				workspaceId: await this.openFolderUnfocused(requestedLocation(folder)),
+				workspaceId: await this.openFolderUnfocused(
+					requestedLocation(folder),
+					"automatic",
+					request.openedBy,
+				),
 				agentId: undefined,
 				origin,
 			};
@@ -8744,6 +8754,9 @@ export class AppController {
 			{
 				review: false,
 				focus: "none",
+				...(request.openedBy === undefined
+					? {}
+					: { openedBy: request.openedBy }),
 			},
 		);
 		const agent = this.coordinator.model.workspaces
@@ -8752,7 +8765,11 @@ export class AppController {
 		return {
 			workspaceId:
 				agent?.workspaceId ??
-				(await this.openFolderUnfocused(requestedLocation(folder))),
+				(await this.openFolderUnfocused(
+					requestedLocation(folder),
+					"automatic",
+					request.openedBy,
+				)),
 			agentId: agent?.id,
 			origin,
 		};
@@ -9083,7 +9100,11 @@ export class AppController {
 		const quiet = how.focus === "none";
 		let workspaceId: WorkspaceId;
 		if (quiet) {
-			workspaceId = await this.openFolderUnfocused(opening);
+			workspaceId = await this.openFolderUnfocused(
+				opening,
+				"automatic",
+				how.openedBy,
+			);
 		} else {
 			await this.openFolder(opening, undefined, "automatic", "for-agent");
 			workspaceId = this.openedWorkspaceId(opening);
@@ -10164,6 +10185,8 @@ interface IssuePromptHow {
 	readonly review?: boolean;
 	/** `"none"` from `devhub --tell`: nothing is selected, shown or focused. */
 	readonly focus?: IntentFocus;
+	/** The orchestrator's side asked: a folder it opens is its (`openedBy`). */
+	readonly openedBy?: WorkspaceOpener;
 }
 
 let current: AppController | undefined;

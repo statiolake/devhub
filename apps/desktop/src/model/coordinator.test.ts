@@ -308,6 +308,49 @@ describe("dispatch", () => {
 });
 
 describe("opening a folder", () => {
+  it("records that the orchestrator opened a folder it added, and only then", () => {
+    const driver = new Driver();
+    const ids = [
+      "550e8400-e29b-41d4-a716-4466554400a1",
+      "550e8400-e29b-41d4-a716-4466554400a2",
+      "550e8400-e29b-41d4-a716-4466554400a3",
+    ];
+    const open = (path: string, openedBy?: "orchestrator") => {
+      driver.dispatch({
+        type: "open_folder",
+        location: requestedLocation({ kind: "local", path }),
+        focus: "none",
+        ...(openedBy === undefined ? {} : { openedBy }),
+      });
+      for (let round = 0; round < 16; round += 1) {
+        const effects = driver.drainEffects();
+        if (effects.length === 0) break;
+        for (const effect of effects)
+          if (effect.kind === "generate_workspace_id")
+            driver.accept({
+              type: "workspace_id_generated",
+              token: effect.token,
+              workspaceId: workspaceId(ids.shift()!),
+            });
+          else driver.answer(effect);
+      }
+    };
+    open("/dev/mine");
+    open("/dev/theirs", "orchestrator");
+    // A folder the person had open already stays theirs.
+    open("/dev/mine", "orchestrator");
+    const byRoot = Object.fromEntries(
+      driver.coordinator
+        .snapshot()
+        .workspaces.map((workspace) => [workspace.root, workspace.openedBy]),
+    );
+    expect(byRoot).toEqual({
+      [SCRATCH_PATH]: undefined,
+      "/dev/mine": undefined,
+      "/dev/theirs": "orchestrator",
+    });
+  });
+
   it("resolves, generates an identity, and adds the workspace", () => {
     const driver = new Driver();
     const outcome = driver.dispatch({

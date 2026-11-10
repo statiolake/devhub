@@ -224,6 +224,21 @@ describe("projection", () => {
     ).toBe(true);
   });
 
+  it("round-trips that the orchestrator opened a Workspace, absent as the person's", () => {
+    const model = populatedModel();
+    expect(
+      "opened_by" in stateFromSnapshot(model.snapshot()).workspaces[1],
+    ).toBe(false);
+    model.workspaces[1]!.setOpenedBy("orchestrator");
+    const state = stateFromSnapshot(model.snapshot());
+    expect(state.workspaces[1].opened_by).toBe("orchestrator");
+    expect(
+      hydrateModel(state, [codex], today())
+        .snapshot()
+        .workspaces.map((workspace) => workspace.openedBy),
+    ).toEqual([undefined, "orchestrator"]);
+  });
+
   it("writes an Agent DevHub labelled as not named, and loads it so", () => {
     const state = stateFromSnapshot(populatedModel().snapshot());
     expect("named" in state.workspaces[0].agents[0]).toBe(false);
