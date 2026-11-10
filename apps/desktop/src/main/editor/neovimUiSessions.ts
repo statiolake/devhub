@@ -76,6 +76,22 @@ interface Session<P> {
 const RESTART_WAIT_MS = 10_000;
 const RESTART_POLL_MS = 100;
 
+/**
+ * How long a socket that is not there yet is waited for at an attach, and
+ * how often it is tried. A pane's `nvim` names its socket before the Neovim
+ * it starts is listening (`terminalNeovimShim.ts`), and DevHub can come to
+ * it first: refused then, the overlay was dropped and the shim ran the TUI
+ * ten seconds later.
+ */
+const LISTEN_WAIT_MS = 5_000;
+const LISTEN_POLL_MS = 10;
+
+/** A connection that failed only because nothing listens there yet. */
+function notListening(error: unknown): boolean {
+	const code = (error as { code?: unknown } | null)?.code;
+	return code === "ENOENT" || code === "ECONNREFUSED";
+}
+
 type Notifying = NeovimRpc & {
 	notify(method: string, params: readonly unknown[]): void;
 };
@@ -102,7 +118,7 @@ export class NeovimUiSessions<P> {
 			session = undefined;
 		}
 		if (session === undefined) {
-			const client = await this.options.connect(target.socketPath);
+			const client = await this.connectListening(target.socketPath);
 			session = this.open(workspaceId, client, page, target);
 		}
 		session.page = page;
@@ -117,6 +133,19 @@ export class NeovimUiSessions<P> {
 			target.cols,
 			target.rows,
 		);
+	}
+
+	/** Connected once the socket is there and listening (`LISTEN_WAIT_MS`). */
+	private async connectListening(socketPath: string): Promise<NeovimRpc> {
+		const deadline = Date.now() + LISTEN_WAIT_MS;
+		for (;;) {
+			try {
+				return await this.options.connect(socketPath);
+			} catch (error) {
+				if (!notListening(error) || Date.now() >= deadline) throw error;
+			}
+			await delay(LISTEN_POLL_MS);
+		}
 	}
 
 	/** A session on a new connection, which says when it ends. */

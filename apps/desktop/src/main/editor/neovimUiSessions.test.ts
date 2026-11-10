@@ -81,6 +81,30 @@ const target = {
 	rows: 24,
 };
 
+describe("an attach", () => {
+	it("waits for a socket named before its Neovim listens", async () => {
+		const neovim = new FakeNeovim();
+		const missing = Object.assign(new Error("connect ENOENT /s"), {
+			code: "ENOENT",
+		});
+		const refused = Object.assign(new Error("connect ECONNREFUSED /s"), {
+			code: "ECONNREFUSED",
+		});
+		const { sessions, ended } = setup([missing, refused, neovim]);
+		await sessions.attach("page", target);
+		expect(neovim.attachedAt()?.slice(0, 2)).toEqual([80, 24]);
+		expect(ended).toEqual([]);
+	});
+
+	it("fails at once when the socket refuses for another reason", async () => {
+		const denied = Object.assign(new Error("connect EACCES /s"), {
+			code: "EACCES",
+		});
+		const { sessions } = setup([denied, new FakeNeovim()]);
+		await expect(sessions.attach("page", target)).rejects.toThrow("EACCES");
+	});
+});
+
 describe("a :restart", () => {
 	it("attaches to the new server on the same socket, at the page's size, and is no end", async () => {
 		const old = new FakeNeovim();
