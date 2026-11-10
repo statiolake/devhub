@@ -96,7 +96,17 @@ export function DiffView({ files }: { readonly files: readonly FileDiff[] }) {
   return (
     <div className="conversation-diff">
       {files.map((file, index) => {
-        const rows = diffRows(file.unifiedDiff);
+        const all = diffRows(file.unifiedDiff);
+        // A diff made from a call's input (`@@` alone) has no numbers to
+        // give: its columns are left out rather than drawn empty, and its
+        // first `@@` says nothing, so only a later one, between two hunks,
+        // is kept — as the rule between them.
+        const numbered = all.some(
+          (row) => row.old !== undefined || row.new !== undefined,
+        );
+        const rows = numbered
+          ? all
+          : all.filter((row, at) => at > 0 || row.kind !== "hunk");
         const line = firstNewLine(rows);
         return (
           <div className="conversation-diff-file" key={`${index}:${file.path}`}>
@@ -113,20 +123,35 @@ export function DiffView({ files }: { readonly files: readonly FileDiff[] }) {
                 {shownPath(file.path, cwd)}
               </PathLink>
             </div>
-            <div className="conversation-diff-lines">
+            <div
+              className="conversation-diff-lines"
+              data-unnumbered={numbered ? undefined : ""}
+            >
               {rows.map((row, at) => (
                 <div
                   key={at}
                   className="conversation-diff-line"
                   data-line={row.kind}
                 >
-                  <span className="conversation-diff-number" aria-hidden="true">
-                    {row.old ?? ""}
+                  {numbered ? (
+                    <>
+                      <span
+                        className="conversation-diff-number"
+                        aria-hidden="true"
+                      >
+                        {row.old ?? ""}
+                      </span>
+                      <span
+                        className="conversation-diff-number"
+                        aria-hidden="true"
+                      >
+                        {row.new ?? ""}
+                      </span>
+                    </>
+                  ) : null}
+                  <span className="conversation-diff-text">
+                    {!numbered && row.kind === "hunk" ? "" : row.text}
                   </span>
-                  <span className="conversation-diff-number" aria-hidden="true">
-                    {row.new ?? ""}
-                  </span>
-                  <span className="conversation-diff-text">{row.text}</span>
                 </div>
               ))}
             </div>

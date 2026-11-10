@@ -115,6 +115,40 @@ describe("a call's readable view", () => {
     }
   });
 
+  it("leaves out the numbers and the bare `@@` of a diff made from a call's input", () => {
+    draw(
+      transcriptOf([
+        IN_CWD,
+        put(
+          tool("t1", "MultiEdit: src/x.ts", {
+            status: "running",
+            change: [
+              {
+                path: `${CWD}/src/x.ts`,
+                unifiedDiff: "@@\n-a\n+b\n@@\n-c\n+d",
+              },
+            ],
+          }),
+        ),
+      ]),
+    );
+    const view = readable("t1")!;
+    expect(view.querySelector(".conversation-diff-number")).toBeNull();
+    expect(
+      view.querySelector(".conversation-diff-lines[data-unnumbered]"),
+    ).not.toBeNull();
+    const rows = view.querySelectorAll(".conversation-diff-line");
+    // The first `@@` is gone; the second is the rule between the hunks.
+    expect([...rows].map((row) => row.getAttribute("data-line"))).toEqual([
+      "remove",
+      "add",
+      "hunk",
+      "remove",
+      "add",
+    ]);
+    expect(rows[2]).toHaveTextContent(/^$/);
+  });
+
   it("is the one slot every kind of readable view is drawn in", () => {
     draw(
       transcriptOf([

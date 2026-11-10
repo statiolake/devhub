@@ -1897,6 +1897,24 @@ span.conversation-picture-box > img {
   color: var(--secondary);
 }
 
+/* A diff with no line numbers (one made from a call's input): no number
+   columns, the lines starting where the path above them does, and a later
+   hunk's `@@` drawn as the rule it is between two hunks. */
+.conversation-diff-lines[data-unnumbered] > .conversation-diff-line {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.conversation-diff-lines[data-unnumbered] .conversation-diff-text {
+  padding-left: var(--space-3);
+  text-indent: 0;
+}
+
+.conversation-diff-lines[data-unnumbered] > [data-line="hunk"] {
+  height: 0;
+  margin: var(--space-1) 0;
+  border-top: 1px solid var(--line-soft);
+}
+
 /* A ```diff block, drawn: the tool diffs' rows, coloured as the file's
    language, inline or side by side. */
 .conversation-diff-preview .conversation-diff-file + .conversation-diff-file {
