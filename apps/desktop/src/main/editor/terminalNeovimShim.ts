@@ -81,6 +81,47 @@ export const NVIM_OVERLAY_OPTION = "@devhub-nvim-overlay";
 /** How long the script waits for DevHub's UI before it runs the TUI, in tenths. */
 export const NVIM_UI_WAIT_TENTHS = 100;
 
+/** The variable the launcher runs the script again with: its directory. */
+export const NVIM_BODY_VARIABLE = "DEVHUB_NVIM_BODY";
+
+/**
+ * What the script runs under (`nvim -l`) once it is to draw the Neovim: the
+ * script again, with the same arguments, as a child that has the pane's
+ * terminal, and its exit status. The pane's foreground process — the job
+ * the shell started, which tmux names the window by, from
+ * `/proc/<pid>/cmdline` on Linux and `p_comm` on macOS — is then DevHub's
+ * Neovim binary, `nvim`, rather than `/bin/sh` (a window read `sh:demo`).
+ *
+ * Ctrl-C and Ctrl-\\ are the script's to ignore, so they are caught here.
+ * Ctrl-Z too, until the script runs the TUI (it says so with `SIGUSR1`):
+ * then a suspended TUI stops this too, or the shell would wait on a job
+ * that never stops.
+ */
+export const NVIM_LAUNCH_LUA = `local uv = vim.uv
+local tui = false
+local function on(name, handler)
+  local signal = uv.new_signal()
+  signal:start(name, handler or function() end)
+end
+on("sigint")
+on("sigquit")
+on("sigusr1", function() tui = true end)
+on("sigtstp", function()
+  if tui then uv.kill(uv.os_getpid(), "sigstop") end
+end)
+local status
+local args = {}
+for i = 1, #arg do args[i] = arg[i] end
+local child = uv.spawn("/bin/sh", { args = args, stdio = { 0, 1, 2 } }, function(code, signal)
+  status = signal ~= 0 and 128 + signal or code
+end)
+if not child then os.exit(127) end
+while status == nil do
+  vim.wait(60000, function() return status ~= nil end)
+end
+os.exit(status)
+`;
+
 export interface NeovimShimFacts {
 	/** DevHub's Neovim on that machine, by its absolute path. */
 	readonly nvim: string;
@@ -138,9 +179,21 @@ overlay() {
 	why "overlay|session|socket is $state (wants 1|${facts.sessionPrefixes.join(" or ")}...|empty)"
 }
 
-overlay "$@" || exec "$real" "$@"
-
-dir=$(mktemp -d "\${TMPDIR:-/tmp}/devhub-nvim.XXXXXX") || exec "$real" "$@"
+if [ -n "\${${NVIM_BODY_VARIABLE}-}" ]; then
+	# Run again by the launcher below, the overlay already settled.
+	dir=$${NVIM_BODY_VARIABLE}
+	unset ${NVIM_BODY_VARIABLE}
+else
+	overlay "$@" || exec "$real" "$@"
+	dir=$(mktemp -d "\${TMPDIR:-/tmp}/devhub-nvim.XXXXXX") || exec "$real" "$@"
+	# The rest runs under \`$real -l\` (\`NVIM_LAUNCH_LUA\`), DevHub's Neovim:
+	# the pane's foreground process, which tmux names the window by, is
+	# then \`nvim\`, not \`sh\`, while this script waits on the server and
+	# follows its \`:restart\`s.
+	cat >"$dir/launch.lua" <<'DEVHUB_NVIM_LAUNCH'
+${NVIM_LAUNCH_LUA}DEVHUB_NVIM_LAUNCH
+	${NVIM_BODY_VARIABLE}=$dir exec "$real" -u NONE -i NONE -n --headless -l "$dir/launch.lua" "$0" "$@"
+fi
 socket=$dir/s
 cleanup() {
 	"$shim_tmux" set-option -p -u -t "$TMUX_PANE" ${NVIM_SOCKET_OPTION} 2>/dev/null
@@ -178,6 +231,8 @@ while kill -0 "$pid" 2>/dev/null; do
 		# the scrollback above the shell once the TUI's screen is gone).
 		[ -n "\${DEVHUB_NVIM_DEBUG-}" ] || printf '\\033[2m%s\\033[22m\\n' "nvim: DevHub did not draw it within ${String(waitTenths / 10)} s (DevHub not running, the terminal not on screen, or the overlay failed): running it in the terminal" >&2
 		trap - INT QUIT TSTP
+		# The launcher stops with the TUI when it suspends (\`:suspend\`, ^Z).
+		kill -USR1 "$PPID" 2>/dev/null
 		exec "$real" "$@"
 	fi
 	waited=$((waited + 1))

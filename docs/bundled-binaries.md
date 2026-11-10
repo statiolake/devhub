@@ -54,7 +54,7 @@ Every place DevHub starts a program at runtime, with its category:
 
 | what | where | |
 | --- | --- | --- |
-| Neovim: the keeper's `nvim --headless --listen`, the shim's `nvim --embed`, the shim's tty-key reader `nvim -l` | `managedNeovim.ts`, `terminalNeovimShim.ts`, `terminalNeovimTtyKeys.ts` | bundled/delivered, by absolute path (`$real`) |
+| Neovim: the keeper's `nvim --headless --listen`, the shim's `nvim --embed`, the shim's tty-key reader `nvim -l`, the shim's launcher `nvim -l` (the pane's foreground process) | `managedNeovim.ts`, `terminalNeovimShim.ts`, `terminalNeovimTtyKeys.ts` | bundled/delivered, by absolute path (`$real`) |
 | tmux, the server and every client (node-pty, `tmux -C`, bounded commands) | `terminal/tmux.ts`, `ptyHost/`, `surfaces.ts` | bundled (`terminal/bundledTmux.ts`) / delivered, by absolute path |
 | a pane's `tmux` (typed, a binding's `run-shell`, `copy-pipe`, a popup's) | `paneTmuxScript`, beside the `nvim` shim and first on every pane's PATH | bundled/delivered, by absolute path (`docs/terminal-mode.md`, "DevHub's tmux") |
 | the `devhub` command | the launcher (`cli/install.ts`), a host's shim (`terminal/launcher.ts`) | bundled/delivered |

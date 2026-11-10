@@ -1132,10 +1132,16 @@ forwarded like the managed Neovim's (`ssh -O forward`). The `devhub-nvim`
 window's pane names its Neovim's socket in the same option, which is all it
 takes for it to be drawn the same way. The server option
 `@devhub-nvim-overlay` says the editor is Neovim, so switching to VS Code
-reaches panes that already have the shim. While the script waits, tmux's
-`pane_current_command` would say `sh`, which DevHub counts as an idle shell;
-every pane reading DevHub makes says `nvim` for a pane with `@devhub-nvim`
-instead, so closing the terminal still asks first.
+reaches panes that already have the shim. Once it is to draw the Neovim the
+script runs the rest of itself under DevHub's Neovim as `nvim -l`
+(`NVIM_LAUNCH_LUA`), which waits on it and exits with its status: the pane's
+foreground process is then `nvim`, not `sh`, so tmux names the window after
+it (`pane_current_command` is the job's leader: `/proc/<pid>/cmdline` on
+Linux, `p_comm` on macOS; a window read `sh:demo` before). The launcher
+ignores Ctrl-C and Ctrl-\ as the script does, and once the script has run
+the TUI instead it stops itself when the TUI suspends, so `:suspend` and `fg`
+work. Every pane reading DevHub makes says `nvim` for a pane with
+`@devhub-nvim` as well, so closing the terminal still asks first.
 
 **Where the overlay goes** (`main/editor/terminalNeovims.ts`,
 `shell/pane/PaneNeovims.tsx`). In the terminal's own page, in its pane. Main

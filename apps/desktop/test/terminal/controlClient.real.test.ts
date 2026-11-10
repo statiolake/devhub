@@ -847,6 +847,26 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
         type(
           `clear; printf '\\033[3J'; nvim --clean -n -i NONE ${file}; echo "status=$?"\r`,
         );
+        // While it waits for DevHub's UI the pane's program is `nvim`, not
+        // the script's `sh`: the window is named after it.
+        await until(
+          "the socket named",
+          () =>
+            tmux(socket, "show-options", "-p", "-t", "ws-fallback").includes(
+              "@devhub-nvim ",
+            ),
+          4000,
+        );
+        expect(
+          tmux(
+            socket,
+            "display-message",
+            "-p",
+            "-t",
+            "ws-fallback",
+            "#{pane_current_command}",
+          ),
+        ).toBe("nvim\n");
         await until(
           "the TUI",
           () =>
