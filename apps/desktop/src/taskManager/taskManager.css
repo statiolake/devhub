@@ -269,6 +269,10 @@ body {
 .tm-table {
   flex: 1;
   overflow: auto;
+  /* The process list grows as processes start: it keeps the bar's room, so
+     the right-aligned figures do not step left when it starts to scroll
+     (docs/motion.md). */
+  scrollbar-gutter: stable;
   outline: none;
 }
 

@@ -290,7 +290,11 @@ What will appear later has its room already, at its final size:
 - **A scrollbar never takes room it did not have.** DevHub's scrollbars are
   styled, so never overlays, on the Mac too: every list that can grow
   keeps the bar's gutter (`scrollbar-gutter: stable`; `both-edges` where
-  the column is centred).
+  the column is centred). Content never sits under a bar: where there is
+  no room to keep for one — compact mode's rail, one 26px entry in a 40px
+  pane — no bar is drawn and the pointer grows the rail into the floating
+  Sidebar, which has its gutter (`tokens.css`; guarded in
+  `scrollbars.test.ts`).
 - **Skeletons equal the content.** A loading state is the height of what
   loads into it, or the place is empty until the content is ready.
 

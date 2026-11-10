@@ -63,12 +63,66 @@ describe("scrollbars", () => {
   it("are hidden by one class, for a strip that fades its edges instead", () => {
     const tokens = read("shell/styles/tokens.css");
     expect(tokens).toMatch(
-      /\n\.scrollbar-none \{\s*scrollbar-width: none;\s*\}/,
+      /\n\.scrollbar-none,\n[^{]*\{\s*scrollbar-width: none;\s*\}/,
     );
     expect(tokens).toMatch(
-      /\n\.scrollbar-none::-webkit-scrollbar \{\s*display: none;\s*\}/,
+      /\n\.scrollbar-none::-webkit-scrollbar,\n[^{]*\{\s*display: none;\s*\}/,
     );
     expect(read("shell/neovim/TabStrip.tsx")).toContain('"scrollbar-none"');
+  });
+
+  /*
+   * Compact mode's rail is one 26px entry in a 40px pane: a kept 10px gutter
+   * left its rows 16px, and the bar stood over the trailing half of every
+   * mark. The rail draws no bar (the pointer on it grows it into the floating
+   * Sidebar, which has one), and keeps no room for it.
+   */
+  it("are not drawn in compact mode's rail, which has no room for one", () => {
+    const tokens = read("shell/styles/tokens.css");
+    const rail = '.sidebar[data-collapsed="true"] .sidebar-scroll-region';
+    const hidden =
+      /\n(\.scrollbar-none,\n[^{]*)\{\s*scrollbar-width: none;/.exec(
+        tokens,
+      )?.[1];
+    expect(hidden).toContain(rail);
+    const gone =
+      /\n(\.scrollbar-none::-webkit-scrollbar,\n[^{]*)\{\s*display: none;/.exec(
+        tokens,
+      )?.[1];
+    expect(gone).toContain(`${rail}::-webkit-scrollbar`);
+  });
+
+  /*
+   * A drawn bar takes its 10px; a list that grew past its box narrowed by
+   * that much the moment it did, and what was right-aligned in it stepped
+   * left. Every list that can grow keeps the room (docs/motion.md).
+   */
+  it("keep their room in every list that can grow", () => {
+    const lists: readonly (readonly [string, string])[] = [
+      ["shell/styles/shell.css", ".sidebar-scroll-region"],
+      ["shell/styles/macos.css", ".mac-list"],
+      ["shell/styles/macos.css", ".chord-help-rows"],
+      ["shell/styles/macos.css", ".picker-aside"],
+      ["shell/styles/toast.css", ".notice-center-list"],
+      ["shell/agents/orchestrator.css", ".orchestrator-lanes"],
+      ["shell/agents/orchestrator.css", ".orchestrator-files"],
+      ["shell/agents/orchestrator.css", ".orchestrator-thread"],
+      ["shell/completion/completionMenu.css", ".completion-menu"],
+      ["shell/conversation/conversation.css", ".conversation-scroll"],
+      ["shell/conversation/conversation.css", ".conversation-background-list"],
+      ["settings/settings.css", ".sf-form"],
+      ["settings/settings.css", ".sf-list"],
+      ["settings/settings.css", ".sf-detail"],
+      ["settings/settings.css", ".settings-theme-list"],
+      ["taskManager/taskManager.css", ".tm-table"],
+    ];
+    for (const [file, selector] of lists) {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const body = new RegExp(`\\n${escaped} \\{([^}]*)\\}`).exec(
+        read(file),
+      )?.[1];
+      expect(body, `${file} ${selector}`).toMatch(/scrollbar-gutter:\s*stable/);
+    }
   });
 
   it("are drawn nowhere else", () => {

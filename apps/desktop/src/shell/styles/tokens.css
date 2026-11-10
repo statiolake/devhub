@@ -947,12 +947,24 @@ a {
 }
 
 /* A strip that scrolls sideways and shows what lies beyond an edge by
-   fading it (the Neovim tab strip) draws no bar at all. */
-.scrollbar-none {
+   fading it (the Neovim tab strip) draws no bar at all.
+
+   Nor does compact mode's rail. It is one 26px entry wide in a 40px pane
+   (76px without a title bar, the same entry centred in it), and a kept
+   10px gutter left the rows 16px: the bar stood over the trailing half of
+   every mark and of the selection's square, scrolling or not. There is no
+   room to keep for a bar, and no list in the rail to drag one along: the
+   pointer on the rail grows it into the floating Sidebar, which is the
+   docked column, gutter and bar included (`sidebarPage.css`). So the rail
+   scrolls under the wheel and the keyboard and draws nothing for it —
+   which also keeps its marks still when it starts to scroll. */
+.scrollbar-none,
+.sidebar[data-collapsed="true"] .sidebar-scroll-region {
   scrollbar-width: none;
 }
 
-.scrollbar-none::-webkit-scrollbar {
+.scrollbar-none::-webkit-scrollbar,
+.sidebar[data-collapsed="true"] .sidebar-scroll-region::-webkit-scrollbar {
   display: none;
 }
 
