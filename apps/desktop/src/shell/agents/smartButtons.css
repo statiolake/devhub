@@ -2,60 +2,37 @@
 
    Placed by the component, which writes `right` and `bottom`: on a GUI
    Agent's composer, in a terminal's bottom right corner, anchored to either,
-   or wherever the person dragged it. Over a surface that may be any colour,
-   so the box carries its own ground: one box round the whole cluster — the
-   automatic actions' switch and every button — and the box is what moves.
+   or wherever the person dragged it.
 
-   A ghost at rest, solid when reached for. At rest the box is a faint wash of
-   the floating material with a hairline edge, and the whole of it is a
-   suggestion at 40%; pointed at, holding focus, or being dragged it
-   materialises — full strength, the floating material with its blur, and
-   elevation 2 (3 while it is carried). One rule for its strength, and it is
-   the only opacity anything in the box has: on the box and not per button,
-   because reaching for one is a decision about the group — a stack in which
-   one button is bright and the others ghosts reads as the others being
-   disabled.
+   Not a box. What to say next belongs to the composer, not to the
+   transcript, so it is one row standing on the composer's top edge — the
+   automatic actions' bolt, then a pill per button — and nothing else: no
+   card round it, no ground of its own between the pills. And it is at full
+   strength whenever it is there: a suggestion seen is seen plainly, and one
+   not wanted is not offered. There used to be a box at 40% that solidified
+   when reached for, and the transcript scrolling under it showed through it
+   — a ghost that read as UI half gone.
+
+   Each pill and the bolt carry an opaque ground, the conversation's own, so
+   a line of the transcript scrolled under the row is covered where a pill
+   is, not read through it; on the transcript's ground they read as outlines.
 
    Motion is the shared tokens' (`tokens.css`), with the playful end of them:
-   a line pops into being on the pop spring, scaled up from small, and lines
-   arriving together pop one after another; a button lifts a pixel under the
-   pointer and gives under the press, springing back; a line that leaves
-   shrinks away quickly where it stands. */
+   a line pops into being on the pop spring, scaled up from small, and pills
+   arriving together pop one after another; a pill lifts a pixel under the
+   pointer and gives under the press, springing back; one that leaves shrinks
+   away quickly where it stands. Only transform and opacity move. */
 .smart-buttons {
-  /* How the box materialises and fades back, in every state below. */
-  --smart-materialize:
-    opacity var(--motion-base) var(--ease-standard),
-    background-color var(--motion-base) var(--ease-standard),
-    box-shadow var(--motion-base) var(--ease-standard),
-    backdrop-filter var(--motion-base) var(--ease-standard);
-
   position: absolute;
   z-index: 2;
   display: flex;
-  max-width: min(260px, calc(100% - var(--space-6)));
-  flex-direction: column;
-  align-items: end;
-  padding: 3px;
-  border-radius: var(--radius-card);
-  background: color-mix(in srgb, var(--material-float) 30%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--edge) 60%, transparent);
+  max-width: calc(100% - var(--space-6));
+  flex-flow: row wrap;
+  align-items: center;
+  justify-content: end;
   cursor: grab;
-  gap: 2px;
-  opacity: 0.4;
+  gap: var(--space-1);
   touch-action: none;
-  transition: var(--smart-materialize);
-}
-
-/* Reached for: made solid. */
-.smart-buttons:is(:hover, :focus-within, [data-dragging]) {
-  backdrop-filter: var(--material-blur);
-  background: var(--material-float);
-  box-shadow: var(--elevation-2);
-}
-
-/* Carried: lifted a level, and the pointer holds it. */
-.smart-buttons[data-dragging] {
-  box-shadow: var(--elevation-3);
 }
 
 .smart-buttons[data-dragging],
@@ -63,34 +40,27 @@
   cursor: grabbing;
 }
 
-/* Snapped to the input box mid-drag: the edge says so before the drop. */
-.smart-buttons[data-dragging][data-anchored] {
+/* Carried: every pill lifted together, the row is one thing in the hand. */
+.smart-buttons[data-dragging] :is(.smart-button, .smart-buttons-auto) {
   box-shadow:
-    0 0 0 1px var(--accent),
-    0 2px 6px var(--shadow-mid),
-    0 10px 28px var(--shadow-deep);
+    inset 0 0 0 1px var(--line),
+    var(--elevation-2);
 }
 
-/* Increase Contrast: no ghost — an opaque ground and a firm edge at rest. */
-@media (prefers-contrast: more) {
-  .smart-buttons {
-    background: var(--raised);
-    box-shadow: 0 0 0 1px var(--edge);
-  }
+/* Snapped to the input box mid-drag: the edges say so before the drop. */
+.smart-buttons[data-dragging][data-anchored]
+  :is(.smart-button, .smart-buttons-auto) {
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    var(--elevation-2);
 }
 
 /* Position glides only just after a snap, dock or undock (set by the
    component for a moment), never on mount, page switch or resize. */
 .smart-buttons[data-settling]:not([data-dragging]) {
   transition:
-    var(--smart-materialize),
     right var(--motion-slow) var(--ease-spring),
     bottom var(--motion-slow) var(--ease-spring);
-}
-
-/* Under the pointer the box follows it exactly. */
-.smart-buttons[data-dragging] {
-  transition: var(--smart-materialize);
 }
 
 /* Mid-drag, going onto the composer's edge (`data-snapping="in"`) and
@@ -143,13 +113,10 @@
   pointer-events: none;
 }
 
-/* Reduce Motion: the box and its lines fade, and nothing moves or grows. */
+/* Reduce Motion: the pills fade, and nothing moves or grows. */
 @media (prefers-reduced-motion: reduce) {
-  .smart-buttons,
-  .smart-buttons[data-settling]:not([data-dragging]),
-  .smart-buttons[data-dragging] {
-    /* It still materialises and fades back; only the glide goes. */
-    transition: var(--smart-materialize);
+  .smart-buttons[data-settling]:not([data-dragging]) {
+    transition: none;
   }
 
   .smart-button-line[data-entering] {
@@ -176,126 +143,92 @@
   }
 }
 
-.smart-buttons:hover,
-.smart-buttons:focus-within,
-.smart-buttons[data-dragging] {
-  opacity: 1;
-}
-
-/* A conversation's stack is one block: every line as wide as the widest, so
-   it stands on the composer as a single tab rather than a ragged edge. A
-   terminal's lines keep their own widths, flush right in the corner. */
-.smart-buttons[data-presentation="gui"] {
-  align-items: stretch;
-}
-
-/* The automatic actions' switch, at the box's top end. */
+/* The automatic actions' bolt, leading the row. */
 .smart-buttons-header {
   display: flex;
   align-items: center;
-  justify-content: end;
-  gap: var(--space-1);
 }
 
 .smart-buttons-auto svg {
   fill: currentcolor;
 }
 
-/* One line: the button. */
+/* One line: the pill. */
 .smart-button-line {
   display: flex;
   min-width: 0;
-  align-items: stretch;
 }
 
-/* A button is a row of the box: a faint wash on the box's ground, its
-   corners following the box's. Under the pointer it lifts a pixel towards
-   the hand; pressed it gives, quickly, and springs back on release. The
-   pointer over it stays the arrow — it is a button first — and becomes the
-   closed hand once a press has turned into a drag. */
+/* A button is a pill: a hairline edge on the conversation's ground, its words
+   in the secondary ink — a suggestion beside the composer, a step quieter
+   than what is typed in it. Under the pointer its words come up to the
+   primary ink and it lifts a pixel towards the hand; pressed it gives,
+   quickly, and springs back on release. The pointer over it stays the arrow
+   — it is a button first — and becomes the closed hand once a press has
+   turned into a drag. */
 .smart-button {
   overflow: hidden;
   min-width: 0;
-  flex: 1 1 auto;
-  padding: 3px 10px;
+  max-width: 24em;
+  padding: 2px 10px;
   border: 0;
-  border-radius: calc(var(--radius-card) - 3px);
-  background: color-mix(in srgb, var(--primary) 6%, transparent);
-  color: var(--primary);
-  font-size: 11px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--secondary);
+  font-size: 12px;
   font-weight: 510;
-  line-height: 16px;
-  text-align: left;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition:
-    background-color var(--motion-fast) var(--ease-standard),
-    box-shadow var(--motion-fast) var(--ease-standard),
-    transform var(--motion-base) var(--ease-spring);
+  transition: transform var(--motion-base) var(--ease-spring);
 }
 
-.smart-button:hover,
+.smart-button:hover:not([data-waiting]),
 .smart-buttons-auto:hover {
-  background: color-mix(in srgb, var(--primary) 11%, transparent);
+  background: color-mix(in srgb, var(--primary) 5%, var(--surface));
+  color: var(--primary);
 }
 
 .smart-button:hover:not([data-waiting]) {
-  box-shadow: 0 1px 3px var(--shadow-soft);
   transform: translateY(-1px);
 }
 
 .smart-button:active:not([data-waiting]),
 .smart-buttons-auto:active {
-  background: color-mix(in srgb, var(--primary) 16%, transparent);
-  box-shadow: none;
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
   transform: scale(0.94);
   transition-duration: 80ms;
 }
 
-/* Carried, nothing in the box answers the pointer: it is all one thing. */
+/* Carried, nothing in the row answers the pointer: it is all one thing. */
 .smart-buttons[data-dragging] :is(.smart-button, .smart-buttons-auto) {
-  box-shadow: none;
   transform: none;
 }
 
 .smart-button:focus-visible,
 .smart-buttons-auto:focus-visible {
   outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+  outline-offset: 1px;
 }
 
-/* Automatic: the line edged in the accent, so an Agent that will act on its
+/* Automatic: the pill edged in the accent, so an Agent that will act on its
    own is never a surprise. One whose condition does not hold is drawn but
-   cannot be pressed: it fires by itself when the condition arises. */
+   cannot be pressed — its words in the tertiary ink, the ink of what is not
+   to hand — and fires by itself when the condition arises. */
 .smart-button-line[data-automatic] .smart-button {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .smart-button[data-waiting] {
-  color: var(--secondary);
+  color: var(--tertiary);
 }
 
-.smart-button[data-waiting]:hover,
-.smart-button[data-waiting]:active {
-  background: color-mix(in srgb, var(--primary) 6%, transparent);
-}
-
-/* With no button offered and nothing switched on, the box is only its
-   header, and it is there to be found, not to be looked at: shown while the
-   pane is pointed at or the box holds focus. */
+/* With no button offered and nothing switched on, the row is only its bolt,
+   and it is there to be found, not to be looked at: shown while the pane is
+   pointed at or the bolt holds focus. */
 .agent-pane:not(:hover) > .smart-buttons[data-quiet]:not(:focus-within) {
   visibility: hidden;
-}
-
-/* And it is not a box: an empty box with a bolt in its corner reads as
-   Smart Buttons that failed to appear. Just the bolt, bare, where the box
-   would stand — no ground, no edge, no lift, however it is reached for. */
-.smart-buttons[data-quiet],
-.smart-buttons[data-quiet]:is(:hover, :focus-within, [data-dragging]) {
-  padding: 0;
-  backdrop-filter: none;
-  background: transparent;
-  box-shadow: none;
 }
 
 .smart-buttons-automatic {
@@ -303,26 +236,26 @@
   display: flex;
 }
 
+/* The bolt: on the same ground as the pills, with no edge — it is the row's
+   switch, not one of the things to say. Armed, it takes the accent edge the
+   automatic pills wear. */
 .smart-buttons-auto {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 2px 5px;
+  padding: 2px 6px;
   border: 0;
   border-radius: var(--radius-pill);
-  background: transparent;
+  background: var(--surface);
   color: var(--secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 510;
-  line-height: 16px;
-  transition:
-    background-color var(--motion-fast) var(--ease-standard),
-    transform var(--motion-base) var(--ease-spring);
+  line-height: 18px;
+  transition: transform var(--motion-base) var(--ease-spring);
 }
 
 .smart-buttons-auto[data-armed] {
-  background: var(--material-float);
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
   color: var(--accent);
 }
 
@@ -336,7 +269,6 @@
   flex-direction: column;
   padding: var(--space-1);
   border-radius: var(--radius-panel);
-  backdrop-filter: var(--material-blur);
   background: var(--material-float);
   box-shadow: var(--elevation-3);
   transform-origin: 100% 100%;

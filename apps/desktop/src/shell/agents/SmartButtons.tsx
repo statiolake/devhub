@@ -19,11 +19,10 @@
  * Every action under a trigger that holds is offered, unless its `button` is
  * off in Settings; the Agent actions sheet lists every action regardless.
  *
- * **Shape.** One box holding a compact stack, one button per line under the
- * automatic actions' switch — never a row that grows as wide as its wording.
- * A terminal's lines are as wide as their words and flush right in its
- * corner; a conversation's are all one width, so the stack reads as one block
- * standing on the composer.
+ * **Shape.** One row: the automatic actions' bolt, then a pill per button,
+ * flush right, wrapping only when the pane is too narrow for it. No box round
+ * it: what to say next is the composer's accessory, so it stands on the
+ * composer's edge rather than floating over the transcript as a card.
  *
  * **Where.** A GUI Agent's stand on its composer's top edge, touching it; a
  * terminal's in the pane's bottom right corner above the queued-message
@@ -37,8 +36,9 @@
  * double-click on the box's own ground, or ⌥Home, puts it back. What is drawn is always
  * clamped to the pane as it is now, so a smaller window never hides it.
  *
- * **How it looks.** A ghost at rest — it sits over the work — and made solid
- * while pointed at, holding focus, or being dragged (`smartButtons.css`).
+ * **How it looks.** At full strength whenever it is there: outlined pills on
+ * the conversation's own ground (`smartButtons.css`). It used to rest as a
+ * ghost at 40%, which over a scrolled transcript read as UI half gone.
  *
  * **Automatic.** The bolt in the header opens a switch for every action that
  * may be automatic (`AUTOMATIC_TRIGGERS`), each with what makes it fire: switched
@@ -249,9 +249,9 @@ function anchorOf(
 }
 
 /**
- * How the box meets what it stands on: inset from a composer's right edge
- * past its rounded corner and 8px (`--space-2`) clear of its top; a small gap above a status,
- * right edges lined up.
+ * How the row meets what it stands on: inset from a composer's right edge
+ * past its rounded corner and 8px (`--space-2`) clear of its top; a small gap
+ * above a status, right edges lined up.
  */
 const SPACING = {
   gui: { inset: 16, gap: 8 },
@@ -405,7 +405,7 @@ export function SmartButtons({
       className="smart-buttons"
       role="toolbar"
       aria-label="Smart Buttons"
-      aria-orientation="vertical"
+      aria-orientation="horizontal"
       data-presentation={agent.presentation}
       data-placed={stored === undefined ? "default" : "moved"}
       {...(anchored === undefined ? {} : { "data-anchored": anchored })}
@@ -416,7 +416,7 @@ export function SmartButtons({
         : {})}
       {...(waiting ? { "data-waiting": "", "aria-hidden": true } : {})}
       aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight Alt+Home"
-      title="Drag to move; near the input box it snaps to it and stays there. Double-click its edge to put it back."
+      title="Drag to move; near the input box it snaps to it and stays there. Double-click between the buttons to put it back."
       style={{
         right: `${String(drawn.right)}px`,
         bottom: `${String(drawn.bottom)}px`,

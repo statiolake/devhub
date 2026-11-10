@@ -1421,9 +1421,8 @@ says. It starts a GUI Agent from the same profile resuming the
 terminal's session, selects it, and stops the terminal Agent once the GUI one
 is running and written down; a launch that fails leaves the terminal running.
 **Smart Buttons.** While a GUI Agent is idle (or done but for something it left
-running in the background), one box holding a compact stack
-of small buttons — one per line, under the automatic actions' bolt — stands
-on its composer's top right edge: what
+running in the background), one row — the automatic actions' bolt, then a
+pill per button — stands on its composer's top right edge: what
 the Workspace's repository says could be done next — commit, push, open a
 pull request, get a draft ready, address review comments, fix CI
 (`smartButtonTriggers` in `model/agentActions.ts`, read from the repository status the Sidebar already
@@ -1432,11 +1431,15 @@ corner, above the queued-message status. Each is an Agent action whose trigger
 holds and whose `button` is on; pressing one queues its wording exactly as the
 Agent actions sheet does, so the corner's rules for what became of it are
 unchanged. They go when the Agent starts working or the condition stops
-holding. A conversation's lines share one width, so the stack reads as one
-tab on the composer; a terminal's keep their own widths, flush right. The box
-rests as a ghost — faint and see-through — and materialises (full strength,
-an opaque floating ground, a shadow) when pointed at, focused or dragged.
-Any part of it drags it anywhere in the pane, a button included: a press
+holding. There is no box round them: what to say next belongs to the
+composer, not to the transcript, so the row stands on the composer's edge
+as its accessory, and it is at full strength whenever it is there — a
+suggestion seen is seen plainly. Each pill is a hairline on the
+conversation's own opaque ground with its words in the secondary ink (the
+transcript scrolled under the row is covered where a pill is, not read
+through it); a row too long for the pane wraps, still flush right. It used to
+rest as a ghost at 40% that solidified when reached for, which over a
+scrolled transcript read as UI half gone. Any part of it drags it anywhere in the pane, a button included: a press
 that moves more than 4px (`SMART_BUTTONS_DRAG_THRESHOLD`) is a drag and
 presses nothing; one that does not, a trackpad tap included, is a click of
 the button under it. With anything in it focused, ⌥ and the arrow keys move
@@ -1452,8 +1455,8 @@ an offset from the pane's right and bottom edges, as every stored place was
 before anchoring, so older `state.json` entries read as the free places they
 were. Main remembers the spot per presentation (`state.json` `smart_buttons`:
 `{"anchored": "top" | "side", "along": px}` or `{"right": px, "bottom": px}`;
-absent is the default, anchored on the top edge), and a double-click on the
-box's edge (not on a button) — or ⌥Home — puts it back; a drop on the default spot is the default and
+absent is the default, anchored on the top edge), and a double-click between
+the pills (not on one) — or ⌥Home — puts it back; a drop on the default spot is the default and
 is forgotten.
 
 **Automatic actions.** An action whose trigger may be automatic
