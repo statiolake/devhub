@@ -25,7 +25,7 @@ import {
 	LAYOUT_SAVE_LUA,
 	SESSION_LUA,
 } from "./neovimSession.js";
-import type { NeovimRpc } from "./neovimRpc.js";
+import { NeovimRpcError, type NeovimRpc } from "./neovimRpc.js";
 
 /** What the GUI hears from its Neovim (`neovimUiSessions.ts` sends it on). */
 export interface NeovimUiSink {
@@ -109,6 +109,17 @@ export function uiAttachOptions(): Record<string, boolean> {
 		ext_messages: true,
 	};
 }
+
+/**
+ * Whether this attach is the Neovim's first UI (`NeovimUi.attachFirst`): it
+ * is still starting — an `--embed` Neovim waits for its first UI before it
+ * reads the config — and no attach of DevHub's has come while it did (a page
+ * that loaded again meanwhile attaches as to a Neovim that had a UI).
+ */
+export const FIRST_UI_LUA = `
+local M = package.loaded["devhub_gui"]
+return vim.v.vim_did_enter == 0 and not (M and M._attached_first_ui)
+`;
 
 /**
  * Run on the server at every attach, with this connection's channel id.
@@ -1097,18 +1108,28 @@ export class NeovimUi {
 			await this.client.request("nvim_ui_detach", []).catch(() => undefined);
 			this.attached = false;
 		}
-		await this.client.request("nvim_exec_lua", [SETUP_LUA, [channel]]);
-		// What a pane's program needs to follow a `:restart`.
-		await this.client.request("nvim_exec_lua", [RESTART_STATE_LUA, []]);
-		// DevHub's own windows kept out of a session (`neovimSession.ts`).
-		await this.client.request("nvim_exec_lua", [SESSION_LUA, []]);
-		// Views (framed or not), inline cards and popups (`gui.view`,
-		// `gui.inline`, `gui.popup`): the same module, grown by its own file.
-		await this.client.request("nvim_exec_lua", [LAYERS_LUA, []]);
-		// Where virtual text and folds' text are, for a proportional face.
-		await this.client.request("nvim_exec_lua", [DECOR_LUA, []]);
-		// Messages: cmdheight held through the attach, the pager, `q:`.
-		await this.client.request("nvim_exec_lua", [MESSAGES_LUA, []]);
+		// DevHub's Lua, in one request (`atomically`): each part runs only
+		// once the one before it has, as when they were asked one by one, but
+		// without a round trip each — over SSH, each a round trip to the host.
+		const setup = await this.atomically([
+			["nvim_exec_lua", [SETUP_LUA, [channel]]],
+			// What a pane's program needs to follow a `:restart`.
+			["nvim_exec_lua", [RESTART_STATE_LUA, []]],
+			// DevHub's own windows kept out of a session (`neovimSession.ts`).
+			["nvim_exec_lua", [SESSION_LUA, []]],
+			// Views (framed or not), inline cards and popups (`gui.view`,
+			// `gui.inline`, `gui.popup`): the same module, grown by its own file.
+			["nvim_exec_lua", [LAYERS_LUA, []]],
+			// Where virtual text and folds' text are, for a proportional face.
+			["nvim_exec_lua", [DECOR_LUA, []]],
+			// Messages: cmdheight held through the attach, the pager, `q:`.
+			["nvim_exec_lua", [MESSAGES_LUA, []]],
+			["nvim_exec_lua", [FIRST_UI_LUA, []]],
+		]);
+		if (setup[6] === true) {
+			await this.attachFirst(cols, rows);
+			return { version };
+		}
 		// A Neovim that had a multigrid UI before (DevHub restarted, the page
 		// reloaded) keeps its window grids and believes the new UI has them
 		// too, so it would send only what changes from here. A moment attached
@@ -1145,14 +1166,7 @@ export class NeovimUi {
 			uiAttachOptions(),
 		]);
 		this.attached = true;
-		// The GUI windows already open (a DevHub restart, a page reload) are
-		// told again: the page knew none of them.
-		await this.client
-			.request("nvim_exec_lua", [
-				"local M = package.loaded['devhub_gui']; if M and M._keep_cmdheight then M._keep_cmdheight() end; if M and M._replay then M._replay() end",
-				[],
-			])
-			.catch(() => undefined);
+		await this.afterAttach();
 		// The sizes the priming attach spread, put back once the command line
 		// has its height again.
 		if (layout !== undefined) {
@@ -1161,6 +1175,79 @@ export class NeovimUi {
 				.catch(() => undefined);
 		}
 		return { version };
+	}
+
+	/**
+	 * The first UI a Neovim has: an `--embed` one (a pane's `nvim`, a
+	 * `:restart`'s new server) waits for it before it reads the config or
+	 * opens a file, and has no window grids a UI before left. So it is
+	 * attached once, at its size, with no priming attach: the config runs
+	 * and the windows are laid out at the size they are drawn at, and
+	 * Neovim's first screen is the page's first frame. The attach zeroes
+	 * `cmdheight` before the config is read, so it is put back in the same
+	 * request (`_attached_first`, before Neovim goes on to the config), and
+	 * the value the config leaves is the person's, read once Neovim has
+	 * started (`_keep_cmdheight`, or at `VimEnter` when Neovim answered that
+	 * while the config waited on something).
+	 */
+	private async attachFirst(cols: number, rows: number): Promise<void> {
+		await this.atomically([
+			[
+				"nvim_exec_lua",
+				[
+					"local M = package.loaded['devhub_gui']; if M and M._before_attach then M._before_attach() end",
+					[],
+				],
+			],
+			[
+				"nvim_ui_attach",
+				[
+					Math.max(1, Math.floor(cols)),
+					Math.max(1, Math.floor(rows)),
+					uiAttachOptions(),
+				],
+			],
+			[
+				"nvim_exec_lua",
+				[
+					"local M = package.loaded['devhub_gui']; if M and M._attached_first then M._attached_first() end",
+					[],
+				],
+			],
+		]);
+		this.attached = true;
+		await this.afterAttach();
+	}
+
+	/** Once attached: cmdheight the person's again, the GUI windows told again. */
+	private async afterAttach(): Promise<void> {
+		// The GUI windows already open (a DevHub restart, a page reload) are
+		// told again: the page knew none of them.
+		await this.client
+			.request("nvim_exec_lua", [
+				"local M = package.loaded['devhub_gui']; if M and M._keep_cmdheight then M._keep_cmdheight() end; if M and M._replay then M._replay() end",
+				[],
+			])
+			.catch(() => undefined);
+	}
+
+	/**
+	 * `calls` as one `nvim_call_atomic`: run in order, each only if the ones
+	 * before it succeeded, and nothing else in between. Their results, or the
+	 * failure of the first that failed, as a request of it would have said.
+	 */
+	private async atomically(
+		calls: readonly (readonly [string, readonly unknown[]])[],
+	): Promise<readonly unknown[]> {
+		const answer = (await this.client.request("nvim_call_atomic", [
+			calls.map(([method, params]) => [method, [...params]]),
+		])) as [unknown[], [number, number, string] | null] | undefined;
+		const failed = answer?.[1];
+		if (Array.isArray(failed)) {
+			const method = calls[failed[0]]?.[0] ?? "nvim_call_atomic";
+			throw new NeovimRpcError(method, [failed[1], failed[2]]);
+		}
+		return answer?.[0] ?? [];
 	}
 
 	/** A call from the page, in order and unanswered. */

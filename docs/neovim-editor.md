@@ -181,6 +181,14 @@ it runs a Lua snippet (`SETUP_LUA`) that:
 - defines the `devhub_gui` Lua module, `:DevhubGuiDemo` and
   `:DevhubImageDemo`; once attached it fires `User DevhubGui`.
 
+**The first attach** is a Neovim's first UI: an `--embed` Neovim (a pane's
+`nvim`, the new server of a `:restart`) waits for it before it reads the
+config or opens a file. It is attached to once, at its pane's size: the
+config runs and the windows are laid out at the size they are drawn at, and
+Neovim's first screen is the page's first frame. The setup above is one
+request (`nvim_call_atomic`: in order, each part only after the one before
+it succeeded, one round trip, which over SSH is one to the host).
+
 **Attaching again** (a reloaded page, a restarted DevHub) needs care: Neovim
 keeps its window grids and assumes a new multigrid UI has them too. So the
 attach is preceded by a moment attached without multigrid (at another size),
@@ -741,9 +749,12 @@ the prompt and the band, `main/editor/neovimMessages.ts` is the Lua).
   (`:pwd`, `:set ts?`) is a notification instead: not worth a window.
 - **`cmdheight`** — Neovim sets it to 0 when a UI takes `ext_messages`
   (and to 1 when it goes). The rows a config keeps are the person's, so
-  the value is read just before that attach (a pane's `--embed` Neovim has
-  read its config by then, not before the first attach) and put back; one
-  the person sets while DevHub is attached is kept for the next attach.
+  the value is read just before that attach and put back; one the person
+  sets while DevHub is attached is kept for the next attach. A pane's
+  `--embed` Neovim reads its config only after its first attach: there it
+  is put back in the same request as the attach, before the config runs,
+  and what the config leaves is read once Neovim has started (no
+  `OptionSet` fires while it starts).
 - `ui2` stays off: it takes `ext_cmdline` and the messages itself and the
   command line would no longer be DevHub's.
 
@@ -1289,8 +1300,9 @@ follows it wherever a Neovim lives, and nothing on screen leaves:
   make current the window edited before (`wincmd p`) if the current one
   was DevHub's. At every attach a `devhub://` window with no GUI window
   behind it (a session written before) is closed the same way.
-- _The sizes_: the new server sources the session once a UI is attached,
-  which is DevHub's priming attach at half the size, so the sizes saved
+- _The sizes_: the new server sources the session once a UI is attached
+  (it is now attached to once, at its size, as any first UI; it used to be
+  a priming attach at half the size), so the sizes saved
   before that attach were of the server's one first window, and put back
   after it they gave that window every column but one (a two-window
   session came back 132 and 1 wide). An attach now puts back a tab's sizes

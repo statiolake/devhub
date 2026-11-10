@@ -29,8 +29,9 @@
  * priming attach at half the size (`NeovimUi.attach`) and the attach after
  * it give every new row and column to the last window, so each tab's sizes
  * are saved before (`LAYOUT_SAVE_LUA`) and put back, scaled, after
- * (`LAYOUT_RESTORE_LUA`). `:restart` sources its session once a UI is
- * attached — during that priming attach — so a session's sizes are saved
+ * (`LAYOUT_RESTORE_LUA`). A Neovim's first UI has no priming attach (it is
+ * attached once, at its size: `NeovimUi.attachFirst`). `:restart` sources
+ * its session once a UI is attached, so a session's sizes are saved
  * again when it has loaded and put back at the resize that follows; so are
  * a Neovim's still starting when DevHub attaches (two files split by `-o`: its
  * socket is there before its windows), at `VimEnter`.
@@ -313,8 +314,8 @@ end
 pcall(M._close_husks)
 
 -- A session sourced while a UI is still attaching (':restart' runs its
--- restore once the first UI is there: DevHub's priming attach, at half the
--- size) sets its windows' sizes for that size; the real attach then gives
+-- restore once the first UI is there, at whatever size that UI had) sets
+-- its windows' sizes for that size; the real attach then gives
 -- every new column and row to the last window. Its sizes are kept here and
 -- put back, scaled, at the next resize, as an attach's are
 -- (LAYOUT_RESTORE_LUA), if that comes soon.
@@ -383,7 +384,7 @@ api.nvim_create_autocmd("SessionLoadPost", {
 })
 -- A Neovim still starting when DevHub attaches (its socket is there before
 -- Neovim given two files to split has made its windows) lays them out at
--- the priming size.
+-- the size of the UI then attached.
 if vim.v.vim_did_enter == 0 then
   api.nvim_create_autocmd("VimEnter", {
     group = group,

@@ -6,10 +6,10 @@
  *   Neovim set `cmdheight` to 0 when it attaches (and to 1 when it goes):
  *   Neovim stops drawing messages there and leaves the rows to the UI. The
  *   rows a config keeps are where the person reads what they type, so the
- *   value is read just before that attach (a pane's `--embed` Neovim has
- *   read its config by then, not before the first) and put back after it;
- *   one the person sets while DevHub is attached is theirs, and kept for
- *   the next attach.
+ *   value is read just before that attach and put back after it; one the
+ *   person sets while DevHub is attached is theirs, and kept for the next
+ *   attach. A pane's `--embed` Neovim reads its config only after its first
+ *   attach (`NeovimUi.attachFirst`): put back at once, and read after.
  * - **The search count while typing.** Neovim says `search_count` only once
  *   a search is entered; the box shows it as the pattern is typed, as the
  *   echo after Enter does (`searchcount()` on `CmdlineChanged`).
@@ -51,8 +51,32 @@ function M._before_attach()
   if M._cmdheight == nil then M._cmdheight = vim.o.cmdheight end
   M._holding = true
 end
+--- The attach that is a starting Neovim's first UI (an --embed one, which
+--- reads its config only once that attach is through): the attach has just
+--- zeroed cmdheight, before the config, so it is put back now; the config
+--- then sets its own, without an OptionSet (none fires while Neovim starts),
+--- and what it leaves is the person's, read once Neovim has started
+--- (_keep_cmdheight, or VimEnter: a config that waits, vim.wait or
+--- vim.system():wait(), has Neovim answer DevHub's next request before it
+--- goes on).
+function M._attached_first()
+  M._attached_first_ui = true
+  if M._cmdheight ~= nil and vim.o.cmdheight ~= M._cmdheight then vim.o.cmdheight = M._cmdheight end
+  M._cmdheight = nil
+  api.nvim_create_autocmd("VimEnter", {
+    group = group,
+    once = true,
+    callback = function()
+      if M._cmdheight == nil then M._cmdheight = vim.o.cmdheight end
+    end,
+  })
+end
 function M._keep_cmdheight()
   M._holding = false
+  if M._cmdheight == nil then
+    if vim.v.vim_did_enter == 1 then M._cmdheight = vim.o.cmdheight end
+    return
+  end
   if vim.o.cmdheight ~= M._cmdheight then vim.o.cmdheight = M._cmdheight end
 end
 

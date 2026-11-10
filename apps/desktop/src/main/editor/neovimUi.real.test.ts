@@ -9,7 +9,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { NeovimClient } from "./neovimRpc.js";
@@ -313,6 +313,141 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			expect(upper).toBeGreaterThan(9);
 			expect(upper).toBeLessThan(lower! / 2);
 			again.close();
+		},
+	);
+
+	it(
+		"attaches once to an --embed Neovim waiting for its first UI: the config runs at the real size, its cmdheight kept",
+		{ timeout: 15_000 },
+		async () => {
+			const scratch = makeSocketDir("nvim-first");
+			directories.push(scratch);
+			const socket = join(scratch, "n.sock");
+			const file = join(scratch, "text.txt");
+			writeFileSync(file, "first line of the file\nsecond\n");
+			const start = async (config: string) => {
+				const init = join(scratch, `init-${String(children.length)}.lua`);
+				writeFileSync(init, config);
+				rmSync(socket, { force: true });
+				// The shim's way (`terminalNeovimShim.ts`): `--embed --listen`,
+				// its stdin a pipe nothing writes to.
+				const child = spawn(
+					NVIM as string,
+					["--embed", "--listen", socket, "-u", init, "-i", "NONE", "-n", file],
+					{ stdio: ["pipe", "ignore", "ignore"] },
+				);
+				children.push(child);
+				for (
+					let attempt = 0;
+					attempt < 200 && !existsSync(socket);
+					attempt += 1
+				)
+					await new Promise((resolve) => setTimeout(resolve, 25));
+				const client = await NeovimClient.connect(socket);
+				const asked: string[] = [];
+				const request = client.request.bind(client);
+				client.request = (method, params) => {
+					asked.push(
+						method === "nvim_call_atomic"
+							? (params[0] as [string][]).map(([m]) => m).join("+")
+							: method,
+					);
+					return request(method, params);
+				};
+				const state = initialUiState();
+				const ui = new NeovimUi(client, {
+					read: () => Promise.resolve(""),
+					write: () => undefined,
+				});
+				const sink: NeovimUiSink = {
+					redraw: (batches) => {
+						applyRedraw(state, batches);
+					},
+					guiWindows: () => undefined,
+					guiOpen: () => undefined,
+					guiClose: () => undefined,
+					guiSend: () => undefined,
+				};
+				await ui.attach(sink, 60, 40);
+				return { client, ui, asked, state, sink };
+			};
+			const sizes = `return { vim.o.lines, vim.o.columns, vim.o.cmdheight, vim.api.nvim_win_get_height(0), vim.g.config_saw }`;
+
+			// The config sees the real size; its cmdheight 2 stays.
+			const first = await start(
+				"vim.o.cmdheight = 2\nvim.g.config_saw = vim.o.columns .. 'x' .. vim.o.lines",
+			);
+			const attaches = first.asked.filter((m) => m.includes("nvim_ui_attach"));
+			expect(attaches).toEqual(["nvim_exec_lua+nvim_ui_attach+nvim_exec_lua"]);
+			expect(first.asked).not.toContain("nvim_ui_detach");
+			expect(await first.ui.request("nvim_exec_lua", [sizes, []])).toEqual([
+				40,
+				60,
+				2,
+				37,
+				"60x40",
+			]);
+			// Neovim's first screen came to this UI: the file in its window.
+			const text = [...first.state.grids.values()].some((grid) =>
+				gridRowText(grid, 0).startsWith("first line of the file"),
+			);
+			expect(text).toBe(true);
+			// Attached again (a page that loaded again): still the person's 2.
+			first.client.close();
+			const again = await NeovimClient.connect(socket);
+			const ui2 = new NeovimUi(again, {
+				read: () => Promise.resolve(""),
+				write: () => undefined,
+			});
+			await ui2.attach(first.sink, 60, 30);
+			expect(await ui2.request("nvim_exec_lua", [sizes, []])).toEqual([
+				30,
+				60,
+				2,
+				27,
+				"60x40",
+			]);
+			again.close();
+
+			// A config that leaves cmdheight alone: Neovim's 1, not the 0 the
+			// attach set before the config ran.
+			const plain = await start("vim.g.config_saw = 'plain'");
+			expect(await plain.ui.request("nvim_exec_lua", [sizes, []])).toEqual([
+				40,
+				60,
+				1,
+				38,
+				"plain",
+			]);
+			plain.client.close();
+
+			// A config that waits before it sets cmdheight: Neovim answers
+			// DevHub's request after the attach while it waits, and the value
+			// the config sets after is still the person's.
+			const waits = await start(
+				"vim.wait(300, function() return false end)\nvim.o.cmdheight = 3\nvim.g.config_saw = 'waited'",
+			);
+			// (The attach may be answered while it waits too: started is after.)
+			while ((await waits.ui.request("nvim_get_vvar", ["vim_did_enter"])) !== 1)
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			expect(await waits.ui.request("nvim_exec_lua", [sizes, []])).toEqual([
+				40,
+				60,
+				3,
+				36,
+				"waited",
+			]);
+			waits.client.close();
+			const later = await NeovimClient.connect(socket);
+			const ui3 = new NeovimUi(later, {
+				read: () => Promise.resolve(""),
+				write: () => undefined,
+			});
+			await ui3.attach(waits.sink, 60, 30);
+			expect(
+				(await ui3.request("nvim_exec_lua", [sizes, []])) as unknown[],
+			).toEqual([30, 60, 3, 26, "waited"]);
+			later.close();
 		},
 	);
 
