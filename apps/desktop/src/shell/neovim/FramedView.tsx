@@ -27,6 +27,7 @@ type FrameContent = ViewFrame & {
 };
 import type { LayerHost } from "./LayerViews";
 import { charOffsetOfByte } from "./redraw";
+import { formatKeys } from "../../model/keyNotation";
 
 /** A row's height: a line and a third, so rows read as rows, not cells. */
 export function frameRowHeight(cellHeight: number): number {
@@ -296,7 +297,7 @@ function FrameParts({
         <div className="nvim-view-frame-keys" style={px(parts.keys)}>
           {content.keys.map(([key, label], index) => (
             <span key={index} className="nvim-view-frame-key">
-              <kbd className="nvc-kbd">{key}</kbd>
+              <kbd className="nvc-kbd">{formatKeys(key)}</kbd>
               <span>{label}</span>
             </span>
           ))}

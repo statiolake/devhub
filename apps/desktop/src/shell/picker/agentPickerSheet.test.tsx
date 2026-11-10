@@ -254,7 +254,7 @@ describe("what the sheet says will happen", () => {
   it("says what Option does", () => {
     mount();
     expect(screen.getByRole("status")).toHaveTextContent(
-      "⌘Return opens it as the other of TUI and GUI.",
+      "⌘↩ opens it as the other of TUI and GUI.",
     );
   });
 });

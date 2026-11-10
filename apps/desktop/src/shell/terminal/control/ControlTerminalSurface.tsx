@@ -1162,13 +1162,13 @@ export function ControlTerminalSurface({
         // Tab's menu takes the keys, as tmux's does.
         hint.append(
           "choose ",
-          kbd("Tab"),
+          kbd("⇥"),
           kbd("↑"),
           kbd("↓"),
           " · put in ",
-          kbd("Enter"),
+          kbd("↩"),
           " · close ",
-          kbd("Esc"),
+          kbd("⎋"),
         );
       } else if (!prompt.confirm) {
         // What tmux's keys do here, the vi table's in its command mode.
@@ -1177,9 +1177,9 @@ export function ControlTerminalSurface({
           kbd("↑"),
           kbd("↓"),
           " · run ",
-          kbd("Enter"),
+          kbd("↩"),
           " · cancel ",
-          ...(prompt.vi ? [kbd("Esc"), " ", kbd("q")] : [kbd("Esc")]),
+          ...(prompt.vi ? [kbd("⎋"), " ", kbd("q")] : [kbd("⎋")]),
         );
       }
       promptLine.replaceChildren(line, hint);

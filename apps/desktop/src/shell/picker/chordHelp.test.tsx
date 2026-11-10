@@ -67,20 +67,20 @@ describe("the chord help", () => {
         row.commandId,
       ).toBeGreaterThan(0);
     }
-    expect(screen.getAllByText("Cmd+q f")).toHaveLength(1);
+    expect(screen.getAllByText("⌘Q f")).toHaveLength(1);
     // The narrowed cycle is a command like any other, so it is a row like any
     // other — the sheet has nothing of its own to keep in step.
     expect(screen.getByText("Next unread Agent")).toBeInTheDocument();
     expect(screen.getByText("Previous unread Agent")).toBeInTheDocument();
-    expect(screen.getByText("Cmd+q }")).toBeInTheDocument();
+    expect(screen.getByText("⌘Q }")).toBeInTheDocument();
     // The two chords that used to share `Shift+J`, now one key each.
     expect(
       screen.getByText("Switch between Scratch and where you were"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Cmd+q J")).toBeInTheDocument();
+    expect(screen.getByText("⌘Q J")).toBeInTheDocument();
     expect(screen.getByText("Orchestrator")).toBeInTheDocument();
-    expect(screen.getByText("Cmd+q O")).toBeInTheDocument();
-    expect(screen.getByText("Cmd+q z")).toBeInTheDocument();
+    expect(screen.getByText("⌘Q O")).toBeInTheDocument();
+    expect(screen.getByText("⌘Q z")).toBeInTheDocument();
   });
 
   it("shows the keyboard the person has, not the one DevHub ships", () => {
@@ -98,7 +98,7 @@ describe("the chord help", () => {
         onDismiss={vi.fn()}
       />,
     );
-    expect(screen.getByText("Cmd+q f")).toBeInTheDocument();
+    expect(screen.getByText("⌘Q f")).toBeInTheDocument();
     expect(screen.queryByText("Go to workspace or Agent…")).toBeNull();
     expect(screen.queryByText("Add Workspace…")).toBeNull();
   });
@@ -117,11 +117,11 @@ describe("the chord help", () => {
     render(<ChordHelpSheet rows={rowsFor({})} onDismiss={vi.fn()} />);
     // The stroke *is* `<`, and `{`. Naming a US keyboard's way of making them
     // would be wrong for the person reading this on a JIS one.
-    expect(screen.getByText("Cmd+q <")).toBeInTheDocument();
-    expect(screen.getByText("Cmd+q {")).toBeInTheDocument();
+    expect(screen.getByText("⌘Q <")).toBeInTheDocument();
+    expect(screen.getByText("⌘Q {")).toBeInTheDocument();
     // Two keys onto one command, both spelled out on the row.
-    expect(screen.getByText("Cmd+q ]")).toBeInTheDocument();
-    expect(screen.getByText("Cmd+q Cmd+]")).toBeInTheDocument();
+    expect(screen.getByText("⌘Q ]")).toBeInTheDocument();
+    expect(screen.getByText("⌘Q ⌘]")).toBeInTheDocument();
     expect(describeChordKey(parseChordKey("Shift+["))).toBe("{");
   });
 

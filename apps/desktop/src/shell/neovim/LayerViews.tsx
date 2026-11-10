@@ -43,6 +43,7 @@ import { placePopup, popupMaxWidth, popupScrollTop } from "./popup";
 import type { OverPart } from "./painter";
 import { createPortal } from "react-dom";
 import type { GridBox } from "./redraw";
+import { formatKeys } from "../../model/keyNotation";
 
 interface Cell {
   readonly width: number;
@@ -292,7 +293,7 @@ function GuiView({
               {key.split("/").map((part, i) => (
                 <span key={i}>
                   {i > 0 ? "/" : null}
-                  <kbd className="nvc-kbd">{part}</kbd>
+                  <kbd className="nvc-kbd">{formatKeys(part)}</kbd>
                 </span>
               ))}
               <span>{label}</span>

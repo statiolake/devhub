@@ -100,7 +100,7 @@ function EmptyTranscript() {
     <div className="conversation-empty">
       <div className="conversation-empty-title">What should the Agent do?</div>
       <div className="conversation-empty-hint">
-        {SEND_KEY} sends, Return starts a new line, and / lists the Agent's
+        {SEND_KEY} sends, ↩ starts a new line, and / lists the Agent's
         commands.
       </div>
     </div>

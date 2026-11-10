@@ -225,10 +225,10 @@ describe("sending", () => {
     expect(COMPOSER_PLACEHOLDER).toBe("Message the Agent…");
     expect(
       document.querySelector(".conversation-empty-hint"),
-    ).toHaveTextContent("⌘Return sends, Return starts a new line");
+    ).toHaveTextContent("⌘↩ sends, ↩ starts a new line");
     expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute(
       "title",
-      "Send (⌘Return)",
+      "Send (⌘↩)",
     );
   });
 
@@ -1231,7 +1231,7 @@ describe("messages waiting to be sent", () => {
     expect(actions.editPending).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
       "title",
-      "Save (⌘Return)",
+      "Save (⌘↩)",
     );
   });
 
@@ -1355,7 +1355,7 @@ describe("a message to a subagent", () => {
     expect(actions.instruct).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("button", { name: "Send to Explorer" }),
-    ).toHaveAttribute("title", "Send to this subagent (⌘Return)");
+    ).toHaveAttribute("title", "Send to this subagent (⌘↩)");
   });
 
   it("is not offered on one that does not", () => {

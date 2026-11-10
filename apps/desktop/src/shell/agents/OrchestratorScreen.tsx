@@ -904,7 +904,7 @@ function EscalationView({
           className="orchestrator-back"
           onClick={onBack}
           aria-label="Back to the board"
-          title="Back to the board (Esc)"
+          title="Back to the board (⎋)"
         >
           <span aria-hidden="true">←</span> ボード
         </button>

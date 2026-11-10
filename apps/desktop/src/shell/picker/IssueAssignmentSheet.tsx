@@ -846,7 +846,7 @@ function staleOriginStep(
     const answer = await input.ask({
       ...SHEET,
       title: "The remote could not be reached",
-      question: `origin could not be fetched, so what ${folderName(place.path)} knows about its branches may be out of date. Go on with the copy on this machine, or press Escape to go back.`,
+      question: `origin could not be fetched, so what ${folderName(place.path)} knows about its branches may be out of date. Go on with the copy on this machine, or press ⎋ to go back.`,
       items: [
         {
           id: USE_STALE_BASE,

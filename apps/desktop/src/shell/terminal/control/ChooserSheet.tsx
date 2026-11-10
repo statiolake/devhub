@@ -70,7 +70,7 @@ export function ChooserSheet({
         <PickerHeader
           row={cell.height}
           title="Choose a session, window or pane"
-          question="Return switches to it · → opens · ← closes · Ctrl-X kills · Escape cancels"
+          question="↩ switches to it · → opens · ← closes · ⌃X kills · ⎋ cancels"
         />
         <div className="picker-search">
           <PickerSearchGlyph />

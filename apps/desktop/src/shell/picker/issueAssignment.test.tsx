@@ -322,7 +322,7 @@ describe("assigning an Issue", () => {
       "Start a new session, or go on with one of this folder's earlier ones.",
     );
     expect(dialog).toHaveTextContent(
-      "The agent starts in this folder. ⌥Return opens it beside the editor; ⌘Return opens it as the other of TUI and GUI.",
+      "The agent starts in this folder. ⌥↩ opens it beside the editor; ⌘↩ opens it as the other of TUI and GUI.",
     );
   });
 

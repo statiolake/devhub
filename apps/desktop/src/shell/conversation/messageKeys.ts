@@ -21,7 +21,7 @@ import { useRef, type KeyboardEvent } from "react";
 import { isImeComposing } from "../accessibility/ime";
 
 /** How the send key is written wherever a GUI Agent names it. */
-export const SEND_KEY = "⌘Return";
+export const SEND_KEY = "⌘↩";
 
 function isSendKey(event: KeyboardEvent): boolean {
   return (

@@ -714,7 +714,7 @@ export function Composer({
                 type="button"
                 className="conversation-stop"
                 aria-label="Stop"
-                title="Stop the turn (Esc or Ctrl+C)"
+                title="Stop the turn (⎋ or ⌃C)"
                 onClick={() => {
                   void interrupt().catch(reportFailure);
                 }}

@@ -358,7 +358,7 @@ function FileView({
           className="orchestrator-back"
           onClick={onBack}
           aria-label="Back to the files"
-          title="Back to the files (Esc)"
+          title="Back to the files (⎋)"
         >
           <span aria-hidden="true">←</span> ファイル
         </button>

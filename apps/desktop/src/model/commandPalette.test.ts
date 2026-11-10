@@ -48,9 +48,9 @@ describe("the command palette's rows", () => {
   it("titles a row by category and shows its chords", () => {
     const row = rows().find((one) => one.commandId === "add_workspace");
     expect(row?.title).toBe("Workspace: Add Workspace…");
-    expect(row?.chords).toEqual(["Cmd+q f"]);
+    expect(row?.chords).toEqual(["⌘Q f"]);
     const back = rows().find((one) => one.commandId === "navigate_back");
-    expect(back?.chords).toEqual(["Cmd+q h"]);
+    expect(back?.chords).toEqual(["⌘Q h"]);
   });
 
   it("hides what would do nothing now", () => {

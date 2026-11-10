@@ -170,13 +170,21 @@ describe("showing a chord", () => {
     expect(describeChordKey(parseChordKey("Shift+,"))).toBe("<");
     expect(describeChordKey(parseChordKey("Shift+/"))).toBe("?");
     expect(describeChordKey(parseChordKey("Shift+["))).toBe("{");
-    expect(describeChordKey(parseChordKey("Cmd+j"))).toBe("Cmd+j");
   });
 
-  it("capitalises a key that has a name rather than a character", () => {
-    expect(describeChordKey(parseChordKey("escape"))).toBe("Escape");
-    expect(describeChordKey(parseChordKey("Shift+escape"))).toBe(
-      "Shift+Escape",
-    );
+  it("writes it as a Mac does: symbols, a modified letter a capital", () => {
+    expect(describeChordKey(parseChordKey("Cmd+j"))).toBe("⌘J");
+    expect(describeChordKey(parseChordKey("Ctrl+Alt+k"))).toBe("⌃⌥K");
+    // `N` is its own stroke: beside a modifier, its Shift is said.
+    expect(describeChordKey(parseChordKey("Cmd+N"))).toBe("⇧⌘N");
+    // No modifier: the character as typed, n and N apart.
+    expect(describeChordKey(parseChordKey("n"))).toBe("n");
+    expect(describeChordKey(parseChordKey("N"))).toBe("N");
+  });
+
+  it("writes a key that has a name rather than a character as its symbol", () => {
+    expect(describeChordKey(parseChordKey("escape"))).toBe("⎋");
+    expect(describeChordKey(parseChordKey("Shift+escape"))).toBe("⇧⎋");
+    expect(describeChordKey(parseChordKey("ArrowLeft"))).toBe("←");
   });
 });

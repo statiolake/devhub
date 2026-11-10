@@ -266,7 +266,7 @@ export const FindBar = forwardRef<
           type="button"
           className="conversation-find-button"
           aria-label="Previous match"
-          title="Previous match (Shift+Return, Shift+F3)"
+          title="Previous match (⇧↩, ⇧F3)"
           disabled={none}
           onClick={() => step(-1)}
         >
@@ -286,7 +286,7 @@ export const FindBar = forwardRef<
           type="button"
           className="conversation-find-button"
           aria-label="Close"
-          title="Close (Esc)"
+          title="Close (⎋)"
           onClick={onClose}
         >
           <CloseIcon />

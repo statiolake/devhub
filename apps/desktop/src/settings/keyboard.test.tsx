@@ -61,7 +61,7 @@ describe("the keyboard screen", () => {
     // `g` moved to `next_tab`, so the tab picker has nothing left and says so.
     await open({ g: "next_tab" });
     await screen.findByText("Next sidebar row");
-    expect(recorder("Next sidebar row")).toHaveTextContent("Cmd+n");
+    expect(recorder("Next sidebar row")).toHaveTextContent("⌘N");
     expect(recorder("Next sidebar row")).toHaveTextContent("g");
     expect(recorder("Go to workspace or Agent…")).toHaveTextContent("Unbound");
   });

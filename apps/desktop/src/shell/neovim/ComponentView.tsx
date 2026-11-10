@@ -26,6 +26,7 @@ import {
   type Run,
   type Size,
 } from "./components";
+import { formatKeys } from "../../model/keyNotation";
 
 export interface ComponentTheme {
   readonly hl: HlTable;
@@ -277,7 +278,7 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
     case "kbd":
       return (
         <kbd className="nvc-kbd" {...extra}>
-          {node.text}
+          {formatKeys(node.text)}
         </kbd>
       );
     case "button": {
@@ -303,7 +304,7 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
           ) : null}
           {node.text}
           {node.key !== undefined ? (
-            <kbd className="nvc-kbd">{node.key}</kbd>
+            <kbd className="nvc-kbd">{formatKeys(node.key)}</kbd>
           ) : null}
         </span>
       );

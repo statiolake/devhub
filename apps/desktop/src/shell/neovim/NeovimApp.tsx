@@ -1391,7 +1391,7 @@ function CmdwinFrame({
           {name} (q{cmdwin.type})
         </span>
         <span className="nvim-cmdwin-keys">
-          <kbd>Enter</kbd> run <kbd>Ctrl-C</kbd> close
+          <kbd>↩</kbd> run <kbd>⌃C</kbd> close
         </span>
       </div>
       <div

@@ -120,6 +120,7 @@ import {
 	type LayoutNode,
 	type TmuxId,
 } from "./tmuxControl.js";
+import { formatKeys } from "../../../model/keyNotation.js";
 
 export type { ControlToPage, PageToControl, PaneBox, PaneModes, WindowInfo };
 
@@ -758,7 +759,7 @@ export class ControlClient {
 				}
 				this.#o.post({
 					kind: "notice",
-					text: `${route.refused.keys}: ${route.refused.command} is not available in control mode yet.`,
+					text: `${formatKeys(route.refused.keys)}: ${route.refused.command} is not available in control mode yet.`,
 				});
 			}
 		}

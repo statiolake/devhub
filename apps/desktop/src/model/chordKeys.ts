@@ -56,6 +56,8 @@
  * character — a dead key half-way through an accent — is no stroke at all.
  */
 
+import { keyCap } from "./keyNotation.js";
+
 /** One stroke: the character it produces, and the modifiers that are not in it. */
 export interface ChordKey {
   /**
@@ -257,17 +259,18 @@ export function sameChordKey(binding: ChordKey, stroke: ChordKey): boolean {
 }
 
 /**
- * How a chord reads on screen.
+ * How a chord reads on screen: in DevHub's one key notation, a Mac's
+ * (`keyNotation.ts`). The modifiers are symbols in the Mac's order and a
+ * named key is its symbol (`⌘Q`, `⇧⎋`, `⌃←`).
  *
- * The character, which is what is printed on the key the person presses — so
- * this is the canonical form and nothing more. It has a name of its own only
- * because a named key reads better with a capital.
+ * The character is what is printed on the key the person presses, so
+ * beside a modifier a letter is its capital — `⌘J` — and the shifted
+ * letter, which is a different stroke here (`N` is not `n`), says its
+ * Shift as a Mac's menus do: `⌘N` beside `⇧⌘N`. A stroke with no modifier
+ * is the character as typed: `n` and `N` stay apart.
  */
 const SHOWN: Readonly<Record<string, string>> = {
   " ": "Space",
-  // The arrows are drawn, not spelled. They are what is printed on the keys —
-  // this is a Mac, and every menu on it says ↑ — and "Arrowup" is a name only
-  // the canonical lower-cased spelling of a named key ever produces.
   arrowup: "↑",
   arrowdown: "↓",
   arrowleft: "←",
@@ -275,14 +278,22 @@ const SHOWN: Readonly<Record<string, string>> = {
 };
 
 export function describeChordKey(chord: ChordKey): string {
-  const shown =
+  const named = isNamedKey(chord.key);
+  const upper = /^\p{Lu}$/u.test(chord.key);
+  const modified = chord.command || chord.control || chord.option;
+  const shift = named ? chord.shift : modified && upper;
+  const mods =
+    (chord.control ? "⌃" : "") +
+    (chord.option ? "⌥" : "") +
+    (shift ? "⇧" : "") +
+    (chord.command ? "⌘" : "");
+  const base =
     SHOWN[chord.key] ??
-    (isNamedKey(chord.key)
-      ? chord.key.charAt(0).toUpperCase() + chord.key.slice(1)
-      : chord.key);
-  const written = MODIFIERS.filter((name) => {
-    if (name === "Shift") return chord.shift && isNamedKey(chord.key);
-    return chord[MODIFIER_FIELD[name]];
-  });
-  return [...written, shown].join("+");
+    (named
+      ? (keyCap(chord.key) ??
+        chord.key.charAt(0).toUpperCase() + chord.key.slice(1))
+      : mods !== ""
+        ? chord.key.toUpperCase()
+        : chord.key);
+  return mods + base;
 }

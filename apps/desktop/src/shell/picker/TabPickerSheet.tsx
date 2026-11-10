@@ -79,7 +79,7 @@ export function TabPickerSheet({ onDismiss }: TabPickerSheetProps) {
       question="Which workspace or agent do you want to look at?"
       items={items}
       emptyNoMatch="Nothing here matches that."
-      note="⌥Return opens an agent beside its editor."
+      note="⌥↩ opens an agent beside its editor."
       onChoose={({ id, split }) => {
         const [kind, value] = id.split(":");
         if (kind === "agent") {
