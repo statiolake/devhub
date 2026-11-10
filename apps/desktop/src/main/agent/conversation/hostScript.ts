@@ -110,7 +110,11 @@ const CLI_NAME = "devhub-agent-cli";
  * names the CLI before the mark or anything the CLI says is in the journal,
  * and a restart asked for the moment either is seen stops this CLI and not
  * the one before it. (Written by the host after `&`, it raced the CLI's own
- * first line.) A CLI it cannot find it runs rather than `exec`s, so that the
+ * first line.) A stop (SIGTERM) that comes while that `sh` is writing them
+ * waits until both are written and the mark's file is gone, and then ends
+ * it, before the CLI starts: stopped between the mark and the removal of
+ * `again.now`, it left the file behind and the host refused to go on, so a
+ * restart that came the moment the mark was read ended the Agent. A CLI it cannot find it runs rather than `exec`s, so that the
  * shell says so in its own words and status, 127, as for any command: a
  * failed `exec` says 126 when a directory on the `PATH` is not searchable. It stays
  * in the host's process group, so tmux's hang-up on Stop reaches it as it
@@ -132,8 +136,12 @@ printf '3\\n' >"$D/version" || refuse "cannot record the host's version in $D/ve
 { printf '%s\\n' "$$" >"$D/pid.new" && mv -f "$D/pid.new" "$D/pid"; } ||
   refuse "cannot record the host's pid in $D/pid"
 run() {
-  /bin/sh -c '{ printf "%s\\n" "$$" >"$1/cli.new" && mv -f "$1/cli.new" "$1/cli"; } || exit 70
+  /bin/sh -c 't=
+trap "t=1" TERM
+{ printf "%s\\n" "$$" >"$1/cli.new" && mv -f "$1/cli.new" "$1/cli"; } || exit 70
 [ ! -f "$1/again.now" ] || { cat "$1/again.now" && rm -f "$1/again.now"; } || exit 70
+trap - TERM
+[ -z "$t" ] || exit 143
 shift
 command -v -- "$1" >/dev/null 2>&1 || { "$@"; exit; }
 exec "$@"' ${CLI_NAME} "$D" "$@" <&3 3<&- >>"$D/out" &
