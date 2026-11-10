@@ -30,7 +30,7 @@
  * it give every new row and column to the last window, so each tab's sizes
  * are saved before (`LAYOUT_SAVE_LUA`) and put back, scaled, after
  * (`LAYOUT_RESTORE_LUA`). A Neovim's first UI has no priming attach (it is
- * attached once, at its size: `NeovimUi.attachFirst`). `:restart` sources
+ * attached once, at its size: `firstAttach`, `neovimUi.ts`). `:restart` sources
  * its session once a UI is attached, so a session's sizes are saved
  * again when it has loaded and put back at the resize that follows; so are
  * a Neovim's still starting when DevHub attaches (two files split by `-o`: its

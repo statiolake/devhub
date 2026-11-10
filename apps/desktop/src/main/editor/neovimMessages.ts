@@ -9,7 +9,7 @@
  *   value is read just before that attach and put back after it; one the
  *   person sets while DevHub is attached is theirs, and kept for the next
  *   attach. A pane's `--embed` Neovim reads its config only after its first
- *   attach (`NeovimUi.attachFirst`): put back at once, and read after.
+ *   attach (`firstAttach`, `neovimUi.ts`): put back at once, and read after.
  * - **The search count while typing.** Neovim says `search_count` only once
  *   a search is entered; the box shows it as the pattern is typed, as the
  *   echo after Enter does (`searchcount()` on `CmdlineChanged`).

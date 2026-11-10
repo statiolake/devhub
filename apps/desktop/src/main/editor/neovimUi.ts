@@ -128,16 +128,65 @@ do
 end
 `;
 
+/** What `FIRST_UI_LUA` fails with when the attach is not a Neovim's first UI. */
+const NOT_FIRST_UI = "devhub: not the first UI";
+
 /**
- * Whether this attach is the Neovim's first UI (`NeovimUi.attachFirst`): it
+ * Whether this attach is the Neovim's first UI (`firstAttach`): it
  * is still starting — an `--embed` Neovim waits for its first UI before it
  * reads the config — and no attach of DevHub's has come while it did (a page
  * that loaded again meanwhile attaches as to a Neovim that had a UI).
  */
 export const FIRST_UI_LUA = `
 local M = package.loaded["devhub_gui"]
-return vim.v.vim_did_enter == 0 and not (M and M._attached_first_ui)
+if vim.v.vim_did_enter ~= 0 or (M and M._attached_first_ui) then
+  error("${NOT_FIRST_UI}")
+end
 `;
+
+/**
+ * The first UI a Neovim has: an `--embed` one (a pane's `nvim`, a
+ * `:restart`'s new server) waits for it before it reads the config or
+ * opens a file, and has no window grids a UI before left. So it is
+ * attached once, at its size, with no priming attach: the config runs and
+ * the windows are laid out at the size they are drawn at, and Neovim's
+ * first screen is the page's first frame. The attach zeroes `cmdheight`
+ * before the config is read, so it is put back in the same request
+ * (`_attached_first`, before Neovim goes on to the config), and the value
+ * the config leaves is the person's, read once Neovim has started
+ * (`_keep_cmdheight`, or at `VimEnter` when Neovim answered that while the
+ * config waited on something). These calls follow the setup and
+ * `FIRST_UI_LUA` in its request.
+ */
+function firstAttach(
+	cols: number,
+	rows: number,
+): readonly (readonly [string, readonly unknown[]])[] {
+	return [
+		[
+			"nvim_exec_lua",
+			[
+				"local M = package.loaded['devhub_gui']; if M and M._before_attach then M._before_attach() end",
+				[],
+			],
+		],
+		[
+			"nvim_ui_attach",
+			[
+				Math.max(1, Math.floor(cols)),
+				Math.max(1, Math.floor(rows)),
+				uiAttachOptions(),
+			],
+		],
+		[
+			"nvim_exec_lua",
+			[
+				"local M = package.loaded['devhub_gui']; if M and M._attached_first then M._attached_first() end",
+				[],
+			],
+		],
+	];
+}
 
 /**
  * Run on the server at every attach, with this connection's channel id.
@@ -1130,17 +1179,28 @@ export class NeovimUi {
 		rows: number,
 	): Promise<NeovimUiAttach> {
 		this.sink = sink;
-		const info = (await this.client.request("nvim_get_api_info", [])) as [
-			number,
-			{ version?: { major?: number; minor?: number; patch?: number } },
+		// Both answered at once, even while Neovim is starting (fast calls):
+		// one round trip, not two (over SSH, each one to the host).
+		const [info, firstMode] = (await Promise.all([
+			this.client.request("nvim_get_api_info", []),
+			this.client.request("nvim_get_mode", []),
+		])) as [
+			[
+				number,
+				{ version?: { major?: number; minor?: number; patch?: number } },
+			],
+			{ readonly blocking?: boolean } | undefined,
 		];
 		const channel = info[0];
 		// A Neovim at a prompt (hit-enter, more, confirm) answers nothing but
 		// fast calls until it is dismissed, and nothing is attached to see it.
 		for (let attempt = 0; attempt < 3; attempt += 1) {
-			const mode = (await this.client.request("nvim_get_mode", [])) as
-				| { readonly blocking?: boolean }
-				| undefined;
+			const mode =
+				attempt === 0
+					? firstMode
+					: ((await this.client.request("nvim_get_mode", [])) as
+							| { readonly blocking?: boolean }
+							| undefined);
 			if (mode?.blocking !== true) break;
 			await this.client.request("nvim_input", ["<Esc>"]);
 			await new Promise((resolve) => setTimeout(resolve, 30));
@@ -1155,7 +1215,10 @@ export class NeovimUi {
 		// DevHub's Lua, in one request (`atomically`): each part runs only
 		// once the one before it has, as when they were asked one by one, but
 		// without a round trip each — over SSH, each a round trip to the host.
-		const setup = await this.atomically([
+		// A Neovim's first UI is attached in the same request
+		// (`attachFirst`): the check before it fails for any other, which
+		// ends the request there.
+		const calls: readonly (readonly [string, readonly unknown[]])[] = [
 			["nvim_exec_lua", [SETUP_LUA, [channel]]],
 			// What a pane's program needs to follow a `:restart`.
 			["nvim_exec_lua", [RESTART_STATE_LUA, []]],
@@ -1169,9 +1232,20 @@ export class NeovimUi {
 			// Messages: cmdheight held through the attach, the pager, `q:`.
 			["nvim_exec_lua", [MESSAGES_LUA, []]],
 			["nvim_exec_lua", [FIRST_UI_LUA, []]],
-		]);
-		if (setup[6] === true) {
-			await this.attachFirst(cols, rows);
+			...firstAttach(cols, rows),
+		];
+		const setup = await this.atomically(calls).catch((error: unknown) => {
+			if (
+				error instanceof NeovimRpcError &&
+				error.message.includes(NOT_FIRST_UI)
+			)
+				return undefined;
+			throw error;
+		});
+		// Every call answered: the attach in it happened.
+		if (setup?.length === calls.length) {
+			this.attached = true;
+			await this.afterAttach();
 			return { version };
 		}
 		// A Neovim that had a multigrid UI before (DevHub restarted, the page
@@ -1234,34 +1308,6 @@ export class NeovimUi {
 	 * started (`_keep_cmdheight`, or at `VimEnter` when Neovim answered that
 	 * while the config waited on something).
 	 */
-	private async attachFirst(cols: number, rows: number): Promise<void> {
-		await this.atomically([
-			[
-				"nvim_exec_lua",
-				[
-					"local M = package.loaded['devhub_gui']; if M and M._before_attach then M._before_attach() end",
-					[],
-				],
-			],
-			[
-				"nvim_ui_attach",
-				[
-					Math.max(1, Math.floor(cols)),
-					Math.max(1, Math.floor(rows)),
-					uiAttachOptions(),
-				],
-			],
-			[
-				"nvim_exec_lua",
-				[
-					"local M = package.loaded['devhub_gui']; if M and M._attached_first then M._attached_first() end",
-					[],
-				],
-			],
-		]);
-		this.attached = true;
-		await this.afterAttach();
-	}
 
 	/**
 	 * Once attached: cmdheight the person's again, the GUI windows told

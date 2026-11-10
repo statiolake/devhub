@@ -192,9 +192,14 @@ it runs a Lua snippet (`SETUP_LUA`) that:
 `nvim`, the new server of a `:restart`) waits for it before it reads the
 config or opens a file. It is attached to once, at its pane's size: the
 config runs and the windows are laid out at the size they are drawn at, and
-Neovim's first screen is the page's first frame. The setup above is one
-request (`nvim_call_atomic`: in order, each part only after the one before
-it succeeded, one round trip, which over SSH is one to the host).
+Neovim's first screen is the page's first frame. The setup above and that
+attach are one request (`nvim_call_atomic`: in order, each part only after
+the one before it succeeded, one round trip, which over SSH is one to the
+host): its check for a first UI (`FIRST_UI_LUA`) fails for any other
+Neovim, which ends the request before the attach and leads to the one
+below. Before it, the channel and whether Neovim waits at a prompt are
+asked together (`nvim_get_api_info`, `nvim_get_mode`, both answered while
+Neovim starts): two round trips from connecting to attached.
 
 **Attaching again** (a reloaded page, a restarted DevHub) needs care: Neovim
 keeps its window grids and assumes a new multigrid UI has them too. So the

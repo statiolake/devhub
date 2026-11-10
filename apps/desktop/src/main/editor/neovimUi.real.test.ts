@@ -378,7 +378,11 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 				"vim.o.cmdheight = 2\nvim.g.config_saw = vim.o.columns .. 'x' .. vim.o.lines",
 			);
 			const attaches = first.asked.filter((m) => m.includes("nvim_ui_attach"));
-			expect(attaches).toEqual(["nvim_exec_lua+nvim_ui_attach+nvim_exec_lua"]);
+			// One request: DevHub's setup, then the attach.
+			expect(attaches).toHaveLength(1);
+			expect(attaches[0]).toMatch(
+				/^(nvim_exec_lua\+){8}nvim_ui_attach\+nvim_exec_lua$/,
+			);
 			expect(first.asked).not.toContain("nvim_ui_detach");
 			expect(await first.ui.request("nvim_exec_lua", [sizes, []])).toEqual([
 				40,
