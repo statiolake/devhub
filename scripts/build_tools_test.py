@@ -81,7 +81,7 @@ class Workflow(unittest.TestCase):
 
 	def test_builds_every_target_on_a_runner_of_its_own(self) -> None:
 		for target, runner in (
-			("darwin-arm64", "macos-14"),
+			("darwin-arm64", "macos-15"),
 			("linux-x64", "ubuntu-latest"),
 			("linux-arm64", "ubuntu-24.04-arm"),
 		):

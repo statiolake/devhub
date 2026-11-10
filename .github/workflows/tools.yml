@@ -14,7 +14,9 @@ name: Tools
 # and a new tag.
 #
 # Each architecture builds on a runner of its own: each tool's build runs
-# the binary it made, and there is no cross-build.
+# the binary it made, and there is no cross-build. macos-15 is Apple Silicon,
+# the image CI builds the app on. macos-14 is not used: GitHub cancelled the
+# tools-1 run's job on it before any runner took it.
 on:
   push:
     tags: ["tools-*"]
@@ -70,7 +72,7 @@ jobs:
       matrix:
         include:
           - target: darwin-arm64
-            runner: macos-14
+            runner: macos-15
           - target: linux-x64
             runner: ubuntu-latest
           - target: linux-arm64
