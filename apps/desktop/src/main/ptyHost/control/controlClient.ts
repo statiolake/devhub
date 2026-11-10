@@ -90,6 +90,7 @@ import {
 	copyCapture,
 	copyScreen,
 	copyState,
+	scaledWheel,
 	matchSpans,
 	plainLine,
 	selectionSpans,
@@ -549,6 +550,15 @@ export class ControlClient {
 				return;
 			}
 			case "session-window-changed":
+				// A window just opened (`%window-add` came first, its listing is
+				// still being read) is made current by that listing, never
+				// before: a layout posted meanwhile — by any notice — would name a
+				// window that is not among the windows, and the page would slide
+				// to it from no side of the tab bar, with nothing in it.
+				if (!this.#windows.has(event.window)) {
+					void this.#refresh();
+					return;
+				}
 				this.#activeWindow = event.window;
 				for (const pane of this.#panes.values())
 					if (pane.window === event.window) pane.all = true;
@@ -1122,7 +1132,13 @@ export class ControlClient {
 		const numbers = displayPanesOf(command);
 		if (numbers !== undefined) return this.#openNumbers(numbers);
 		const conditional = ifShellOf(command);
-		if (conditional !== undefined && waitingCommand(command) !== undefined)
+		// From the mouse, too: its arms aim at the mouse's pane (`-t =`),
+		// which tmux can only resolve for a binding it ran itself (the
+		// root table's WheelUpPane, `copy-mode -et=` in an if-shell arm).
+		if (
+			conditional !== undefined &&
+			(mouse !== undefined || waitingCommand(command) !== undefined)
+		)
 			return this.#conditional(conditional, mouse);
 		const waiting = waitingCommand(command);
 		if (waiting !== undefined) {
@@ -1599,6 +1615,17 @@ export class ControlClient {
 	 * (`MouseDown3Pane`, `WheelUpPane`, `MouseDown3Status`) runs with it as
 	 * its mouse, in the mode's table while the pane is in copy mode.
 	 */
+	/** Wheel turns waiting (`#wheelTurns`); the first is being run. */
+	#wheelQueue: {
+		readonly key: string;
+		readonly pane: number;
+		readonly x: number;
+		readonly y: number;
+		count: number;
+		started: boolean;
+	}[] = [];
+	#wheelRunning = false;
+
 	#mouse(at: {
 		key: string;
 		pane?: number;
@@ -1613,27 +1640,110 @@ export class ControlClient {
 			this.#chooser !== undefined
 		)
 			return;
+		// The wheel over a pane: queued, a flick's lines merged while the
+		// last ones are scrolled (`#wheelTurn`).
+		if (
+			(at.key === "WheelUpPane" || at.key === "WheelDownPane") &&
+			at.pane !== undefined &&
+			at.window === undefined
+		) {
+			const last = this.#wheelQueue.at(-1);
+			if (
+				last !== undefined &&
+				!last.started &&
+				last.key === at.key &&
+				last.pane === at.pane
+			)
+				last.count += 1;
+			else
+				this.#wheelQueue.push({
+					...at,
+					pane: at.pane,
+					count: 1,
+					started: false,
+				});
+			if (!this.#wheelRunning) void this.#wheelTurns();
+			return;
+		}
+		void this.#mouseBinding(at, 1);
+	}
+
+	/** The wheel's queued turns, one after the other. */
+	async #wheelTurns(): Promise<void> {
+		this.#wheelRunning = true;
+		try {
+			for (;;) {
+				const next = this.#wheelQueue[0];
+				if (next === undefined || this.#ended) return;
+				next.started = true;
+				await this.#mouseBinding(next, next.count);
+				this.#wheelQueue.shift();
+			}
+		} finally {
+			this.#wheelRunning = false;
+		}
+	}
+
+	/**
+	 * A mouse key's binding, in the pane's mode's table while it is in copy
+	 * mode, `count` times over (a wheel's lines, merged when the binding is
+	 * a plain scroll: `scaledWheel`).
+	 */
+	async #mouseBinding(
+		at: {
+			readonly key: string;
+			readonly pane?: number;
+			readonly window?: number;
+			readonly x: number;
+			readonly y: number;
+		},
+		count: number,
+	): Promise<void> {
 		const pane = at.pane === undefined ? undefined : this.#panes.get(at.pane);
 		const inCopy = pane !== undefined && COPY_MODES.has(pane.mode);
-		const table = inCopy
-			? this.#modeKeys === "vi"
-				? "copy-mode-vi"
-				: "copy-mode"
-			: "root";
+		const modeTable = this.#modeKeys === "vi" ? "copy-mode-vi" : "copy-mode";
+		const table = inCopy ? modeTable : "root";
 		const command = this.#router.binding(table, at.key);
 		if (command === undefined) return;
 		const target =
 			at.window !== undefined ? `@${String(at.window)}` : `%${String(at.pane)}`;
-		void this.#hold(
+		const mouse = {
+			target,
+			key: at.key,
+			x: at.x,
+			y: at.y,
+			...(inCopy ? { viaMode: true } : {}),
+			...(at.window === undefined ? {} : { window: at.window }),
+		};
+		const inMode = async (bound: string, times: number) => {
+			const scaled = scaledWheel(bound, times);
+			if (scaled !== undefined)
+				return this.#dispatch(scaled, { ...mouse, viaMode: true });
+			for (let i = 0; i < times && !this.#ended; i += 1)
+				await this.#dispatch(bound, { ...mouse, viaMode: true });
+		};
+		await this.#hold(
 			[],
-			this.#dispatch(command, {
-				target,
-				key: at.key,
-				x: at.x,
-				y: at.y,
-				...(inCopy ? { viaMode: true } : {}),
-				...(at.window === undefined ? {} : { window: at.window }),
-			}),
+			(async () => {
+				if (inCopy) {
+					await inMode(command, count);
+					return;
+				}
+				await this.#dispatch(command, mouse);
+				// The wheel that put the pane in copy mode (`copy-mode -e`, tmux's
+				// own WheelUpPane) scrolls it too, as `send -M` after it would:
+				// the first tick over a shell moves its scrollback by a line, as
+				// every tick after it does (`docs/motion.md`, "Scrolling").
+				if (pane === undefined || at.key !== "WheelUpPane") {
+					for (let i = 1; i < count && !this.#ended; i += 1)
+						await this.#dispatch(command, mouse);
+					return;
+				}
+				await this.#readFacts(pane.id);
+				if (!COPY_MODES.has(pane.mode) || this.#ended) return;
+				const bound = this.#router.binding(modeTable, at.key);
+				if (bound !== undefined) await inMode(bound, count);
+			})(),
 		);
 	}
 

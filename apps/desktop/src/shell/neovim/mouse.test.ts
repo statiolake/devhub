@@ -112,11 +112,20 @@ describe("the pointer", () => {
 
   it("turns trackpad pixels into line steps, keeping the remainder", () => {
     const wheel = new WheelAccumulator();
-    expect(wheel.steps(0, 10, 0, cell)).toEqual([]);
-    expect(wheel.steps(0, 10, 0, cell)).toEqual(["down"]);
-    expect(wheel.steps(0, -40, 0, cell)).toEqual(["up", "up"]);
-    expect(wheel.steps(17, 0, 0, cell)).toEqual(["right", "right"]);
-    expect(wheel.steps(0, 3, 1, cell)).toEqual(["down", "down", "down"]);
+    // A swipe's first event is a step however small; the pixels after it
+    // pay that step back before the next.
+    expect(wheel.steps(0, 10, 0, cell, 0)).toEqual(["down"]);
+    expect(wheel.steps(0, 10, 0, cell, 16)).toEqual([]);
+    expect(wheel.steps(0, -40, 0, cell, 32)).toEqual(["up", "up"]);
+    expect(wheel.steps(17, 0, 0, cell, 48)).toEqual(["right", "right"]);
+    expect(wheel.steps(0, 3, 1, cell, 64)).toEqual(["down", "down", "down"]);
+  });
+
+  it("a tick of a few pixels is a step, each one", () => {
+    const wheel = new WheelAccumulator();
+    expect(wheel.steps(0, 4, 0, cell, 0)).toEqual(["down"]);
+    expect(wheel.steps(0, 4, 0, cell, 100)).toEqual(["down"]);
+    expect(wheel.steps(0, -4, 0, cell, 200)).toEqual(["up"]);
   });
 
   it("fits a grid to the view", () => {

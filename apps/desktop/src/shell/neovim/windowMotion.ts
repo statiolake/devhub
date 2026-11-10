@@ -30,6 +30,7 @@ import {
   placeGroup,
   plan,
   reducedMotion,
+  switchesForward,
   type Change,
   type CellRect,
   type Place,
@@ -90,7 +91,8 @@ interface Seen {
   readonly rests: ReadonlyMap<number, WindowRest>;
   readonly toplines: ReadonlyMap<number, number>;
   readonly tab: number | undefined;
-  readonly tabIndex: number;
+  /** The tabs in the tab strip's order. */
+  readonly tabs: readonly number[];
   readonly grid1: string;
 }
 
@@ -194,7 +196,7 @@ export class WindowMotion {
     const grid1 = { width: base?.width ?? 0, height: base?.height ?? 0 };
     const windows = windowsOf(boxes);
     const tab = state.tabline?.current;
-    const tabIndex = state.tabline?.tabs.findIndex((t) => t.tab === tab) ?? 0;
+    const tabs = state.tabline?.tabs.map((t) => t.tab) ?? [];
     const toplines = new Map<number, number>();
     for (const grid of windows.keys()) {
       const top = state.windows.get(grid)?.viewport?.topline;
@@ -206,7 +208,7 @@ export class WindowMotion {
       rests: windowRests(boxes, grid1, opts.cmdheight, cell, dpr),
       toplines,
       tab,
-      tabIndex,
+      tabs,
       grid1: `${String(grid1.width)}x${String(grid1.height)}`,
     };
     this.seen = next;
@@ -506,7 +508,10 @@ export class WindowMotion {
 /** What changed between two frames' windows, or nothing to move. */
 function changeOf(a: Seen, b: Seen): Change | undefined {
   if (a.tab !== b.tab && a.tab !== undefined && b.tab !== undefined)
-    return { kind: "switch", forward: b.tabIndex > a.tabIndex };
+    return {
+      kind: "switch",
+      forward: switchesForward(a.tab, b.tab, a.tabs, b.tabs),
+    };
   const rects = (w: ReadonlyMap<number, GridBox>) =>
     new Map<number, CellRect>(
       [...w].map(([g, box]) => [

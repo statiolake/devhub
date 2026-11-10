@@ -398,6 +398,30 @@ export function recede(
 }
 
 /**
+ * Whether a switch from window (or tab) `from` to `to` goes forward — the
+ * one arriving slides in from the right — by where they are in the order
+ * the tab bar shows: `to` after `from`. The order after the switch is
+ * asked first (a window just opened is only in it, wherever it was put:
+ * `new-window -a`, `-b`, an index, `:tabnew`, `:0tabnew`), then the order
+ * before it (a window just closed is only in that one: the window that
+ * takes its place comes from the side it was on). Neither knowing both,
+ * forward.
+ */
+export function switchesForward<K>(
+  from: K | undefined,
+  to: K | undefined,
+  before: readonly K[],
+  after: readonly K[],
+): boolean {
+  for (const order of [after, before]) {
+    const a = from === undefined ? -1 : order.indexOf(from);
+    const b = to === undefined ? -1 : order.indexOf(to);
+    if (a >= 0 && b >= 0) return b > a;
+  }
+  return true;
+}
+
+/**
  * What a layout change is, from the panes' rectangles in cells before and
  * after (`a`, `b`, by key): a step when the same panes are there and no
  * edge moved more than `stepCells`; else structural. Zooms and window

@@ -15,6 +15,7 @@ import {
   classify,
   placeGroup,
   rowShift,
+  switchesForward,
   type Change,
   type Place,
   type Rect,
@@ -73,6 +74,8 @@ export interface Shown {
   readonly cols: number;
   readonly rows: number;
   readonly window: number | undefined;
+  /** The session's windows in the tab bar's order (by index). */
+  readonly order: readonly number[];
   readonly zoomed: boolean;
   readonly panes: readonly PaneBox[];
   /** The rows of each pane whose size changes, as text (`rowShift`). */
@@ -141,18 +144,29 @@ export function waitingFor(
   return out;
 }
 
+/** A view's windows in the tab bar's order: by index. */
+export function windowOrder(view: {
+  readonly windows: readonly { id: number; index: number }[];
+}): number[] {
+  return [...view.windows].sort((a, b) => a.index - b.index).map((w) => w.id);
+}
+
 /**
- * What a change from `before` to the view now is: a window switch (the
- * new window's index past the old one's is forward), a zoom or unzoom, a
- * few cells' resize step, or a structural change; `undefined` for none.
+ * What a change from `before` to the view now is: a window switch (forward
+ * when the new window is after the old one in the tab bar's order,
+ * `switchesForward`), a zoom or unzoom, a few cells' resize step, or a
+ * structural change; `undefined` for none.
  */
 export function changeOf(before: Shown, view: ControlView): Change | undefined {
   if (before.window !== view.window) {
-    const index = (id: number | undefined) =>
-      view.windows.find((w) => w.id === id)?.index ?? 0;
     return {
       kind: "switch",
-      forward: index(view.window) > index(before.window),
+      forward: switchesForward(
+        before.window,
+        view.window,
+        before.order,
+        windowOrder(view),
+      ),
     };
   }
   const zoomed = zoomedOf(view);

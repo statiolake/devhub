@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { pasteBytes, sgrMouse, tmuxKey, type KeyLike } from "./controlKeys";
 import {
   applyControl,
+  copyScrolled,
+  gridOf,
   borders,
   hlOf,
   newControlView,
@@ -305,5 +307,80 @@ describe("a popup's ground", () => {
     ]);
     // Its page frames it: no panel of the painter's round it.
     expect(paneBoxes(view).find((b) => b.grid === 1)?.bare).toBe(true);
+  });
+});
+
+describe("a pane's copy mode scrolling", () => {
+  const modes = {
+    mouse: 0,
+    sgrMouse: false,
+    bracketedPaste: false,
+    focusEvents: false,
+    alternateScreen: false,
+  };
+  const copy = (scroll: number, history = 100) =>
+    ({
+      kind: "copy-mode",
+      pane: 1,
+      badge: "",
+      scroll,
+      history,
+      selection: [],
+      matches: [],
+    }) as const;
+  const frame = (full: boolean) =>
+    ({
+      kind: "pane",
+      seq: 1,
+      pane: 1,
+      modes,
+      frame: {
+        cols: 4,
+        rows: 2,
+        full,
+        dirty: [],
+        cursor: { x: 0, y: 0, visible: true, blinking: false, shape: 1 },
+        styles: [],
+      },
+    }) as const;
+
+  it("is the rows its top line moved in the history", () => {
+    expect(
+      copyScrolled({ scroll: 0, history: 100 }, { scroll: 3, history: 100 }),
+    ).toBe(-3);
+    expect(
+      copyScrolled({ scroll: 3, history: 100 }, { scroll: 1, history: 100 }),
+    ).toBe(2);
+    // Output arriving grows both: nothing moved.
+    expect(
+      copyScrolled({ scroll: 3, history: 100 }, { scroll: 5, history: 102 }),
+    ).toBe(0);
+  });
+
+  it("goes to the painter with the new view's picture, not before", () => {
+    const view = newControlView({ foreground: 0xffffff, background: 0 });
+    applyControl(view, copy(1));
+    // Entering: from the foot of the history, the wheel's line already in.
+    let changes = applyControl(view, copy(4));
+    expect(changes.scrolled.size).toBe(0);
+    expect(changes.grids.size).toBe(0);
+    expect(applyControl(view, frame(false)).scrolled.size).toBe(0);
+    changes = applyControl(view, frame(true));
+    expect([...changes.scrolled]).toEqual([[gridOf(1), -4]]);
+    // A selection moving with no scroll is drawn at once.
+    changes = applyControl(view, copy(4));
+    expect(changes.grids.has(gridOf(1))).toBe(true);
+    expect(applyControl(view, frame(true)).scrolled.size).toBe(0);
+  });
+
+  it("leaving it slides back down to the live screen", () => {
+    const view = newControlView({ foreground: 0xffffff, background: 0 });
+    applyControl(view, copy(0));
+    applyControl(view, copy(2));
+    applyControl(view, frame(true));
+    applyControl(view, { kind: "copy-mode-closed", pane: 1 });
+    expect([...applyControl(view, frame(true)).scrolled]).toEqual([
+      [gridOf(1), 2],
+    ]);
   });
 });

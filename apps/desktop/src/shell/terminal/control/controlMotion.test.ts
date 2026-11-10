@@ -13,6 +13,7 @@ import {
   restPlace,
   shiftsOf,
   waitingFor,
+  windowOrder,
   type Moving,
   type Shown,
 } from "./controlMotion";
@@ -61,6 +62,7 @@ function shownOf(view: ControlView, text = new Map<number, string[]>()): Shown {
     cols: view.cols,
     rows: view.rows,
     window: view.window,
+    order: windowOrder(view),
     zoomed: false,
     panes: view.panes,
     text,
@@ -343,5 +345,219 @@ describe("a commit", () => {
     ];
     view.window = 2;
     expect(changeOf(before, view)).toEqual({ kind: "switch", forward: true });
+  });
+
+  describe("a switch slides by the tab bar's order", () => {
+    const win = (id: number, index: number) => ({
+      id,
+      index,
+      name: "",
+      active: false,
+      zoomed: false,
+    });
+    /** From window `from` in `before` to window `to` in `after`. */
+    const slide = (
+      from: number,
+      before: readonly (readonly [number, number])[],
+      to: number,
+      after: readonly (readonly [number, number])[],
+    ) => {
+      const old = viewWith([pane(1, 0, 0, 80, 24)]);
+      old.windows = before.map(([id, index]) => win(id, index));
+      old.window = from;
+      const view = viewWith([pane(1, 0, 0, 80, 24)]);
+      view.windows = after.map(([id, index]) => win(id, index));
+      view.window = to;
+      const change = changeOf(shownOf(old), view);
+      return change?.kind === "switch" ? change.forward : undefined;
+    };
+
+    it("a new window to the right comes from the right", () => {
+      // new-window: after the last.
+      expect(
+        slide(1, [[1, 0]], 2, [
+          [1, 0],
+          [2, 1],
+        ]),
+      ).toBe(true);
+      // new-window -a from the first of three: between it and the second.
+      expect(
+        slide(
+          1,
+          [
+            [1, 0],
+            [2, 1],
+            [3, 2],
+          ],
+          4,
+          [
+            [1, 0],
+            [4, 1],
+            [2, 2],
+            [3, 3],
+          ],
+        ),
+      ).toBe(true);
+    });
+
+    it("a new window to the left comes from the left", () => {
+      // new-window -b from the only window: tmux renumbers it after.
+      expect(
+        slide(1, [[1, 0]], 2, [
+          [2, 0],
+          [1, 1],
+        ]),
+      ).toBe(false);
+      // new-window -t :0 with windows at 1 and 2, from the second.
+      expect(
+        slide(
+          2,
+          [
+            [1, 1],
+            [2, 2],
+          ],
+          3,
+          [
+            [3, 0],
+            [1, 1],
+            [2, 2],
+          ],
+        ),
+      ).toBe(false);
+      // new-window -b from the last of three: still right of the first.
+      expect(
+        slide(
+          3,
+          [
+            [1, 0],
+            [2, 1],
+            [3, 2],
+          ],
+          4,
+          [
+            [1, 0],
+            [2, 1],
+            [4, 2],
+            [3, 3],
+          ],
+        ),
+      ).toBe(false);
+    });
+
+    it("an index past the gaps is still to the right", () => {
+      expect(
+        slide(
+          1,
+          [
+            [1, 0],
+            [2, 1],
+          ],
+          3,
+          [
+            [1, 0],
+            [2, 1],
+            [3, 9],
+          ],
+        ),
+      ).toBe(true);
+      expect(
+        slide(
+          3,
+          [
+            [1, 0],
+            [3, 9],
+          ],
+          2,
+          [
+            [1, 0],
+            [2, 5],
+            [3, 9],
+          ],
+        ),
+      ).toBe(false);
+    });
+
+    it("a closed window gives way from the side of the one taking over", () => {
+      // The middle one closed; tmux makes the right one current.
+      expect(
+        slide(
+          2,
+          [
+            [1, 0],
+            [2, 1],
+            [3, 2],
+          ],
+          3,
+          [
+            [1, 0],
+            [3, 2],
+          ],
+        ),
+      ).toBe(true);
+      // The last one closed: its left neighbour (or the last used) is current.
+      expect(
+        slide(
+          3,
+          [
+            [1, 0],
+            [2, 1],
+            [3, 2],
+          ],
+          1,
+          [
+            [1, 0],
+            [2, 1],
+          ],
+        ),
+      ).toBe(false);
+      // tmux said which is current before the listing dropped the closed one.
+      expect(
+        slide(
+          2,
+          [
+            [1, 0],
+            [2, 1],
+            [3, 2],
+          ],
+          1,
+          [
+            [1, 0],
+            [2, 1],
+            [3, 2],
+          ],
+        ),
+      ).toBe(false);
+    });
+
+    it("next and previous by index", () => {
+      expect(
+        slide(
+          1,
+          [
+            [1, 0],
+            [2, 1],
+          ],
+          2,
+          [
+            [1, 0],
+            [2, 1],
+          ],
+        ),
+      ).toBe(true);
+      expect(
+        slide(
+          2,
+          [
+            [1, 0],
+            [2, 1],
+          ],
+          1,
+          [
+            [1, 0],
+            [2, 1],
+          ],
+        ),
+      ).toBe(false);
+    });
   });
 });

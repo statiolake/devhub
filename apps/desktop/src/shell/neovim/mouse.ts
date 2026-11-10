@@ -9,6 +9,7 @@
  * trackpad scroll moves by lines and a fast one does not lose any.
  */
 
+import { WheelLines } from "./wheelLines";
 import { frameGeometry, insideRounded } from "./frame";
 import { frameCuts, inFrameCells } from "./floats";
 import type { GridBox } from "./redraw";
@@ -147,11 +148,13 @@ export function mouseButton(
 
 export type WheelStep = "up" | "down" | "left" | "right";
 
-/** Pixels in, line steps out, the remainder kept. */
+/**
+ * Pixels in, line steps out, the remainder kept: each axis by
+ * `WheelLines`' rule (a tick is at least a step, no pixel lost).
+ */
 export class WheelAccumulator {
-  private x = 0;
-  private y = 0;
-  private mode = 0;
+  private readonly x = new WheelLines();
+  private readonly y = new WheelLines();
 
   /** `deltaMode` 1 is lines already (a mouse wheel on some systems). */
   steps(
@@ -159,29 +162,20 @@ export class WheelAccumulator {
     deltaY: number,
     deltaMode: number,
     cell: CellMetrics,
+    now = performance.now(),
   ): WheelStep[] {
-    // A remainder in pixels means nothing in lines, and the other way round.
-    if (deltaMode !== this.mode) this.reset();
-    this.mode = deltaMode;
-    const lineX = deltaMode === 1 ? 1 : cell.width;
-    const lineY = deltaMode === 1 ? 1 : cell.height;
-    this.x += deltaX;
-    this.y += deltaY;
     const out: WheelStep[] = [];
-    while (Math.abs(this.y) >= lineY) {
-      out.push(this.y > 0 ? "down" : "up");
-      this.y -= Math.sign(this.y) * lineY;
-    }
-    while (Math.abs(this.x) >= lineX) {
-      out.push(this.x > 0 ? "right" : "left");
-      this.x -= Math.sign(this.x) * lineX;
-    }
+    const ny = this.y.lines(deltaY, deltaMode, cell.height, 1, now);
+    for (let i = 0; i < Math.abs(ny); i += 1) out.push(ny > 0 ? "down" : "up");
+    const nx = this.x.lines(deltaX, deltaMode, cell.width, 1, now);
+    for (let i = 0; i < Math.abs(nx); i += 1)
+      out.push(nx > 0 ? "right" : "left");
     return out;
   }
 
   reset(): void {
-    this.x = 0;
-    this.y = 0;
+    this.x.reset();
+    this.y.reset();
   }
 }
 

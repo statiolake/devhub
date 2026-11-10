@@ -581,6 +581,12 @@ export class GridPainter {
   private lastMargins: NeovimUiState["margins"] = new Map();
   /** Each window grid's pixel scrolling, by grid. */
   private readonly scrolls = new Map<number, ScrollSlot>();
+  /**
+   * Grids that are not Neovim's windows but scroll the same way when their
+   * owner says by how many rows (`RedrawChanges.scrolled`): tmux's panes in
+   * copy mode, with the glide each one's shift takes.
+   */
+  private readonly shiftedGrids = new Map<number, number>();
   /** One shadow per panel of floats (`floats.ts`), by what it looks like. */
   private readonly clusters = new Map<
     string,
@@ -1209,6 +1215,7 @@ export class GridPainter {
    * message grid's), with Neovim saying how far it scrolls.
    */
   private smoothable(state: NeovimUiState, box: GridBox): boolean {
+    if (this.shiftedGrids.has(box.grid)) return true;
     return (
       !box.float &&
       box.grid !== 1 &&
@@ -1254,6 +1261,12 @@ export class GridPainter {
     const text = this.textRows(state, box);
     this.takeGhost(slot, entry, text);
     shifted(slot.view, rows, ch, (text.bottom - text.top) * ch, now);
+    const glide = this.shiftedGrids.get(box.grid);
+    if (glide !== undefined && slot.view.ease) {
+      // Seen from the frame it lands in: the whole glide is drawn.
+      slot.view.ease = { from: slot.view.off, start: now };
+      slot.view.easeMs = glide;
+    }
   }
 
   /** What the window shows now, drawn into its ghost (`scrolledBy`). */
@@ -1456,8 +1469,30 @@ export class GridPainter {
       slot = { view: newScrollView() };
       this.scrolls.set(grid, slot);
     }
-    wheeled(slot.view, dy, performance.now());
+    wheeled(
+      slot.view,
+      dy,
+      performance.now(),
+      this.metrics.height,
+      !matchMedia("(prefers-reduced-motion: reduce)").matches,
+    );
     return true;
+  }
+
+  /**
+   * Grids (not Neovim's windows) whose scrolls the owner says, and how long
+   * each one's shift glides (`shiftedGrids`).
+   */
+  setShiftedGrids(grids: ReadonlyMap<number, number>): void {
+    for (const grid of this.shiftedGrids.keys())
+      if (!grids.has(grid)) this.dropScroll(grid);
+    this.shiftedGrids.clear();
+    for (const [grid, ms] of grids) this.shiftedGrids.set(grid, ms);
+  }
+
+  /** Whether any grid's display is away from its grid (moving, or held). */
+  get scrolling(): boolean {
+    return this.scrolls.size > 0;
   }
 
   /** The display of a window grid that scrolls in pixels, if it does. */

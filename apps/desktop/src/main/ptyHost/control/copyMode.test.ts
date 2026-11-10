@@ -5,6 +5,7 @@ import {
 	copyState,
 	matchSpans,
 	plainLine,
+	scaledWheel,
 	selectionSpans,
 } from "./copyMode.js";
 
@@ -100,5 +101,29 @@ describe("copy mode as tmux's formats say it", () => {
 		expect(aimAt("select-pane -t = ; send -M", "%3")).toBe(
 			"select-pane -t %3 ; send -t %3 -M",
 		);
+	});
+});
+
+describe("a wheel binding for several lines at once", () => {
+	it("scales a plain scroll", () => {
+		expect(scaledWheel("send-keys -X -N 1 scroll-up", 4)).toBe(
+			"send-keys -X -N 4 scroll-up",
+		);
+		expect(scaledWheel("send -X -N 5 scroll-down", 3)).toBe(
+			"send-keys -X -N 15 scroll-down",
+		);
+		expect(scaledWheel("send-keys -X scroll-up", 2)).toBe(
+			"send-keys -X -N 2 scroll-up",
+		);
+		// tmux's own copy-mode-vi WheelUpPane.
+		expect(scaledWheel("select-pane \\; send-keys -X -N 5 scroll-up", 2)).toBe(
+			"select-pane \\; send-keys -X -N 10 scroll-up",
+		);
+	});
+	it("leaves anything else to be run line by line", () => {
+		expect(scaledWheel("send-keys -X -N 1 scroll-up \\; select-pane", 2)).toBe(
+			undefined,
+		);
+		expect(scaledWheel("send-keys -X halfpage-up", 2)).toBe(undefined);
 	});
 });

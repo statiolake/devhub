@@ -547,6 +547,114 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     await until("the end", () => view.ended);
   }, 20000);
 
+  it("scrolls a shell's history from the first wheel tick, a line a tick", async () => {
+    const socket = `devhub-wheel-${String(process.pid)}`;
+    sockets.push(socket);
+    tmux(socket, "new-session", "-d", "-s", "w", "-x", "80", "-y", "24", "sh");
+    // The usual wheel bindings: into copy mode by an if-shell arm aimed at
+    // the mouse's pane, a line a turn in it.
+    tmux(
+      socket,
+      "bind-key",
+      "-T",
+      "root",
+      "WheelUpPane",
+      "if",
+      "-F",
+      "-t",
+      "=",
+      "#{?pane_in_mode,1,#{alternate_on}}",
+      "send-keys -M",
+      "copy-mode -et=",
+    );
+    tmux(
+      socket,
+      "bind-key",
+      "-T",
+      "copy-mode-vi",
+      "WheelUpPane",
+      "send-keys",
+      "-X",
+      "-N",
+      "1",
+      "scroll-up",
+    );
+    tmux(socket, "send-keys", "-t", "w", "PS1='$ '; clear; seq 1 100", "Enter");
+    const view = page();
+    const client = new ControlClient({
+      process: controlProcess(socket, "w"),
+      vt: lib,
+      cols: 80,
+      rows: 24,
+      post: view.post,
+      ended: () => undefined,
+    });
+    const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
+    await until("the output", () =>
+      view.screens.get(pane)?.some((row) => row === "100"),
+    );
+    // The client has read the bindings (the prefix is said with them).
+    await until("the bindings", () => view.layout?.prefixes.includes("C-q"));
+    const wheel = () =>
+      client.receive({ kind: "mouse", key: "WheelUpPane", pane, x: 5, y: 5 });
+    // The tick that enters copy mode scrolls too.
+    wheel();
+    await until("a line up", () =>
+      view.copy?.scroll === 1 ? true : undefined,
+    );
+    // Ticks that come while one is scrolled are each a line still.
+    for (let i = 0; i < 5; i += 1) wheel();
+    await until("six lines up", () =>
+      view.copy?.scroll === 6 ? true : undefined,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(view.copy?.scroll).toBe(6);
+    client.stop();
+    await until("the end", () => view.ended);
+  }, 20000);
+
+  it("says a new window is current only with its place among the windows", async () => {
+    const socket = `devhub-neww-${String(process.pid)}`;
+    sockets.push(socket);
+    tmux(socket, "new-session", "-d", "-s", "n", "-x", "80", "-y", "24", "sh");
+    const layouts: Extract<ControlToPage, { kind: "layout" }>[] = [];
+    const view = page();
+    const client = new ControlClient({
+      process: controlProcess(socket, "n"),
+      vt: lib,
+      cols: 80,
+      rows: 24,
+      post: (message) => {
+        if (message.kind === "layout") layouts.push(message);
+        view.post(message);
+      },
+      ended: () => undefined,
+    });
+    const home = await until("the window", () => view.layout?.window);
+    // Before the current one (renumbering it), then after it.
+    tmux(socket, "new-window", "-b", "-t", "n:", "sh");
+    const left = await until("the new window", () =>
+      view.layout !== undefined && view.layout.window !== home
+        ? view.layout.window
+        : undefined,
+    );
+    tmux(socket, "select-window", "-t", `@${String(home)}`);
+    await until("back", () => view.layout?.window === home || undefined);
+    tmux(socket, "new-window", "-a", "-t", `@${String(home)}`, "sh");
+    const right = await until("the other new window", () =>
+      view.layout !== undefined &&
+      view.layout.window !== home &&
+      view.layout.window !== left
+        ? view.layout.window
+        : undefined,
+    );
+    for (const layout of layouts)
+      expect(layout.windows.map((w) => w.id)).toContain(layout.window);
+    expect(view.layout?.windows.map((w) => w.id)).toEqual([left, home, right]);
+    client.stop();
+    await until("the end", () => view.ended);
+  }, 20000);
+
   it("refuses the bindings that would wait on it, and is never held by them", async () => {
     const socket = `devhub-guard-${String(process.pid)}`;
     sockets.push(socket);

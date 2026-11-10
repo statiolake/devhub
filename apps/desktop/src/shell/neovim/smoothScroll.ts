@@ -24,11 +24,22 @@
  * ghosts and draws, the editor sends the requests.
  */
 
+import { TICK_GAP_MS } from "./wheelLines";
+
 /** How long the display takes to ease onto Neovim's `topline`. */
 export const EASE_MS = 90;
 
 /** A frame, at 60 Hz. */
 const FRAME_MS = 16;
+
+/**
+ * How long a wheel tick's line takes to glide in (`wheeled` with a row
+ * height), and a tmux pane's copy-mode shift (`GridPainter.setShiftedGrids`):
+ * VS Code's smooth wheel scroll is 125 ms. On the ease-out cubic it is half
+ * way in 25 ms and 90% in 65, so a tick answers in the frame it lands in
+ * and settles without a visible stop.
+ */
+export const GLIDE_MS = 120;
 
 /** How long after the last wheel event the display settles. */
 export const WHEEL_IDLE_MS = 110;
@@ -66,8 +77,16 @@ export interface ScrollView {
   /** The last wheel event: its time and direction. */
   wheelAt: number;
   dir: number;
-  /** The ease onto `topline`: from where, since when. */
+  /** The ease onto `topline`: from where, since when, how long. */
   ease: { from: number; start: number } | undefined;
+  easeMs: number;
+  /**
+   * A tick's glide to the line it asked for: from where the display was,
+   * since when; it ends on wherever `want` is then.
+   */
+  glide: { readonly from: number; start: number } | undefined;
+  /** Pixels a tick moved ahead of the wheel, which its next pixels pay. */
+  credit: number;
   /** The settling line request has been made for this rest. */
   settled: boolean;
   /** How long Neovim takes to answer a request with its scroll (ms). */
@@ -93,6 +112,9 @@ export function newScrollView(): ScrollView {
     wheelAt: -Infinity,
     dir: 0,
     ease: undefined,
+    easeMs: EASE_MS,
+    glide: undefined,
+    credit: 0,
     settled: false,
     rtt: 30,
     speed: 0,
@@ -137,12 +159,14 @@ export function shifted(
   view.ghost = view.off - d;
   view.off -= d;
   view.want -= d;
+  if (view.glide) view.glide = { ...view.glide, from: view.glide.from - d };
   view.reach = { lo: view.reach.lo - d, hi: view.reach.hi - d };
   if (!led) {
     // Started a frame ago: the first frame drawn already shows the move,
     // so a key's scroll is seen as soon as it would be without easing.
     view.settled = true;
     view.ease = { from: view.off, start: now - FRAME_MS };
+    view.easeMs = EASE_MS;
   } else if (view.ease) {
     view.ease = { from: view.off, start: now };
   }
@@ -156,14 +180,33 @@ export function shifted(
     view.want = 0;
     view.ghost = undefined;
     view.ease = undefined;
+    view.glide = undefined;
   }
 }
 
-/** The wheel moved `dy` pixels (down positive). */
-export function wheeled(view: ScrollView, dy: number, now: number): void {
+/**
+ * The wheel moved `dy` pixels (down positive). With `rowHeight`, a tick —
+ * the first event after a pause of `TICK_GAP_MS`, or the first the other
+ * way (`wheelLines.ts`) — moves the display at least to the next line past
+ * where it was going, gliding there in `GLIDE_MS` (at once when `glide` is
+ * false: Reduce Motion); the pixels after it pay that line back before the
+ * display moves on, so a swipe goes by its pixels, under the finger.
+ */
+export function wheeled(
+  view: ScrollView,
+  dy: number,
+  now: number,
+  rowHeight?: number,
+  glide = true,
+): void {
   if (dy === 0) return;
   const dt = now - view.wheelAt;
   const fresh = dt > WHEEL_IDLE_MS;
+  const tick =
+    rowHeight !== undefined &&
+    rowHeight > 0 &&
+    (dt > TICK_GAP_MS || Math.sign(dy) !== view.dir);
+  if (tick || Math.sign(dy) !== view.dir) view.credit = 0;
   if (fresh) view.reach = { lo: view.off, hi: view.off };
   // A gesture's first event came a frame after it began, as far as is known.
   const speed = Math.abs(dy) / Math.max(8, fresh ? FRAME_MS : dt);
@@ -173,7 +216,27 @@ export function wheeled(view: ScrollView, dy: number, now: number): void {
       : 0.5 * view.speed + 0.5 * speed;
   view.wheelAt = now;
   view.dir = Math.sign(dy);
-  view.want += dy;
+  let move = dy;
+  if (!tick && view.credit > 0) {
+    const paid = Math.min(view.credit, Math.abs(move));
+    view.credit -= paid;
+    move -= view.dir * paid;
+  }
+  if (tick && rowHeight !== undefined) {
+    // A tick ends on a whole line: the nearest to where its pixels go, and
+    // at least one past the line the display was on, or going to. What it
+    // went past its pixels is paid by the next ones; what it fell short,
+    // less than half a line, is let go (at rest it would be too).
+    const line = Math.round(view.want / rowHeight);
+    const to = view.want + move;
+    const near = Math.round(to / rowHeight);
+    const n =
+      view.dir > 0 ? Math.max(near, line + 1) : Math.min(near, line - 1);
+    view.credit = Math.max(0, view.dir * (n * rowHeight - to));
+    move = n * rowHeight - view.want;
+    view.glide = glide ? { from: view.off, start: now } : undefined;
+  }
+  view.want += move;
   view.ease = undefined;
   view.settled = false;
   // Neovim cannot go further that way: the wheel's surplus is dropped, so
@@ -237,8 +300,21 @@ export function step(
   const { lo, hi } = coverage(view);
   // Still catching up with a flick that went past what Neovim has drawn.
   const behind = view.stuck !== view.dir && (view.want < lo || view.want > hi);
-  if (now - view.wheelAt < WHEEL_IDLE_MS || behind) {
-    view.off = snap(Math.min(hi, Math.max(lo, view.want)));
+  if (view.glide && now - view.glide.start >= GLIDE_MS) view.glide = undefined;
+  if (now - view.wheelAt < WHEEL_IDLE_MS || behind || view.glide) {
+    const to = Math.min(hi, Math.max(lo, view.want));
+    // A glide starts with the first frame that can move: until Neovim has
+    // drawn the rows it goes to, it has not begun (not jumped into later).
+    if (view.glide && to === view.glide.from && view.pending !== 0)
+      view.glide.start = now;
+    // A tick glides to its line; a swipe's pixels are followed as they come.
+    view.off = snap(
+      view.glide
+        ? view.glide.from +
+            (to - view.glide.from) *
+              easeOut((now - view.glide.start) / GLIDE_MS)
+        : to,
+    );
     view.reach = {
       lo: Math.min(view.reach.lo, view.off),
       hi: Math.max(view.reach.hi, view.off),
@@ -249,7 +325,12 @@ export function step(
     // that draws it, whichever is more (a flick slows down, it does not
     // speed up: twice is room for the round trip's jitter); by less than a
     // window at a time (so the ghost and the canvas meet).
-    const lead = Math.max(rowHeight, view.speed * (view.rtt + FRAME_MS) * 2);
+    // A tick's glide goes to a line it knows: Neovim is asked for that
+    // line and no further, or it would be led past the window and the
+    // display would jump to it.
+    const lead = view.glide
+      ? 0
+      : Math.max(rowHeight, view.speed * (view.rtt + FRAME_MS) * 2);
     const most = Math.max(1, textRows - 2);
     if (view.dir > 0 && view.want > -lead) {
       const lines = Math.ceil((view.want + lead) / rowHeight);
@@ -276,7 +357,7 @@ export function step(
     return undefined;
   }
   view.ease ??= { from: view.off, start: now };
-  const t = Math.min(1, (now - view.ease.start) / EASE_MS);
+  const t = Math.min(1, (now - view.ease.start) / view.easeMs);
   view.off = t >= 1 ? 0 : snap(view.ease.from * (1 - easeOut(t)));
   if (view.off === 0) {
     view.ghost = undefined;

@@ -57,6 +57,7 @@ durations and curves:
 | a change of place (FLIP glide)                                      | 240 ms (`GLIDE_MS`)                             | `--ease-standard` | `translate()` only                                                    |
 | a transcript following an entry that arrived (`followGlide.ts`)     | 167 ms (`FOLLOW_GLIDE_MS`)                      | WinUI's point to point `(0.55, 0.55, 0, 1)` | the transcript's `translateY()` only                  |
 | a disclosure opening or closing                                     | `--motion-slow`                                 | `--ease-standard` | its own block size                                                    |
+| a scroll by the wheel in a terminal or Neovim ("Scrolling")             | 120 ms (`GLIDE_MS`); a key's scroll in Neovim 90 ms (`EASE_MS`) | ease-out cubic `1 - (1 - t)³` | the content's `translateY()` only |
 | panes and Neovim windows as their layout changes (`docs/pane-motion.md`) | 167 ms (zoom 250, a key's step 83, a drag 0; a window or tab switch WinUI's slide, 300 ms) | WinUI's point to point `(0.55, 0.55, 0, 1)` (`paneMotion.ts`) | `translate()` of nested clips and content, `opacity` |
 
 Repeating motion (the activity dots, a spinner) is what something is doing
@@ -64,6 +65,85 @@ now; it is the only motion with no end, and it stops under Reduce Motion.
 
 A theme change is not a motion: the new colours land in one frame
 (`applyPalette` turns transitions off while the variables change).
+
+## Scrolling
+
+What the person said: scrolling with the wheel caught, and looked as if
+the content were being rewritten. Two rules, on the terminal's panes and
+Neovim's windows alike:
+
+1. **Every wheel tick scrolls at least one line, and no pixel is lost**
+   (`shell/neovim/wheelLines.ts`). A mouse notch is a few pixels on a Mac
+   (4 for a slow turn), 120 on Linux, and a trackpad's first event of a
+   swipe one or two: an event that starts a movement — the first after a
+   pause of 50 ms (`TICK_GAP_MS`), or the first the other way — is a tick,
+   and moves a whole line however small it is. Inside a movement the
+   pixels add up and every whole line is given as it is reached; the line
+   a tick took ahead of its pixels is paid back by the pixels after it, so
+   a swipe moves by exactly the lines its pixels make. 50 ms is the gap
+   that tells them apart: a trackpad (momentum included) sends an event
+   every frame, 8–17 ms; a slowly turned wheel sends its notches 60 ms and
+   more apart.
+2. **What moves glides, and only by a transform, ending on the program's
+   own picture.** The program (tmux, Neovim) scrolls by whole lines in its
+   own grid; DevHub draws the new grid moved back by the rows it scrolled
+   and lets it go to rest, with the old picture (a "ghost") under it
+   bringing in the rows from the edge, so no row is ever blank while it
+   slides (`smoothScroll.ts`, `GridPainter`). Its last frame is the grid as
+   the program drew it.
+
+**Timings.** A tick's line, and every scroll of a tmux pane's copy mode,
+glide in **120 ms on an ease-out cubic** (`GLIDE_MS`). That is VS Code's
+smooth wheel scroll (125 ms), on the curve a scroll decelerates by: it is
+half way in 25 ms and 90% in 65 ms, so a tick answers in the frame it
+lands in and settles with no visible stop; anything slower reads as the
+content lagging the hand. Ticks in quick succession each start from where
+the content is drawn, so a turned wheel is one continuous motion. A key's
+scroll in Neovim (`<C-d>`, `zz`, a search) eases in 90 ms (`EASE_MS`),
+as before. A trackpad is followed pixel for pixel, never animated: the
+content is under the finger, and momentum is the trackpad's own.
+
+**Per surface.**
+
+- **Neovim's windows** (the GUI, and a Neovim in a tmux pane): the display
+  follows the trackpad in pixels with Neovim led a line ahead (as built
+  earlier); a tick now goes to a whole line at least one past where the
+  display was going and glides there, Neovim asked for that line and no
+  further (a single notch used to lead Neovim up to a window ahead, and
+  the display jumped to it). Neovim's own `win_viewport` `scroll_delta`
+  moves the content (`shifted`), so what DevHub draws is always what
+  Neovim scrolled. Outside Normal mode, or with a mapped wheel, the
+  wheel is Neovim's own `<ScrollWheelUp/Down>` per line of pixels, by the
+  same rule.
+- **tmux, a shell's history (copy mode):** one WheelUpPane/WheelDownPane
+  binding turn per line, the person's own binding (`-N 1` is a line). The
+  tick that puts the pane into copy mode scrolls it too (tmux's
+  `copy-mode -e` alone only enters). Lines that come while the last ones
+  are being scrolled are merged into one `send-keys -X -N n` when the
+  binding is a plain scroll (`scaledWheel`), so a flick does not queue a
+  round trip per line. The page knows how far the mode scrolled from its
+  state (`history - scroll`, `copyScrolled`) and slides the next picture in
+  from there (`copyShift`); leaving copy mode by scrolling to the end
+  slides down to the live screen.
+- **tmux, a program that takes the mouse** (less `--mouse`, htop, a Neovim
+  TUI): a wheel report per line, by the same rule, so a tick is at least
+  one. It is not smooth, and cannot be: DevHub only forwards the wheel;
+  the program decides how far to scroll and redraws its screen as text,
+  and nothing says by how many rows it moved (guessing it from the rows
+  would slide a screen that changed for another reason). The step is the
+  program's own.
+
+**Reduce Motion:** a tick lands on its line at once, and a tmux pane's
+scroll is drawn at once; a trackpad is still followed, which is the
+person's own hand, not an animation.
+
+Measured on Xvfb at deviceScaleFactor 2, 60 fps screen captures, the
+content's offset frame by frame: a 4 px tick in Neovim moved 4 px and
+went back to where it was (no line) before, and over a shell's history
+nothing moved at all (the wheel's binding never reached the pane: its
+`if-shell` arm aimed at `=` was run outside a mouse event); after, a 4 px
+tick is one line in both, gliding 8, 27, 30, 32, 33 px (dpr 2) and
+resting; a 120 px notch is 7 lines in one glide, never back.
 
 ## Start and end equal the layout
 

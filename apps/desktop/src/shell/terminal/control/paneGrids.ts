@@ -110,6 +110,13 @@ export interface ControlView {
     number,
     Omit<Extract<ControlToPage, { kind: "copy-mode" }>, "kind" | "pane">
   >;
+  /**
+   * The rows a pane's copy mode scrolled (down positive) whose picture has
+   * not come yet: the next frame of the pane is its new view, and goes
+   * with them to the painter (`RedrawChanges.scrolled`), which slides it in
+   * from where the old one was (`smoothScroll.ts`).
+   */
+  readonly copyShift: Map<number, number>;
   /** Cells of a grid drawn in another look (a selection), and their own hl. */
   readonly overrides: Map<number, Map<number, number>>;
   /** The selection's colour (Neovim's Visual, the theme's selection). */
@@ -143,6 +150,7 @@ export function newControlView(fallback: {
     chooser: undefined,
     numbers: undefined,
     copy: new Map(),
+    copyShift: new Map(),
     overrides: new Map(),
     selection: mixColors(fallback.foreground, fallback.background, 25),
     modes: new Map(),
@@ -241,6 +249,18 @@ function applyFrame(
   }
 }
 
+/**
+ * The rows a copy mode's view moved down between two of its states: its
+ * top line's place in the history (`history - scroll`) moved by that much.
+ * Output arriving meanwhile grows both and moves nothing.
+ */
+export function copyScrolled(
+  before: { readonly scroll: number; readonly history: number },
+  after: { readonly scroll: number; readonly history: number },
+): number {
+  return after.history - after.scroll - (before.history - before.scroll);
+}
+
 /** Fold one message into the view; what the painter has to redraw. */
 export function applyControl(
   view: ControlView,
@@ -264,6 +284,11 @@ export function applyControl(
     case "pane": {
       const { pane, frame } = message;
       applyFrame(view, String(pane), gridOf(pane), frame, changes);
+      const shift = view.copyShift.get(pane);
+      if (shift !== undefined && frame.full) {
+        view.copyShift.delete(pane);
+        changes.scrolled.set(gridOf(pane), shift);
+      }
       if (view.copy.has(pane)) drawCopy(view, pane);
       view.cursors.set(pane, frame.cursor);
       view.modes.set(pane, message.modes);
@@ -351,18 +376,36 @@ export function applyControl(
       return changes;
     case "copy-mode": {
       const { kind: _, pane, ...copy } = message;
+      const before = view.copy.get(pane);
       view.copy.set(pane, copy);
+      // Entering, the pane was at the foot of its history: the mode may be
+      // read only after the wheel that entered it has scrolled it too.
+      const rows = copyScrolled(before ?? { ...copy, scroll: 0 }, copy);
+      if (rows !== 0) {
+        // Drawn with the new view's picture, which comes next.
+        view.copyShift.set(pane, (view.copyShift.get(pane) ?? 0) + rows);
+        return changes;
+      }
       drawCopy(view, pane);
       changes.grids.add(gridOf(pane));
       changes.cursor = true;
       return changes;
     }
-    case "copy-mode-closed":
+    case "copy-mode-closed": {
+      // Left by scrolling to the end (`copy-mode -e`), or by a key: the
+      // live screen is the bottom of the history, `scroll` rows down.
+      const before = view.copy.get(message.pane);
+      if (before !== undefined && before.scroll > 0)
+        view.copyShift.set(
+          message.pane,
+          (view.copyShift.get(message.pane) ?? 0) + before.scroll,
+        );
       view.copy.delete(message.pane);
       undraw(view, gridOf(message.pane));
       changes.grids.add(gridOf(message.pane));
       changes.cursor = true;
       return changes;
+    }
     case "notice":
     case "clipboard":
     case "ended":

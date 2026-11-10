@@ -18,7 +18,8 @@ import {
   type FontSpec,
 } from "../../neovim/painter";
 import { terminalCellFont } from "../../neovim/cellFont";
-import { emptyChanges } from "../../neovim/redraw";
+import { emptyChanges, type GridBox } from "../../neovim/redraw";
+import { GLIDE_MS } from "../../neovim/smoothScroll";
 import {
   IDLE,
   imeStep,
@@ -52,6 +53,7 @@ import type {
   StatusLine,
 } from "../../../ipc/terminalControl";
 import { pasteBytes, sgrMouse, TerminalKeys } from "./controlKeys";
+import { WheelLines } from "../../neovim/wheelLines";
 import { surfaceBridge } from "../surfaceBridge";
 import "./copyMode.css";
 import {
@@ -78,6 +80,7 @@ import {
   paneUnder,
   restPlace,
   waitingFor,
+  windowOrder,
   zoomedOf,
   type Moving,
   type Shown,
@@ -613,6 +616,9 @@ export function ControlTerminalSurface({
         for (const g of b.grids) a.grids.add(g);
         a.layout ||= b.layout;
         a.cursor ||= b.cursor;
+        if (a !== b)
+          for (const [g, rows] of b.scrolled)
+            a.scrolled.set(g, (a.scrolled.get(g) ?? 0) + rows);
         return a;
       });
       const { width, height } = cell();
@@ -642,7 +648,22 @@ export function ControlTerminalSurface({
           win: undefined,
         })),
       ];
+      // A pane's copy mode scrolled (`copyShift`): its new view slides in
+      // from where the old one was, the old one's rows leaving at the
+      // other edge (`smoothScroll.ts`, as a Neovim window's). Not while
+      // panes move: their groups hold the grids.
+      painter.setShiftedGrids(
+        motion === undefined
+          ? new Map(
+              view.panes
+                .filter((p) => !clear.has(gridOf(p.pane)))
+                .map((p) => [gridOf(p.pane), GLIDE_MS] as const),
+            )
+          : new Map(),
+      );
       painter.paint(view.state, merged, boxes, merged.layout);
+      shownBoxes = boxes;
+      if (painter.scrolling) requestScrollTick();
       // tmux's panes as panes with a boundary between them, as the Neovim
       // editor's windows are (docs/rendering-layers.md, "Panes and
       // boundaries"): each pane's ground reaches exactly half into the
@@ -910,6 +931,7 @@ export function ControlTerminalSurface({
         cols: view.cols,
         rows: view.rows,
         window: view.window,
+        order: windowOrder(view),
         zoomed: zoomedOf(view),
         panes: view.panes,
         text,
@@ -989,7 +1011,9 @@ export function ControlTerminalSurface({
           active: box.active && track.role !== "gone",
         });
       }
-      // Groups again from this commit's panes, in this same frame.
+      // Groups again from this commit's panes, in this same frame; a copy
+      // mode's glide ends where it was going.
+      painter.setShiftedGrids(new Map());
       painter.endMotion();
       for (const [pane, picture] of before.pictures) {
         const box = view.panes.find((p) => p.pane === pane);
@@ -1008,6 +1032,19 @@ export function ControlTerminalSurface({
         size: { width: grids.clientWidth, height: grids.clientHeight },
         last: shown,
       };
+    };
+    // The panes' copy-mode glides, a frame at a time until they rest.
+    let shownBoxes: readonly GridBox[] = [];
+    let scrollTickRequested = false;
+    const requestScrollTick = () => {
+      if (scrollTickRequested) return;
+      scrollTickRequested = true;
+      requestAnimationFrame(() => {
+        scrollTickRequested = false;
+        if (disposed || motion !== undefined) return;
+        if (painter.scrollFrame(view.state, shownBoxes, () => undefined))
+          requestScrollTick();
+      });
     };
     const requestTick = () => {
       if (tickRequested) return;
@@ -1826,29 +1863,51 @@ export function ControlTerminalSurface({
           bytes: sgrMouse(event.button, hit.x, hit.y, true),
         });
     };
+    // The wheel in lines (`WheelLines`: a tick is at least one, no pixel
+    // lost), one movement per pane.
+    const wheelLines = new WheelLines();
+    let wheelPane: number | undefined;
     const onWheel = (event: WheelEvent) => {
       if (inNeovim(event.target)) return;
       const hit = mouseFor(event);
       if (hit === undefined) return;
       event.preventDefault();
+      if (event.deltaY === 0) return;
+      if (wheelPane !== hit.pane.pane) wheelLines.reset();
+      wheelPane = hit.pane.pane;
+      const rows = hit.pane.height > 0 ? hit.pane.height : view.rows;
+      const lines = wheelLines.lines(
+        event.deltaY,
+        event.deltaMode,
+        cell().height,
+        Math.max(1, rows),
+        event.timeStamp,
+      );
+      // At most a screen's worth for one event: a flick is many events.
+      const n = Math.min(Math.abs(lines), Math.max(1, rows));
+      if (n === 0) return;
+      const up = lines < 0;
       // The wheel over a program that does not take it is tmux's
-      // (WheelUpPane: into copy mode, and scrolling in it).
+      // (WheelUpPane: into copy mode, and scrolling in it), one binding's
+      // turn per line.
       if (!hit.reports) {
-        if (event.deltaY === 0 || hit.pane.pane < 0) return;
-        send({
-          kind: "mouse",
-          key: event.deltaY < 0 ? "WheelUpPane" : "WheelDownPane",
-          pane: hit.pane.pane,
-          x: hit.pane.x + hit.x,
-          y: hit.pane.y + hit.y,
-        });
+        if (hit.pane.pane < 0) return;
+        for (let i = 0; i < n; i += 1)
+          send({
+            kind: "mouse",
+            key: up ? "WheelUpPane" : "WheelDownPane",
+            pane: hit.pane.pane,
+            x: hit.pane.x + hit.x,
+            y: hit.pane.y + hit.y,
+          });
         return;
       }
-      send({
-        kind: "bytes",
-        ...target(hit.pane.pane),
-        bytes: sgrMouse(event.deltaY < 0 ? 64 : 65, hit.x, hit.y, false),
-      });
+      // A program that takes the mouse gets a wheel report per line; it
+      // scrolls by its own steps, in its own redraws.
+      const one = sgrMouse(up ? 64 : 65, hit.x, hit.y, false);
+      const bytes = new Uint8Array(one.length * n);
+      for (let i = 0; i < n; i += 1) bytes.set(one, i * one.length);
+      send({ kind: "bytes", ...target(hit.pane.pane), bytes });
     };
 
     input.addEventListener("keydown", onKeyDown);

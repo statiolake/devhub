@@ -213,3 +213,24 @@ export function aimAt(command: string, pane: string): string {
 			`$1$2 -t ${pane}`,
 		);
 }
+
+/**
+ * A copy mode's wheel binding run `count` times as one command, when it is
+ * a plain scroll (`send-keys -X [-N n] scroll-up` or `scroll-down`, after a
+ * `select-pane \;` or not: tmux's own, and the usual `-N 1`): the lines
+ * of a flick that came while the last ones were being scrolled go in one
+ * turn, not one round trip each.
+ * Anything else is run as it is, once per line.
+ */
+export function scaledWheel(
+	command: string,
+	count: number,
+): string | undefined {
+	const match =
+		/^\s*(select-pane\s*\\;\s*)?send(?:-keys)?\s+-X\s+(?:-N\s+(\d+)\s+)?(scroll-up|scroll-down)\s*$/.exec(
+			command,
+		);
+	if (match === null) return undefined;
+	const n = Number(match[2] ?? "1") * count;
+	return `${match[1] ?? ""}send-keys -X -N ${String(n)} ${match[3]}`;
+}

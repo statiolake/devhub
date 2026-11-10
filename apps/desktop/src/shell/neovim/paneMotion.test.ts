@@ -8,6 +8,7 @@ import {
   plan,
   recede,
   rowShift,
+  switchesForward,
   type Place,
 } from "./paneMotion";
 
@@ -249,6 +250,32 @@ describe("a window switch", () => {
       next: [{ key: 7, rest: place(0, 0, 800, 600) }],
     });
     expect(t.at(0, 2).get(7)!.rect.left).toBe(-SLIDE.enterOffset);
+  });
+});
+
+describe("which side a switch comes from (tabs by their handles)", () => {
+  it(":tabnew puts the new tab right of the current one: from the right", () => {
+    expect(switchesForward(2, 9, [1, 2, 3], [1, 2, 9, 3])).toBe(true);
+  });
+  it(":0tabnew and :-tabnew put it left: from the left", () => {
+    expect(switchesForward(2, 9, [1, 2, 3], [9, 1, 2, 3])).toBe(false);
+    expect(switchesForward(2, 9, [1, 2, 3], [1, 9, 2, 3])).toBe(false);
+  });
+  it(":tabclose: the tab taking its place comes from its side", () => {
+    // Neovim goes to the next tab: it was right of the closed one.
+    expect(switchesForward(2, 3, [1, 2, 3], [1, 3])).toBe(true);
+    // The last tab closed: the one before it, from the left.
+    expect(switchesForward(3, 2, [1, 2, 3], [1, 2])).toBe(false);
+  });
+  it("gt and gT by the order", () => {
+    expect(switchesForward(3, 1, [1, 2, 3], [1, 2, 3])).toBe(false);
+    expect(switchesForward(1, 3, [1, 2, 3], [1, 2, 3])).toBe(true);
+  });
+  it("a moved tab (:tabmove) is judged where it is now", () => {
+    expect(switchesForward(1, 2, [1, 2, 3], [2, 1, 3])).toBe(false);
+  });
+  it("neither order knowing both: forward", () => {
+    expect(switchesForward(1, 2, [1], [2])).toBe(true);
   });
 });
 

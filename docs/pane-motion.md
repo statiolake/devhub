@@ -44,7 +44,7 @@ What each change does now:
 | Resize drag | At once, each committed cell under the pointer (a boundary can be dragged now: `resize-pane` per cell; the commit does not wait for the pictures) | At once (the sash drag) | 0 |
 | Zoom | The zoomed pane grows over the others from its own rectangle (its final grid, clipped); the others slide away from it, 30% of its edge's travel, and fade out under it | (no zoom in Neovim) | 250 ms, point to point |
 | Unzoom | The zoomed pane shrinks to its rectangle; the others come back from 30% away, fading in, under it | | 250 ms |
-| Window switch / tab switch | The next window (by index) slides in from the right over the last, which slides 150 px on and fades; the previous one from the left | The same for a tab (`gt`, `gT`, `:tabnext`), by the tabs' order | in 300 ms on (0.1, 0.9, 0.2, 1); out 150 ms on (0.7, 0, 1, 0.5) |
+| Window switch / tab switch | A window after the last one in the tab bar's order slides in from the right over it, which slides 150 px on and fades; one before it from the left. A window just opened comes from the side it was put on (`new-window`, `-a`, `-b`, an index, a split or break to a window), and the window that takes a closed one's place from its side of the closed one (`switchesForward`) | The same for a tab (`gt`, `gT`, `:tabnext`, `:tabnew`, `:0tabnew`, `:tabclose`), by the tabs' order | in 300 ms on (0.1, 0.9, 0.2, 1); out 150 ms on (0.7, 0, 1, 0.5) |
 | First attach, surface resize, Reduce Motion | At once | At once | 0 |
 | A pane with a Neovim drawn in it | As any pane: the Neovim, its floats, cursor, command line and notifications move with the pane (below) | (its own windows move, inside it) | as the change |
 
@@ -339,7 +339,8 @@ What is taken from each:
 **DevHub's own motion**, which pane motion must sit beside:
 - `dd`/`p`/`o` slide: 60 ms, `cubic-bezier(0.2, 0.8, 0.2, 1)`.
 - Cursor glide: 70 ms.
-- Scroll ease onto `topline`: 90 ms, ease-out cubic.
+- Scroll ease onto `topline`: 90 ms, ease-out cubic; a wheel tick's glide
+  and a tmux pane's copy-mode shift 120 ms (`docs/motion.md`, "Scrolling").
 - Cursor blink edges: 120 ms.
 
 The pane durations below are longer only where the distance is a pane's
