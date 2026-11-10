@@ -148,12 +148,12 @@ vim.g.devhub_gui_channel = chan
 vim.g.clipboard = {
   name = "devhub",
   copy = {
-    ["+"] = function(lines, regtype) vim.rpcnotify(chan, "devhub_clipboard_set", lines, regtype) end,
-    ["*"] = function(lines, regtype) vim.rpcnotify(chan, "devhub_clipboard_set", lines, regtype) end,
+    ["+"] = function(lines, regtype) package.loaded["devhub_gui"]._notify("devhub_clipboard_set", lines, regtype) end,
+    ["*"] = function(lines, regtype) package.loaded["devhub_gui"]._notify("devhub_clipboard_set", lines, regtype) end,
   },
   paste = {
-    ["+"] = function() return vim.rpcrequest(chan, "devhub_clipboard_get") end,
-    ["*"] = function() return vim.rpcrequest(chan, "devhub_clipboard_get") end,
+    ["+"] = function() return package.loaded["devhub_gui"]._request("devhub_clipboard_get") end,
+    ["*"] = function() return package.loaded["devhub_gui"]._request("devhub_clipboard_get") end,
   },
   cache_enabled = 0,
 }
@@ -193,6 +193,32 @@ map_unless_mapped("i", "<D-s>", "<Esc><Cmd>write<CR>")
 local M = package.loaded["devhub_gui"] or {}
 package.loaded["devhub_gui"] = M
 M._chan = chan
+
+-- DevHub's UI goes (DevHub quit or restarted, its page went) while this
+-- Neovim runs on: what it would be told is dropped until a UI attaches again
+-- (SETUP_LUA then names the new channel), not sent to the old channel, which
+-- says "Invalid channel" in :messages from every scheduled report.
+local function gone(to)
+  return vim.tbl_isempty(vim.api.nvim_get_chan_info(to))
+end
+--- A notification to DevHub's UI, or nothing while none is attached.
+function M._notify(method, ...)
+  local to = M._chan
+  if not to then return end
+  local ok, err = pcall(vim.rpcnotify, to, method, ...)
+  if ok then return end
+  if gone(to) then
+    if M._chan == to then M._chan = nil end
+    return
+  end
+  error(err, 0)
+end
+--- A request to DevHub's UI (the clipboard's paste); an error with none.
+function M._request(method, ...)
+  local to = M._chan
+  if not to or gone(to) then error("DevHub's GUI is not attached", 0) end
+  return vim.rpcrequest(to, method, ...)
+end
 M._handlers = M._handlers or {}
 M._open = M._open or {}
 M._next = M._next or 0
@@ -201,9 +227,9 @@ M._next = M._next or 0
 function M._replay()
   -- The field that had the keys went with the old page.
   if M._editing then vim.cmd("stopinsert") end
-  for _, open in pairs(M._open) do vim.rpcnotify(M._chan, "devhub_gui_open", open) end
+  for _, open in pairs(M._open) do M._notify("devhub_gui_open", open) end
   M._report()
-  vim.rpcnotify(M._chan, "devhub_buffer", vim.api.nvim_buf_get_name(0), vim.bo.buftype)
+  M._notify("devhub_buffer", vim.api.nvim_buf_get_name(0), vim.bo.buftype)
   for id, image in pairs(M._images or {}) do M._event("image", { id = id, src = image.src }) end
   if M._place then vim.schedule(M._place) end
   -- In the command-line window (q:): the new page frames it too.
@@ -234,7 +260,7 @@ local function report()
         width = vim.api.nvim_win_get_width(win), height = vim.api.nvim_win_get_height(win) })
     end
   end
-  vim.rpcnotify(M._chan, "devhub_gui_windows", list, vim.api.nvim_get_current_win(), layout)
+  M._notify("devhub_gui_windows", list, vim.api.nvim_get_current_win(), layout)
 end
 M._report = report
 
@@ -244,7 +270,7 @@ vim.api.nvim_create_autocmd({ "BufEnter", "BufFilePost", "WinEnter" }, {
   group = group,
   callback = function()
     vim.schedule(function()
-      vim.rpcnotify(M._chan, "devhub_buffer", vim.api.nvim_buf_get_name(0), vim.bo.buftype)
+      M._notify("devhub_buffer", vim.api.nvim_buf_get_name(0), vim.bo.buftype)
     end)
   end,
 })
@@ -303,7 +329,7 @@ function M.webview(opts)
   local handle = { id = id, buf = buf, win = win }
   --- Send the page a message (any value msgpack can carry).
   function handle.send(_, message)
-    vim.rpcnotify(M._chan, "devhub_gui_send", id, message)
+    M._notify("devhub_gui_send", id, message)
   end
   --- fn(message) for every message the page posts with devhub.send().
   function handle.on_message(_, fn)
@@ -314,7 +340,7 @@ function M.webview(opts)
   end
   M._open[id] = { id = id, title = opts.title or "", html = opts.html, url = opts.url, keyboard = keyboard }
   if keyboard == "neovim" then M._keyboard(id, buf) end
-  vim.rpcnotify(M._chan, "devhub_gui_open", M._open[id])
+  M._notify("devhub_gui_open", M._open[id])
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = group, buffer = buf, once = true,
     callback = function()
@@ -322,7 +348,7 @@ function M.webview(opts)
       M._open[id] = nil
       M._pages[id] = nil
       if M._editing == id then M._editing = nil end
-      vim.rpcnotify(M._chan, "devhub_gui_close", id)
+      M._notify("devhub_gui_close", id)
       vim.schedule(report)
     end,
   })
@@ -337,7 +363,7 @@ end
 
 --- One-way GUI events (a toast, an image, a layer), on one method.
 local function gui_event(kind, payload)
-  vim.rpcnotify(M._chan, "devhub_gui_event", kind, payload)
+  M._notify("devhub_gui_event", kind, payload)
 end
 M._event = gui_event
 

@@ -451,6 +451,59 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		},
 	);
 
+	it(
+		"drops what it would tell a UI whose channel has gone, and tells the next UI",
+		{ timeout: 15_000 },
+		async () => {
+			const h = await attached(60, 20);
+			// DevHub quits: its channel closes, the Neovim runs on.
+			h.ui.client.close();
+			const other = await NeovimClient.connect(lastSocket);
+			await other.request("nvim_exec_lua", [
+				`local M = package.loaded.devhub_gui
+				vim.cmd("messages clear")
+				-- What a window event or a timer does while no UI is there.
+				M._schedule_place()
+				vim.schedule(function() M._event("notify", { msg = "x" }) end)
+				vim.schedule(M._report)`,
+				[],
+			]);
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			const messages = (await other.request("nvim_exec_lua", [
+				'return vim.fn.execute("messages") .. vim.v.errmsg',
+				[],
+			])) as string;
+			expect(messages).not.toContain("Invalid channel");
+			other.close();
+			// A new DevHub attaches: it is told what happens from then on.
+			const client = await NeovimClient.connect(lastSocket);
+			const events: string[] = [];
+			const ui = new NeovimUi(client, {
+				read: () => Promise.resolve(""),
+				write: () => undefined,
+			});
+			await ui.attach(
+				{
+					redraw: () => undefined,
+					guiWindows: () => undefined,
+					guiOpen: () => undefined,
+					guiClose: () => undefined,
+					guiSend: () => undefined,
+					guiEvent: (kind) => events.push(kind),
+				},
+				60,
+				20,
+			);
+			await ui.request("nvim_exec_lua", [
+				'package.loaded.devhub_gui._event("notify", { msg = "y" })',
+				[],
+			]);
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			expect(events).toContain("notify");
+			client.close();
+		},
+	);
+
 	it("scrolls the grid as the buffer scrolls", async () => {
 		const h = await attached(40, 10);
 		h.ui.call("nvim_exec_lua", [
