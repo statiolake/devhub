@@ -21,7 +21,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { COMMANDS } from "../model/commands";
 import { SettingsApp } from "./SettingsApp";
 import { testClient, testConfig } from "./testHarness";
@@ -37,20 +37,37 @@ async function open(chords: Record<string, string> = {}) {
   return harness;
 }
 
-/** The recorder button for one command, by the command's own label. */
+/**
+ * The recorder button for one command, by the command's own label.
+ *
+ * By the label it carries rather than by role: a role query computes the role
+ * and accessible name of every element on the screen, a row per command, and
+ * took 0.4 s a call on a loaded machine, so the cases that ask for a few
+ * recorders spent most of a case's 5 s on the lookups alone.
+ */
 function recorder(label: string): HTMLElement {
-  return screen.getByRole("button", { name: `Change the key for ${label}` });
+  return screen.getByLabelText(`Change the key for ${label}`, {
+    selector: "button",
+  });
 }
 
 describe("the keyboard screen", () => {
+  // The screen drawn once before the cases, for as long as that takes. The
+  // first draw in a worker is the code's first run (React's, the screen's,
+  // the queries'), several times a later one's, and on a loaded machine it
+  // took the first case past its 5 s alone (7.6 s, the others 2 s).
+  beforeAll(async () => {
+    await open();
+    await screen.findByText("Next workspace");
+    cleanup();
+  }, 60_000);
+
   it("lists every command in the registry, and nothing else", async () => {
     await open();
     await screen.findByText("Next workspace");
-    // The recorders read once: a role query per command walks the whole
-    // screen's accessible names each time, which on a loaded machine is
-    // longer than a test may take.
+    // The recorders read once, and by their labels (`recorder`).
     const recorders = screen
-      .getAllByRole("button", { name: /^Change the key for / })
+      .getAllByLabelText(/^Change the key for /, { selector: "button" })
       .map((button) => button.getAttribute("aria-label") ?? button.textContent);
     expect([...recorders].sort()).toEqual(
       COMMANDS.map((command) => `Change the key for ${command.label}`).sort(),
@@ -77,12 +94,17 @@ describe("the keyboard screen", () => {
     expect(recorder("Keyboard shortcuts")).toHaveTextContent("?");
   });
 
-  it("records the character a keypress produced, not where the key sits", async () => {
-    // The same character from the two keys that make it: `}` is Shift and
-    // `BracketRight` on a US keyboard and Shift and `Backslash` on a JIS one.
-    // Both record the same binding, which is the whole point.
-    for (const code of ["BracketRight", "Backslash"]) {
+  // The same character from the two keys that make it: `}` is Shift and
+  // `BracketRight` on a US keyboard and Shift and `Backslash` on a JIS one.
+  // Both record the same binding, which is the whole point. A case each: one
+  // case that rendered the screen twice took twice a case's time, and the
+  // `cleanup()` between its two renders, run late by a case that had timed
+  // out, emptied the next case's screen under it.
+  it.each(["BracketRight", "Backslash"])(
+    "records the character a keypress produced, not where the key sits (%s)",
+    async (code) => {
       const harness = await open();
+      await screen.findByText("Next sidebar row");
       const button = recorder("Next sidebar row");
       fireEvent.click(button);
       fireEvent.keyDown(button, { key: "}", code, shiftKey: true });
@@ -91,9 +113,8 @@ describe("the keyboard screen", () => {
           "next_tab",
         );
       });
-      cleanup();
-    }
-  });
+    },
+  );
 
   it("says which command a recorded key is being taken from", async () => {
     const harness = await open();
@@ -127,7 +148,7 @@ describe("the keyboard screen", () => {
     const harness = await open();
     await screen.findByText("Add Workspace…");
     fireEvent.click(
-      screen.getAllByRole("button", { name: "Unbind" })[
+      screen.getAllByText("Unbind", { selector: "button" })[
         COMMANDS.findIndex((command) => command.id === "add_workspace")
       ],
     );
@@ -141,7 +162,7 @@ describe("the keyboard screen", () => {
     await screen.findByText("Add Workspace…");
     expect(recorder("Add Workspace…")).toHaveTextContent("g");
     fireEvent.click(
-      screen.getAllByRole("button", { name: "Reset" })[
+      screen.getAllByText("Reset", { selector: "button" })[
         COMMANDS.findIndex((command) => command.id === "add_workspace")
       ],
     );
