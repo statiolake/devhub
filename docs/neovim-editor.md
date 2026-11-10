@@ -347,24 +347,27 @@ one layer model and pane motion.
   - Selections and search matches are their highlight's own fill, square
     and continuous: the whole cell, `linespace` included, with no seam
     between cells or rows (a terminal's grid shows one).
-  - Windows side by side are panes with a boundary between them, as VS
-    Code and Zed show editor groups — not a separator column drawn in
-    cells, which is a TUI's artefact of the cell grid (`boundariesOf`,
-    `placePanes`; docs/rendering-layers.md, "Panes and boundaries"). Each
-    window's pane is an element under its grid in its own ground (its
-    `Normal`, or `NormalNC` when it is not current, through its
-    `winhighlight`: `windowGround`), reaching exactly half into the
-    column beside it, so the edges of windows split across and down line
-    up; the boundary is a hairline element on the shared edge in
-    `WinSeparator`'s colour. All from the windows' places and highlights:
-    grid 1's cells in the column are not drawn, and nothing a window
-    scrolls or redraws touches them. A status line drawn as a line (`─`, a
-    person's `stl:`) beside a boundary meets it; where the boundary ends on
-    a status line, that line's own junction (`┴`) is drawn by grid 1 on the
-    same pixels. Earlier rounds painted the column into grid 1's canvas
-    with each half in the commonest colour of the window beside it, which
-    a diff hunk scrolling past flipped, and read grid 1's stale cells under
-    a window for the stubs (a stray tick left over from an earlier split).
+  - Windows are panes with a boundary between them, as VS Code and Zed
+    show editor groups — not separator cells, a TUI's artefact of the
+    cell grid (`boundariesOf`, `placePanes`; docs/rendering-layers.md,
+    "Panes and boundaries", has the rule). A window and its status line
+    (`laststatus` 1 or 2) are one region; regions meet at one hairline in
+    `WinSeparator`'s ink on the middle of the gap cells, joined at T and +
+    junctions, and each region's ground goes on to it: the window's rows
+    continue sideways in their own edge cells' grounds (its `Normal` or
+    `NormalNC` through `winhighlight`, a current line, a diff line), its
+    pane in its own ground above and below. With `laststatus` 0 or 3,
+    stacked windows meet at a hairline across the separator row. A status
+    line drawn as a line (`─`, a person's `stl:`) beside a boundary meets
+    it, and a boundary ending on its junction (`┴`) ends on its line. In a
+    tmux pane, the editor's rows, its windows' and its tab strip reach
+    into the pane's half border cells to tmux's line. Earlier rounds
+    painted the column into grid 1's canvas with each half in the
+    commonest colour of the window beside it, which a diff hunk scrolling
+    past flipped; then each pane in its `Normal` alone, which left a
+    half-cell strip of it beside a current line, a sidebar's own ground,
+    a sign column, a status line's label, and (in a tmux pane) beside the
+    tab strip and every row on the pane's edge.
   - The `~` past the end of a buffer (in `EndOfBuffer`) is not drawn while
     the window's `fillchars` has no `eob:` of the person's
     (`isEndOfBuffer`); a `:setlocal fillchars` is seen at once

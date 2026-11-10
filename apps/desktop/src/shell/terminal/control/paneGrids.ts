@@ -20,6 +20,7 @@ import type {
   WindowInfo,
 } from "../../../ipc/terminalControl";
 import { mixColors } from "../../neovim/painter";
+import { borders as traceBorders, type BorderLine } from "../../neovim/chrome";
 import {
   emptyChanges,
   initialUiState,
@@ -555,91 +556,14 @@ export function paneAt(
 
 /**
  * The lines between panes: tmux leaves one cell between neighbours, and
- * DevHub draws a hairline down its middle instead of a character border.
- * Traced cell by cell over the gaps, so lines meet: a gap cell beside a pane
- * carries a line through it (down it beside a pane to its left or right,
- * across it beside one above or below), and every gap cell reaches half a
- * cell towards a neighbour whose line runs towards it — where a line ends on
- * another (a T) and where four panes meet (a +), the lines join. In cells:
- * `x`/`y` where it starts (on the gap cell's middle line), `length` how far
- * it runs; halves are cells too.
+ * DevHub draws a hairline down its middle instead of a character border,
+ * joined where lines meet (`borders`, shared with Neovim's windows).
  */
 export function borders(panes: readonly PaneBox[]): BorderLine[] {
-  if (panes.length < 2) return [];
-  const cols = Math.max(...panes.map((p) => p.x + p.width));
-  const rows = Math.max(...panes.map((p) => p.y + p.height));
-  const pane = new Uint8Array(cols * rows);
-  for (const p of panes)
-    for (let y = p.y; y < p.y + p.height; y++)
-      pane.fill(1, y * cols + p.x, y * cols + p.x + p.width);
-  const inside = (x: number, y: number) =>
-    x >= 0 && y >= 0 && x < cols && y < rows;
-  const isPane = (x: number, y: number) =>
-    inside(x, y) && pane[y * cols + x] === 1;
-  const isGap = (x: number, y: number) =>
-    inside(x, y) && pane[y * cols + x] === 0;
-  // A line down the cell (beside a pane left or right), across it (above or below).
-  const down = (x: number, y: number) =>
-    isGap(x, y) && (isPane(x - 1, y) || isPane(x + 1, y));
-  const across = (x: number, y: number) =>
-    isGap(x, y) && (isPane(x, y - 1) || isPane(x, y + 1));
-  // Each column's and row's covered half-cells, as runs to merge.
-  const vertical = new Map<number, [number, number][]>();
-  const horizontal = new Map<number, [number, number][]>();
-  const add = (
-    map: Map<number, [number, number][]>,
-    at: number,
-    from: number,
-    to: number,
-  ) => {
-    const list = map.get(at) ?? [];
-    list.push([from, to]);
-    map.set(at, list);
-  };
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      if (!isGap(x, y)) continue;
-      if (down(x, y)) add(vertical, x, y, y + 1);
-      if (across(x, y)) add(horizontal, y, x, x + 1);
-      if (down(x, y - 1)) add(vertical, x, y, y + 0.5);
-      if (down(x, y + 1)) add(vertical, x, y + 0.5, y + 1);
-      if (across(x - 1, y)) add(horizontal, y, x, x + 0.5);
-      if (across(x + 1, y)) add(horizontal, y, x + 0.5, x + 1);
-    }
-  }
-  const lines: BorderLine[] = [];
-  const merge = (map: Map<number, [number, number][]>, isVertical: boolean) => {
-    for (const [at, runs] of [...map].sort((a, b) => a[0] - b[0])) {
-      runs.sort((a, b) => a[0] - b[0]);
-      let [start, end] = runs[0];
-      const flush = () =>
-        lines.push(
-          isVertical
-            ? { vertical: true, x: at, y: start, length: end - start }
-            : { vertical: false, x: start, y: at, length: end - start },
-        );
-      for (const [from, to] of runs.slice(1)) {
-        if (from <= end) end = Math.max(end, to);
-        else {
-          flush();
-          [start, end] = [from, to];
-        }
-      }
-      flush();
-    }
-  };
-  merge(vertical, true);
-  merge(horizontal, false);
-  return lines;
+  return traceBorders(panes);
 }
 
-/** A line between panes (`borders`), in cells of the window. */
-export interface BorderLine {
-  readonly vertical: boolean;
-  readonly x: number;
-  readonly y: number;
-  readonly length: number;
-}
+export type { BorderLine };
 
 /** A piece of a pane's outline (`paneOutlines`): the active pane's or not. */
 export interface OutlineLine extends BorderLine {

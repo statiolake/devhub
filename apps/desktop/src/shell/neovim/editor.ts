@@ -27,6 +27,7 @@ import {
 import { clearCursorRow } from "./floats";
 import {
   GridPainter,
+  type Reach,
   ICON_FAMILY,
   cssColor,
   floatLook,
@@ -628,6 +629,14 @@ export class NeovimEditor {
     this.windowMotion.dispose();
     this.band.remove();
     this.preedit.remove();
+  }
+
+  /**
+   * How far past grid 1 its ground reaches, in CSS pixels (a tmux pane's
+   * half border cells: `GridPainter.setReach`).
+   */
+  setReach(reach: Reach): void {
+    if (this.painter.setReach(reach)) this.paint(true);
   }
 
   private fontSpec(): FontSpec {

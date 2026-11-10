@@ -82,7 +82,11 @@
   z-index: var(--nvim-band-host);
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  /* Cut at its edges, but for the half border cells of a tmux pane its
+     rows go on into (`GridPainter.setReach`): its pane's own clip cuts
+     there. */
+  overflow: clip;
+  overflow-clip-margin: var(--nvim-reach-clip, 0px);
   cursor: text;
 }
 
@@ -288,7 +292,14 @@
   display: flex;
   flex: none;
   height: 31px;
-  padding: 0 8px;
+  padding: var(--nvim-reach-top, 0px) calc(8px + var(--nvim-reach-right, 0px)) 0
+    calc(8px + var(--nvim-reach-left, 0px));
+  /* Out to the boundary of a tmux pane it is in, as grid 1's rows are
+     (`GridPainter.setReach`): its ground runs to the hairline. */
+  margin: calc(-1 * var(--nvim-reach-top, 0px))
+    calc(-1 * var(--nvim-reach-right, 0px)) 0
+    calc(-1 * var(--nvim-reach-left, 0px));
+  box-sizing: content-box;
   /* The strip's bottom line is its ground's last pixel row, so the current
      tab, the editor's ground, covers it and joins the editor. */
   background: linear-gradient(to top, var(--line-soft) 1px, var(--chrome) 1px);

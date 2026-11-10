@@ -25,6 +25,7 @@ function handle(focused = false): NeovimHandle & { typed: string[] } {
     drawnSize: () => undefined,
     background: () => undefined,
     typeKey: (key) => typed.push(key.key),
+    setReach: () => undefined,
     focused: () => focused,
   };
 }

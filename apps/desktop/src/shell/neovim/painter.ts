@@ -56,10 +56,11 @@ import {
   fillChosen,
   floatScrollbars,
   boundariesOf,
+  paneRect,
+  rowBleed,
   isEndOfBuffer,
   sameTheme,
   windowGround,
-  type Boundary,
   type PaintTheme,
 } from "./chrome";
 import {
@@ -346,13 +347,42 @@ interface GridCanvas {
   readonly ctx: CanvasRenderingContext2D;
   width: number;
   height: number;
-  /** The border it was sized without (`cropOf`). */
+  /** The border it was sized without (`cropOf`), and its bleed. */
   crop?: string;
+  /** How far the canvas reaches past the grid's cells (`Bleed`). */
+  bleed: Bleed;
   /** Made without an alpha channel: not blending (`gridBlends`). */
   readonly opaque: boolean;
 }
 
 const NO_CROP = { top: 0, right: 0, bottom: 0, left: 0 } as const;
+
+/** How far past an editor's grid 1 its ground reaches (`setReach`), in CSS pixels. */
+export interface Reach {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+
+export const NO_REACH: Reach = { left: 0, right: 0, top: 0, bottom: 0 };
+
+/**
+ * How far a grid's canvas reaches past its cells on each side, in CSS
+ * pixels: the half cell of a boundary beside it (or the editor's reach),
+ * where each of its rows goes on in the ground of its cell on that edge —
+ * a current line, a diff line, a status line, a sidebar's own ground run
+ * right up to the hairline. Above its first row and below its last (grid
+ * 1's only), the row's grounds go on up or down.
+ */
+export interface Bleed {
+  readonly l: number;
+  readonly r: number;
+  readonly t: number;
+  readonly b: number;
+}
+
+const NO_BLEED: Bleed = { l: 0, r: 0, t: 0, b: 0 };
 
 /** A selection's or search match's corners (`chrome.ts`). */
 
@@ -634,9 +664,28 @@ export class GridPainter {
     end: number;
     align: "left" | "right";
   }[] = [];
-  /** Grid 1's columns between windows side by side (`boundariesOf`). */
-  private boundaries: readonly Boundary[] = [];
-  private boundariesKey = "";
+  /**
+   * Grid 1's cells the boundaries between windows run through
+   * (`boundariesOf`), by index: not drawn as cells; `vgaps`, those a line
+   * runs down, are grounded half and half by the cells beside them.
+   */
+  private gaps: ReadonlySet<number> = new Set();
+  private vgaps: ReadonlySet<number> = new Set();
+  private gapsKey = "";
+  /**
+   * How far past grid 1 the editor's ground reaches on each side, in CSS
+   * pixels: the half cells of a tmux pane's border its Neovim takes
+   * (`setReach`). Grid 1 and the windows on that side continue their rows
+   * into it.
+   */
+  private reach: Reach = NO_REACH;
+  /**
+   * How far each window's canvas reaches past its cells (`placePanes`), and
+   * each grid laid out by someone else (`setGridReach`): into the half cell
+   * of the boundary beside it, where its rows go on in their own grounds.
+   */
+  private readonly bleeds = new Map<number, Bleed>();
+  private gridReach: ReadonlyMap<number, Bleed> = new Map();
   /** Each window's pane, by grid; the boundaries' hairlines and stubs. */
   private readonly panes = new Map<number, HTMLDivElement>();
   private chrome: HTMLDivElement[] = [];
@@ -877,12 +926,15 @@ export class GridPainter {
     const entry = this.canvases.get(grid);
     if (entry === undefined || entry.width < 0) return undefined;
     const source = entry.canvas;
-    const r = region ?? {
+    const { bleed } = entry;
+    // In the grid's own pixels: its bleed left out.
+    const given = region ?? {
       x: 0,
       y: 0,
-      w: parseFloat(source.style.width),
-      h: parseFloat(source.style.height),
+      w: parseFloat(source.style.width) - bleed.l - bleed.r,
+      h: parseFloat(source.style.height) - bleed.t - bleed.b,
     };
+    const r = { ...given, x: given.x + bleed.l, y: given.y + bleed.t };
     const d = this.dpr;
     const copy = document.createElement("canvas");
     copy.width = Math.max(1, Math.round(r.w * d));
@@ -1079,7 +1131,7 @@ export class GridPainter {
         canvas.className = "nvim-grid";
         const ctx = canvas.getContext("2d", { alpha: !opaque });
         if (!ctx) continue;
-        entry = { canvas, ctx, width: -1, height: -1, opaque };
+        entry = { canvas, ctx, width: -1, height: -1, opaque, bleed: NO_BLEED };
         this.canvases.set(box.grid, entry);
         fresh = true;
       }
@@ -1093,10 +1145,11 @@ export class GridPainter {
       // A float's blank border is left out: the canvas is its text area,
       // where Neovim put it (`paintRow` draws the grid shifted by it).
       const crop = cropOf(box);
-      const cropKey = `${String(crop.top)},${String(crop.right)},${String(crop.bottom)},${String(crop.left)}`;
+      const bleed = this.bleedOf(box);
+      const cropKey = `${String(crop.top)},${String(crop.right)},${String(crop.bottom)},${String(crop.left)}:${String(bleed.l)},${String(bleed.r)},${String(bleed.t)},${String(bleed.b)}`;
       canvas.style.display = "";
-      canvas.style.left = `${String((box.col + crop.left) * this.metrics.width)}px`;
-      canvas.style.top = `${String((box.row + crop.top) * this.metrics.height)}px`;
+      canvas.style.left = `${String((box.col + crop.left) * this.metrics.width - bleed.l)}px`;
+      canvas.style.top = `${String((box.row + crop.top) * this.metrics.height - bleed.t)}px`;
       canvas.classList.toggle("nvim-float", box.float);
       canvas.classList.toggle("nvim-framed", box.frame !== undefined);
       // A menu's scrollbar drawn as floats: the thumb a thin rounded bar
@@ -1138,8 +1191,14 @@ export class GridPainter {
         fresh ||
         forceAll
       ) {
-        const w = (grid.width - crop.left - crop.right) * this.metrics.width;
-        const h = (grid.height - crop.top - crop.bottom) * this.metrics.height;
+        const w =
+          (grid.width - crop.left - crop.right) * this.metrics.width +
+          bleed.l +
+          bleed.r;
+        const h =
+          (grid.height - crop.top - crop.bottom) * this.metrics.height +
+          bleed.t +
+          bleed.b;
         canvas.width = Math.max(1, Math.ceil(w * this.dpr));
         canvas.height = Math.max(1, Math.ceil(h * this.dpr));
         canvas.style.width = `${String(w)}px`;
@@ -1147,6 +1206,7 @@ export class GridPainter {
         entry.width = grid.width;
         entry.height = grid.height;
         entry.crop = cropKey;
+        entry.bleed = bleed;
         fresh = true;
       }
       const scrolled = changes.scrolled.get(box.grid) ?? 0;
@@ -1366,7 +1426,7 @@ export class GridPainter {
       canvas.before(port);
       port.append(canvas);
     }
-    const left = `${String(box.col * cw)}px`;
+    const left = `${String(box.col * cw - entry.bleed.l)}px`;
     const top = `${String(box.row * ch)}px`;
     port.dataset.left = left;
     port.dataset.top = top;
@@ -1425,7 +1485,7 @@ export class GridPainter {
       pin.height = canvas.height;
     }
     pin.style.display = "";
-    pin.style.left = `${String(box.col * this.metrics.width)}px`;
+    pin.style.left = `${String(box.col * this.metrics.width - entry.bleed.l)}px`;
     pin.style.top = `${String(box.row * this.metrics.height)}px`;
     pin.style.width = canvas.style.width;
     pin.style.height = canvas.style.height;
@@ -1660,54 +1720,140 @@ export class GridPainter {
   }
 
   /**
+   * How far past grid 1 the editor's ground reaches (a tmux pane's half
+   * border cells, `placeNeovims`); answers whether it changed.
+   */
+  setReach(reach: Reach): boolean {
+    const r = this.reach;
+    if (
+      r.left === reach.left &&
+      r.right === reach.right &&
+      r.top === reach.top &&
+      r.bottom === reach.bottom
+    )
+      return false;
+    this.reach = reach;
+    return true;
+  }
+
+  /**
+   * How far each grid laid out by someone else (tmux's panes) reaches past
+   * its cells: to the hairline on each side (`Bleed`, sideways only).
+   */
+  setGridReach(reach: ReadonlyMap<number, Bleed>): void {
+    this.gridReach = reach;
+  }
+
+  /** How far `box`'s canvas reaches past its cells (`Bleed`). */
+  private bleedOf(box: GridBox): Bleed {
+    if (box.float) return NO_BLEED;
+    if (box.grid === 1) {
+      const r = this.reach;
+      return { l: r.left, r: r.right, t: r.top, b: r.bottom };
+    }
+    return (
+      this.bleeds.get(box.grid) ?? this.gridReach.get(box.grid) ?? NO_BLEED
+    );
+  }
+
+  /** A row's grounds continued into its canvas's bleed (`rowBleed`). */
+  private paintBleed(
+    ctx: CanvasRenderingContext2D,
+    state: NeovimUiState,
+    grid: {
+      readonly width: number;
+      readonly height: number;
+      readonly hls: ArrayLike<number>;
+    },
+    row: number,
+    bleed: Bleed,
+  ): void {
+    if (bleed.l <= 0 && bleed.r <= 0 && bleed.t <= 0 && bleed.b <= 0) return;
+    const base = row * grid.width;
+    for (const r of rowBleed(
+      grid.width,
+      grid.height,
+      row,
+      this.metrics,
+      bleed,
+    )) {
+      const attr = state.hl.get(grid.hls[base + r.col] ?? 0);
+      ctx.fillStyle = cssColor(resolveColors(attr, state.defaults).bg);
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+    }
+  }
+
+  /**
    * The windows as panes with a boundary between them, as a GUI shows them
-   * (VS Code, Zed), not a TUI's separator column drawn in cells: each
-   * window's pane is an element under its grid, in its own ground (its
-   * `Normal`, or `NormalNC` when not current, as its highlights state them),
-   * reaching half into the column a boundary has beside it; the boundary is
-   * a hairline element on the edge they share, in `WinSeparator`'s colour,
-   * over the windows' level. All from the windows' places, sizes and
-   * highlights: grid 1's cells in the column are not drawn (`paintRow`), and
-   * nothing a window scrolls or redraws touches them. A status line drawn
-   * as a line beside a boundary meets it (a stub to the hairline).
+   * (VS Code, Zed), not a TUI's separator cells: each region (a window and
+   * its status line, `boundariesOf`) meets its neighbour at one hairline,
+   * in `WinSeparator`'s colour, on the middle of the gap cells Neovim keeps
+   * between them, over the windows' level. Each window's pane is an
+   * element under its grid in its own ground (its `Normal`, or `NormalNC`
+   * when not current, as its highlights state them) reaching exactly half
+   * into each gap beside it — and out to the editor's reach on its edges
+   * (`setReach`) — and its canvas reaches as far sideways (`Bleed`), each
+   * row going on in its own edge cell's ground, so nothing but the
+   * hairline divides two regions. All from the windows' places, sizes and
+   * highlights: grid 1's cells in the gaps are not drawn as cells
+   * (`paintRow`), and nothing a window scrolls or redraws touches them. A
+   * status line drawn as a line (`─`, a person's `stl:`) beside a boundary
+   * meets it (a stub to the hairline), and a boundary ending on its
+   * junction (`┴`) ends on that line.
    */
   private placePanes(state: NeovimUiState, boxes: readonly GridBox[]): void {
     const base = state.grids.get(1);
-    const { boundaries, panes } = boundariesOf(
+    const W = base?.width ?? 0;
+    const H = base?.height ?? 0;
+    const { lines, panes, gaps, vgaps } = boundariesOf(
       boxes,
-      base?.width ?? 0,
-      base?.height ?? 0,
+      W,
+      H,
+      this.theme.laststatus ?? 2,
     );
     // Grid 1's rows a boundary leaves or reaches are painted again (their
     // cells in it are not drawn).
-    const key = JSON.stringify(boundaries);
-    if (key !== this.boundariesKey) {
+    const key = [...gaps].join(",");
+    if (key !== this.gapsKey) {
       const dirty = base?.dirty;
-      for (const b of [...this.boundaries, ...boundaries])
-        for (let row = b.top; row < b.bottom; row += 1) dirty?.add(row);
-      this.boundaries = boundaries;
-      this.boundariesKey = key;
+      if (W > 0)
+        for (const i of [...this.gaps, ...gaps]) dirty?.add(Math.floor(i / W));
+      this.gaps = gaps;
+      this.vgaps = vgaps;
+      this.gapsKey = key;
     }
     const cursorWin = state.gridWins.get(state.cursor.grid);
     if (cursorWin !== undefined) this.currentWin = cursorWin;
     const { width: cw, height: ch } = this.metrics;
-    // The hairline in a column: where grid 1 draws a `│` there (the same
-    // shapes as its `┴` below it), so they meet.
-    const line = (col: number) => {
+    const dpr = this.dpr;
+    const reach = this.reach;
+    // The hairline down a column, across a row: where grid 1 draws a `│`
+    // or a `─` there (the shapes of its `┴` and its status lines'), so
+    // they meet.
+    const vertical = (col: number) => {
       const shape = glyphShapes(
         "│",
         { x: col * cw, y: 0, w: cw, h: ch },
-        this.dpr,
+        dpr,
         this.font.size,
       )?.find((p) => p.kind === "rect");
-      const w = shape?.kind === "rect" ? shape.w : 1 / this.dpr;
-      const x =
-        shape?.kind === "rect"
-          ? shape.x
-          : Math.round((col + 0.5) * cw * this.dpr) / this.dpr;
-      return { x, w };
+      return shape?.kind === "rect"
+        ? { x: shape.x, w: shape.w }
+        : { x: Math.round((col + 0.5) * cw * dpr) / dpr, w: 1 / dpr };
+    };
+    const horizontal = (row: number) => {
+      const shape = glyphShapes(
+        "─",
+        { x: 0, y: row * ch, w: cw, h: ch },
+        dpr,
+        this.font.size,
+      )?.find((p) => p.kind === "rect");
+      return shape?.kind === "rect"
+        ? { y: shape.y, h: shape.h }
+        : { y: Math.round((row + 0.5) * ch * dpr) / dpr, h: 1 / dpr };
     };
     const onScreen = new Set<number>();
+    this.bleeds.clear();
     for (const pane of panes) {
       const box = boxes.find((b) => b.grid === pane.grid);
       if (!box) continue;
@@ -1719,22 +1865,25 @@ export class GridPainter {
         this.panes.set(pane.grid, el);
       }
       this.put(el, box.z, "pane", pane.grid);
-      // Exactly half the column on each side, so the edges of windows
-      // split across and down line up whatever is beside them.
-      const half = (col: number) =>
-        Math.round((col + 0.5) * cw * this.dpr) / this.dpr;
-      const left = pane.left ? half(box.col - 1) : box.col * cw;
-      const right = pane.right
-        ? half(box.col + box.width)
-        : (box.col + box.width) * cw;
+      const { left, right, top, bottom } = paneRect(
+        pane,
+        box,
+        { width: W, height: H },
+        this.metrics,
+        dpr,
+        reach,
+      );
+      const end = box.col + box.width;
       el.style.left = `${String(left)}px`;
-      el.style.top = `${String(box.row * ch)}px`;
+      el.style.top = `${String(top)}px`;
       el.style.width = `${String(right - left)}px`;
-      el.style.height = `${String(box.height * ch)}px`;
+      el.style.height = `${String(bottom - top)}px`;
       const ground =
         windowGround(this.theme, pane.win, pane.win === this.currentWin) ??
         state.defaults.background;
       el.style.background = cssColor(ground);
+      const bleed = { l: box.col * cw - left, r: right - end * cw, t: 0, b: 0 };
+      if (bleed.l > 0 || bleed.r > 0) this.bleeds.set(pane.grid, bleed);
     }
     for (const [grid, el] of this.panes) {
       if (onScreen.has(grid)) continue;
@@ -1756,36 +1905,74 @@ export class GridPainter {
           b.col <= col &&
           col < b.col + b.width,
       );
-    for (const b of boundaries) {
-      const { x, w } = line(b.col);
-      pieces.push({
-        x,
-        y: b.top * ch,
-        w,
-        h: (b.bottom - b.top) * ch,
-        c: colour,
-      });
-      if (!base) continue;
-      for (let row = b.top; row < b.bottom; row += 1) {
+    const armsAt = (row: number, col: number) =>
+      base && row >= 0 && row < H && col >= 0 && col < W && !inWindow(row, col)
+        ? boxArms(base.chars[row * W + col] ?? "")
+        : undefined;
+    for (const line of lines) {
+      let from = line.vertical ? line.y : line.x;
+      let to = from + line.length;
+      if (line.vertical) {
+        // Ending on a junction a status line draws (`┴`, `┬`): on its line.
+        const last = armsAt(Math.ceil(to) - 1, line.x);
+        if (Number.isInteger(to) && last && last.s === 0 && last.n !== 0)
+          to -= 0.5;
+        const first = armsAt(Math.floor(from), line.x);
+        if (Number.isInteger(from) && first && first.n === 0 && first.s !== 0)
+          from += 0.5;
+        const { x, w } = vertical(line.x);
+        const y0 = Number.isInteger(from)
+          ? from === 0
+            ? -reach.top
+            : from * ch
+          : horizontal(Math.floor(from)).y;
+        const y1 = Number.isInteger(to)
+          ? to >= H
+            ? H * ch + reach.bottom
+            : to * ch
+          : (() => {
+              const h = horizontal(Math.floor(to));
+              return h.y + h.h;
+            })();
+        pieces.push({ x, y: y0, w, h: y1 - y0, c: colour });
+      } else {
+        const { y, h } = horizontal(line.y);
+        const x0 = Number.isInteger(from)
+          ? from === 0
+            ? -reach.left
+            : from * cw
+          : vertical(Math.floor(from)).x;
+        const x1 = Number.isInteger(to)
+          ? to >= W
+            ? W * cw + reach.right
+            : to * cw
+          : (() => {
+              const v = vertical(Math.floor(to));
+              return v.x + v.w;
+            })();
+        pieces.push({ x: x0, y, w: x1 - x0, h, c: colour });
+      }
+      if (!base || !line.vertical) continue;
+      const { x, w } = vertical(line.x);
+      for (let row = Math.floor(from); row < Math.ceil(to); row += 1) {
         for (const dc of [-1, 1]) {
-          const col = b.col + dc;
-          if (col < 0 || col >= base.width || inWindow(row, col)) continue;
-          const i = row * base.width + col;
-          const arms = boxArms(base.chars[i] ?? "");
+          const col = line.x + dc;
+          const arms = armsAt(row, col);
           if (!arms || arms.e === 0 || arms.w === 0 || arms.n !== 0) continue;
           const shape = glyphShapes(
             "─",
             { x: col * cw, y: row * ch, w: cw, h: ch },
-            this.dpr,
+            dpr,
             this.font.size,
           )?.find((p) => p.kind === "rect");
           if (shape?.kind !== "rect") continue;
-          const from = dc < 0 ? col * cw + cw : x + w;
-          const to = dc < 0 ? x : col * cw;
+          const i = row * W + col;
+          const start = dc < 0 ? col * cw + cw : x + w;
+          const stop = dc < 0 ? x : col * cw;
           pieces.push({
-            x: Math.min(from, to),
+            x: Math.min(start, stop),
             y: shape.y,
-            w: Math.abs(to - from),
+            w: Math.abs(stop - start),
             h: shape.h,
             c: resolveColors(state.hl.get(base.hls[i] ?? 0), state.defaults).fg,
           });
@@ -2332,15 +2519,17 @@ export class GridPainter {
     const { width: cw, height: ch, baseline } = this.metrics;
     const crop = cropOf(box);
     if (row < crop.top || row >= grid.height - crop.bottom) return;
+    const { bleed } = entry;
     ctx.setTransform(
       this.dpr,
       0,
       0,
       this.dpr,
-      -crop.left * cw * this.dpr,
-      -crop.top * ch * this.dpr,
+      (bleed.l - crop.left * cw) * this.dpr,
+      (bleed.t - crop.top * ch) * this.dpr,
     );
     const y = row * ch;
+    this.paintBleed(ctx, state, grid, row, bleed);
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, y, grid.width * cw, ch);
@@ -2363,11 +2552,32 @@ export class GridPainter {
       this.paintGround(ctx, state, box, grid.chars, base, run, y);
     }
     this.skip.clear();
-    // Grid 1's cells in a boundary's column are the panes' and the
-    // hairline's (`placePanes`): not drawn.
+    // Grid 1's cells a boundary runs through are the panes' and the
+    // hairline's (`placePanes`): not drawn as cells. One a line runs down
+    // is grounded half and half, each half as the cell beside it (a status
+    // line's, where the windows' panes do not reach), so each region's
+    // ground goes on to the line.
     if (box.grid === 1)
-      for (const b of this.boundaries)
-        if (b.top <= row && row < b.bottom) this.skip.add(b.col);
+      for (let c = 0; c < grid.width; c += 1) {
+        const i = base + c;
+        if (!this.gaps.has(i)) continue;
+        this.skip.add(c);
+        if (!this.vgaps.has(i)) continue;
+        const mid = Math.round((c + 0.5) * cw * this.dpr) / this.dpr;
+        const side = (at: number) =>
+          cssColor(
+            resolveColors(
+              state.hl.get(
+                grid.hls[base + Math.max(0, Math.min(grid.width - 1, at))] ?? 0,
+              ),
+              state.defaults,
+            ).bg,
+          );
+        ctx.fillStyle = side(c - 1);
+        ctx.fillRect(c * cw, y, mid - c * cw, ch);
+        ctx.fillStyle = side(c + 1);
+        ctx.fillRect(mid, y, (c + 1) * cw - mid, ch);
+      }
     if (
       !box.float &&
       box.grid !== 1 &&
@@ -2531,8 +2741,9 @@ export class GridPainter {
     if (Math.abs(moved.rows) > Math.max(1, Math.floor(box.height / 3))) return;
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const { width: cw, height: ch } = this.metrics;
-    const x = moved.left * cw;
-    const y = moved.top * ch;
+    // In the canvas's pixels (its bleed before the cells).
+    const x = moved.left * cw + entry.bleed.l;
+    const y = moved.top * ch + entry.bleed.t;
     const w = (moved.right - moved.left) * cw;
     const h = (moved.bot - moved.top) * ch;
     if (w <= 0 || h <= 0) return;

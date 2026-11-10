@@ -92,21 +92,63 @@ What follows the rule in code:
     it completes.
   - **preedit**: the IME's composition, at the cursor or in the command
     line: the text going in is over everything that could cover it.
-- Panes and boundaries (`chrome.ts` `boundariesOf`, `painter.ts`
-  `placePanes`): Neovim keeps a cell column between windows side by side,
-  and a TUI can only draw a `│` in it; a GUI shows panes with an edge
-  between them (VS Code's editor groups, Zed's panes). Each window's pane
-  is an element under its grid (`PART_Z.pane`) in the window's own ground
-  as its highlights state it (`Normal`, `NormalNC` when not current, through
-  `winhighlight`), reaching exactly half into the column on each side —
-  not some pixels of padding — so the edges of windows split across and
-  down line up whatever their neighbours. The boundary is one hairline
-  element on the shared edge (`PART_Z.boundary`), in `WinSeparator`'s
-  colour, worked out from the windows' places and sizes. Grid 1's cells in
-  the column are not drawn. A status line row is the horizontal bar: a
-  boundary ending on it meets its `┴` (grid 1 draws it on the same
-  pixels), and a status line drawn as a line beside a boundary runs into
-  it (a stub element).
+- Panes and boundaries (`chrome.ts` `boundariesOf`, `paneRect`,
+  `rowBleed`; `painter.ts` `placePanes`; tmux's in
+  `ControlTerminalSurface.tsx`): Neovim keeps a cell between windows (a
+  column side by side, a row stacked when there is no status line) and
+  tmux one between panes, and a TUI can only draw a `│` or `─` in it; a
+  GUI shows two regions meeting at an edge (VS Code's editor groups, Zed's
+  panes). The rule, for both:
+  - **A region is what the person reads as one thing.** A tmux pane; a
+    Neovim window together with its status line when `laststatus` is 1 or
+    2 (the status line is the window's footer, as an editor group's tab
+    bar is its header). So stacked windows with their own status lines
+    meet at the status line, which divides them as the person's
+    colorscheme draws it (a band, or a line with `stl:`), with no
+    hairline added; side by side, the line between them runs down beside
+    the status lines' row too. With `laststatus` 0 or 3 there is no
+    window status line, and stacked windows meet at a hairline across
+    the separator row, as side by side ones do. The tab line, a global
+    status line and the command line are no region's: the lines stop at
+    them.
+  - **Each region's ground goes on to the line.** The gap cell is split
+    exactly in half, on device pixels, so edges split across and down
+    line up. On its side each region continues as itself: a window's
+    canvas reaches into the half column (`Bleed`) and each of its rows
+    goes on in the ground of its edge cell — its `Normal` or `NormalNC`
+    (through `winhighlight`), a sign column's, a current line's, a diff
+    line's, a winbar's — so a sidebar in its own ground, a current line
+    or a status line's label meets the line with no strip of another
+    colour. Above and below a window (the half row of a separator row),
+    its pane element is in the window's own ground (`windowGround`); a
+    window's text scrolls along its rows, not across them. Grid 1's gap
+    cells are not drawn as cells: one a line runs down (beside the status
+    lines) is grounded half and half by the cells either side of it. A
+    tmux pane's rows go on the same way (`setGridReach`), its ground is
+    the pane's default background, and a Neovim in a tmux pane reaches
+    into the pane's half border cells on every side (`setReach`): grid 1
+    continues its first and last rows up and down and its edge cells
+    sideways, its windows on that edge their rows, and the tab strip its
+    ground (`neovim.css`, `--nvim-reach-*`).
+  - **One hairline on the shared edge.** One element per line,
+    `PART_Z.boundary` over the windows' level (tmux's
+    `CONTROL_Z.borders`), traced over the gap cells (`borders`, shared by
+    both): lines join at a T (one ends on the other's middle) and cross
+    at a +, so no junction has a gap. Neovim's is in `WinSeparator`'s ink
+    on the pixels grid 1 draws a `│` or `─` on (one CSS pixel at the
+    usual sizes, on whole device pixels), so a status line drawn as a
+    line meets it (a stub to the hairline), and a line that ends on the
+    status line's junction (`┴`) ends on that line. A line on grid 1's
+    edge runs on to the editor's reach, to meet tmux's line. tmux's is
+    one CSS pixel on whole device pixels, centred on the gap cell; the
+    active pane's (and synchronized panes') outline is that stretch of it
+    recoloured and two pixels thick, so it too sits where the regions
+    meet.
+  - Everything from the regions' places, sizes and highlights, never from
+    what is drawn in the gaps; nothing a window scrolls or redraws
+    touches the lines. While panes move each draws the lines on its own
+    edges (`docs/pane-motion.md`); the shared ones are placed again at
+    rest.
 - One page, one layer model: a Neovim DevHub draws in a tmux pane is in
   the terminal's own page (`shell/pane/PaneNeovims.tsx`), not a view of
   its own over it. The control surface puts it in the panes' level

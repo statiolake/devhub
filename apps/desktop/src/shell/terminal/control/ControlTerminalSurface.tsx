@@ -545,6 +545,15 @@ export function ControlTerminalSurface({
         if (unpaintedNeovims.has(entry.key)) continue;
         el.style.width = `${String(box.width * width)}px`;
         el.style.height = `${String(box.height * height)}px`;
+        // Its rows go on into the half border cells its ground takes, to
+        // the hairline (docs/rendering-layers.md, "Panes and boundaries").
+        const rest = restPlace(box, view.cols, view.rows, cell(), dpr).rect;
+        entry.handle?.setReach({
+          left: box.x * width - rest.left,
+          right: rest.right - (box.x + box.width) * width,
+          top: box.y * height - rest.top,
+          bottom: rest.bottom - (box.y + box.height) * height,
+        });
         if (!moving) {
           placeGroup(
             group,
@@ -661,6 +670,28 @@ export function ControlTerminalSurface({
             )
           : new Map(),
       );
+      // Each pane's rows go on sideways into the half border cells its
+      // ground takes, to the hairline: a coloured row (a TUI's bar, a
+      // prompt's band) meets the line, not a strip of the default ground.
+      {
+        const dpr = window.devicePixelRatio || 1;
+        painter.setGridReach(
+          new Map(
+            view.panes.map((p) => {
+              const r = restPlace(p, view.cols, view.rows, cell(), dpr).rect;
+              return [
+                gridOf(p.pane),
+                {
+                  l: p.x * width - r.left,
+                  r: r.right - (p.x + p.width) * width,
+                  t: 0,
+                  b: 0,
+                },
+              ] as const;
+            }),
+          ),
+        );
+      }
       painter.paint(view.state, merged, boxes, merged.layout);
       shownBoxes = boxes;
       if (painter.scrolling) requestScrollTick();

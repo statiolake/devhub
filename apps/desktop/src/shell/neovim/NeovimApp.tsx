@@ -64,6 +64,8 @@ import {
   fontOf,
   resolveColors,
   uiTypeScale,
+  NO_REACH,
+  type Reach,
 } from "./painter";
 import { CompletionMenu } from "../completion/CompletionMenu";
 import { TabStrip } from "./TabStrip";
@@ -144,6 +146,12 @@ export interface NeovimHandle {
   drawnSize(): { cols: number; rows: number } | undefined;
   /** Neovim's default background: its pane's ground. */
   background(): number | undefined;
+  /**
+   * How far past its cells its ground reaches, in CSS pixels: the half
+   * border cells of its tmux pane, which its rows go on into
+   * (`GridPainter.setReach`).
+   */
+  setReach(reach: Reach): void;
   /** A keystroke main took for it (`TerminalNeovimKeyWire`). */
   typeKey(key: TerminalNeovimKeyWire): void;
   /** Whether the page's focus is in it (its textarea or a GUI window). */
@@ -213,6 +221,7 @@ export function NeovimSurface({
   const handleRef = useRef(handle);
   handleRef.current = handle;
   const [, setTick] = useState(0);
+  const [reach, setReach] = useState<Reach>(NO_REACH);
   const [guiContent, setGuiContent] = useState<ReadonlyMap<number, GuiContent>>(
     new Map(),
   );
@@ -281,6 +290,16 @@ export function NeovimSurface({
           : undefined,
       typeKey: (key) => {
         editor.typeKey(key);
+      },
+      setReach: (next) => {
+        setReach((now) =>
+          now.left === next.left &&
+          now.right === next.right &&
+          now.top === next.top &&
+          now.bottom === next.bottom
+            ? now
+            : next,
+        );
       },
       focused: () => {
         const active = document.activeElement;
@@ -752,6 +771,11 @@ export function NeovimSurface({
 
   const tabs = nvim?.tabline;
   const showTabs = tabs !== undefined && tabs.tabs.length > 1;
+  // Grid 1's reach: the tab strip, when it is shown, is what takes the
+  // half cell above (its own ground, `neovim.css`).
+  useEffect(() => {
+    editor?.setReach(showTabs ? { ...reach, top: 0 } : reach);
+  }, [editor, reach, showTabs]);
   const boxes = editor?.gridBoxes() ?? [];
   const fontFamily = editor?.font().family;
   const fontSize = editor?.font().size;
@@ -789,6 +813,14 @@ export function NeovimSurface({
               ["--nvim-editor-ground" as string]: cssColor(
                 nvim.defaults.background,
               ),
+              // A tmux pane's half border cells it reaches into (`setReach`).
+              ["--nvim-reach-left" as string]: `${String(reach.left)}px`,
+              ["--nvim-reach-right" as string]: `${String(reach.right)}px`,
+              ["--nvim-reach-top" as string]: `${String(reach.top)}px`,
+              ["--nvim-reach-bottom" as string]: `${String(reach.bottom)}px`,
+              ["--nvim-reach-clip" as string]: `${String(
+                Math.max(reach.left, reach.right, reach.top, reach.bottom),
+              )}px`,
               // The type scale of everything DevHub sets in the UI face
               // (`neovim.css`): from the grid's size, so a larger terminal
               // font makes the hovers, toasts, labels and code larger too.
