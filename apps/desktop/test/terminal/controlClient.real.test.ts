@@ -89,8 +89,18 @@ function controlProcess(socket: string, session: string): ControlProcess {
   };
 }
 
-/** The page's view: the last layout and each pane's rows as text. */
+/**
+ * The page's view: the last layout and each pane's rows as text.
+ *
+ * It acks each pane frame once it has it, as the pane page does once it has
+ * painted one (`ControlTerminalSurface`): the client keeps at most four
+ * frames unacked in flight and posts none after that, so a page that never
+ * acked saw the first four frames of a case and nothing more. A shell whose
+ * output came in three frames rather than one, as it does on a loaded
+ * machine, left the case no frame for the copy mode it then drew.
+ */
 function page() {
+  let painter: ControlClient | undefined;
   const screens = new Map<number, string[]>();
   let layout: Extract<ControlToPage, { kind: "layout" }> | undefined;
   let ended: string | undefined;
@@ -121,6 +131,8 @@ function page() {
     else if (message.kind === "ended") ended = message.reason;
     else if (message.kind === "notice") notices.push(message.text);
     else if (message.kind === "pane") {
+      const seq = message.seq;
+      queueMicrotask(() => painter?.receive({ kind: "ack", seq }));
       framesSinceCopy += 1;
       const rows = screens.get(message.pane) ?? [];
       for (const row of message.frame.dirty)
@@ -131,6 +143,10 @@ function page() {
   };
   return {
     post,
+    /** The client whose frames this page acks. */
+    paints(client: ControlClient) {
+      painter = client;
+    },
     screens,
     notices,
     get layout() {
@@ -198,6 +214,7 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       post: view.post,
       ended: () => undefined,
     });
+    view.paints(client);
     // What was on screen before the client attached is read by capture-pane.
     const first = await until(
       "the first pane",
@@ -258,6 +275,7 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       post: view.post,
       ended: () => undefined,
     });
+    view.paints(client);
     await until("the pane", () => view.layout?.panes[0]?.pane);
     // tmux's own `,`: the input is the window's name, expanded by tmux.
     client.receive({ kind: "keys", keys: ["C-q", ","] });
@@ -343,6 +361,7 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       ended: () => undefined,
       popup,
     });
+    view.paints(client);
     const first = await until("the pane", () => view.layout?.panes[0]?.pane);
     // A pane's `tmux` (`paneTmuxScript`), run as the pane's shell runs it.
     const bin = mkdtempSync(join(tmpdir(), "devhub-pane-tmux-"));
@@ -425,6 +444,7 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       post: view.post,
       ended: () => undefined,
     });
+    view.paints(client);
     await until("two panes", () => view.layout?.panes.length === 2);
     const [top, bottom] = view.layout?.panes ?? [];
     expect(bottom.active).toBe(true);
@@ -485,6 +505,7 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       post: view.post,
       ended: () => undefined,
     });
+    view.paints(client);
     await until("two panes", () => view.layout?.panes.length === 2);
     const [top] = view.layout?.panes ?? [];
     client.receive({ kind: "keys", keys: ["C-q", "w"] });
@@ -526,6 +547,7 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       post: view.post,
       ended: () => undefined,
     });
+    view.paints(client);
     const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
     await until("the output", () =>
       view.screens.get(pane)?.some((row) => row === "60"),
@@ -600,6 +622,7 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       post: view.post,
       ended: () => undefined,
     });
+    view.paints(client);
     const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
     await until("the output", () =>
       view.screens.get(pane)?.some((row) => row === "100"),
@@ -641,6 +664,7 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       },
       ended: () => undefined,
     });
+    view.paints(client);
     const home = await until("the window", () => view.layout?.window);
     // Before the current one (renumbering it), then after it.
     tmux(socket, "new-window", "-b", "-t", "n:", "sh");
@@ -680,6 +704,7 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       post: view.post,
       ended: () => undefined,
     });
+    view.paints(client);
     const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
     // A buffer chooser is said, not run, and so is a popup with no pty to
     // run it in (`ControlClientOptions.popup`): the client answers on.
@@ -735,6 +760,7 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
         post: view.post,
         ended: () => undefined,
       });
+      view.paints(client);
       await until("the pane", () => view.layout?.panes[0]?.pane);
       tmux(
         socket,
@@ -848,6 +874,7 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
         },
         ended: () => undefined,
       });
+      view.paints(client);
       const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
       await until("the prompt", () =>
         view.screens.get(pane)?.some((row) => row === "$"),
