@@ -593,7 +593,9 @@ function M.popup(opts)
     max_width = type(opts.max_width) == "number" and opts.max_width or nil,
     max_height = type(opts.max_height) == "number" and opts.max_height or nil,
     keys = opts.keys, on_close = opts.on_close }
-  p.mark = vim.api.nvim_buf_set_extmark(buf, ns, lnum - 1, col, {})
+  -- Left gravity: text put in at the anchor (typing at the cursor, a
+  -- completion's preview) goes after it, and the popup stays where it was.
+  p.mark = vim.api.nvim_buf_set_extmark(buf, ns, lnum - 1, col, { right_gravity = false })
   p.at = vim.api.nvim_win_get_cursor(win)
   M._popups[p.id] = p
   local handle = { id = p.id, buf = buf, win = win }

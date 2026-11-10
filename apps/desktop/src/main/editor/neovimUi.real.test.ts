@@ -1001,6 +1001,45 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		h.ui.client.close();
 	});
 
+	it("keeps a popup where it was when text goes in at its anchor", async () => {
+		const h = await attached(60, 20);
+		const waitFor = async (check: () => boolean, what: string) => {
+			const deadline = Date.now() + 3_000;
+			while (!check()) {
+				if (Date.now() > deadline)
+					throw new Error(`timed out waiting for ${what}`);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+		};
+		const layers = () => h.gui.events.filter((e) => e.kind === "layers");
+		const popups = (): Record<string, unknown>[] => {
+			const v = (layers().at(-1)?.payload as Record<string, unknown>)?.[
+				"popups"
+			];
+			return Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
+		};
+		const lua = (code: string) => h.ui.request("nvim_exec_lua", [code, []]);
+		await lua(`vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'alpha', 'beta gamma' })
+			vim.api.nvim_win_set_cursor(0, { 2, 5 })
+			_G.pop = require('devhub_gui').popup{ component = { type = 'markdown', text = 'hover' }, close_on = {} }`);
+		await waitFor(() => popups().length === 1, "the popup placed");
+		expect(popups()[0]).toMatchObject({ row: 1, col: 5 });
+		// Text put in at the anchor, as a completion's preview is: the
+		// anchor stays before it, so the popup does not jump right.
+		const before = layers().length;
+		await lua(`vim.api.nvim_buf_set_text(0, 1, 5, 1, 5, { 'pre' })
+			require('devhub_gui')._schedule_place()`);
+		await waitFor(() => layers().length > before, "placed again");
+		expect(
+			await h.ui.request("nvim_exec_lua", [
+				"return vim.api.nvim_buf_get_lines(0, 1, 2, false)[1]",
+				[],
+			]),
+		).toBe("beta pregamma");
+		expect(popups()[0]).toMatchObject({ row: 1, col: 5 });
+		h.ui.client.close();
+	});
+
 	it("reports a view's items and cursor, and a card's reserved rows round trip", async () => {
 		const h = await attached(60, 20);
 		const waitFor = async (check: () => boolean, what: string) => {
