@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   analyzeFrame,
   floatLabelsOf,
+  frameBands,
   frameGeometry,
   insideRounded,
   labelBox,
@@ -260,6 +261,41 @@ describe("where a frame's line is", () => {
       w: 7 * 8,
       cy: geo.y + 0.5,
     });
+  });
+
+  it("goes round a label that takes its whole side: a band, inside", () => {
+    // A pager's header and footer, each across every cell of its side.
+    const g = gridOf(
+      [
+        " Messages     3 lines ",
+        " hello                ",
+        " j k move     q close ",
+      ],
+      (row) => (row === 1 ? 0 : 5),
+    );
+    const frame = analyzeFrame(g, ALL, {
+      title: " Messages     3 lines ",
+      footer: " j k move     q close ",
+    }).frame;
+    if (!frame) throw new Error("no frame");
+    const at = { row: 3, col: 3, width: 22, height: 3 };
+    const bands = frameBands(frame, at.width);
+    expect(bands).toEqual({ top: true, bottom: true });
+    const geo = frameGeometry(frame.margins, at, cell, 2, 4, bands);
+    // The line on the rows' outer edges: the whole box is inside it.
+    expect(geo.y).toBe(at.row * cell.height);
+    expect(geo.y + geo.h).toBe((at.row + at.height) * cell.height);
+    // Each band centred on its row, inside the line.
+    const [top, bottom] = frame.labels;
+    if (!top || !bottom) throw new Error("no labels");
+    expect(labelBox(top, at, geo, cell, bands).cy).toBe(
+      (at.row + 0.5) * cell.height,
+    );
+    expect(labelBox(bottom, at, geo, cell, bands).cy).toBe(
+      (at.row + at.height - 0.5) * cell.height,
+    );
+    // A title with line left beside it is on its line, as ever.
+    expect(frameBands(frameOf(rounded), place.width)).toEqual({});
   });
 
   it("tells inside from outside along a rounded corner", () => {

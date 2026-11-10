@@ -10,7 +10,7 @@
  */
 
 import { WheelLines } from "./wheelLines";
-import { frameGeometry, insideRounded } from "./frame";
+import { frameBands, frameGeometry, insideRounded } from "./frame";
 import { frameCuts, inFrameCells } from "./floats";
 import type { GridBox } from "./redraw";
 
@@ -82,7 +82,14 @@ function insideFrame(
 ): boolean {
   const frame = box.frame;
   if (!frame) return false;
-  const g = frameGeometry(frame.margins, box, cell, 1, 0);
+  const g = frameGeometry(
+    frame.margins,
+    box,
+    cell,
+    1,
+    0,
+    frameBands(frame, box.width),
+  );
   const near = (d: number) => d >= -1 && d <= 1;
   const overlap = (a0: number, a1: number, b0: number, b1: number) =>
     Math.max(a0, b0) < Math.min(a1, b1);

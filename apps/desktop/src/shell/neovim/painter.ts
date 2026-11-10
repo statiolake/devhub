@@ -76,7 +76,9 @@ import {
 } from "./smoothScroll";
 import {
   SIDES,
+  frameBands,
   frameGeometry,
+  type FrameBands,
   labelBox,
   type FrameLabel,
   type FrameSide,
@@ -2209,7 +2211,7 @@ export class GridPainter {
     // Every framed member's shape first: a float under framed ones, in
     // its cluster or another, is clipped by theirs (`cutClip`).
     const panels = floatClusters(shown).map((cluster) => {
-      const framed: (FramedMember & { box: GridBox })[] = [];
+      const framed: (FramedMember & { box: GridBox; bands: FrameBands })[] = [];
       for (const m of cluster.members) {
         const box = byGrid.get(m.grid);
         const margins = box ? marginsOf(box) : undefined;
@@ -2222,7 +2224,15 @@ export class GridPainter {
           labelled: Object.fromEntries(
             (box.frame?.labels ?? []).map((l) => [l.side, true]),
           ),
-          geometry: frameGeometry(margins, box, this.metrics, this.dpr, radius),
+          bands: box.frame ? frameBands(box.frame, box.width) : {},
+          geometry: frameGeometry(
+            margins,
+            box,
+            this.metrics,
+            this.dpr,
+            radius,
+            box.frame ? frameBands(box.frame, box.width) : {},
+          ),
         });
       }
       const framedPieces = framePieces(framed, this.dpr);
@@ -2301,7 +2311,13 @@ export class GridPainter {
             this.label(
               state,
               label,
-              labelBox(label, member.box, member.geometry, this.metrics),
+              labelBox(
+                label,
+                member.box,
+                member.geometry,
+                this.metrics,
+                member.bands,
+              ),
             ),
           );
         }

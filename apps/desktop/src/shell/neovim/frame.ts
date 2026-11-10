@@ -21,6 +21,12 @@
  *   one is padded as much, outside its cells).
  * - `labelBox` is where a title or footer sits: on its line, over the
  *   cells Neovim gave it.
+ * - A label that takes its whole side (`frameBands`: a pager's header with
+ *   its count at the right end, a footer of keys across) is no label on a
+ *   line but a band — the line has no length of its own left there. Its
+ *   side's line goes round it, along the outer edge of its row, so the
+ *   band is inside the frame with the text, not a strip sticking out of
+ *   it half a row.
  */
 
 import type { Grid, Margins } from "./redraw.js";
@@ -244,6 +250,18 @@ export function analyzeFrame(
   return { frame: { margins, sides, corners, labels: found } };
 }
 
+/** The sides whose label is a band: it takes every cell between the corners. */
+export type FrameBands = Readonly<Partial<Record<"top" | "bottom", true>>>;
+
+export function frameBands(frame: FloatFrame, width: number): FrameBands {
+  const inner = width - frame.margins.left - frame.margins.right;
+  const out: Partial<Record<"top" | "bottom", true>> = {};
+  for (const label of frame.labels)
+    if (label.col === frame.margins.left && label.cells === inner)
+      out[label.side] = true;
+  return out;
+}
+
 export interface FrameGeometry {
   /** The line's outer edges, in the editor's CSS pixels. */
   readonly x: number;
@@ -313,15 +331,23 @@ export function frameGeometry(
   cell: CellSize,
   dpr: number,
   radius: number,
+  bands: FrameBands = {},
 ): FrameGeometry {
   const { width: cw, height: ch } = cell;
   const m = margins;
   const line = lineWidth(dpr);
+  // A band's side: the line inside the row's outer edge, round the band.
   const middles = {
     left: (place.col + m.left) * cw - cw / 2,
     right: (place.col + place.width - m.right) * cw + cw / 2,
-    top: (place.row + m.top) * ch - ch / 2,
-    bottom: (place.row + place.height - m.bottom) * ch + ch / 2,
+    top:
+      bands.top === true && m.top > 0
+        ? place.row * ch + line / 2
+        : (place.row + m.top) * ch - ch / 2,
+    bottom:
+      bands.bottom === true && m.bottom > 0
+        ? (place.row + place.height) * ch - line / 2
+        : (place.row + place.height - m.bottom) * ch + ch / 2,
   };
   const [x0] = lineSpan(middles.left, line, dpr);
   const [, x1] = lineSpan(middles.right, line, dpr);
@@ -352,9 +378,14 @@ export function labelBox(
   place: CellPlace,
   geometry: FrameGeometry,
   cell: CellSize,
+  bands: FrameBands = {},
 ): LabelBox {
-  const cy =
-    label.side === "top"
+  // A band is centred on its row, inside the line that goes round it.
+  const cy = bands[label.side]
+    ? label.side === "top"
+      ? (place.row + 0.5) * cell.height
+      : (place.row + place.height - 0.5) * cell.height
+    : label.side === "top"
       ? geometry.y + geometry.widths.top / 2
       : geometry.y + geometry.h - geometry.widths.bottom / 2;
   return {

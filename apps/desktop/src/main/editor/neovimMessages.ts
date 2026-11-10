@@ -232,9 +232,11 @@ function M._pager_show(opts)
   local width = math.max(20, columns - 2)
   -- As tall as its lines are on screen (a long one wraps), at most 60 % of
   -- the room: the windows above stay in sight, it is a look, not a switch.
+  -- The text starts a cell in (a fold column of the float's ground), in
+  -- the column the header's and footer's words start: not on the frame.
   local rows = 0
   for _, line in ipairs(text) do
-    rows = rows + math.max(1, math.ceil(width_of(line) / width))
+    rows = rows + math.max(1, math.ceil(width_of(line) / (width - 1)))
   end
   local height = math.max(1, math.min(rows, math.floor(room * 0.6)))
   -- Comment's colour on the float's ground: header and footer words.
@@ -255,7 +257,7 @@ function M._pager_show(opts)
     { " j k", "NormalFloat" }, { " move   ", "DevhubPagerDim" },
     { "/", "NormalFloat" }, { " search   ", "DevhubPagerDim" },
     { "y", "NormalFloat" }, { " yank   ", "DevhubPagerDim" },
-    { "Tab", "NormalFloat" },
+    { "⇥", "NormalFloat" },
     { source == "notifications" and " messages" or " notifications", "DevhubPagerDim" },
   }, { { "q", "NormalFloat" }, { " close ", "DevhubPagerDim" } }, width)
   local config = {
@@ -283,7 +285,10 @@ function M._pager_show(opts)
   wo.wrap = true
   wo.linebreak = true
   wo.cursorline = true
-  wo.winhighlight = "NormalFloat:NormalFloat,FloatBorder:NormalFloat"
+  wo.foldcolumn = "1"
+  wo.foldenable = false
+  wo.winhighlight = "NormalFloat:NormalFloat,FloatBorder:NormalFloat,FoldColumn:NormalFloat,"
+    .. "CursorLineFold:CursorLine"
   -- Newest last, as :messages: the cursor on the newest, the view ending
   -- there (a view left scrolled by the last content would hide the first).
   api.nvim_win_set_cursor(P.win, { #text, 0 })
