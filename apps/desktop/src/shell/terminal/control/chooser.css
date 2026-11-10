@@ -57,10 +57,23 @@
 
 .control-chooser-head > .picker-search {
   border-top: 1px solid var(--line-soft);
+  /* The rule under the field is the head's own last pixel: the body's top
+     edge is the grid's first row, which the painter covers. */
+  border-bottom: 1px solid var(--line-soft);
 }
 
 .control-chooser .picker-body {
   min-height: 0;
+}
+
+.control-chooser.picker > .picker-body {
+  border-top: 0;
+}
+
+/* The rule between the tree and the preview is the tree's right edge, for
+   the same reason: the aside's left edge is the grid's first column. */
+.control-chooser .picker-list {
+  border-right: 1px solid var(--line-soft);
 }
 
 .control-chooser .picker-results {
@@ -101,9 +114,10 @@
 }
 
 /* The chosen pane's grid is the painter's, over this. */
-.control-chooser-preview {
+.control-chooser .control-chooser-preview {
   padding: 0;
   overflow: hidden;
+  border-left: 0;
 }
 
 /* `display-panes`: each pane's index, large, in its middle. */

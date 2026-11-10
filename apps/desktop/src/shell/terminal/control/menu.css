@@ -40,9 +40,10 @@
   min-width: 160px;
   max-height: 100%;
   overflow-y: auto;
-  /* The bar's room kept whether it shows or not: a list that grows past
-     its height does not narrow its column (docs/motion.md). */
-  scrollbar-gutter: stable;
+  /* No gutter kept for a bar: a menu's items are tmux's, fixed while it is
+     open, so it never grows past its height and narrows — and a kept gutter
+     was a strip down its right side that the title band, the rules and the
+     chosen item stopped short of. */
   padding: var(--float-pad-block) 0;
   border: 1px solid var(--float-line);
   border-radius: var(--float-radius);
