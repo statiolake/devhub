@@ -54,7 +54,14 @@ same socket (on an SSH host, the same forward) and runs in the Neovim host
 own (`pane.html`): it holds the terminal and each Neovim over one of its
 panes, every UI on it named by its overlay's key on the one port. Main answers the attach (which
 Neovim, which socket), hands the port out, and answers the clipboard, which a
-utility process has none of. A host that ends is restarted and the pages
+utility process has none of. The host is started once DevHub is idle
+after launch — the window shown, every page's first paint done, main's
+event loop quiet (`shell/launchIdle.ts`, `NeovimHostClient.startAtIdle`) —
+so the first `nvim` finds it running; a Neovim named in a pane before then
+starts it at once (`prepare`, as the overlay appears), and the idle start
+then starts nothing. A build with no Neovim of its own (`out/nvim`) or
+`DEVHUB_NEOVIM_IN_MAIN=1` starts none at idle. A host that ends is started
+again by the next attach, not eagerly, and the pages
 reconnect by themselves; after three ends in a minute, or with
 `DEVHUB_NEOVIM_IN_MAIN=1`, the same code (`editor/neovimUiSessions.ts`) runs
 in main and the page's calls and redraws are IPC (`docs/process-model.md`,

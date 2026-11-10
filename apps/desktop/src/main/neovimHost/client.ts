@@ -156,6 +156,19 @@ export class NeovimHostClient {
 		if (this.available) this.#hostNow();
 	}
 
+	/**
+	 * DevHub is idle after launch (`AppController.startNeovimHostWhenIdle`):
+	 * the host is started now, so the first `nvim` does not wait on it. Only
+	 * the first host: nothing if one was ever started — by a Neovim named
+	 * before idle (`prepare`), or one that has since ended, which the next
+	 * Neovim starts again, as it would without this. True if it started one.
+	 */
+	startAtIdle(): boolean {
+		if (!this.available || this.#generation > 0) return false;
+		this.#hostNow();
+		return true;
+	}
+
 	listen(listener: NeovimHostListener): void {
 		this.#listener = listener;
 	}

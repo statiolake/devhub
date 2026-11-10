@@ -305,6 +305,9 @@ export async function bootstrapShell(userDataPath: string): Promise<void> {
 	// After the window is up and the runtimes are started: the readers need
 	// the login environment, and nothing they do is on the way to a window.
 	controller.startUsageReaders();
+	// The Neovim host, once the window has shown and main is quiet: off the
+	// first window's path, ahead of the first `nvim`.
+	controller.startNeovimHostWhenIdle();
 	// A Mac menu bar describes the key window, so it is rebuilt when the key
 	// window changes as well as when the model does.
 	electron.app.on("browser-window-focus", refreshMenu);

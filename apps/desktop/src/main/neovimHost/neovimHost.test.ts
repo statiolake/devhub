@@ -347,6 +347,35 @@ describe("a Neovim editor's UI in the Neovim host", () => {
 		expect(w.hosts).toHaveLength(1);
 	});
 
+	it("is started at idle after launch, and the first attach uses it", async () => {
+		const w = world();
+		expect(w.client.startAtIdle()).toBe(true);
+		expect(w.hosts).toHaveLength(1);
+		const reply = await w.editors.attach(new FakePage(1), REQUEST);
+		expect(reply).toMatchObject({ ok: true, hosted: 1 });
+		expect(w.hosts).toHaveLength(1);
+	});
+
+	it("started on demand before idle, is not started again at idle", async () => {
+		const w = world();
+		w.client.prepare();
+		expect(w.client.startAtIdle()).toBe(false);
+		expect(w.hosts).toHaveLength(1);
+		const reply = await w.editors.attach(new FakePage(1), REQUEST);
+		expect(reply).toMatchObject({ ok: true, hosted: 1 });
+		expect(w.hosts).toHaveLength(1);
+	});
+
+	it("that ended before idle is not restarted by it, only by the next attach", async () => {
+		const w = world();
+		w.client.prepare();
+		w.hosts[0]!.crash();
+		expect(w.client.startAtIdle()).toBe(false);
+		expect(w.hosts).toHaveLength(1);
+		await w.editors.attach(new FakePage(1), REQUEST);
+		expect(w.hosts).toHaveLength(2);
+	});
+
 	it("is attached again by a page that reloaded, which is handed a new port its redraws come on", async () => {
 		const w = world();
 		const page = new FakePage(1);

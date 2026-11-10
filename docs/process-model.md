@@ -372,6 +372,23 @@ UI was main's and the same checks passed. An SSH-forwarded Neovim takes the
 same path (a second connection through the same `ssh -O forward` socket) but
 was not run against a real host here.
 
+When it starts: at first by the first attach; then as a pane names a Neovim
+(`8a86bfc8`); now once DevHub is idle after launch (`shell/launchIdle.ts`:
+the window shown, then main's 50 ms timer slices firing on time four in a
+row, no sooner than 500 ms and no later than 10 s after it showed), so the
+first `nvim` does not pay for it, at the price of one idle process. A Neovim
+named before then starts it as before and the idle start does nothing; a
+host that ends is started again by the next attach, never from the idle
+start. On Xvfb with the person's dotfiles, eight DevHub starts each, the
+first `nvim` 4 s after the window showed: from main taking the attach to the
+host answering on its port, median 53 ms (40–163) → 2.2 ms (1.0–6.6); Enter
+to the attach answered, median 383 → 351 ms (noisy: the shell and Neovim's
+own start). The host is forked 520–560 ms after the window shows and
+300–415 ms after the last page's first contentful paint; the window's
+`ready-to-show` comes before either, so nothing of it is on the window's
+way (949–1646 ms from the process's start before, 868–1499 ms after: the
+same spread).
+
 **Phase 5d.** Two things, the first found while setting up the second.
 Every command for an SSH host had failed since phase 2 — opening a
 Workspace there said "[object Object] could not be cloned": a host's

@@ -254,6 +254,8 @@ import {
 	NeovimHostClient,
 	electronNeovimHostLauncher,
 } from "../neovimHost/client.js";
+import { bundledNeovim } from "../editor/bundledNeovim.js";
+import { whenIdleAfterLaunch } from "./launchIdle.js";
 import { EscalationStore } from "../orchestrator/escalationStore.js";
 import {
 	OrchestratorService,
@@ -3963,6 +3965,7 @@ export class AppController {
 		// adopts them by their sockets. Their UIs' connections go first.
 		this.neovimEditors?.dispose();
 		this.terminalNeovims?.dispose();
+		this.cancelNeovimHostIdle?.();
 		this.neovimHost?.dispose();
 		this.managedNeovims?.dispose();
 		// The conversations stop being followed; their hosts run on in tmux,
@@ -4674,6 +4677,30 @@ export class AppController {
 
 	/** The background readers of each CLI's plan limits, once started. */
 	private usageReaders: { stop(): void } | undefined;
+
+	/**
+	 * Start the Neovim host once DevHub is idle after launch — the window
+	 * shown, its first paint done, main quiet (`launchIdle.ts`) — so the
+	 * first `nvim` does not pay for the host's start; the price is one idle
+	 * process. A Neovim named before then starts it as it always did
+	 * (`NeovimHostClient.prepare`), and this then starts nothing; a host that
+	 * ends is started again by the next Neovim, never from here.
+	 */
+	startNeovimHostWhenIdle(): void {
+		const host = this.neovimHost;
+		// No host (`DEVHUB_NEOVIM_IN_MAIN=1`), or no Neovim on this Mac (a
+		// checkout without `build:nvim`): nothing to start ahead of time; a
+		// host's Neovim still starts it when it is named.
+		if (host === undefined || bundledNeovim() === undefined) return;
+		shellWindowIfCreated()?.onceShown(() => {
+			this.cancelNeovimHostIdle = whenIdleAfterLaunch(() => {
+				this.cancelNeovimHostIdle = undefined;
+				host.startAtIdle();
+			});
+		});
+	}
+
+	private cancelNeovimHostIdle: (() => void) | undefined;
 
 	/**
 	 * Start reading each CLI's plan limits in the background, once the window

@@ -476,6 +476,16 @@ export class ShellWindow {
 	}
 
 	/**
+	 * `fn` once the window has shown — after its page's first paint, which
+	 * is what `ready-to-show` waits for — or now if it already has.
+	 */
+	onceShown(fn: () => void): void {
+		if (this.window.isDestroyed()) return;
+		if (this.window.isVisible()) fn();
+		else this.window.once("show", fn);
+	}
+
+	/**
 	 * Runs every page in the window: its own and each child's, together.
 	 * Calling it twice is a bug, not a reload.
 	 */
