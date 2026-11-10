@@ -188,7 +188,7 @@ export function GeneralSection({
         note="When an Agent finishes its turn or is waiting for you, DevHub notifies you unless you are already looking at that Agent. Clicking the notification opens the Agent."
       >
         <SwitchRow
-          label="Notify when an Agent needs me"
+          label="Agent notifications"
           help="Show a notification when an Agent goes idle or is waiting for permission or input."
           checked={config.general.notifyOnIdle}
           onChange={(notifyOnIdle) => {
@@ -204,11 +204,11 @@ export function GeneralSection({
           }}
         />
         <Row
-          label="Hide DevHub's notices after (seconds)"
+          label="Notice timeout"
           help="A notice from DevHub itself hides into Notifications (Cmd+Q M) after this long, unless the pointer or keyboard is on it. 0 keeps it until it is dismissed or over. Default 8."
         >
           <NumberField
-            label="Hide DevHub's notices after (seconds)"
+            label="Notice timeout"
             value={config.general.noticeSeconds}
             min={0}
             max={3_600}
@@ -228,11 +228,11 @@ export function GeneralSection({
         note="A Workspace's row shows the working mark while a command in one of its terminals is printing, and the unread mark when it finishes or goes quiet while you are looking elsewhere."
       >
         <Row
-          label="Quiet after (seconds)"
+          label="Quiet after"
           help="A command that prints nothing for this long counts as finished. 0 counts a command as working until it exits. Default 5."
         >
           <NumberField
-            label="Quiet after (seconds)"
+            label="Quiet after"
             value={config.general.terminalIdleSeconds}
             min={0}
             max={86_400}
@@ -344,7 +344,7 @@ export function GeneralSection({
           }}
         />
         <SwitchRow
-          label="Auto-compact before cache expires"
+          label="Auto-compact"
           help="When a GUI Claude agent sits idle and its prompt cache is about to expire, send /compact shortly before, so your next message re-caches a short summary instead of the whole conversation. The compaction itself uses tokens, and conversations under the minimum size below are left alone. On by default."
           checked={config.agents.autoCompactBeforeCacheExpiry}
           onChange={(autoCompactBeforeCacheExpiry) => {
@@ -355,11 +355,11 @@ export function GeneralSection({
           }}
         />
         <Row
-          label="Minimum context size (tokens)"
+          label="Minimum context"
           help="Conversations with less context than this are not compacted, since re-caching them is cheap. Default 100,000."
         >
           <NumberField
-            label="Minimum context size (tokens)"
+            label="Minimum context"
             value={config.agents.autoCompactMinTokens}
             min={0}
             max={Number.MAX_SAFE_INTEGER}
@@ -374,11 +374,11 @@ export function GeneralSection({
           />
         </Row>
         <Row
-          label="Start this many seconds before expiry"
+          label="Lead time"
           help="How long before the prompt cache expires the compaction is sent. Must be above zero. Default 60."
         >
           <NumberField
-            label="Start this many seconds before expiry"
+            label="Lead time"
             value={config.agents.autoCompactLeadSeconds}
             min={1}
             max={Number.MAX_SAFE_INTEGER}

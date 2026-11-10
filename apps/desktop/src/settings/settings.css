@@ -41,8 +41,12 @@ body {
   flex-direction: column;
   height: 100%;
   /* Wide enough for the longest label this window has. Labels are nouns —
-     "Density", "Line height", "Identifier" — precisely so this column can stay
-     narrow and every control can sit next to the word that names it. */
+     "Density", "Line height", "Identifier", "Notice timeout" — precisely so
+     this column can stay narrow and every control can sit next to the word
+     that names it. A label that wanted a sentence ("Hide DevHub's notices
+     after (seconds)", three lines here) names the setting instead and leaves
+     the sentence to the help under its control; a unit is the field's, beside
+     it, not the label's. */
   --sf-label-width: 132px;
   --sf-list-width: 224px;
 }
