@@ -116,7 +116,8 @@ export interface StatusLine {
 	/**
 	 * The colour `pane-active-border-style` gives the active pane's border,
 	 * expanded there: tmux's default turns it yellow in a mode and red while
-	 * the panes are synchronized.
+	 * the panes are synchronized. Left out at tmux's resting default (its
+	 * green): the page outlines the active pane in the theme's accent.
 	 */
 	readonly activeBorder?: StatusColor;
 }

@@ -136,6 +136,10 @@ const GONE_WAIT_MS = 150;
 /** Resize steps closer than this are a held key's: placed at once. */
 const STEP_REPEAT_MS = 250;
 const NOTICE_MS = 4_000;
+/** Copy mode's bar starts this far down its pane: under the badge (18px at 4px) and a gap. */
+const COPY_TRACK_TOP = 4 + 18 + 4;
+/** A notice fades out over this long, in place (`control.css`). */
+const NOTICE_LEAVE_MS = 600;
 
 type Connection = "connecting" | "connected" | "disconnected";
 
@@ -237,6 +241,7 @@ export function ControlTerminalSurface({
   const [connection, setConnection] = useState<Connection>("connecting");
   const [error, setError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
+  const [noticeLeaving, setNoticeLeaving] = useState(false);
   const [tabs, setTabs] = useState<ControlView["windows"]>([]);
   const [status, setStatus] = useState<StatusLine | undefined>();
   const [promptMenu, setPromptMenu] = useState<PromptMenu | undefined>();
@@ -1332,13 +1337,18 @@ export function ControlTerminalSurface({
           badge.style.right = `${String((view.cols - box.x - box.width) * width + 4)}px`;
           badge.style.top = `${String(box.y * height + 4)}px`;
           const out: HTMLElement[] = [badge];
-          if (copy.history > 0) {
-            const whole = box.height * height;
+          // The bar is a picture of where the view is, and the badge says it
+          // in numbers. A history shorter than the pane makes a thumb over
+          // half its track, whose place does not read; then the badge alone.
+          // The track starts under the badge, so the two never touch.
+          if (copy.history >= box.height) {
+            const whole = box.height * height - COPY_TRACK_TOP - 4;
             const bar = Math.max(
               12,
               (whole * box.height) / (copy.history + box.height),
             );
             const top =
+              COPY_TRACK_TOP +
               ((copy.history - copy.scroll) / copy.history) * (whole - bar);
             const thumb = document.createElement("div");
             thumb.className = "control-copy-scroll";
@@ -1420,8 +1430,13 @@ export function ControlTerminalSurface({
 
     const say = (text: string) => {
       setNotice(text);
+      setNoticeLeaving(false);
       if (noticeTimer !== undefined) clearTimeout(noticeTimer);
-      noticeTimer = setTimeout(() => setNotice(undefined), NOTICE_MS);
+      // It fades in place, then is gone (docs/motion.md).
+      noticeTimer = setTimeout(() => {
+        setNoticeLeaving(true);
+        noticeTimer = setTimeout(() => setNotice(undefined), NOTICE_LEAVE_MS);
+      }, NOTICE_MS);
     };
 
     const focusIfUnclaimed = () => {
@@ -2134,11 +2149,12 @@ export function ControlTerminalSurface({
                 "--terminal-foreground": palette.foreground,
                 // A bell is said in the theme's red (ANSI 1).
                 "--terminal-ansi-red": palette.ansi[1],
-                // The active pane's outline: tmux's pane-active-border-style.
-                "--control-active-border": cssOfStatusColor(
-                  status?.activeBorder ?? { index: 2 },
-                  colors.palette,
-                ),
+                // The active pane's outline: tmux's pane-active-border-style
+                // where it says something, else the theme's accent.
+                "--control-active-border":
+                  status?.activeBorder !== undefined
+                    ? cssOfStatusColor(status.activeBorder, colors.palette)
+                    : "var(--accent)",
                 "--terminal-selection": palette.selectionBackground,
                 color: palette.foreground,
               }
@@ -2197,7 +2213,12 @@ export function ControlTerminalSurface({
         onMenu={(id, x) => controllerRef.current?.windowMenu(id, x)}
       />
       {notice !== undefined && (
-        <div className="control-notice" role="status">
+        <div
+          key={notice}
+          className="control-notice"
+          data-leaving={noticeLeaving}
+          role="status"
+        >
           {notice}
         </div>
       )}

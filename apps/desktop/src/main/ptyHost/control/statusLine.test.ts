@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	TAB_FIELD_COUNT,
 	parseStatus,
+	TMUX_ACTIVE_BORDER_DEFAULT,
 	parseStyle,
 	parseTab,
 	statusRuns,
@@ -177,5 +178,20 @@ describe("the status line as data", () => {
 		expect(status("fg=red")).toEqual({ index: 1 });
 		expect(status("fg=#5a9e78,bold")).toEqual({ rgb: 0x5a9e78 });
 		expect(status("default")).toBeUndefined();
+	});
+
+	it("leaves tmux's resting default green to the theme's accent", () => {
+		const status = (expanded: string, option: string) =>
+			parseStatus(
+				["on", "bottom", "left", "", "", "10", "40", expanded, option].join(F),
+			)?.activeBorder;
+		const own = TMUX_ACTIVE_BORDER_DEFAULT;
+		// The default at rest: the page's accent, not the palette's green.
+		expect(status("fg=green", own)).toBeUndefined();
+		// The default in a mode or synchronized: tmux's colour, which says so.
+		expect(status("fg=yellow", own)).toEqual({ index: 3 });
+		expect(status("fg=red", own)).toEqual({ index: 1 });
+		// The person's own green is theirs.
+		expect(status("fg=green", "fg=green")).toEqual({ index: 2 });
 	});
 });

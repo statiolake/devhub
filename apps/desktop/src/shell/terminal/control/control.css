@@ -57,8 +57,9 @@
 }
 
 /* The active pane's outline: the separators on its sides, in the colour
-   tmux gives its border (pane-active-border-style: by default green, yellow
-   in a mode, red while the panes are synchronized) and 2px, square where
+   tmux gives its border (pane-active-border-style: yellow in a mode, red
+   while the panes are synchronized; at rest the theme's accent where tmux
+   would say its default green, `statusLine.ts`) and 2px, square where
    they meet (`paneOutlines`). While synchronize-panes is on, the other panes
    that take the keys are outlined dashed: what is typed reaches all of
    them. */
@@ -152,22 +153,41 @@
   caret-color: transparent;
 }
 
-/* What DevHub did not do, said quietly (`keyGuard.ts`). */
+/* What DevHub did not do, said quietly (`keyGuard.ts`), as DevHub's other
+   notices are said (the Neovim toasts, fidget's): a line of text at the
+   bottom right, no card and no edge, in the terminal's own ink a step down.
+   A halo of the terminal's ground keeps it legible over the text it lies
+   on without a box. It rises in and fades out in place (docs/motion.md). */
 .control-notice {
   position: absolute;
   z-index: var(--control-z-notice);
   right: 12px;
   bottom: 36px;
   max-width: 60%;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: color-mix(
+  color: color-mix(
     in srgb,
-    var(--terminal-background, #000) 80%,
-    currentColor
+    var(--terminal-foreground, currentColor) 62%,
+    var(--terminal-background, transparent)
   );
-  font: 12px var(--font-ui, system-ui, sans-serif);
+  font: 12px/18px var(--font-ui, system-ui, sans-serif);
+  text-align: right;
+  text-shadow:
+    0 0 2px var(--terminal-background, Canvas),
+    0 0 4px var(--terminal-background, Canvas);
   pointer-events: none;
+  animation: control-notice-enter var(--motion-slow) var(--ease-enter);
+  transition: opacity 600ms ease-in;
+}
+
+.control-notice[data-leaving="true"] {
+  opacity: 0;
+}
+
+@keyframes control-notice-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-rise));
+  }
 }
 
 /* A Neovim drawn in a pane (`placeNeovims`, `PaneNeovims`): a group the

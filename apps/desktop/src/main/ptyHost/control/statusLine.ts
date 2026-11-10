@@ -54,7 +54,18 @@ export const STATUS_FORMAT = [
 	"#{status-left-length}",
 	"#{status-right-length}",
 	"#{E:pane-active-border-style}",
+	"#{pane-active-border-style}",
 ].join(FIELD);
+
+/**
+ * tmux's own `pane-active-border-style`: green, yellow in a mode, red while
+ * the panes are synchronized. Its resting green is the terminal palette's,
+ * not the theme's: where the person left the default, the active pane is
+ * outlined in the theme's accent instead (`activeBorder` is left out), and
+ * the mode's and synchronization's colours, which say something, stay.
+ */
+export const TMUX_ACTIVE_BORDER_DEFAULT =
+	"#{?pane_in_mode,fg=yellow,#{?synchronize-panes,fg=red,fg=green}}";
 
 /** A format that leads with the window's index, past any style. */
 const LEADING_INDEX = /^(?:\s|#\[[^\]]*\])*(?:#I|#\{window_index\})/;
@@ -100,9 +111,16 @@ export function parseStatus(value: string): StatusLine | undefined {
 		leftLength,
 		rightLength,
 		activeBorder,
+		activeBorderOption,
 	] = value.split(FIELD);
 	if (rightLength === undefined) return undefined;
-	const border = parseStyle(activeBorder ?? "")?.fg;
+	const expanded = parseStyle(activeBorder ?? "")?.fg;
+	const resting =
+		activeBorderOption === TMUX_ACTIVE_BORDER_DEFAULT &&
+		expanded !== undefined &&
+		"index" in expanded &&
+		expanded.index === 2;
+	const border = resting ? undefined : expanded;
 	return {
 		shown: status !== "off",
 		position: position === "top" ? "top" : "bottom",
