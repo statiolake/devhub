@@ -1143,7 +1143,9 @@ says each terminal's page which of its panes have a Neovim, whether tmux
 shows each, and which has the keys (`PaneBridge.onTerminalNeovims`); the
 page mounts a `NeovimSurface` for each, in an element of its own that the
 terminal surface places. In control mode (below) that element is the pane's
-content, and moves with it. Without control mode, while a terminal is on
+content, and moves with it; one main says is gone stays as its pane's last
+picture until its pane's close has moved (`docs/pane-motion.md`, "A closing
+pane's Neovim leaves as its last picture"). Without control mode, while a terminal is on
 screen — a Workspace's in the editor area (`pane.html#ws:<id>`, its `ws-`
 session), an Agent's beside it (`tm-`), both at once in a split — its
 session is read every 150 ms (400 ms on a host): each pane's cells, which

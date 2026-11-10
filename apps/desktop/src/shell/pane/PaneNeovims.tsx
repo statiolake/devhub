@@ -20,6 +20,16 @@
  * main took on its way in (`onTerminalNeovimKey`) is typed where it was
  * meant: a key that gives a Neovim the keys, or tmux's prefix typed in one.
  *
+ * # A Neovim whose pane closes
+ *
+ * Main says a Neovim is gone once its pane has gone (or its UI ended),
+ * which can be while the pane's close is still moving, or just before tmux's
+ * word of the close is drawn. A surface that moves panes keeps it as its
+ * pane's last picture until then (`keepGone`): it stays mounted and drawn,
+ * takes no keys, and is let go when the surface no longer keeps it
+ * (`release`), as a gone tty pane's last picture is (docs/pane-motion.md,
+ * "Close").
+ *
  * # Failure
  *
  * Each Neovim is under a boundary of its own: one that throws while
@@ -56,6 +66,11 @@ export interface PaneNeovim {
   readonly handle: NeovimHandle | undefined;
   /** The surface has put it on its pane at the pane's size. */
   readonly placed: boolean;
+  /**
+   * When main said it was gone (`performance.now()`), if it did: kept as
+   * its pane's last picture while its surface keeps it (`keepGone`).
+   */
+  readonly goneAt: number | undefined;
 }
 
 /** What the terminal surface lends the Neovims: its own keys. */
@@ -85,6 +100,7 @@ interface Entry {
   readonly element: HTMLDivElement;
   handle: NeovimHandle | undefined;
   placed: boolean;
+  goneAt: number | undefined;
 }
 
 /**
@@ -96,16 +112,17 @@ export class PaneNeovims {
   private readonly listeners = new Set<() => void>();
   private keysOf: string | undefined;
   private terminal: PaneTerminalKeys | undefined;
+  private keeper: ((entry: PaneNeovim) => boolean) | undefined;
 
   /** Every Neovim, in main's order. */
   list(): readonly PaneNeovim[] {
     return [...this.entries.values()];
   }
 
-  /** The Neovim on tmux pane `pane`, if there is one. */
+  /** The Neovim on tmux pane `pane`, if there is one (not a gone one). */
   onPane(pane: number): PaneNeovim | undefined {
     for (const entry of this.entries.values())
-      if (entry.pane === pane) return entry;
+      if (entry.pane === pane && entry.goneAt === undefined) return entry;
     return undefined;
   }
 
@@ -127,6 +144,27 @@ export class PaneNeovims {
     this.terminal = terminal;
   }
 
+  /**
+   * The surface that moves its panes says which gone Neovims it keeps as
+   * their panes' last pictures (`undefined`: none, each goes at once).
+   */
+  keepGone(keeper: ((entry: PaneNeovim) => boolean) | undefined): void {
+    this.keeper = keeper;
+    this.release();
+  }
+
+  /** The gone Neovims the surface no longer keeps, let go of. */
+  release(): void {
+    let dropped = false;
+    for (const [key, entry] of [...this.entries]) {
+      if (entry.goneAt === undefined || this.keeper?.(entry) === true) continue;
+      this.entries.delete(key);
+      entry.element.remove();
+      dropped = true;
+    }
+    if (dropped) this.changed();
+  }
+
   /** The surface put a Neovim on its pane at the pane's size. */
   setPlaced(key: string, placed: boolean): void {
     const entry = this.entries.get(key);
@@ -138,8 +176,11 @@ export class PaneNeovims {
   /** Main's word: answers whether anything changed. */
   update(wire: TerminalNeovimsWire): void {
     const wanted = new Set(wire.overlays.map((o) => o.key));
+    const now = performance.now();
     for (const [key, entry] of [...this.entries]) {
       if (wanted.has(key)) continue;
+      entry.goneAt ??= now;
+      if (this.keeper?.(entry) === true) continue;
       this.entries.delete(key);
       entry.element.remove();
     }
@@ -157,9 +198,11 @@ export class PaneNeovims {
           element,
           handle: undefined,
           placed: false,
+          goneAt: undefined,
         };
         this.entries.set(overlay.key, entry);
       }
+      entry.goneAt = undefined;
       entry.pane = overlay.pane;
       entry.shown = overlay.shown;
       entry.cells = overlay.cells;
@@ -273,7 +316,9 @@ export function PaneNeovimViews({
               appearance={appearance}
               bridge={bridge}
               placed={entry.placed}
-              keys={keys === entry.key && entry.shown}
+              keys={
+                keys === entry.key && entry.shown && entry.goneAt === undefined
+              }
               handle={(handle) => {
                 neovims.setHandle(entry.key, handle);
               }}

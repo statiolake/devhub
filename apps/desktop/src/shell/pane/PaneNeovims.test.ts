@@ -52,6 +52,56 @@ describe("the Neovims of a terminal's page", () => {
     expect(told).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps a gone Neovim as its pane's last picture while its surface keeps it", () => {
+    const neovims = new PaneNeovims();
+    let keep = true;
+    const asked: string[] = [];
+    neovims.keepGone((entry) => {
+      asked.push(entry.key);
+      return keep;
+    });
+    neovims.update({
+      overlays: [
+        { key: "tnv:1", pane: 2, shown: true },
+        { key: "tnv:2", pane: 3, shown: true },
+      ],
+      keys: "tnv:1",
+    });
+    const element = neovims.onPane(2)?.element;
+    document.body.append(element!);
+    // Its pane closing, still moving: kept, drawn, no longer any pane's.
+    neovims.update({ overlays: [{ key: "tnv:2", pane: 3, shown: true }] });
+    const gone = neovims.list().find((entry) => entry.key === "tnv:1");
+    expect(gone?.goneAt).toBeTypeOf("number");
+    expect(gone?.element).toBe(element);
+    expect(element?.isConnected).toBe(true);
+    expect(neovims.onPane(2)).toBeUndefined();
+    expect(asked).toEqual(["tnv:1"]);
+    // Still kept: nothing changes.
+    neovims.release();
+    expect(neovims.list()).toHaveLength(2);
+    // The close's motion over: let go of, its element with it.
+    keep = false;
+    neovims.release();
+    expect(neovims.list().map((entry) => entry.key)).toEqual(["tnv:2"]);
+    expect(element?.isConnected).toBe(false);
+    // The live one was never asked.
+    expect(asked).not.toContain("tnv:2");
+  });
+
+  it("drops a gone Neovim at once with no surface keeping it, and all it kept when that surface goes", () => {
+    const neovims = new PaneNeovims();
+    neovims.update({ overlays: [{ key: "tnv:1", pane: 2, shown: true }] });
+    neovims.update({ overlays: [] });
+    expect(neovims.list()).toEqual([]);
+    neovims.keepGone(() => true);
+    neovims.update({ overlays: [{ key: "tnv:3", pane: 4, shown: true }] });
+    neovims.update({ overlays: [] });
+    expect(neovims.list()).toHaveLength(1);
+    neovims.keepGone(undefined);
+    expect(neovims.list()).toEqual([]);
+  });
+
   it("types a key main took where it was meant, and moves the focus out of a Neovim", () => {
     const neovims = new PaneNeovims();
     const terminal = { focus: vi.fn(), typeKey: vi.fn() };

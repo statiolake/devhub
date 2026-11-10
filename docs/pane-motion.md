@@ -152,14 +152,35 @@ itself, and the resting path draws the frame after the last.
   tty pane. The element is never moved to another parent while it moves,
   since an iframe in it (a GUI window) would load again. Typing during
   the motion goes to the Neovim as usual and shows where it stays.
-- **Not moved, documented:** inside a Neovim, floats anchored to a
-  window (`relative='win'`) are placed where Neovim puts them, at their
-  final place, not with their window's visual origin, when Neovim's own
-  windows move (`<C-w>v` and the rest). A float is a grid of its own at
-  its own stacking order, outside its window's motion group, whose clip
-  would cut it. Moving it with its window would need a group of its own
-  that follows that window's track. When tmux moves the pane, they move
-  with it, like the rest of the Neovim.
+- **A closing pane's Neovim leaves as its last picture.** Main says a
+  Neovim is gone once its pane has gone or its UI ended, which is often
+  while that pane's close is moving, and with `exec nvim` and `:q` some
+  20 ms before tmux's word of the close. The page keeps it
+  (`PaneNeovims.keepGone`, `keepsGone` in `ControlTerminalSurface.tsx`):
+  mounted and drawn, taking no keys, while its pane is gone in the running
+  transition, a close tmux said is held for its commit, or, on a pane tmux
+  still shows, for 150 ms (`GONE_WAIT_MS`). So the gone pane is the
+  Neovim's last picture, as a gone tty pane is its own, and the
+  neighbours grow over it; its tty's grid is not drawn. It is let go
+  when the transition ends. A pane that stays (`:q` back to its shell)
+  shows its tty those 150 ms later.
+- **Floats travel with their window.** A float anchored to a window
+  (`relative='win'`, or to a float that is) is put by Neovim at its final
+  place in the flush that moves the window (`<C-w>v`, a close, `<C-w>=`
+  and the rest). In the transition it is carried by its window's track:
+  its parts (canvas, panel, frame, title and footer, what the page lays
+  over it) go in a group of their own in their own level
+  (`GridPainter.carryFloats`, one per window and level), whose clips are
+  the surface's, so the window's clip does not cut it and it stacks as at
+  rest. Each frame its content is moved by the window content's own offset
+  from its laid-out place, so it starts where it was and ends where it
+  rests, on the same clock and curve. One at a buffer position (`bufpos`)
+  follows the window's text; any other the window's corner, without the
+  rows its text moved (`topline`). Floats relative to the editor do not
+  move. When tmux moves the pane, they move with it, as the rest of the
+  Neovim does: Neovim's grid is resized then, and its own windows are
+  placed at once (`WindowMotion` does not move them when grid 1 changes
+  size).
 
 ### Reflow, not animated
 
@@ -215,6 +236,24 @@ within the rules:
 - `windowMotion.test.ts`: a window's rest is its pane's (`placePanes`)
   with its status line; a split ends on its rests; `topline` moves the
   text.
+- `windowMotionFloats.test.ts` (jsdom): floats anchored to a window that
+  closes beside them are carried in their own group in their level, frame
+  by frame at the window content's offset, from where they were to rest,
+  not cut by the window's clip; a float on a float rides the same window;
+  one at the window's corner does not take the rows its text moved, one
+  at its text does; an editor float is not carried.
+- `PaneNeovims.test.ts`: a gone Neovim is kept, drawn and no pane's, while
+  its surface keeps it, and let go of after; with no surface keeping it,
+  it goes at once.
+- In the app (Xvfb, 2×, the person's settings, tmux.conf and Neovim
+  config), at 0.03×: `kill-pane` of a Neovim pane beside another, and
+  `exec nvim` then `:qa!`: the neighbour grows over the Neovim's last
+  picture (before: over its tty's, or its bare ground); floats `relative='win'`
+  (with a border and a title, and at `bufpos`) in the right
+  window while the left one closes and while `:leftabove vsplit` pushes
+  it right: they travel with it (before: at their final place from the
+  first frame); a tmux split to the left of the Neovim pane: they move
+  with the pane.
 - In the app (Xvfb, 2×, the person's settings, tmux.conf and Neovim
   config): each change run with motion and again with Reduce Motion
   emulated; the resting DOM after the motion (every pane's ground,
@@ -538,7 +577,8 @@ What this asks of the layer model, which follows from
   The winbar is in the window's grid already.
 - **Floats** anchored to a window (`relative='win'`, `bufpos`) are placed
   from that window's visual origin during a transition, as riders are
-  placed from its scroll. Editor-relative floats (`relative='editor'`,
+  placed from its scroll (built: As built, "Floats travel with their
+  window"). Editor-relative floats (`relative='editor'`,
   the command line, popups) stay where Neovim puts them.
 - **Neovim drawn in a tmux pane** was at first a separate
   `WebContentsView`, placed by main with `setBounds`, which the page's

@@ -13,10 +13,18 @@
  * `topline` moved (`win_viewport`, before and after) are rows the content
  * moved, so a window that kept its cursor line in view by scrolling moves
  * its lines with the edge rather than under it.
+ *
+ * A float anchored to a moving window (`relative='win'`, or to a float
+ * that is) travels with it: Neovim puts it at its final place at once, and
+ * it is carried from where it was by its window's track, the same
+ * transforms on the same clock, in a group of its own in its level
+ * (`GridPainter.carryFloats`), so the window's clip does not cut it and it
+ * stacks as it does at rest. One at a buffer position (`bufpos`) follows
+ * the window's text; any other, the window's corner.
  */
 
 import { boundariesOf } from "./chrome";
-import type { GridPainter } from "./painter";
+import { PART_Z, type GridPainter, type MotionGroup } from "./painter";
 import {
   classify,
   placeGroup,
@@ -94,6 +102,36 @@ export function viewportShift(
   return before === undefined || after === undefined ? 0 : after - before;
 }
 
+/**
+ * The window a float is anchored to, through floats anchored to floats:
+ * none for a window, or a float anchored to the editor (grid 1).
+ */
+export function anchorWindowOf(
+  state: NeovimUiState,
+  grid: number,
+): number | undefined {
+  let at = grid;
+  for (let depth = 0; depth < 8; depth += 1) {
+    const p = state.windows.get(at)?.placement;
+    if (p === undefined) return undefined;
+    if (p.kind === "window") return at === grid ? undefined : at;
+    if (p.anchorGrid === 1) return undefined;
+    at = p.anchorGrid;
+  }
+  return undefined;
+}
+
+/** Floats carried by a window's motion, in one level (`carryFloats`). */
+interface Riders {
+  readonly group: MotionGroup;
+  /** The window they are anchored to. */
+  readonly anchor: number;
+  /** At its text (`bufpos`): they follow its content, not its corner. */
+  readonly text: boolean;
+  /** The rows its text moved in its grid (`topline`), up positive. */
+  readonly shift: number;
+}
+
 const windowsOf = (boxes: readonly GridBox[]) =>
   new Map(
     boxes
@@ -116,6 +154,8 @@ export class WindowMotion {
         readonly extent: { readonly width: number; readonly height: number };
         readonly separator: string;
         readonly hairline: number;
+        /** The floats each moving window carries, by carrier. */
+        readonly riders: ReadonlyMap<string, Riders>;
       }
     | undefined;
   private lastStep = -Infinity;
@@ -292,6 +332,35 @@ export class WindowMotion {
     }
     for (const [grid, strip] of strips)
       this.painter.motionGroup(grid, 1).clipB.append(strip);
+    // The floats anchored to a moving window, carried by its track.
+    const carried = new Map<
+      string,
+      { anchor: number; z: number; text: boolean; floats: number[] }
+    >();
+    for (const box of boxes) {
+      if (!box.float || box.win === undefined) continue;
+      const anchor = anchorWindowOf(state, box.grid);
+      if (anchor === undefined || !transition.tracks.has(anchor)) continue;
+      const text = this.painter.atBufpos(box.win);
+      const key = `${String(anchor)}:${String(box.z)}:${text ? "text" : "win"}`;
+      const riders = carried.get(key) ?? {
+        anchor,
+        z: box.z,
+        text,
+        floats: [],
+      };
+      riders.floats.push(box.grid);
+      carried.set(key, riders);
+    }
+    const riders = new Map<string, Riders>();
+    for (const [key, r] of carried) {
+      riders.set(key, {
+        group: this.painter.carryFloats(key, r.z, r.floats),
+        anchor: r.anchor,
+        text: r.text,
+        shift: shifts.get(r.anchor) ?? 0,
+      });
+    }
     this.painter.hideBoundaries(true);
     this.motion = {
       transition,
@@ -306,6 +375,7 @@ export class WindowMotion {
       },
       separator: opts.separator,
       hairline: this.painter.hairline(),
+      riders,
     };
     this.frame(now);
   }
@@ -340,7 +410,8 @@ export class WindowMotion {
     }
     const dpr = window.devicePixelRatio || 1;
     const ch = this.painter.cell().height;
-    for (const [grid, place] of m.transition.at(now, dpr)) {
+    const at = m.transition.at(now, dpr);
+    for (const [grid, place] of at) {
       const track = m.transition.tracks.get(grid);
       const laid = m.laid.get(grid);
       if (track === undefined || laid === undefined) continue;
@@ -377,6 +448,37 @@ export class WindowMotion {
         const x = Math.round((side.at - m.hairline / 2) * dpr) / dpr;
         el.style.transform = `translate(${String(x)}px, ${String(r.top)}px) scale(${String(m.hairline)}, ${String(Math.max(0, r.bottom - r.top - status))})`;
       });
+    }
+    // The floats carried by their windows: moved as their window's content
+    // is, from its laid-out place; one at the window's corner without the
+    // rows its text moved, which are left of them as the track goes.
+    for (const riders of m.riders.values()) {
+      const place = at.get(riders.anchor);
+      const laid = m.laid.get(riders.anchor);
+      const track = m.transition.tracks.get(riders.anchor);
+      if (place === undefined || laid === undefined || track === undefined)
+        continue;
+      const elapsed = now - m.transition.t0;
+      const left =
+        track.ms <= 0 || elapsed >= track.ms
+          ? 0
+          : 1 - track.curve(Math.max(0, elapsed / track.ms));
+      const lift = riders.text
+        ? 0
+        : Math.round(riders.shift * ch * left * dpr) / dpr;
+      placeGroup(
+        riders.group,
+        {
+          rect: { left: 0, top: 0, right: m.size.width, bottom: m.size.height },
+          x: place.x - laid.x,
+          y: place.y - laid.y - lift,
+          opacity: place.opacity,
+        },
+        PART_Z.grid,
+        { x: 0, y: 0 },
+        m.size,
+        "",
+      );
     }
     if (this.tick === 0) {
       this.tick = requestAnimationFrame((t) => {

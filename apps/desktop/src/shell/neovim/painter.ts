@@ -486,6 +486,26 @@ export interface MotionGroup {
   readonly edges: HTMLDivElement;
 }
 
+/** A motion group's elements, empty (`GridPainter.motionGroup`). */
+function makeMotionGroup(): MotionGroup {
+  const make = (className: string) => {
+    const el = document.createElement("div");
+    el.className = className;
+    return el;
+  };
+  const group = {
+    outer: make("nvim-motion"),
+    clipA: make("nvim-motion-clip"),
+    clipB: make("nvim-motion-clip"),
+    content: make("nvim-motion-content"),
+    edges: make("nvim-motion-edges"),
+  };
+  group.clipB.append(group.content);
+  group.clipA.append(group.clipB);
+  group.outer.append(group.clipA, group.edges);
+  return group;
+}
+
 /** What the page lays over a grid, in that grid's clip (`GridPainter.over`). */
 /**
  * `shadow` is under the grid and not cut by it: what a page draws round a
@@ -557,6 +577,15 @@ export class GridPainter {
   private readonly levels = new Map<number, HTMLDivElement>();
   /** Each grid's pane while it moves (`motionGroup`), by grid. */
   private readonly motion = new Map<number, MotionGroup>();
+  /**
+   * Floats carried by their anchor window's motion (`carryFloats`): each
+   * carrier's group and level, by its key, and each float's carrier.
+   */
+  private readonly carriers = new Map<
+    string,
+    { readonly group: MotionGroup; readonly z: number }
+  >();
+  private readonly carried = new Map<number, string>();
   /** Where each part of a grid's was put, to move it into its group and back. */
   private readonly parts = new Map<
     HTMLElement,
@@ -755,7 +784,10 @@ export class GridPainter {
     part: keyof typeof PART_Z,
     grid?: number,
   ): void {
-    const group = grid === undefined ? undefined : this.motion.get(grid);
+    const group =
+      grid === undefined
+        ? undefined
+        : (this.motion.get(grid) ?? this.carrierOf(grid, z));
     const parent = group?.content ?? this.level(z);
     if (group !== undefined && group.outer.parentElement !== this.level(z))
       this.level(z).append(group.outer);
@@ -776,21 +808,7 @@ export class GridPainter {
   motionGroup(grid: number, z: number): MotionGroup {
     let group = this.motion.get(grid);
     if (group === undefined) {
-      const make = (className: string) => {
-        const el = document.createElement("div");
-        el.className = className;
-        return el;
-      };
-      group = {
-        outer: make("nvim-motion"),
-        clipA: make("nvim-motion-clip"),
-        clipB: make("nvim-motion-clip"),
-        content: make("nvim-motion-content"),
-        edges: make("nvim-motion-edges"),
-      };
-      group.clipB.append(group.content);
-      group.clipA.append(group.clipB);
-      group.outer.append(group.clipA, group.edges);
+      group = makeMotionGroup();
       this.motion.set(grid, group);
       this.level(z).append(group.outer);
       for (const [el, at] of this.parts) {
@@ -802,11 +820,52 @@ export class GridPainter {
     return group;
   }
 
+  /**
+   * Floats anchored to a moving window (`relative='win'`, at a position
+   * in it or at its text) carried by that window's motion
+   * (`WindowMotion`): their parts — canvas, panel, frame, labels, what the
+   * page lays over them — in one group of their own in their level `z`,
+   * moved by the same transforms on the same clock as their window's
+   * content. It cuts nothing but the surface: the window's clip does not
+   * cut them, and they stack in their level as at rest. `key` names the
+   * carrier (a window and a level); let go at the transition's end
+   * (`endMotion`).
+   */
+  carryFloats(key: string, z: number, floats: readonly number[]): MotionGroup {
+    let carrier = this.carriers.get(key);
+    if (carrier === undefined) {
+      carrier = { group: makeMotionGroup(), z };
+      carrier.group.outer.classList.add("nvim-motion-floats");
+      this.carriers.set(key, carrier);
+      this.level(z).append(carrier.group.outer);
+    }
+    const mine = new Set(floats);
+    for (const grid of floats) this.carried.set(grid, key);
+    for (const [el, at] of this.parts) {
+      if (!el.isConnected) this.parts.delete(el);
+      else if (mine.has(at.grid) && el.parentElement === this.levels.get(at.z))
+        this.put(el, at.z, at.part, at.grid);
+    }
+    return carrier.group;
+  }
+
+  /** The group a float's part at level `z` is carried in, if it is. */
+  private carrierOf(grid: number, z: number): MotionGroup | undefined {
+    const key = this.carried.get(grid);
+    const carrier = key === undefined ? undefined : this.carriers.get(key);
+    return carrier?.z === z ? carrier.group : undefined;
+  }
+
   /** Every pane at rest: the parts back in their levels, the groups gone. */
   endMotion(): void {
-    if (this.motion.size === 0) return;
-    const groups = [...this.motion.values()];
+    if (this.motion.size === 0 && this.carriers.size === 0) return;
+    const groups = [
+      ...this.motion.values(),
+      ...[...this.carriers.values()].map((c) => c.group),
+    ];
     this.motion.clear();
+    this.carriers.clear();
+    this.carried.clear();
     for (const [el, at] of this.parts) {
       if (!el.isConnected) this.parts.delete(el);
       else if (groups.some((g) => el.parentElement === g.content))
@@ -1441,6 +1500,11 @@ export class GridPainter {
   /** The floats (by window) that are at a buffer position (`bufpos`). */
   setBufposFloats(wins: ReadonlyMap<number, BufposAnchor>): void {
     this.bufposFloats = wins;
+  }
+
+  /** Whether window `win` is a float at a buffer position (`bufpos`). */
+  atBufpos(win: number): boolean {
+    return this.bufposFloats.has(win);
   }
 
   /** How far a float riding its anchor's text is moved (`rideFloats`). */
@@ -2086,6 +2150,10 @@ export class GridPainter {
       // A framed member's ground and line at its own zindex, under its
       // canvas but over a lower member's (a picker's box under its list):
       // one element per zindex, in that zindex's level.
+      // Each part tagged with a member at its zindex, so it goes with the
+      // floats when a window's motion carries them (`carryFloats`).
+      const memberAt = (z: number) =>
+        cluster.members.find((m) => byGrid.get(m.grid)?.z === z)?.grid;
       const frames = new Map<number, HTMLDivElement>();
       for (const part of pieces) {
         el.append(pieceOf(part, false));
@@ -2094,7 +2162,7 @@ export class GridPainter {
         if (!layer) {
           layer = document.createElement("div");
           layer.className = "nvim-float-frames";
-          this.put(layer, part.z, "frames");
+          this.put(layer, part.z, "frames", memberAt(part.z));
           frames.set(part.z, layer);
         }
         layer.append(pieceOf(part, true));
@@ -2132,13 +2200,13 @@ export class GridPainter {
       }
       // Under the members' canvases, by part, not by place in the page;
       // the labels over every member.
-      this.put(el, cluster.z, "shadow");
-      if (over)
-        this.put(
-          over,
-          Math.max(...cluster.members.map((m) => byGrid.get(m.grid)?.z ?? 0)),
-          "labels",
+      this.put(el, cluster.z, "shadow", memberAt(cluster.z));
+      if (over) {
+        const top = Math.max(
+          ...cluster.members.map((m) => byGrid.get(m.grid)?.z ?? 0),
         );
+        this.put(over, top, "labels", memberAt(top));
+      }
       this.clusters.set(key, {
         ground: el,
         frames: [...frames.values()],

@@ -119,6 +119,15 @@ const REATTACH_ON_EXIT_MS = 3_000;
  * (`waitingFor`) before it is drawn with what has come.
  */
 const COMMIT_WAIT_MS = 100;
+
+/**
+ * How long a Neovim main says is gone is kept on a pane tmux still shows:
+ * its UI can end before tmux's word that its pane closed is here (`exec
+ * nvim`, then `:q`: by some 20 ms), and that close moves with the Neovim's
+ * last picture (`keepsGone`). A pane that stays (`:q` back to its shell)
+ * shows its tty this much later.
+ */
+const GONE_WAIT_MS = 150;
 /** Resize steps closer than this are a held key's: placed at once. */
 const STEP_REPEAT_MS = 250;
 const NOTICE_MS = 4_000;
@@ -436,9 +445,39 @@ export function ControlTerminalSurface({
       for (const entry of live.current.neovims?.list() ?? []) {
         if (inMode.has(entry.pane)) continue;
         if (!view.panes.some((p) => p.pane === entry.pane)) continue;
+        // A gone one kept on its pane gives way to a new one there.
+        if (entry.goneAt !== undefined && out.has(entry.pane)) continue;
         out.set(entry.pane, entry);
       }
       return out;
+    };
+    /**
+     * Whether a Neovim main says is gone stays, as its pane's last picture
+     * (`PaneNeovims.keepGone`): while its pane leaves in a transition, or
+     * a close tmux said is held for its commit or about to start moving;
+     * on a pane tmux still shows, a moment for tmux's word of its close.
+     */
+    let goneTimer: ReturnType<typeof setTimeout> | undefined;
+    const keepsGone = (entry: PaneNeovim): boolean => {
+      if (disposed) return false;
+      if (motion?.transition.tracks.get(entry.pane)?.role === "gone")
+        return true;
+      const held = (gate?.messages ?? []).some(
+        (m) =>
+          m.kind === "layout" && !m.panes.some((p) => p.pane === entry.pane),
+      );
+      if (held || commit !== undefined) return true;
+      if (!view.panes.some((p) => p.pane === entry.pane)) return false;
+      const waited = performance.now() - (entry.goneAt ?? 0);
+      if (waited >= GONE_WAIT_MS) return false;
+      goneTimer ??= setTimeout(
+        () => {
+          goneTimer = undefined;
+          live.current.neovims?.release();
+        },
+        GONE_WAIT_MS - waited + 1,
+      );
+      return true;
     };
     const neovimGround = (entry: PaneNeovim) =>
       cssColor(entry.handle?.background() ?? view.state.defaults.background);
@@ -462,6 +501,7 @@ export function ControlTerminalSurface({
      */
     const placeNeovims = () => {
       const registry = live.current.neovims;
+      registry?.release();
       const list = registry?.list() ?? [];
       const keep = new Set(list.map((entry) => entry.key));
       for (const [key, group] of neovimGroups) {
@@ -569,8 +609,14 @@ export function ControlTerminalSurface({
       // tty's grid, ground and cursor are not drawn.
       const inNeovims = neovimPanes();
       const clear = new Set([...inNeovims.keys()].map((pane) => gridOf(pane)));
+      // A gone pane that held a Neovim leaves as the Neovim's last picture
+      // (`keepsGone`), not its tty's.
+      const heldNeovims = new Set(
+        (live.current.neovims?.list() ?? []).map((entry) => entry.pane),
+      );
       const gone = [...(motion?.moving.values() ?? [])]
         .filter((m) => motion?.transition.tracks.get(m.pane)?.role === "gone")
+        .filter((m) => !heldNeovims.has(m.pane))
         .filter((m) => view.state.grids.has(gridOf(m.pane)));
       const boxes = [
         ...paneBoxes(view).filter((box) => !clear.has(box.grid)),
@@ -1812,6 +1858,7 @@ export function ControlTerminalSurface({
       if (gate !== undefined && gateOpen()) release();
       schedule({ ...emptyChanges(), cursor: true });
     });
+    live.current.neovims?.keepGone(keepsGone);
     live.current.neovims?.lendTerminal({
       focus: () => {
         input.focus();
@@ -1915,6 +1962,8 @@ export function ControlTerminalSurface({
       host.removeEventListener("click", focusInput);
       offNeovims?.();
       live.current.neovims?.lendTerminal(undefined);
+      clearTimeout(goneTimer);
+      live.current.neovims?.keepGone(undefined);
       for (const group of neovimGroups.values()) group.outer.remove();
       neovimGroups.clear();
       host.removeEventListener("contextmenu", noContextMenu);
