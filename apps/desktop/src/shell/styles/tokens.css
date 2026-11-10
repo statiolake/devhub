@@ -315,9 +315,12 @@
    * theme. In dark, where a shadow on a near-black ground cannot be seen, a
    * raised surface also catches a hairline of light along its top edge.
    *
-   * What floats over moving content (levels 2 and 3) may be translucent and
-   * blur what passes under it: `--material-float` with `--material-blur`.
-   * Under Increase Contrast or Reduce Transparency both become opaque. */
+   * What floats over moving content (levels 2 and 3) is `--material-float`
+   * on `--material-blur`: the raised ground, opaque, and no blur. Blur is
+   * kept for the one surface whose letters lie over code that goes on being
+   * read, Neovim's fidget-like notifications (`.nvim-toast-veil`); a panel,
+   * a pill or the find bar is solid, so the words under it never smear into
+   * its own. */
   --ink-edge: 12%;
   --edge: color-mix(in srgb, var(--primary) var(--ink-edge), transparent);
   --edge-highlight: light-dark(
@@ -349,8 +352,8 @@
      accent — a quiet hairline, no glow and no tint. Where the field is, is
      already plain; which field has the keyboard is all this says. */
   --focus-edge: 0 0 0 1px color-mix(in srgb, var(--focus-ring) 65%, var(--edge));
-  --material-float: color-mix(in srgb, var(--raised) 90%, transparent);
-  --material-blur: blur(20px) saturate(1.6);
+  --material-float: var(--raised);
+  --material-blur: none;
 
   /* Radii, by what the shape is. A row and a control are a small rounding;
      a card and a popover the panel's; a message bubble and the composer are
