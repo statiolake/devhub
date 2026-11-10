@@ -146,6 +146,16 @@ export class NeovimHostClient {
 		return !this.#disposed && !this.#gaveUp;
 	}
 
+	/**
+	 * A UI is about to attach (a Neovim was named in a pane): the host is
+	 * started now, while the page mounts its surface, rather than by that
+	 * attach — starting it was most of the first attach's wait after DevHub
+	 * opened. Nothing if it runs, or was given up on.
+	 */
+	prepare(): void {
+		if (this.available) this.#hostNow();
+	}
+
 	listen(listener: NeovimHostListener): void {
 		this.#listener = listener;
 	}

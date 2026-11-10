@@ -1186,6 +1186,15 @@ export class AppController {
 			// Which Neovim the Workspace's terminal shows is in the title.
 			changed: () => {
 				this.refreshWindowTitle();
+				// A Neovim to draw: the host its UI runs in, started while its
+				// page mounts it (`NeovimHostClient.prepare`).
+				const neovims = this.terminalNeovims;
+				if (
+					neovims
+						?.terminals()
+						.some((id) => neovims.neovims(id).overlays.length > 0) === true
+				)
+					this.neovimHost?.prepare();
 			},
 			gone: (key) => {
 				this.neovimEditors?.letGoOf(key);

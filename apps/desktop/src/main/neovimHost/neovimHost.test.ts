@@ -336,6 +336,17 @@ describe("a Neovim editor's UI in the Neovim host", () => {
 		).toEqual([]);
 	});
 
+	it("is started ahead of the first attach when asked, and that attach uses it", async () => {
+		const w = world();
+		expect(w.hosts).toHaveLength(0);
+		w.client.prepare();
+		w.client.prepare();
+		expect(w.hosts).toHaveLength(1);
+		const reply = await w.editors.attach(new FakePage(1), REQUEST);
+		expect(reply).toMatchObject({ ok: true, hosted: 1 });
+		expect(w.hosts).toHaveLength(1);
+	});
+
 	it("is attached again by a page that reloaded, which is handed a new port its redraws come on", async () => {
 		const w = world();
 		const page = new FakePage(1);
