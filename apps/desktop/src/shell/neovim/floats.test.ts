@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { clearCursorRow, floatClusters, touching } from "./floats";
+import {
+  clearCursorRow,
+  clearEdges,
+  floatClusters,
+  scrollbarLine,
+  touching,
+  withRightLine,
+} from "./floats";
+import { frameGeometry } from "./frame";
 import type { GridBox } from "./redraw";
 
 const float = (
@@ -105,5 +113,93 @@ describe("a panel next to the cursor's row", () => {
     // A border's line is in its cells: nothing to clear.
     expect(clearCursorRow([framed], 5)[0]?.row).toBe(6);
     expect(clearCursorRow([float(4, 6, 10, 20, 5)], undefined)[0]?.row).toBe(6);
+  });
+});
+
+describe("a panel at the editor's edge", () => {
+  const size = { width: 80, height: 24 };
+  const none = { left: 0, right: 0, top: 0, bottom: 0 };
+
+  it("moves a cell in, so its padding and line are not cut", () => {
+    // Left (a cmdline menu at column 0) and right.
+    expect(clearEdges([float(4, 5, 0, 20, 4)], size, none)[0]?.col).toBe(1);
+    expect(clearEdges([float(4, 5, 60, 20, 4)], size, none)[0]?.col).toBe(59);
+    // Top and bottom.
+    expect(clearEdges([float(4, 0, 10, 20, 4)], size, none)[0]?.row).toBe(1);
+    expect(clearEdges([float(4, 20, 10, 20, 4)], size, none)[0]?.row).toBe(19);
+    // A corner: both ways.
+    const corner = clearEdges([float(4, 0, 0, 20, 4)], size, none)[0];
+    expect([corner?.row, corner?.col]).toEqual([1, 1]);
+  });
+
+  it("moves with its scrollbar, which its frame takes in", () => {
+    // blink.cmp's menu at the right edge, its scrollbar in the last column.
+    const menu = float(4, 5, 59, 20, 4, { z: 150 });
+    const gutter = float(5, 5, 79, 1, 4, { z: 151 });
+    const thumb = float(6, 5, 79, 1, 1, { z: 152 });
+    const out = clearEdges([menu, gutter, thumb], size, none);
+    expect(out.map((b) => b.col)).toEqual([58, 78, 78]);
+  });
+
+  it("stays where Neovim put it inside the editor, or where there is room", () => {
+    expect(clearEdges([float(4, 5, 1, 20, 4)], size, none)[0]?.col).toBe(1);
+    // A tmux pane's border beside it, more than the padding's half cell.
+    const room = { left: 0.6, right: 0, top: 0, bottom: 0 };
+    expect(clearEdges([float(4, 5, 0, 20, 4)], size, room)[0]?.col).toBe(0);
+    // A float with a border of its own: its line is inside its cells.
+    const margins = { top: 1, right: 1, bottom: 1, left: 1 };
+    const framed = float(4, 0, 0, 20, 4, {
+      lined: true,
+      frame: { margins, sides: {}, corners: {}, labels: [] },
+    });
+    expect(clearEdges([framed], size, none)[0]).toBe(framed);
+  });
+
+  it("stays on an axis it cannot clear both edges of", () => {
+    const wide = clearEdges([float(4, 5, 0, 80, 4)], size, none)[0];
+    expect(wide?.col).toBe(0);
+  });
+
+  it("keeps the rows it was moved to off the cursor's row", () => {
+    // A menu above the cursor at the top: off the cursor's row first.
+    const off = clearCursorRow([float(4, 0, 10, 20, 4)], 4);
+    expect(off[0]?.row).toBe(-0.5);
+    expect(clearEdges(off, size, none)[0]?.row).toBe(-0.5);
+  });
+});
+
+describe("a menu's scrollbar in its frame", () => {
+  const cell = { width: 8, height: 16 };
+
+  it("puts the line along the scrollbar's outer edge", () => {
+    const menu = { row: 5, col: 10, width: 20, height: 8 };
+    // Beside a menu without a border; on a bordered menu's last column.
+    expect(
+      scrollbarLine(menu, [{ row: 5, col: 30, width: 1, height: 8 }]),
+    ).toBe(31);
+    expect(
+      scrollbarLine(menu, [{ row: 6, col: 29, width: 1, height: 2 }]),
+    ).toBe(30);
+    // Not beside it.
+    expect(
+      scrollbarLine(menu, [{ row: 5, col: 32, width: 1, height: 8 }]),
+    ).toBeUndefined();
+    expect(
+      scrollbarLine(menu, [{ row: 2, col: 30, width: 1, height: 8 }]),
+    ).toBeUndefined();
+  });
+
+  it("widens the frame to it, the thumb inside the right padding", () => {
+    const none = { top: 0, right: 0, bottom: 0, left: 0 };
+    const place = { row: 5, col: 10, width: 20, height: 8 };
+    const g = frameGeometry(none, place, cell, 2, 4);
+    // Half a cell outside the text: through the scrollbar's column.
+    expect(g.middles.right).toBe(30 * 8 + 4);
+    const wide = withRightLine(g, 31 * 8, 2);
+    expect(wide.middles.right).toBe(31 * 8);
+    expect(wide.x).toBe(g.x);
+    expect(wide.x + wide.w).toBe(31 * 8 + 0.5);
+    // Never pulled in.
+    expect(withRightLine(g, 29 * 8, 2)).toBe(g);
   });
 });

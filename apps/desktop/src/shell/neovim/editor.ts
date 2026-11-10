@@ -24,7 +24,7 @@ import {
   type NeovimUiState,
   type RedrawChanges,
 } from "./redraw";
-import { clearCursorRow } from "./floats";
+import { clearCursorRow, clearEdges } from "./floats";
 import {
   GridPainter,
   type Reach,
@@ -679,11 +679,17 @@ export class NeovimEditor {
     // A panel next to the cursor's row is moved half a row off it, so a
     // borderless float's padding never covers what is typed
     // (`clearCursorRow`).
+    // And a cell in from the editor's edge, where its padding would
+    // be cut (`clearEdges`).
     const at = laid.find((b) => b.grid === this.state.cursor.grid);
-    this.boxes = clearCursorRow(
+    const grid1 = this.state.grids.get(1);
+    const offRow = clearCursorRow(
       laid,
       at === undefined ? undefined : at.row + this.state.cursor.row,
     );
+    this.boxes = grid1
+      ? clearEdges(offRow, grid1, this.painter.edgeRoom())
+      : offRow;
     this.host.style.background = cssColor(this.state.defaults.background);
     const theme = this.paintTheme();
     // The floating surfaces' colours (`tokens.css`), for what DevHub draws

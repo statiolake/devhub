@@ -46,9 +46,12 @@ import {
   floatClusters,
   cutClip,
   frameCuts,
+  scrollbarLine,
+  withRightLine,
   framePieces,
   type FloatCorners,
   type FramedMember,
+  type EdgeRoom,
   type FrameShape,
 } from "./floats";
 import {
@@ -78,6 +81,7 @@ import {
   SIDES,
   frameBands,
   frameGeometry,
+  lineWidth,
   type FrameBands,
   labelBox,
   type FrameLabel,
@@ -1739,6 +1743,25 @@ export class GridPainter {
   }
 
   /**
+   * How far past grid 1 a float's frame may be drawn, in cells
+   * (`clearEdges`): the reach, less the frame's line — none at the
+   * editor's own edge, where it is cut.
+   */
+  edgeRoom(): EdgeRoom {
+    const { width: cw, height: ch } = this.metrics;
+    const line = lineWidth(this.dpr);
+    const r = this.reach;
+    const room = (px: number, cell: number) =>
+      cell > 0 ? Math.max(0, px - line) / cell : 0;
+    return {
+      left: room(r.left, cw),
+      right: room(r.right, cw),
+      top: room(r.top, ch),
+      bottom: room(r.bottom, ch),
+    };
+  }
+
+  /**
    * How far each grid laid out by someone else (tmux's panes) reaches past
    * its cells: to the hairline on each side (`Bleed`, sideways only).
    */
@@ -2212,10 +2235,24 @@ export class GridPainter {
     // its cluster or another, is clipped by theirs (`cutClip`).
     const panels = floatClusters(shown).map((cluster) => {
       const framed: (FramedMember & { box: GridBox; bands: FrameBands })[] = [];
+      // A menu's scrollbar beside it is in its frame: the line along the
+      // scrollbar's outer edge (`scrollbarLine`).
+      const bars = cluster.members
+        .filter((m) => scrollbars.has(m.grid))
+        .map((m) => m.rect);
       for (const m of cluster.members) {
         const box = byGrid.get(m.grid);
         const margins = box ? marginsOf(box) : undefined;
         if (!box || !margins) continue;
+        const geometry = frameGeometry(
+          margins,
+          box,
+          this.metrics,
+          this.dpr,
+          radius,
+          box.frame ? frameBands(box.frame, box.width) : {},
+        );
+        const barEdge = scrollbarLine(m.rect, bars);
         framed.push({
           grid: m.grid,
           rect: m.rect,
@@ -2225,14 +2262,10 @@ export class GridPainter {
             (box.frame?.labels ?? []).map((l) => [l.side, true]),
           ),
           bands: box.frame ? frameBands(box.frame, box.width) : {},
-          geometry: frameGeometry(
-            margins,
-            box,
-            this.metrics,
-            this.dpr,
-            radius,
-            box.frame ? frameBands(box.frame, box.width) : {},
-          ),
+          geometry:
+            barEdge === undefined
+              ? geometry
+              : withRightLine(geometry, barEdge * cw, this.dpr),
         });
       }
       const framedPieces = framePieces(framed, this.dpr);
@@ -2246,9 +2279,19 @@ export class GridPainter {
       const geometries = new Map(framed.map((f) => [f.grid, f]));
       // The others' grounds, for the shadow: a box cut by the frames over
       // it (`cutClip`), a border drawn cell for cell.
+      const inFrame = (grid: number) =>
+        scrollbars.has(grid) &&
+        framed.some((f) => {
+          const bar = byGrid.get(grid);
+          return (
+            bar !== undefined && scrollbarLine(f.rect, [bar]) !== undefined
+          );
+        });
       for (const m of cluster.members) {
         const box = byGrid.get(m.grid);
         if (!box || geometries.has(m.grid) || blendOf(m.grid) > 0) continue;
+        // A scrollbar in its menu's frame: that frame's ground is under it.
+        if (inFrame(m.grid)) continue;
         const x = m.rect.col * cw;
         const y = m.rect.row * ch;
         const cut = cuts.get(box.grid);

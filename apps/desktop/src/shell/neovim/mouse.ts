@@ -42,26 +42,23 @@ export function hitTest(
     // inside their lines, where they take the click themselves.
     const cut = cuts.get(box.grid);
     if (cut !== undefined && inFrameCells(cut, row, col)) continue;
-    // Rows by the pointer's place, not its screen row: a panel may be
-    // drawn half a row off Neovim's (`clearCursorRow`).
+    // Rows and columns by the pointer's place, not its screen cell: a
+    // panel may be drawn half a cell off Neovim's (`clearCursorRow`,
+    // `clearEdges`).
     const at = Math.floor(y / cell.height - box.row);
+    const across = Math.floor(x / cell.width - box.col);
     if (box.frame) {
       if (insideFrame(box, boxes, cell, x, y)) {
         return {
           grid: box.grid,
           row: Math.min(box.height - 1, Math.max(0, at)),
-          col: Math.min(box.width - 1, Math.max(0, col - box.col)),
+          col: Math.min(box.width - 1, Math.max(0, across)),
         };
       }
       continue;
     }
-    if (
-      at >= 0 &&
-      at < box.height &&
-      col >= box.col &&
-      col < box.col + box.width
-    ) {
-      return { grid: box.grid, row: at, col: col - box.col };
+    if (at >= 0 && at < box.height && across >= 0 && across < box.width) {
+      return { grid: box.grid, row: at, col: across };
     }
   }
   return { grid: 1, row, col };

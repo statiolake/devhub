@@ -265,7 +265,15 @@ one layer model and pane motion.
   much outside its cells; a panel where such a float is next to the
   cursor's row (a completion menu under the line being typed) is drawn
   half a row off it, so the padding never covers what is typed
-  (`clearCursorRow`; a click is read back by the pixel). The `title` and
+  (`clearCursorRow`; a click is read back by the pixel). Floats are over
+  the windows: a window's boundary inside the editor never cuts a frame.
+  The editor's own edge does (its clip, or a tmux pane's border past its
+  half cell), so a panel whose frame would go past it — a cmdline menu at
+  column 0, a float on the first or last row or column — is drawn a whole
+  cell in from that edge, its line through the middle of the edge cell as
+  a bordered float's is, its text still on whole cells (`clearEdges`; a
+  panel that cannot clear both edges of an axis, or was moved off the
+  cursor's row, stays on that axis). The `title` and
   `footer` are the cells Neovim put in the border, its blanks too, on the
   line where Neovim put them (`title_pos`/`footer_pos`), the line broken
   under them: the page asks `nvim_win_get_config` when a border holds
@@ -395,8 +403,11 @@ one layer model and pane motion.
     filler row's `fillchars` `diff:` character (`-` by default) as text.
     How a changed line and its changed text look is the colorscheme's.
   - A menu's scrollbar made of one-column floats (blink.cmp, nvim-cmp) on
-    a menu's right edge is an overlay scrollbar: the gutter not drawn, the
-    thumb a thin bar.
+    a menu's right edge is an overlay scrollbar inside the menu's frame:
+    its column is the frame's right padding, the line along its outer edge
+    (`scrollbarLine`), the gutter not drawn, the thumb a thin bar in the
+    padding — not a strip half outside the frame with the line through
+    the thumb.
   - Status lines, winbars, folds (a closed fold's `foldtext` and its
     `fold:` fill, the fold column's marks), indent guides and
     `MatchParen` are what Neovim and the person's config say, cell for

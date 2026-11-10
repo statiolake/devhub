@@ -554,6 +554,23 @@ export function cutClip(
 }
 
 /**
+ * Whether a float is padded by DevHub (`frameGeometry`): no border of its
+ * own, so its frame's line is half a cell outside its cells. Not a box the
+ * frames over it cut, a float drawn bare, or a one-column float (a menu's
+ * scrollbar: `fuseScrollbar` puts it in its menu's frame).
+ */
+function paddedFloats(boxes: readonly GridBox[]): (b: GridBox) => boolean {
+  const cuts = frameCuts(boxes);
+  return (b) =>
+    b.float &&
+    b.frame === undefined &&
+    b.lined !== true &&
+    b.bare !== true &&
+    b.width > 1 &&
+    !cuts.has(b.grid);
+}
+
+/**
  * The boxes with a panel moved half a row off the cursor's row, where a
  * float without a border in it is next to that row (a completion menu
  * under the line being typed, a signature above it): such a float's
@@ -567,13 +584,7 @@ export function clearCursorRow(
   cursorRow: number | undefined,
 ): GridBox[] {
   if (cursorRow === undefined) return [...boxes];
-  const cuts = frameCuts(boxes);
-  const padded = (b: GridBox) =>
-    b.frame === undefined &&
-    b.lined !== true &&
-    b.bare !== true &&
-    b.width > 1 &&
-    !cuts.has(b.grid);
+  const padded = paddedFloats(boxes);
   const byGrid = new Map(boxes.map((b) => [b.grid, b]));
   const shift = new Map<number, number>();
   for (const cluster of floatClusters(boxes.filter((b) => b.bare !== true))) {
@@ -595,4 +606,120 @@ export function clearCursorRow(
     const by = shift.get(b.grid);
     return by === undefined ? b : { ...b, row: b.row + by };
   });
+}
+
+/**
+ * How far past grid 1 DevHub may draw on each side, in cells: the editor's
+ * reach (a tmux pane's half border cell, `GridPainter.setReach`) less the
+ * frame's line — 0 at a window's edge, where the editor is cut.
+ */
+export interface EdgeRoom {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/**
+ * The boxes with a panel moved in from the editor's edge, a whole cell,
+ * where a float without a border in it is at that edge (a cmdline menu at
+ * column 0, a hover on the last column): its padding and line are half a
+ * cell outside its cells (`frameGeometry`), and past grid 1 they would be
+ * cut by the editor's clip (or, at a tmux pane's border, drawn over the
+ * hairline). Moved a cell, its line runs through the middle of the edge
+ * cell, as a bordered float's does, its text still on whole cells. Floats are over the windows and never cut by a window's
+ * boundary inside the editor; only the editor's own edge cuts, so only
+ * there is the panel moved — whole, with its scrollbar, as
+ * `clearCursorRow` moves it; Neovim's cells do not move, and a click is
+ * read back by the pixel (`mouse.ts`). A panel too wide or tall to clear
+ * both edges stays where it is on that axis, and one already moved off
+ * the cursor's row keeps its rows: what is typed comes first.
+ * `size` is grid 1's, in cells.
+ */
+export function clearEdges(
+  boxes: readonly GridBox[],
+  size: { readonly width: number; readonly height: number },
+  room: EdgeRoom,
+): GridBox[] {
+  const padded = paddedFloats(boxes);
+  const byGrid = new Map(boxes.map((b) => [b.grid, b]));
+  const shift = new Map<number, { dx: number; dy: number }>();
+  // In whole cells, so the text stays on the cells' pixels; a line on
+  // the edge itself is half cut, so in too.
+  const nudge = (lo: number, hi: number, min: number, max: number) => {
+    const inward = lo <= min ? Math.max(1, Math.ceil(min - lo)) : 0;
+    const outward = hi >= max ? Math.max(1, Math.ceil(hi - max)) : 0;
+    if (inward > 0 && hi + inward <= max) return inward;
+    if (outward > 0 && lo - outward >= min) return -outward;
+    return 0;
+  };
+  for (const cluster of floatClusters(boxes.filter((b) => b.bare !== true))) {
+    const members = cluster.members.flatMap((m) => byGrid.get(m.grid) ?? []);
+    const pads = members.filter(padded);
+    if (pads.length === 0) continue;
+    // The frame's outer edges: half a cell outside the padded members.
+    const left = Math.min(...pads.map((b) => b.col)) - 0.5;
+    const thin = members.filter((b) => b.width === 1);
+    const right = Math.max(
+      ...pads.map((b) => b.col + b.width + 0.5),
+      ...pads.map((b) => scrollbarLine(b, thin) ?? 0),
+    );
+    const top = Math.min(...pads.map((b) => b.row)) - 0.5;
+    const bottom = Math.max(...pads.map((b) => b.row + b.height)) + 0.5;
+    const dx = nudge(left, right, -room.left, size.width + room.right);
+    const moved = members.some((b) => !Number.isInteger(b.row));
+    const dy = moved
+      ? 0
+      : nudge(top, bottom, -room.top, size.height + room.bottom);
+    if (dx !== 0 || dy !== 0)
+      for (const b of members) shift.set(b.grid, { dx, dy });
+  }
+  return boxes.map((b) => {
+    const by = shift.get(b.grid);
+    return by === undefined
+      ? b
+      : { ...b, col: b.col + by.dx, row: b.row + by.dy };
+  });
+}
+
+/**
+ * Where the right line of a framed menu with a scrollbar beside it runs,
+ * in cells of grid 1 (the cell edge it is centred on), or `undefined` when
+ * it has none. blink.cmp and nvim-cmp draw a menu's scrollbar as one-column
+ * floats on the menu's last column (its border) or the one after
+ * (`floatScrollbars`); DevHub's frame would put its line through the
+ * middle of that column, the thumb straddling it and the gutter half
+ * outside the menu. The scrollbar's column is the frame's right padding
+ * instead: the line along its outer edge, the thumb inside the frame.
+ */
+export function scrollbarLine(
+  menu: CellRect,
+  bars: readonly CellRect[],
+): number | undefined {
+  let edge: number | undefined;
+  for (const bar of bars) {
+    const beside =
+      bar.width === 1 &&
+      bar.col >= menu.col + menu.width - 1 &&
+      bar.col <= menu.col + menu.width &&
+      bar.row >= menu.row &&
+      bar.row + bar.height <= menu.row + menu.height;
+    if (beside) edge = Math.max(edge ?? 0, bar.col + 1);
+  }
+  return edge;
+}
+
+/** `geometry` with its right line centred on `middle` (CSS pixels), if further out. */
+export function withRightLine(
+  geometry: FrameGeometry,
+  middle: number,
+  dpr: number,
+): FrameGeometry {
+  if (middle <= geometry.middles.right) return geometry;
+  const [, x1] = lineSpan(middle, geometry.widths.right, dpr);
+  return {
+    ...geometry,
+    w: x1 - geometry.x,
+    middles: { ...geometry.middles, right: middle },
+  };
 }

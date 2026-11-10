@@ -52,6 +52,18 @@ describe("the pointer", () => {
     });
   });
 
+  it("reads a panel moved in from the editor's edge by the pixel", () => {
+    // A menu at column 0, drawn a cell in (`clearEdges`): its first cell
+    // is where the pointer sees it, not Neovim's column 0.
+    const moved = [...boxes, box(7, 10, 1, 20, 4, 170)];
+    expect(hitTest(moved, cell, 8 * 1 + 2, 16 * 11)).toEqual({
+      grid: 7,
+      row: 1,
+      col: 0,
+    });
+    expect(hitTest(moved, cell, 8 * 0 + 2, 16 * 11).grid).toBe(2);
+  });
+
   it("lets a click through a blank border outside its line", () => {
     const margins = { top: 1, right: 1, bottom: 1, left: 1 };
     const blank = { glyph: " ", hl: 0 };
