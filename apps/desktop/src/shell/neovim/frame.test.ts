@@ -297,7 +297,7 @@ describe("a panel of framed floats", () => {
     ),
   });
 
-  it("draws the edge a list and its preview share once, half way between them", () => {
+  it("draws the edge a list and its preview share once, where their border cells meet", () => {
     const list = member(4, { row: 0, col: 0, width: 10, height: 6 });
     const preview = member(5, { row: 0, col: 10, width: 10, height: 6 });
     const [a, b] = framePieces([list, preview], 1);
@@ -313,10 +313,12 @@ describe("a panel of framed floats", () => {
       bottom: true,
       left: false,
     });
-    // Two border columns, 9 and 10: the line through the left one's
-    // middle (76), one pixel on whole pixels; the preview's ground from it.
-    expect(a ? a.x + a.w : 0).toBe(77);
-    expect(b?.x).toBe(77);
+    // Two border columns, 9 and 10: the line at the middle of the two
+    // together, the edge they share (80), one pixel on whole pixels
+    // ([80, 81]); the list's piece reaches its far side, the preview's
+    // ground starts there.
+    expect(a ? a.x + a.w : 0).toBe(81);
+    expect(b?.x).toBe(81);
     // Only the panel's outer corners are round.
     expect(a?.radii.tr).toBe(0);
     expect(a?.radii.tl).toBeGreaterThan(0);
@@ -362,9 +364,114 @@ describe("a panel of framed floats", () => {
         cell,
       ).cy,
     ).toBe(70);
-    // No title: through the upper one's bottom row instead (row 2, 50).
-    const [i2] = framePieces([input, { ...list, labelled: {} }], 2);
-    expect(i2 ? i2.y + i2.h : 0).toBe(50.5);
+    // No title: at the middle of the two border rows together, the edge
+    // they share (60): the line [59.5, 60.5].
+    const [i2, l2] = framePieces([input, { ...list, labelled: {} }], 2);
+    expect(i2 ? i2.y + i2.h : 0).toBe(60.5);
+    expect(l2?.y).toBe(60.5);
+  });
+
+  describe("two border cells fused into one line", () => {
+    // A fractional cell, as a font gives: no ratio may move the line.
+    const odd = { width: 7.7, height: 18.3 };
+    const near = (v: number, dpr: number) =>
+      Math.abs(v * dpr - Math.round(v * dpr)) < 1e-6;
+    const at = (
+      grid: number,
+      rect: { row: number; col: number; width: number; height: number },
+      dpr: number,
+      labelled?: FramedMember["labelled"],
+    ): FramedMember => ({
+      grid,
+      rect,
+      ruled: true,
+      ...(labelled ? { labelled } : {}),
+      geometry: frameGeometry(ALL, rect, odd, dpr, 4),
+    });
+    const cases = [
+      { name: "side by side", across: "x" },
+      { name: "stacked", across: "y" },
+    ] as const;
+    const titles = [
+      { name: "no title", label: undefined },
+      { name: "a title on the lower or right one", label: "second" },
+      { name: "a footer on the upper or left one", label: "first" },
+    ] as const;
+    for (const dpr of [1, 1.5, 2, 3]) {
+      for (const c of cases) {
+        for (const t of titles) {
+          it(`${c.name}, ${t.name}, at DPR ${String(dpr)}`, () => {
+            const stacked = c.across === "y";
+            const first = stacked
+              ? { row: 2, col: 3, width: 11, height: 5 }
+              : { row: 2, col: 3, width: 11, height: 9 };
+            const second = stacked
+              ? { row: 7, col: 3, width: 11, height: 9 }
+              : { row: 2, col: 14, width: 13, height: 9 };
+            // Titles and footers are only ever in the top and bottom rows:
+            // side by side, the shared column holds none.
+            const a = at(
+              4,
+              first,
+              dpr,
+              t.label === "first" ? { bottom: true } : undefined,
+            );
+            const b = at(
+              5,
+              second,
+              dpr,
+              t.label === "second" ? { top: true } : undefined,
+            );
+            const [p, q] = framePieces([a, b], dpr);
+            if (!p || !q) throw new Error("no pieces");
+            const size = stacked ? odd.height : odd.width;
+            const edge = (stacked ? second.row : second.col) * size;
+            const titled = stacked && t.label !== undefined;
+            // Through the titled row's middle; else the edge the two cells
+            // share.
+            const want = !titled
+              ? edge
+              : t.label === "first"
+                ? edge - size / 2
+                : edge + size / 2;
+            const line = (1 / dpr) * Math.max(1, Math.round(dpr));
+            // The upper or left one draws it, its piece to the line's far
+            // side; the other's ground starts there: no strip, no gap.
+            expect(stacked ? p.draw.bottom : p.draw.right).toBe(true);
+            expect(stacked ? q.draw.top : q.draw.left).toBe(false);
+            const end = stacked ? p.y + p.h : p.x + p.w;
+            expect(stacked ? q.y : q.x).toBeCloseTo(end, 9);
+            const start = end - line;
+            // On whole device pixels, centred within half a device pixel.
+            expect(near(start, dpr) && near(end, dpr)).toBe(true);
+            expect(Math.abs((start + end) / 2 - want)).toBeLessThanOrEqual(
+              0.5 / dpr + 1e-9,
+            );
+            // Its middle is the nearest device pixel's: no drift.
+            const w = Math.round(line * dpr);
+            expect(Math.round(start * dpr)).toBe(
+              Math.round(want * dpr - w / 2),
+            );
+            if (titled) {
+              // The title sits on the line.
+              const owner = t.label === "first" ? a : b;
+              const box = labelBox(
+                {
+                  side: t.label === "first" ? "bottom" : "top",
+                  col: 1,
+                  cells: 5,
+                  runs: [],
+                },
+                owner.rect,
+                owner.geometry,
+                odd,
+              );
+              expect(box.cy).toBeCloseTo((start + end) / 2, 9);
+            }
+          });
+        }
+      }
+    }
   });
 
   it("draws no line where a float without a border meets another", () => {

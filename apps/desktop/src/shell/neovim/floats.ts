@@ -301,22 +301,18 @@ function covered(
   return reach >= to;
 }
 
-/** The middle of a member's line on `side` (its edge where it has none). */
+/** The true middle of a member's line on `side` (not yet on device pixels). */
 function lineMiddle(m: FramedMember, side: Side): number {
-  const g = m.geometry;
-  const w = g.widths[side];
-  if (side === "left") return g.x + w / 2;
-  if (side === "right") return g.x + g.w - w / 2;
-  if (side === "top") return g.y + w / 2;
-  return g.y + g.h - w / 2;
+  return m.geometry.middles[side];
 }
 
 /**
- * Where the line `m` and `o` share on `m`'s `side` runs (its middle). A
- * line goes through the middle of border cells: when both have a border
- * there, through the one that holds a title or footer — a list's title
- * under an input sits on the line between them — else the upper or left
- * one's; a border beside none, through the border; two without one meet
+ * Where the line `m` and `o` share on `m`'s `side` runs (its middle). When
+ * both have a border there, their two border cells are fused into one
+ * line: through the middle of the one that holds a title or footer — a
+ * list's title under an input sits on the line between them — else at the
+ * middle of the two cells together, the edge they share, leaning to
+ * neither. A border beside none, through the border; two without one meet
  * half way, ground to ground.
  */
 function sharedMiddle(m: FramedMember, side: Side, o: FramedMember): number {
@@ -325,12 +321,11 @@ function sharedMiddle(m: FramedMember, side: Side, o: FramedMember): number {
   const theirs = lineMiddle(o, back);
   const mRuled = m.ruled !== false;
   const oRuled = o.ruled !== false;
-  if (!mRuled && !oRuled) return (mine + theirs) / 2;
   if (mRuled !== oRuled) return mRuled ? mine : theirs;
-  const mLabel = m.labelled?.[side] === true;
-  const oLabel = o.labelled?.[back] === true;
+  const mLabel = mRuled && m.labelled?.[side] === true;
+  const oLabel = oRuled && o.labelled?.[back] === true;
   if (mLabel !== oLabel) return mLabel ? mine : theirs;
-  return side === "right" || side === "bottom" ? mine : theirs;
+  return (mine + theirs) / 2;
 }
 
 /**
@@ -338,7 +333,7 @@ function sharedMiddle(m: FramedMember, side: Side, o: FramedMember): number {
  * members with borders share is drawn by one: the one whose side the other
  * covers whole (the left or upper one when each covers the other's), so a
  * list beside a preview, or an input over a list, shows one line between
- * them, through the middle of border cells (`sharedMiddle`). A member
+ * them, where their border cells meet (`sharedMiddle`). A member
  * without a border draws no line where it meets another.
  */
 export function framePieces(

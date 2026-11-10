@@ -252,6 +252,12 @@ export interface FrameGeometry {
   readonly h: number;
   /** Each side's line, CSS pixels across. */
   readonly widths: Readonly<Record<Side, number>>;
+  /**
+   * The true middle of each side's line, before it is put on device
+   * pixels: two members' lines fused into one are centred from these, so
+   * the snapping is done once, not twice.
+   */
+  readonly middles: Readonly<Record<Side, number>>;
   /** Each corner's outer radius. */
   readonly radii: Readonly<Record<Corner, number>>;
 }
@@ -311,24 +317,23 @@ export function frameGeometry(
   const { width: cw, height: ch } = cell;
   const m = margins;
   const line = lineWidth(dpr);
-  const [x0] = lineSpan((place.col + m.left) * cw - cw / 2, line, dpr);
-  const [, x1] = lineSpan(
-    (place.col + place.width - m.right) * cw + cw / 2,
-    line,
-    dpr,
-  );
-  const [y0] = lineSpan((place.row + m.top) * ch - ch / 2, line, dpr);
-  const [, y1] = lineSpan(
-    (place.row + place.height - m.bottom) * ch + ch / 2,
-    line,
-    dpr,
-  );
+  const middles = {
+    left: (place.col + m.left) * cw - cw / 2,
+    right: (place.col + place.width - m.right) * cw + cw / 2,
+    top: (place.row + m.top) * ch - ch / 2,
+    bottom: (place.row + place.height - m.bottom) * ch + ch / 2,
+  };
+  const [x0] = lineSpan(middles.left, line, dpr);
+  const [, x1] = lineSpan(middles.right, line, dpr);
+  const [y0] = lineSpan(middles.top, line, dpr);
+  const [, y1] = lineSpan(middles.bottom, line, dpr);
   return {
     x: x0,
     y: y0,
     w: x1 - x0,
     h: y1 - y0,
     widths: { top: line, right: line, bottom: line, left: line },
+    middles,
     radii: { tl: radius, tr: radius, br: radius, bl: radius },
   };
 }

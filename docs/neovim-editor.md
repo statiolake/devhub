@@ -269,10 +269,12 @@ one layer model and pane motion.
   canvases, with the floats' `drop-shadow`), only the panel's outer
   corners rounded; a float alone is a panel of one, and one with
   `winblend` gets none. The edge members with borders share is drawn once
-  (`framePieces`), still through the middle of border cells: of the one
-  whose border holds a title or footer there (a list's title under the
-  input sits on the line), else of the upper or left one; members
-  without one meet ground to ground, a one-cell seam between them filled
+  (`framePieces`), the two border cells that touch fused into one line:
+  through the middle of the one that holds a title or footer there (a
+  list's title under the input sits on the line), else at the middle of
+  the two cells together — the edge they share, leaning to neither side
+  — on the nearest whole device pixel, each member's ground meeting the
+  line from its side; members without one meet ground to ground, a one-cell seam between them filled
   with their ground. A borderless float inside the rectangle the framed
   floats over it span (a picker's root box) has no frame of its own and
   is clipped by them (`frameCuts`, `cutClip`): drawn where no frame is
@@ -1354,6 +1356,7 @@ editor half); `Cmd+Q O` between the halves; resize; switching Workspaces;
 
 Drawn in the terminal's page (DevHub run under Xvfb at 2×, the dotfiles'
 settings with control mode, tmux.conf and Neovim config). These were checked:
+
 - the `devhub-nvim` window's Neovim and a `nvim` typed in a pane, side by
   side in one tmux window, each with its own UI, the keys moving between
   them with tmux's pane moves;
