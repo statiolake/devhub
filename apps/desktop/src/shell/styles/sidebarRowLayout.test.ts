@@ -31,6 +31,15 @@ describe("Workspace row layout", () => {
     expect(css).toMatch(/\.row-glyph\s*\{[^}]*flex:\s*0 0 var/);
   });
 
+  it("shows context only while 6em of it fit, and is one line tall", () => {
+    expect(css).toMatch(
+      /\.row-text\s*\{[^}]*height:\s*1lh;[^}]*flex-wrap:\s*wrap;/,
+    );
+    expect(css).toMatch(
+      /\.row-text > :is\(\.row-branch, \.row-name, \.row-note\):last-child\s*\{[^}]*flex:\s*1 0 6em/,
+    );
+  });
+
   it("drops the Issue mark whole in a narrow row", () => {
     expect(css).toMatch(
       /\.workspace-row\s*\{[^}]*container-type:\s*inline-size/,

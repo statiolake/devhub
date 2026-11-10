@@ -206,9 +206,12 @@
     var(--space-4);
 }
 
-/* The section heading is a rule: the hairline between Scratch and the
-   workspaces under it, with the air of one section step either side, in the
-   docked column exactly as in the rail. It was a band as tall as a row with
+/* The section heading is air: one section step either side of a pixel
+   between Scratch and the workspaces under it, in the docked column exactly
+   as in the rail. It was a hairline as well, stopping short of the two
+   actions at its end — which made the actions read as set down on a line,
+   squeezed into the gap under Scratch. The break in the list is the air and
+   the two actions standing in it; a rule says it a second time. It was a band as tall as a row with
    "WORKSPACES" in it, which put every workspace row 17px lower in the docked
    column than in the rail — so turning compact mode off moved every row, and
    the rail grown over the content (compact mode's overlay) could not be the
@@ -224,15 +227,6 @@
   margin: var(--sidebar-section-gap) var(--space-2);
 }
 
-/* The rule itself, stopping short of the two actions at its trailing end so
-   the line runs into them rather than through them. */
-.sidebar-section-heading::before {
-  position: absolute;
-  inset: 0 calc(2 * 20px + var(--space-2)) 0 0;
-  background: var(--line);
-  content: "";
-}
-
 .sidebar-section-heading h2 {
   position: absolute;
   overflow: hidden;
@@ -243,7 +237,7 @@
   white-space: nowrap;
 }
 
-/* The two ways to start work stand on the rule's trailing end, centred on it,
+/* The two ways to start work stand at the air's trailing end, centred in it,
    where the band's trailing edge had them. They are taller than the rule's air
    by a pixel or two either side, which the rows' own block padding absorbs:
    nothing is moved to make room for them. */
@@ -559,9 +553,14 @@
   display: flex;
   overflow: hidden;
   min-width: 0;
+  /* One line tall, and what does not fit on it wraps out of sight: see the
+     context, below. */
+  height: 1lh;
   flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-content: flex-start;
   align-items: baseline;
-  gap: var(--space-2);
+  column-gap: var(--space-2);
   white-space: nowrap;
   /* Opaque up to the last 20 pixels, then out. `mask-image` and not a
      gradient overlay: an overlay would have to be painted in the row's own
@@ -588,6 +587,22 @@
   color: var(--tertiary);
   font-size: 11px;
   font-weight: 400;
+}
+
+/* But a fade needs words to fade. Context that would show two or three
+   letters before the edge ("Ba" of "Bash…") reads as a glitch, not as words
+   running out; so the last piece of context takes the line only while 6em of
+   it fit — its basis — and otherwise wraps onto the line `.row-text` keeps out
+   of sight, and the row is just its name. 6em and not less because the last
+   20px of the line are the fade: what is left clear is five or six letters,
+   a word's worth. With room it grows to its whole
+   width and fades at the edge as before. One before it takes the line only
+   whole (`flex: none`), and one that wraps takes everything after it along. */
+.row-text > :is(.row-branch, .row-name, .row-note):last-child {
+  /* No automatic minimum: that would be the whole text, unbroken. */
+  min-width: 0;
+  max-width: max-content;
+  flex: 1 0 6em;
 }
 
 /* Why the row may not be doing what its status says: it is stopping, its
@@ -2019,11 +2034,6 @@ body.is-resizing-rows {
 .sidebar[data-collapsed="true"] .row-action-button,
 .sidebar[data-collapsed="true"] .sidebar-section-actions {
   display: none;
-}
-
-/* The rule runs the rail's whole width: the actions are not drawn here. */
-.sidebar[data-collapsed="true"] .sidebar-section-heading::before {
-  right: 0;
 }
 
 /* The connector connects two columns that are one column here. Two rows one

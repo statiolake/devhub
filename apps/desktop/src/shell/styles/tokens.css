@@ -603,8 +603,8 @@
   --sidebar-row-gap: var(--space-1);
   /* The step between the Scratch row and the workspaces under it. It was a
      whole `--space-3`, which is a paragraph break in a list whose rows are
-     26px tall; at one section boundary in the whole Sidebar it is a rule and
-     the air around it, and the air is the smaller half. */
+     26px tall; at the one section boundary in the whole Sidebar it is the
+     air either side of a pixel, the section's two actions standing in it. */
   --sidebar-section-gap: var(--space-2);
   --sidebar-scroll-inset: var(--space-1);
 }
