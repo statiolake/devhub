@@ -86,8 +86,8 @@
 
 /* The active pane's cursor, in the program's colour (OSC 12) or the
    theme's `cursor`. Its shape is the program's (`DECSCUSR`): 0 bar, 1 block,
-   2 underline, 3 hollow block. A block holds its character painted as the
-   row paints it, in the theme's `cursor_text` (`paintCursorCell`), as Ghostty
+   2 underline, 3 hollow block. A block shows the text under it painted as the
+   row paints it, in the theme's `cursor_text` (`paintCursorInk`), as Ghostty
    and the old terminal draw it; not a colour blended over the text, which
    showed neither colour (a dark cursor on a light ground came out light
    grey). Without the keyboard any shape is a hollow block, as in Ghostty. */
@@ -100,15 +100,25 @@
   overflow: hidden;
 }
 
-.control-cursor > canvas {
+/* The text under a block, in `cursor_text` (`cursorInk.ts`): a canvas of
+   the grid's cells placed on the text inside the cursor, which cuts it. */
+.control-cursor-ink {
+  position: absolute;
+  width: 0;
+  height: 0;
   display: none;
+}
+
+.control-cursor-ink > canvas {
+  position: absolute;
+  display: block;
 }
 
 .control-cursor[data-shape="1"] {
   background: var(--control-cursor);
 }
 
-.control-cursor[data-shape="1"] > canvas {
+.control-cursor[data-shape="1"] > .control-cursor-ink {
   display: block;
 }
 
@@ -126,7 +136,7 @@
   border: 1px solid var(--control-cursor);
 }
 
-.control-terminal:not(:focus-within) .control-cursor > canvas {
+.control-terminal:not(:focus-within) .control-cursor > .control-cursor-ink {
   display: none;
 }
 

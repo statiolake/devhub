@@ -345,7 +345,9 @@ because a followed transcript moves by every pixel of it.
   outside the three written exceptions. The terminal, Neovim and
   completion stylesheets are held to it too: the Neovim cursor glides by a
   `translate` from where it was seen to its cell (`glideCursor`), never
-  across a scroll; a notification line rises and fades in at its full
+  across a scroll, and its ink (the text under it in its colours,
+  `cursorInk.ts`) by the opposite `translate` on the same clock, so the
+  shape moves over still text; a notification line rises and fades in at its full
   height and fades out in place. The same test holds the gutter rule's
   completion-menu exception to its place: `scrollbar-gutter: auto`, the
   declaration that gives the gutter up on purpose, is written in

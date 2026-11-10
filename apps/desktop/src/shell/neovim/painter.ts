@@ -30,6 +30,7 @@ import type {
   RedrawChanges,
 } from "./redraw";
 import type { CellMetrics } from "./mouse";
+import type { CellSpan } from "./cursorInk";
 import { pinnedRows, type BufposAnchor, type FloatRef } from "./riders";
 import { strokesFor, type Stroke, type StrokeKind } from "./strokes";
 import {
@@ -679,6 +680,14 @@ export class GridPainter {
       readonly image: HTMLCanvasElement;
       readonly x: number;
       readonly y: number;
+      readonly region: {
+        readonly top: number;
+        readonly bot: number;
+        readonly left: number;
+        readonly right: number;
+        readonly rows: number;
+      };
+      animation?: Animation;
     }
   >();
   /** Where each window's decorations are, as Lua last said (`decor.ts`). */
@@ -2091,72 +2100,84 @@ export class GridPainter {
   }
 
   /**
-   * The cell under a block cursor, drawn as its row draws it (`paintRun`:
-   * the cell's face, the grid's baseline and cell, box drawing and icons as
-   * shapes) in the cursor's colours, so its character sits on exactly the
-   * pixels it has off the cursor. Two cells for a wide character.
+   * The cursor's ink (`cursorInk.ts`): `span`'s cells of a grid drawn as
+   * their rows draw them (`paintRun`: each cell's face, the grid's
+   * baseline and cell, box drawing and icons as shapes) in the cursor's
+   * colours — `fg` for the text on a ground of `bg` — so each character
+   * sits on exactly the pixels it has in the grid. The owner places the
+   * canvas on those cells and cuts it by the cursor's shape; nothing of the
+   * text is drawn in the cursor itself.
    */
-  paintCursorCell(
+  paintCursorInk(
     canvas: HTMLCanvasElement,
     state: NeovimUiState,
-    cursor: {
-      readonly grid: number;
-      readonly row: number;
-      readonly col: number;
-    },
+    gridId: number,
+    span: CellSpan,
     fg: number,
     bg: number,
   ): void {
     const { width: cw, height: ch, baseline } = this.metrics;
-    const grid = state.grids.get(cursor.grid);
-    const { row, col } = cursor;
-    const inside = grid !== undefined && row < grid.height && col < grid.width;
-    const base = inside ? row * grid.width : 0;
-    const cells = inside && grid.chars[base + col + 1] === "" ? 2 : 1;
-    const w = Math.ceil(cells * cw * this.dpr);
-    const h = Math.ceil(ch * this.dpr);
+    const grid = state.grids.get(gridId);
+    const cols = Math.max(1, span.col1 - span.col0);
+    const rows = Math.max(1, span.row1 - span.row0);
+    const w = Math.ceil(cols * cw * this.dpr);
+    const h = Math.ceil(rows * ch * this.dpr);
     if (canvas.width !== w) canvas.width = w;
     if (canvas.height !== h) canvas.height = h;
-    canvas.style.width = `${String(cells * cw)}px`;
-    canvas.style.height = `${String(ch)}px`;
+    canvas.style.width = `${String(cols * cw)}px`;
+    canvas.style.height = `${String(rows * ch)}px`;
     // Its ground is painted whole: opaque, so its text is set as the
     // grid's is (subpixel, font smoothing; see the top).
     const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) return;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = cssColor(bg);
-    ctx.fillRect(0, 0, cells * cw, ch);
-    if (!inside) return;
-    ctx.translate(-col * cw, 0);
+    ctx.fillRect(0, 0, cols * cw, rows * ch);
+    if (grid === undefined) return;
+    ctx.translate(-span.col0 * cw, 0);
     this.skip.clear();
     this.icons.length = 0;
-    this.paintRun(
-      ctx,
-      state,
-      grid.chars,
-      grid.hls,
-      grid.width,
-      base,
-      col,
-      col + cells,
-      grid.hls[base + col] ?? 0,
-      0,
-      baseline,
-      fg,
-    );
-    for (const icon of this.icons) {
-      ctx.fillStyle = cssColor(icon.fg);
-      this.paintIcon(
-        ctx,
-        icon.c,
-        icon.x,
-        0,
-        icon.cells,
-        icon.attr,
-        icon.centre,
-      );
+    const end = Math.min(span.col1, grid.width);
+    for (let row = span.row0; row < span.row1; row += 1) {
+      if (row < 0 || row >= grid.height) continue;
+      const base = row * grid.width;
+      const y = (row - span.row0) * ch;
+      // In runs of one highlight, as the row is drawn: each cell's face.
+      let col = Math.max(0, span.col0);
+      while (col < end) {
+        const hl = grid.hls[base + col] ?? 0;
+        let stop = col + 1;
+        while (stop < end && (grid.hls[base + stop] ?? 0) === hl) stop += 1;
+        this.paintRun(
+          ctx,
+          state,
+          grid.chars,
+          grid.hls,
+          grid.width,
+          base,
+          col,
+          stop,
+          hl,
+          y,
+          baseline,
+          fg,
+        );
+        col = stop;
+      }
+      for (const icon of this.icons) {
+        ctx.fillStyle = cssColor(icon.fg);
+        this.paintIcon(
+          ctx,
+          icon.c,
+          icon.x,
+          y,
+          icon.cells,
+          icon.attr,
+          icon.centre,
+        );
+      }
+      this.icons.length = 0;
     }
-    this.icons.length = 0;
   }
 
   /**
@@ -2900,7 +2921,21 @@ export class GridPainter {
     image.style.height = `${String(h)}px`;
     clip.append(image);
     canvas.after(clip);
-    this.slides.set(box.grid, { clip, image, x, y });
+    const entrySlide = {
+      clip,
+      image,
+      x,
+      y,
+      region: {
+        top: moved.top,
+        bot: moved.bot,
+        left: moved.left,
+        right: moved.right,
+        rows: moved.rows,
+      },
+      animation: undefined as Animation | undefined,
+    };
+    this.slides.set(box.grid, entrySlide);
     this.refreshSlide(box.grid, entry);
     const slide = image.animate(
       [
@@ -2909,8 +2944,37 @@ export class GridPainter {
       ],
       { duration: SLIDE_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
     );
+    entrySlide.animation = slide;
     slide.onfinish = () => {
       this.endSlide(box.grid, clip);
+    };
+  }
+
+  /**
+   * The lines sliding in grid `grid` (`slideLines`), if any: their region
+   * in the grid's cells, how many rows they come from (the image's start,
+   * `rows` rows down), and the slide's animation, for what must move with
+   * them (the cursor's ink, `cursorInk.ts`).
+   */
+  slideOf(grid: number):
+    | {
+        readonly top: number;
+        readonly bot: number;
+        readonly left: number;
+        readonly right: number;
+        readonly rows: number;
+        readonly animation: Animation;
+      }
+    | undefined {
+    const slide = this.slides.get(grid);
+    if (!slide?.animation) return undefined;
+    return {
+      top: slide.region.top,
+      bot: slide.region.bot,
+      left: slide.region.left,
+      right: slide.region.right,
+      rows: slide.region.rows,
+      animation: slide.animation,
     };
   }
 

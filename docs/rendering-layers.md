@@ -17,7 +17,10 @@ computation was off by one something else broke:
   separator's cells);
 - the Neovim overlay hidden under tmux prompts (one view cleared to make
   room for another, while the Neovim was a view of its own);
-- the glyph under the cursor a pixel off (page text, not the row's painter);
+- the glyph under the cursor a pixel off (page text, not the row's painter),
+  then sliding in with the gliding cursor and standing still while text
+  slid under it (a copy of the cell carried by the cursor, not the grid's
+  text recoloured where the cursor covers it);
 - a transparent canvas turning subpixel antialiasing off;
 - a separator's colour borrowed from the highlights scrolling past beside it
   (a7ea595f);
@@ -165,6 +168,18 @@ What follows the rule in code:
 - `gridBlends` (`painter.ts`): a leaf canvas has alpha only while one of its
   cells blends (`winblend`); every other grid, floats and tmux popups
   included, is opaque.
+- The cursor (`cursorInk.ts`; Neovim's and the terminal's): a shape over
+  the text, never a carrier of it. Its element holds its ground and its
+  _ink_, an opaque canvas of the grid's own cells around it painted by the
+  grid's painter in the cursor's colours (`paintCursorInk`), placed on
+  those cells inside the cursor and cut by its shape. What moves the text
+  moves the ink: a pixel scroll the cursor rides, a slide (the same
+  keyframes on the slide's clock), copy mode's glide (the canvas's
+  `translateY(-off)`), a window's or pane's motion group; what moves the
+  cursor alone — its glide — is undone for the ink by the opposite
+  `translate` on the same clock. Only transforms move, and at rest the
+  ink is on the grid's device pixels, so the cursor's text is the grid's
+  to the pixel.
 
 ## Audit
 

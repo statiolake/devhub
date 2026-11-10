@@ -455,9 +455,14 @@ picks it by the setting and mounts the other one when it changes.
   `painter.ts`.
 - **Cursor.** The active pane's cursor takes the program's shape
   (`DECSCUSR`) and colour (OSC 12, until OSC 112), else the theme's
-  `cursor`; a block holds its character painted as the row paints it
-  (`paintCursorCell`, the Neovim editor's), in the theme's `cursor_text`,
-  as Ghostty and xterm.js draw it. Without the keyboard it is a hollow
+  `cursor`; a block shows the text under it painted as the row paints it,
+  in the theme's `cursor_text`, as Ghostty and xterm.js draw it — the
+  pane's cells around it drawn again (`paintCursorInk`, `cursorInk.ts`,
+  the Neovim editor's), placed on the text inside the block and cut by it,
+  never a copy of the character carried by the cursor: while copy mode's
+  glide moves the pane's text under a still cursor, the ink moves with the
+  text (`followInk`, the canvas's own `translateY(-off)`), and in a pane
+  that moves the cursor rides the pane's content. Without the keyboard it is a hollow
   block. (It was a `difference` blend of `cursor` over the text: neither
   colour showed, a dark cursor on a light ground came out light grey.)
 - **Keys.** By tmux's names (`controlKeys.ts`), so the prefix and the

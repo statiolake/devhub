@@ -249,11 +249,30 @@
   overflow: hidden;
 }
 
-.nvim-cursor > canvas {
+/* The text under the cursor, in its colours (`cursorInk.ts`): a canvas of
+   the grid's cells placed on the text inside the cursor, which cuts it to
+   its shape. The ink is at the editor's origin; the cursor moves over it. */
+.nvim-cursor-ink {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.nvim-cursor-ink canvas {
+  position: absolute;
   display: block;
 }
 
-.nvim-cursor-unfocused > canvas {
+/* Lines sliding under the cursor, cut by their region as in the window. */
+.nvim-cursor-ink-slide {
+  position: absolute;
+  overflow: hidden;
+}
+
+/* Without the keyboard the cursor recolours nothing: a hollow block, a
+   faint bar or underline over the text as it is. */
+.nvim-cursor-unfocused > .nvim-cursor-ink,
+.nvim-cursor-unfocused-thin > .nvim-cursor-ink {
   visibility: hidden;
 }
 

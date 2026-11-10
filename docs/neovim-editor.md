@@ -486,16 +486,34 @@ one layer model and pane motion.
     no glyph atlas, and none has been needed.
 - The cursor follows `guicursor`: its shape, its highlight, and its blink
   (`blinkwait`/`blinkon`/`blinkoff`, restarted on every move; each edge
-  fades over 120 ms of its phase). Square, as the cell. The character
-  under a block is painted as its row paints it (`paintCursorCell`: the
-  cell's face, the grid's baseline, box drawing and icons as shapes) in
-  the cursor's colours, on exactly the device pixels it has off the cursor
-  — as page text it sat half a pixel or a pixel off the row's baseline,
-  depending on font and size (the line box rounds ascent and descent its
-  own way), and lost bold, italic and wide cells. It glides to a
-  new cell in 70 ms outside Insert mode (none with reduced motion), but
-  never across a scroll of its window: then it moves with the text at
-  once.
+  fades over 120 ms of its phase). Square, as the cell. The cursor is a
+  shape over the text, and the text under it stays the grid's
+  (`cursorInk.ts`): the cursor's element holds only its ground and its
+  _ink_ — the cells of its grid under it painted again in its colours
+  (`paintCursorInk`: each cell's face, the grid's baseline, box drawing
+  and icons as shapes, wide cells whole; `Cursor`'s foreground on its
+  background, or the inverse when `guicursor` names no group), placed on
+  those cells inside the cursor so its shape cuts them. A block recolours
+  the character under it, a bar or an underline the part of it they
+  cover; without the keyboard (a hollow block, a faint bar) nothing is
+  recoloured. On exactly the device pixels the text has off the cursor —
+  as page text it sat half a pixel or a pixel off the row's baseline (the
+  line box rounds ascent and descent its own way) and lost bold, italic
+  and wide cells. It glides to a new cell in 70 ms outside Insert mode
+  (none with reduced motion), but never across a scroll of its window:
+  then it moves with the text at once. While it glides its ink glides
+  back as far on the same clock (`glideFrames`: two `translate`s that add
+  up to nothing), and holds the cells under the whole way, so the block
+  slides over still text, recolouring what it covers that frame — half of
+  one glyph and half of the next. A copy of the cell carried by the
+  cursor (`paintCursorCell`, before) slid the character in with the block,
+  and left it standing while text slid under a still cursor. While the
+  window scrolls in pixels the cursor rides its text and the ink with it;
+  lines a `dd` or an `o` slides under a still cursor slide in its ink too,
+  the same keyframes on the slide's clock (`GridPainter.slideOf`); a
+  window moving (a split, a close) carries its cursor in its group.
+  The command line's caret does not move and keeps its character as
+  text.
 - A window scrolls in pixels (`smoothScroll.ts`; Neovim says how far
   a window scrolled in `win_viewport`'s `scroll_delta`): the trackpad and
   the wheel move its text pixel for pixel while Neovim's `topline` stays a
@@ -1739,7 +1757,8 @@ ENTER`) — done (round 9): `ext_messages` on, Neovim 0.12 only, which asks
     `DiffDelete`, as every diff line is what Neovim says.
 11. _The block cursor and its cell_ — done: the block is square (round 5; its
     rounded corners were taken back), it still shows the character in the
-    cursor's foreground, and the blink (`guicursor`'s) fades in and out
+    cursor's foreground (the grid's own text recoloured under it,
+    `cursorInk.ts`), and the blink (`guicursor`'s) fades in and out
     over 120 ms of its phases, as VS Code's "smooth" blink; a hard blink
     with reduced motion.
 12. _Blended backdrops_ — done (round 3): a float of only blank cells in

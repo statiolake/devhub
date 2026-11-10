@@ -76,6 +76,13 @@ import { MetaComposition, OptionKeys } from "../surfaces/optionKey";
 import { BaseKeys, layoutMapSource } from "../surfaces/baseKeys";
 import type { MacOptionIsMeta } from "../../model/macOption";
 import { WindowMotion } from "./windowMotion";
+import {
+  glideFrames,
+  inkPlace,
+  inkSpan,
+  slideSpan,
+  type CellSpan,
+} from "./cursorInk";
 
 /** DevHub's theme, for a Neovim that sets no colours of its own. */
 function themeColors(): {
@@ -134,8 +141,26 @@ export class NeovimEditor {
   private cursorAt: { x: number; y: number } | undefined;
   /** Its glide under way, if any. */
   private cursorGlide: Animation | undefined;
-  /** The character under a block cursor, painted as the grid paints it. */
-  private readonly cursorCell: HTMLCanvasElement;
+  /**
+   * The text under the cursor, in its colours (`cursorInk.ts`): the
+   * grid's cells near it painted again, placed on the text inside the
+   * cursor and cut by its shape. The cursor holds nothing else.
+   */
+  private readonly ink: HTMLDivElement;
+  private readonly inkCanvas: HTMLCanvasElement;
+  /** The ink's counter-glide, with the cursor's (`glideFrames`). */
+  private inkGlide: Animation | undefined;
+  /** Where the cursor was seen as its glide began, while it glides. */
+  private glideFrom: { x: number; y: number } | undefined;
+  /** The ink of lines sliding under the cursor (`GridPainter.slideOf`). */
+  private inkSlide:
+    | {
+        readonly clip: HTMLDivElement;
+        readonly canvas: HTMLCanvasElement;
+        readonly animation: Animation;
+        readonly of: Animation;
+      }
+    | undefined;
   private readonly preedit: HTMLCanvasElement;
   readonly input: HTMLTextAreaElement;
   private ime: ImeState = IDLE;
@@ -191,8 +216,11 @@ export class NeovimEditor {
     this.gridLayer.className = "nvim-grids";
     this.cursor = document.createElement("div");
     this.cursor.className = "nvim-cursor";
-    this.cursorCell = document.createElement("canvas");
-    this.cursor.append(this.cursorCell);
+    this.ink = document.createElement("div");
+    this.ink.className = "nvim-cursor-ink";
+    this.inkCanvas = document.createElement("canvas");
+    this.ink.append(this.inkCanvas);
+    this.cursor.append(this.ink);
     this.preedit = document.createElement("canvas");
     this.preedit.className = "nvim-preedit";
     this.input = document.createElement("textarea");
@@ -1127,19 +1155,7 @@ export class NeovimEditor {
       s.top = `${String(at.y)}px`;
       s.width = `${String(width)}px`;
       s.height = `${String(cell.height)}px`;
-      // Its character as the grid draws it, not as text in the page: the
-      // page's line box rounds the font's ascent and descent its own way,
-      // half a pixel off the painter's baseline, and knows nothing of the
-      // cell's bold or italic, its wide cells or box drawing.
-      this.painter.paintCursorCell(
-        this.cursorCell,
-        this.state,
-        this.state.cursor,
-        colors.fg,
-        colors.bg,
-      );
     }
-    this.cursorCell.style.display = shape === "block" ? "" : "none";
     this.placeBlink(
       focused ? (mode?.blinkon ?? 0) : 0,
       mode?.blinkoff ?? 0,
@@ -1154,6 +1170,12 @@ export class NeovimEditor {
       : this.gridLayer;
     if (this.cursor.parentElement !== parent) parent.append(this.cursor);
     this.glideCursor(glides);
+    // The text under it, in its colours, on the text: as the grid draws
+    // it, not as text in the page (whose line box rounds the font's ascent
+    // its own way, half a pixel off the painter's baseline, and knows
+    // nothing of bold or italic, wide cells or box drawing), and not
+    // carried by the cursor (`cursorInk.ts`).
+    this.paintInk(colors);
     // The IME's candidate window opens at the textarea: keep it on the
     // cursor — the command line's, while the bar is up.
     const ime = this.cmdlineCaret() ?? at;
@@ -1182,6 +1204,7 @@ export class NeovimEditor {
     this.cursorAt = this.cursor.style.display === "none" ? undefined : to;
     const running = this.cursorGlide;
     // Placed again where it is going (a redraw, a blink): the glide goes on.
+    // (Its ink's too: `glideFrom` stays.)
     if (
       glides &&
       running !== undefined &&
@@ -1198,7 +1221,10 @@ export class NeovimEditor {
       seen = { x: from.x + dx, y: from.y + dy };
     }
     running?.cancel();
+    this.inkGlide?.cancel();
     this.cursorGlide = undefined;
+    this.inkGlide = undefined;
+    this.glideFrom = undefined;
     if (
       !glides ||
       seen === undefined ||
@@ -1209,17 +1235,156 @@ export class NeovimEditor {
     const dx = seen.x - to.x;
     const dy = seen.y - to.y;
     if (dx === 0 && dy === 0) return;
-    const glide = this.cursor.animate(
-      [
-        { translate: `${String(dx)}px ${String(dy)}px` },
-        { translate: "0px 0px" },
-      ],
-      { duration: CURSOR_GLIDE_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
-    );
-    this.cursorGlide = glide;
-    glide.onfinish = () => {
-      if (this.cursorGlide === glide) this.cursorGlide = undefined;
+    // The shape glides; its ink glides back as far on the same clock, so
+    // it stays on the text the shape goes over (`glideFrames`).
+    const frames = glideFrames(dx, dy);
+    const timing = {
+      duration: CURSOR_GLIDE_MS,
+      easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
     };
+    const glide = this.cursor.animate(frames.cursor, timing);
+    const inkGlide = this.ink.animate(frames.ink, timing);
+    this.cursorGlide = glide;
+    this.inkGlide = inkGlide;
+    this.glideFrom = seen;
+    glide.onfinish = () => {
+      if (this.cursorGlide !== glide) return;
+      this.cursorGlide = undefined;
+      this.inkGlide = undefined;
+      this.glideFrom = undefined;
+    };
+  }
+
+  /**
+   * The cursor's ink (`cursorInk.ts`): the cells of its grid under it —
+   * and, while it glides, under the way it goes — painted in its colours
+   * and placed on them inside it, so the shape cuts the text where it is
+   * and the text stays where the grid has it. Lines sliding under it
+   * (`GridPainter.slideOf`) slide in its ink too, on the slide's clock.
+   */
+  private paintInk(colors: { readonly fg: number; readonly bg: number }): void {
+    const s = this.cursor.style;
+    const { grid: gridId } = this.state.cursor;
+    const box = this.boxes.find((b) => b.grid === gridId);
+    const grid = this.state.grids.get(gridId);
+    const cell = this.painter.cell();
+    const at = { x: parseFloat(s.left) || 0, y: parseFloat(s.top) || 0 };
+    const w = parseFloat(s.width) || 0;
+    const h = parseFloat(s.height) || 0;
+    const rects = [{ x: at.x, y: at.y, w, h }];
+    if (this.glideFrom) rects.push({ ...this.glideFrom, w, h });
+    let span =
+      box && grid && s.display !== "none"
+        ? inkSpan(rects, box, grid, cell)
+        : undefined;
+    const slide = span ? this.painter.slideOf(gridId) : undefined;
+    if (span && slide) span = slideSpan(span, slide);
+    this.ink.style.left = `${String(-at.x)}px`;
+    this.ink.style.top = `${String(-at.y)}px`;
+    if (!span || !box) {
+      this.inkCanvas.style.display = "none";
+      this.dropInkSlide();
+      return;
+    }
+    this.inkCanvas.style.display = "";
+    this.painter.paintCursorInk(
+      this.inkCanvas,
+      this.state,
+      gridId,
+      span,
+      colors.fg,
+      colors.bg,
+    );
+    // In the ink, the editor's pixels: the cells' own place.
+    const origin = inkPlace(span, box, { x: 0, y: 0 }, cell);
+    this.inkCanvas.style.left = `${String(origin.left)}px`;
+    this.inkCanvas.style.top = `${String(origin.top)}px`;
+    this.placeInkSlide(slide, span, box, colors.bg);
+  }
+
+  /**
+   * Lines sliding under the cursor: the slide's rows of the ink, moved as
+   * the slide moves the grid's (the same keyframes, at the same time) in a
+   * clip of its region in the cursor's ground, as the slide's clip is in
+   * the window's.
+   */
+  private placeInkSlide(
+    slide: ReturnType<GridPainter["slideOf"]>,
+    span: CellSpan,
+    box: GridBox,
+    bg: number,
+  ): void {
+    const top = slide ? Math.max(slide.top, span.row0) : 0;
+    const bot = slide ? Math.min(slide.bot, span.row1) : 0;
+    const effect = slide?.animation.effect;
+    if (
+      !slide ||
+      bot <= top ||
+      !(effect instanceof KeyframeEffect) ||
+      slide.animation.playState === "finished"
+    ) {
+      this.dropInkSlide();
+      return;
+    }
+    const cell = this.painter.cell();
+    let ink = this.inkSlide;
+    if (ink?.of !== slide.animation) {
+      this.dropInkSlide();
+      const clip = document.createElement("div");
+      clip.className = "nvim-cursor-ink-slide";
+      const canvas = document.createElement("canvas");
+      clip.append(canvas);
+      this.ink.append(clip);
+      const animation = canvas.animate(
+        effect.getKeyframes(),
+        effect.getTiming(),
+      );
+      ink = { clip, canvas, animation, of: slide.animation };
+      this.inkSlide = ink;
+    }
+    // On the slide's clock, whenever it was laid.
+    if (slide.animation.startTime !== null) {
+      ink.animation.startTime = slide.animation.startTime;
+    } else if (slide.animation.currentTime !== null) {
+      ink.animation.currentTime = slide.animation.currentTime;
+    }
+    const left = (box.col + slide.left) * cell.width;
+    const y = (box.row + slide.top) * cell.height;
+    const { clip, canvas } = ink;
+    clip.style.left = `${String(left)}px`;
+    clip.style.top = `${String(y)}px`;
+    clip.style.width = `${String((slide.right - slide.left) * cell.width)}px`;
+    clip.style.height = `${String((slide.bot - slide.top) * cell.height)}px`;
+    clip.style.background = cssColor(bg);
+    // The ink's rows inside the region, where they are in it.
+    const perRow = this.inkCanvas.height / (span.row1 - span.row0);
+    const sy = Math.round((top - span.row0) * perRow);
+    const sh = Math.round((bot - top) * perRow);
+    canvas.width = this.inkCanvas.width;
+    canvas.height = Math.max(1, sh);
+    canvas.style.width = this.inkCanvas.style.width;
+    canvas.style.height = `${String((bot - top) * cell.height)}px`;
+    canvas.style.left = `${String((box.col + span.col0) * cell.width - left)}px`;
+    canvas.style.top = `${String((top - slide.top) * cell.height)}px`;
+    const ctx = canvas.getContext("2d", { alpha: false });
+    ctx?.drawImage(
+      this.inkCanvas,
+      0,
+      sy,
+      canvas.width,
+      sh,
+      0,
+      0,
+      canvas.width,
+      sh,
+    );
+  }
+
+  private dropInkSlide(): void {
+    if (!this.inkSlide) return;
+    this.inkSlide.animation.cancel();
+    this.inkSlide.clip.remove();
+    this.inkSlide = undefined;
   }
 
   /**

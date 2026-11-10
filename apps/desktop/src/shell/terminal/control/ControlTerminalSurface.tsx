@@ -20,6 +20,7 @@ import {
 import { terminalCellFont } from "../../neovim/cellFont";
 import { emptyChanges, type GridBox } from "../../neovim/redraw";
 import { GLIDE_MS } from "../../neovim/smoothScroll";
+import { inkPlace, inkSpan, shiftedRows } from "../../neovim/cursorInk";
 import {
   IDLE,
   imeStep,
@@ -284,10 +285,26 @@ export function ControlTerminalSurface({
     lines.className = "control-borders";
     const cursor = document.createElement("div");
     cursor.className = "control-cursor";
-    // The character under a block cursor, painted as its row paints it
-    // (`paintCursorCell`, as the Neovim editor's cursor).
-    const cursorCell = document.createElement("canvas");
-    cursor.append(cursorCell);
+    // The text under a block cursor, in its colours (`cursorInk.ts`, as
+    // the Neovim editor's): the grid's cells painted as their rows paint
+    // them, placed on the text inside the cursor, which cuts them.
+    const ink = document.createElement("div");
+    ink.className = "control-cursor-ink";
+    const inkCanvas = document.createElement("canvas");
+    ink.append(inkCanvas);
+    cursor.append(ink);
+    /** The grid the ink is of, whose scroll it follows (`followInk`). */
+    let inkGrid: number | undefined;
+    /**
+     * The ink on the text while the grid's display is moved from it (copy
+     * mode's or the output's glide, `smoothScroll.ts`): the cursor stays
+     * on its cell, the text and its ink move under it.
+     */
+    const followInk = () => {
+      const off = inkGrid === undefined ? 0 : painter.scrollOffset(inkGrid);
+      const t = off === 0 ? "" : `translateY(${String(-off)}px)`;
+      if (ink.style.transform !== t) ink.style.transform = t;
+    };
     const popupFrame = document.createElement("div");
     popupFrame.className = "control-popup";
     popupFrame.hidden = true;
@@ -887,19 +904,47 @@ export function ControlTerminalSurface({
         cursor.style.top = `${String((pane.y + at.y) * height)}px`;
         cursor.style.width = `${String(width * (wide ? 2 : 1))}px`;
         cursor.style.height = `${String(height)}px`;
+        inkGrid = undefined;
         if (at.shape === 1 && grid !== undefined) {
-          painter.paintCursorCell(
-            cursorCell,
-            view.state,
-            {
-              grid: popup !== undefined ? POPUP_GRID : gridOf(pane.pane),
-              row: at.y,
-              col: at.x,
-            },
-            cursorText,
-            color,
-          );
+          const gridId = popup !== undefined ? POPUP_GRID : gridOf(pane.pane);
+          const origin = { row: pane.y, col: pane.x };
+          const x = (pane.x + at.x) * width;
+          const y = (pane.y + at.y) * height;
+          const w = width * (wide ? 2 : 1);
+          let span = inkSpan([{ x, y, w, h: height }], origin, grid, {
+            width,
+            height,
+          });
+          // The rows its text comes from while the display moves.
+          if (span) {
+            span = {
+              ...span,
+              ...shiftedRows(
+                span.row0,
+                span.row1,
+                painter.scrollOffset(gridId),
+                height,
+                grid.height,
+              ),
+            };
+            painter.paintCursorInk(
+              inkCanvas,
+              view.state,
+              gridId,
+              span,
+              cursorText,
+              color,
+            );
+            const place = inkPlace(span, origin, { x: 0, y: 0 }, cell());
+            inkCanvas.style.left = `${String(place.left)}px`;
+            inkCanvas.style.top = `${String(place.top)}px`;
+            ink.style.left = `${String(-x)}px`;
+            ink.style.top = `${String(-y)}px`;
+            inkGrid = gridId;
+          }
+          inkCanvas.style.display = span ? "" : "none";
         }
+        followInk();
         input.style.left = cursor.style.left;
         input.style.top = cursor.style.top;
       }
@@ -1078,8 +1123,13 @@ export function ControlTerminalSurface({
       requestAnimationFrame(() => {
         scrollTickRequested = false;
         if (disposed || motion !== undefined) return;
-        if (painter.scrollFrame(view.state, shownBoxes, () => undefined))
-          requestScrollTick();
+        const moving = painter.scrollFrame(
+          view.state,
+          shownBoxes,
+          () => undefined,
+        );
+        followInk();
+        if (moving) requestScrollTick();
       });
     };
     const requestTick = () => {
