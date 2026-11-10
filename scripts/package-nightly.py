@@ -28,7 +28,8 @@ about and Node's own resolver finds every dependency in every process.
 
 `out/vt/ghostty-vt.wasm` (libghostty-vt, the control-mode terminal's engine),
 `out/native/` (DevHub's helpers), `out/nvim/` (the Neovim DevHub runs,
-Neovim's own release, fetched by `build:nvim`), `out/bash/` (the bash
+Neovim's own release, fetched by `build:nvim`), `out/nvim-lua/` (DevHub's
+setup Lua as that Neovim's bytecode, `build:nvim-lua`), `out/bash/` (the bash
 Claude Agents run in, `build:bash`) and `out/tmux/` (the tmux DevHub runs,
 `scripts/build_tmux.py`'s, by `build:tmux`) travel inside `out/`.
 
@@ -112,6 +113,7 @@ def check_inputs() -> None:
 		DESKTOP_DIR / "out" / "preload" / "shell.js",
 		DESKTOP_DIR / "out" / "vt" / "ghostty-vt.wasm",
 		DESKTOP_DIR / "out" / "nvim" / "bin" / "nvim",
+		DESKTOP_DIR / "out" / "nvim-lua" / "setup.json",
 		DESKTOP_DIR / "out" / "bash" / "bin" / "bash",
 		DESKTOP_DIR / "out" / "tmux" / "bin" / "tmux",
 		DESKTOP_DIR / "out" / "cli" / "SHA256SUMS",

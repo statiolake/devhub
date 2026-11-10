@@ -205,6 +205,23 @@ as a TUI's Neovim takes its terminal's: a config that names no
 colorscheme (`--clean`) drew its first screen dark and turned light only
 when the theme was told, after it had started.
 
+**The setup goes as bytecode.** It is about 100 KB of Lua, and Neovim
+compiled it at every attach (about 1.5 ms of the setup's 3; more on a busy
+machine). `build:nvim-lua` (`scripts/build-nvim-lua.mjs`, after
+`build:main` and `build:nvim`) has the bundled Neovim compile each chunk
+(`SETUP_CHUNKS`) with its LuaJIT into `out/nvim-lua/setup.json`, by the
+sha256 of its source, debug info kept (an error names `devhub:<chunk>` and
+its line), and the attach sends that bytecode, which `nvim_exec_lua` loads
+as it loads text (`editor/neovimBytecode.ts`). Only a chunk whose source is
+the one compiled, to a Neovim of the version that compiled it, goes as
+bytecode; anything else (vitest, a checkout that did not run the step, a
+source edited since) is the source. The three builds of the pinned Neovim
+(darwin-arm64, linux-x64, linux-arm64) have the same LuaJIT, little-endian
+and GC64, so the Mac's bytecode serves an SSH host's Neovim; should one
+refuse it, the request fails at that chunk, the whole setup is sent again as
+source, and that Neovim version is sent source from then on. Nothing is
+written on Neovim's machine and the person's config does nothing.
+
 **Attaching again** (a reloaded page, a restarted DevHub) needs care: Neovim
 keeps its window grids and assumes a new multigrid UI has them too. So the
 attach is preceded by a moment attached without multigrid (at another size),

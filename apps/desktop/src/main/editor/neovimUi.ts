@@ -26,6 +26,11 @@ import {
 	SESSION_LUA,
 } from "./neovimSession.js";
 import { NeovimRpcError, type NeovimRpc } from "./neovimRpc.js";
+import {
+	SETUP_LUA_CODE,
+	type LuaChunk,
+	type SetupLua,
+} from "./neovimBytecode.js";
 
 /** What the GUI hears from its Neovim (`neovimUiSessions.ts` sends it on). */
 export interface NeovimUiSink {
@@ -1163,6 +1168,37 @@ export interface NeovimUiAttach {
 	readonly version: string;
 }
 
+/**
+ * DevHub's Lua, run in this order at every attach (`SETUP_LUA` with the
+ * channel, the rest with nothing) before the first UI's check. The build
+ * compiles each to bytecode (`neovimBytecode.ts`, `build:nvim-lua`).
+ */
+export const SETUP_CHUNKS: readonly LuaChunk[] = [
+	{ name: "setup", lua: SETUP_LUA },
+	// What a pane's program needs to follow a `:restart`.
+	{ name: "restart", lua: RESTART_STATE_LUA },
+	// DevHub's own windows kept out of a session (`neovimSession.ts`).
+	{ name: "session", lua: SESSION_LUA },
+	// Views (framed or not), inline cards and popups (`gui.view`,
+	// `gui.inline`, `gui.popup`): the same module, grown by its own file.
+	{ name: "layers", lua: LAYERS_LUA },
+	// Where virtual text and folds' text are, for a proportional face.
+	{ name: "decor", lua: DECOR_LUA },
+	// Messages: cmdheight held through the attach, the pager, `q:`.
+	{ name: "messages", lua: MESSAGES_LUA },
+];
+
+/** A call of an `nvim_call_atomic` failed: which one, by its index. */
+class AtomicCallError extends NeovimRpcError {
+	constructor(
+		method: string,
+		detail: unknown,
+		readonly index: number,
+	) {
+		super(method, detail);
+	}
+}
+
 export class NeovimUi {
 	private attached = false;
 	/** Attached a moment only to free stale grids: nothing it says is drawn. */
@@ -1174,6 +1210,8 @@ export class NeovimUi {
 			notify(method: string, params: readonly unknown[]): void;
 		},
 		private readonly clipboard: NeovimClipboard,
+		/** What DevHub's chunks are sent as (`neovimBytecode.ts`). */
+		private readonly setupLua: SetupLua = SETUP_LUA_CODE,
 	) {
 		client.onNotification?.((method, params) => {
 			this.notified(method, params);
@@ -1228,29 +1266,43 @@ export class NeovimUi {
 		// A Neovim's first UI is attached in the same request
 		// (`attachFirst`): the check before it fails for any other, which
 		// ends the request there.
-		const calls: readonly (readonly [string, readonly unknown[]])[] = [
-			["nvim_exec_lua", [SETUP_LUA, [channel]]],
-			// What a pane's program needs to follow a `:restart`.
-			["nvim_exec_lua", [RESTART_STATE_LUA, []]],
-			// DevHub's own windows kept out of a session (`neovimSession.ts`).
-			["nvim_exec_lua", [SESSION_LUA, []]],
-			// Views (framed or not), inline cards and popups (`gui.view`,
-			// `gui.inline`, `gui.popup`): the same module, grown by its own file.
-			["nvim_exec_lua", [LAYERS_LUA, []]],
-			// Where virtual text and folds' text are, for a proportional face.
-			["nvim_exec_lua", [DECOR_LUA, []]],
-			// Messages: cmdheight held through the attach, the pager, `q:`.
-			["nvim_exec_lua", [MESSAGES_LUA, []]],
+		// Each chunk is sent as the bytecode the build compiled it to, where
+		// there is one for this Neovim (`neovimBytecode.ts`): Neovim loads it
+		// without compiling the source again.
+		const setupCalls = (
+			code: (lua: string) => string | Uint8Array,
+		): readonly (readonly [string, readonly unknown[]])[] => [
+			...SETUP_CHUNKS.map(
+				(chunk, index) =>
+					[
+						"nvim_exec_lua",
+						[code(chunk.lua), index === 0 ? [channel] : []],
+					] as const,
+			),
 			["nvim_exec_lua", [FIRST_UI_LUA, []]],
 			...firstAttach(cols, rows, background),
 		];
-		const setup = await this.atomically(calls).catch((error: unknown) => {
+		const notFirst = (error: unknown) => {
 			if (
 				error instanceof NeovimRpcError &&
 				error.message.includes(NOT_FIRST_UI)
 			)
 				return undefined;
 			throw error;
+		};
+		let calls = setupCalls((lua) => this.setupLua.code(lua, version));
+		const setup = await this.atomically(calls).catch((error: unknown) => {
+			// A chunk sent as bytecode failed (a Neovim whose LuaJIT does
+			// not take it): the chunks before it ran, and every chunk is
+			// run again at each attach anyway, so all of them go again as
+			// source, and this Neovim version is sent source from now on.
+			const failed = calls[error instanceof AtomicCallError ? error.index : -1];
+			if (failed?.[1][0] instanceof Uint8Array) {
+				this.setupLua.bytecodeRefused(version);
+				calls = setupCalls((lua) => lua);
+				return this.atomically(calls).catch(notFirst);
+			}
+			return notFirst(error);
 		});
 		// Every call answered: the attach in it happened.
 		if (setup?.length === calls.length) {
@@ -1348,7 +1400,7 @@ export class NeovimUi {
 		const failed = answer?.[1];
 		if (Array.isArray(failed)) {
 			const method = calls[failed[0]]?.[0] ?? "nvim_call_atomic";
-			throw new NeovimRpcError(method, [failed[1], failed[2]]);
+			throw new AtomicCallError(method, [failed[1], failed[2]], failed[0]);
 		}
 		return answer?.[0] ?? [];
 	}
