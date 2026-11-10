@@ -137,11 +137,16 @@ describe("the groups", () => {
       "DiagnosticUnderlineWarn",
       "DiffAdd",
       "@diff.plus",
-      "BlinkCmpLabelMatch",
-      "GitSignsAdd",
+      "PmenuMatch",
     ]) {
       expect(highlights[name], name).toBeDefined();
     }
+    // Neovim's groups only: no plugin's (DevHub knows none).
+    expect(
+      Object.keys(highlights).filter((name) =>
+        /^(Blink|GitSigns|Snacks|Fidget|NvimTree|CmpItem)/u.test(name),
+      ),
+    ).toEqual([]);
     expect(highlights["DiagnosticUnderlineError"]).toMatchObject({
       undercurl: true,
     });

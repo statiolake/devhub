@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { familyOf, iconKinds, kindOf, markPath } from "./kinds";
+import { familyOf, kindOf, markPath } from "./kinds";
 import { themeOf } from "./chrome";
 
 describe("a completion kind", () => {
@@ -22,29 +22,17 @@ describe("a completion kind", () => {
     });
   });
 
-  it("is known by the person's own kind icons, the first kind winning a shared glyph", () => {
-    const icons = iconKinds({
-      Method: "A",
-      Function: "A ",
-      Value: "B",
-      Enum: "B",
-    });
-    expect(icons.get("A")).toBe("Method");
-    expect(icons.get("B")).toBe("Value");
-  });
-
-  it("takes the kind's own colour, not a plugin's one colour for all", () => {
+  it("takes the colour its words wear in the buffer, and nothing of a plugin", () => {
     const theme = themeOf({
       groups: {
-        BlinkCmpKind: { fg: 0x111111 },
         BlinkCmpKindMethod: { fg: 0x111111 },
-        BlinkCmpKindField: { fg: 0x222222 },
+        CmpItemKindField: { fg: 0x222222 },
         "@function.method": { fg: 0x333333 },
       },
       kind_icons: { Method: "\u{f0295}" },
     });
     expect(theme.kinds?.colours.get("Method")).toBe(0x333333);
-    expect(theme.kinds?.colours.get("Field")).toBe(0x222222);
-    expect(theme.kinds?.icons.get("\u{f0295}")).toBe("Method");
+    expect(theme.kinds?.colours.has("Field")).toBe(false);
+    expect(theme.kinds).toEqual({ colours: new Map([["Method", 0x333333]]) });
   });
 });

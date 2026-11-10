@@ -5,15 +5,14 @@
  * letter (`f`, `v`) or a Nerd Font glyph, in whatever colours a GUI picked;
  * here it is a small mark whose shape tells the family — something you
  * call, a value, a slot in a structure, a type, a keyword, a module, a
- * snippet, prose — and whose colour is the person's own group for that
- * kind (`BlinkCmpKind*`, `CmpItemKind*`, else the treesitter group the
- * kind's words have in the buffer). Twenty-five kinds, eight shapes: a
+ * snippet, prose — and whose colour is the one the kind's words wear in
+ * the buffer (the treesitter group, as the person's colorscheme sets it). Twenty-five kinds, eight shapes: a
  * glyph per kind at 10 px is a puzzle; eight shapes are learnt at a glance,
  * as VS Code's and Zed's symbol marks are.
  *
- * Both menus use these: DevHub's own (`ext_popupmenu`, `NeovimApp.tsx`)
- * and a plugin's drawn in a float (blink.cmp), whose kind glyphs are known
- * by the person's own `kind_icons` table (`THEME_LUA`), not guessed.
+ * DevHub's own menu (`ext_popupmenu`, `NeovimApp.tsx`) uses these, the kind
+ * known by its LSP name or Vim's letter (`kindOf`). A menu a plugin draws in
+ * a float is its cells as sent: DevHub knows Neovim, not the plugin.
  */
 
 /** LSP's order (`CompletionItemKind` 1–25): a glyph two kinds share is the first's. */
@@ -115,10 +114,7 @@ export function familyOf(kind: Kind): KindFamily {
   return FAMILY[kind];
 }
 
-/**
- * The treesitter group a kind's words wear in the buffer: its colour when
- * no completion plugin names one (`kindGroups`).
- */
+/** The treesitter group a kind's words wear in the buffer: its colour. */
 const CAPTURE: Record<Kind, string> = {
   Text: "Comment",
   Method: "@function.method",
@@ -147,30 +143,14 @@ const CAPTURE: Record<Kind, string> = {
   Snippet: "Special",
 };
 
-/**
- * The groups a kind's colour is asked by, each with the plugin's generic
- * group it falls back to: the first that gives the kind a colour of its
- * own wins. blink.cmp links every `BlinkCmpKind*` to one `BlinkCmpKind`
- * unless something sets them; one colour for every kind says nothing
- * about the kind, so then the kind's words' own colour in the buffer.
- */
-export function kindGroups(
-  kind: Kind,
-): readonly { readonly name: string; readonly generic?: string }[] {
-  return [
-    { name: `BlinkCmpKind${kind}`, generic: "BlinkCmpKind" },
-    { name: `CmpItemKind${kind}`, generic: "CmpItemKind" },
-    { name: CAPTURE[kind] },
-  ];
+/** The group a kind's colour is asked by (`THEME_LUA`). */
+export function kindGroup(kind: Kind): string {
+  return CAPTURE[kind];
 }
 
-/** Every group `kindGroups` asks, for `THEME_GROUPS`. */
+/** Every group `kindGroup` asks, for `THEME_GROUPS`. */
 export const KIND_GROUPS: readonly string[] = [
-  ...new Set([
-    "BlinkCmpKind",
-    "CmpItemKind",
-    ...KINDS.flatMap((k) => kindGroups(k).map((g) => g.name)),
-  ]),
+  ...new Set(KINDS.map(kindGroup)),
 ];
 
 /**
@@ -244,19 +224,4 @@ export function markPath(
         stroke,
       };
   }
-}
-
-/**
- * The person's kind icons (blink.cmp's `appearance.kind_icons`), glyph to
- * kind: a glyph two kinds share is the one earlier in LSP's order.
- */
-export function iconKinds(icons: Record<string, unknown>): Map<string, Kind> {
-  const out = new Map<string, Kind>();
-  for (const kind of KINDS) {
-    const icon = icons[kind];
-    if (typeof icon !== "string") continue;
-    const glyph = icon.trim();
-    if (glyph !== "" && !out.has(glyph)) out.set(glyph, kind);
-  }
-  return out;
 }

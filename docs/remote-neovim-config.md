@@ -45,7 +45,7 @@ it was built:
 | 1 | **Carry config + plugins, always.** No `carry` level setting. | Every host gets the whole setup. Nothing has to be cloned there, so a host with no route to github.com and no git still starts your editor. |
 | — | **No per-plugin special cases** (correction). DevHub knows lazy.nvim's standard spec, not plugins. | There is no "recipe" table, and no code, doc or message in DevHub names a plugin. A plugin that needs a built artefact on the host gets it from its own `build` step (`build = …` or a `build.lua`), run by lazy.nvim on the host, as lazy would have run it on install. What that step does (download a release, compile) is the plugin's business. When it fails, DevHub shows lazy's own message, naming the plugin. |
 | — | **Nothing is dropped by binary format** (correction). | A plugin that commits a binary for every platform under `bin/<os>-<arch>/` works as it is copied. A binary this Mac built for itself is a dead file on the host, which the plugin's own build replaces there if it has one. |
-| 2 | **Language servers are the host's.** Not carried. | After each sync the host is probed; each enabled LSP config whose command is not there (on `PATH` or in Mason's `bin`) is named in the notice, with whether Mason could reach github.com to install it. |
+| 2 | **Language servers are the host's.** Not carried. | After each sync the host is probed; each enabled LSP config whose command is not executable there (on `PATH` as the carried config leaves it) is named in the notice, with whether the host can reach github.com to download it. |
 | 3 | **`node` is carried** (correction: the design had it off). | Language servers often run on Node, so Mason on a host with network can install the npm-based ones. Node is delivered like `rg` and `fd`. Copilot still needs its own sign-in on the host. |
 | 4 | **A plugin's binaries come from the plugin**: its own build step, or binaries it commits for every platform. | DevHub neither fetches nor cross-builds anything for a plugin. |
 | 5 | **Trimmed**: `tests/` and `test/` at a plugin's top, and `*.map` anywhere. | 16.8 MB sent instead of about 37 MB. None of them is on the runtimepath or read at run time. A `test/` deeper inside a plugin (a Lua module, say) is kept. |
@@ -195,8 +195,8 @@ One host, one sync at a time (`HostCarry`):
    leaves the old manifest, so the next sync sends those units again; a
    half-written unit never sits behind a name that means "done".
 4. **Build**, as above, and **probe**: the carried Neovim, headless, lists
-   each enabled LSP config whose `cmd[1]` is not executable (nor in Mason's
-   `bin`), whether `rg`, `fd`, `git` and `node` are there, and whether
+   each enabled LSP config whose `cmd[1]` is not executable (on `PATH` as
+   the carried config leaves it), whether `rg`, `fd`, `git` and `node` are there, and whether
    github.com answers `curl`.
 5. **Report** (`composeReport`): logged always; raised in DevHub as a notice
    (`neovim_config_incomplete`) when something is missing, a build failed,
@@ -251,8 +251,8 @@ version and kept like tmux.
 
 **No network.** The carry needs none. Plugins, config, and any plugin that
 carries its own binaries work. A plugin whose build step downloads fails
-that step, and the notice names it with lazy's message. Mason cannot
-install servers: the notice says the host has no route to github.com.
+that step, and the notice names it with lazy's message. Language servers
+cannot be downloaded: the notice says the host has no route to github.com.
 `:Lazy update` is refused by the guard.
 
 **Old glibc, or musl.** DevHub's Neovim needs glibc 2.34 and is refused by

@@ -10,7 +10,7 @@
  */
 
 import type { GridBox, NeovimUiState } from "./redraw";
-import { KINDS, KIND_GROUPS, iconKinds, kindGroups, type Kind } from "./kinds";
+import { KINDS, KIND_GROUPS, kindGroup, type Kind } from "./kinds";
 
 /**
  * What the painter knows of the colorscheme beyond the grid's own colours,
@@ -32,8 +32,8 @@ export interface PaintTheme {
   /** The completion menu's colours (`Pmenu*`); absent until asked. */
   readonly menu?: MenuColours;
   /**
-   * Completion kinds (`kinds.ts`): each kind's colour from the person's
-   * groups, and their kind icons (blink.cmp's `kind_icons`) glyph to kind.
+   * Completion kinds (`kinds.ts`): each kind's colour, the colour its
+   * words wear in the buffer.
    */
   readonly kinds?: KindTheme;
   /**
@@ -51,7 +51,6 @@ export interface PaintTheme {
 
 export interface KindTheme {
   readonly colours: ReadonlyMap<Kind, number>;
-  readonly icons: ReadonlyMap<string, Kind>;
 }
 
 /** `Pmenu` and its parts, as the person's colorscheme gives them. */
@@ -99,18 +98,14 @@ export const NO_THEME: PaintTheme = {
 /**
  * Asked with `nvim_exec_lua` (`nvim_get_hl`): each group's colours,
  * links followed; `cmdheight`; the global `fillchars` and each window's
- * of the tab page; blink.cmp's kind icons once blink is loaded (only read:
- * asking would load a lazy plugin).
+ * of the tab page. Nothing of any plugin: DevHub knows Neovim, not what
+ * the person installed in it.
  */
 export const THEME_LUA = `local names = ...
 local out = { groups = {}, wins = {}, cmdheight = vim.o.cmdheight, laststatus = vim.o.laststatus, fillchars = vim.go.fillchars }
 for _, name in ipairs(names) do
   local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
   if ok then out.groups[name] = hl end
-end
-local blink = package.loaded['blink.cmp.config']
-if type(blink) == 'table' and type(blink.appearance) == 'table' and type(blink.appearance.kind_icons) == 'table' then
-  out.kind_icons = blink.appearance.kind_icons
 end
 out.grounds = {}
 local function bg(name)
@@ -196,17 +191,9 @@ export function themeOf(answer: unknown): PaintTheme {
   }).filter(([, v]) => v !== undefined);
   const colours = new Map<Kind, number>();
   for (const kind of KINDS) {
-    const fg = kindGroups(kind)
-      .map(({ name, generic }) => {
-        const own = colour(name, "fg");
-        return generic !== undefined && own === colour(generic, "fg")
-          ? undefined
-          : own;
-      })
-      .find((v) => v !== undefined);
+    const fg = colour(kindGroup(kind), "fg");
     if (fg !== undefined) colours.set(kind, fg);
   }
-  const icons = iconKinds(record(out["kind_icons"]) ?? {});
   const grounds = new Map<number, { normal?: number; nc?: number }>();
   for (const [win, value] of Object.entries(record(out["grounds"]) ?? {})) {
     const id = Number(win);
@@ -233,9 +220,7 @@ export function themeOf(answer: unknown): PaintTheme {
     ...(menuEntries.length > 0
       ? { menu: Object.fromEntries(menuEntries) as MenuColours }
       : {}),
-    ...(colours.size > 0 || icons.size > 0
-      ? { kinds: { colours, icons } }
-      : {}),
+    ...(colours.size > 0 ? { kinds: { colours } } : {}),
   };
 }
 
@@ -264,8 +249,6 @@ export function sameTheme(a: PaintTheme, b: PaintTheme): boolean {
     JSON.stringify(a.menu) === JSON.stringify(b.menu) &&
     JSON.stringify([...(a.kinds?.colours ?? [])]) ===
       JSON.stringify([...(b.kinds?.colours ?? [])]) &&
-    JSON.stringify([...(a.kinds?.icons ?? [])]) ===
-      JSON.stringify([...(b.kinds?.icons ?? [])]) &&
     JSON.stringify([...(a.grounds ?? [])]) ===
       JSON.stringify([...(b.grounds ?? [])]) &&
     a.separator === b.separator &&

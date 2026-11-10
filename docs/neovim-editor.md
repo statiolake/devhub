@@ -1690,14 +1690,12 @@ across DevHub:
   module, `⋯` a snippet (text with gaps), `=` text. Eight are learnt at a
   glance; a glyph per kind at cap height is a puzzle. A mark is a cap
   height square on the baseline, as tall as the capitals beside it, its
-  stroke a tenth of it. Its colour is the person's: `BlinkCmpKind<Kind>`,
-  else `CmpItemKind<Kind>`, else the treesitter group the kind's words
-  wear in the buffer (`@function.method`, `@constant`, …). A plugin group
-  that is only its generic group (blink links every kind to one
-  `BlinkCmpKind`) says nothing about the kind and is passed over. In a
-  plugin's float a kind glyph is known by the person's own table
-  (blink.cmp's `appearance.kind_icons`, read once blink is loaded — never
-  loading it), not guessed from the glyph; other icons stay glyphs.
+  stroke a tenth of it. Its colour is the person's: the treesitter group
+  the kind's words wear in the buffer (`@function.method`, `@constant`,
+  …), as their colorscheme sets it. The kind is known by its LSP
+  `CompletionItemKind` name or Vim's letter, the item's `kind`; DevHub
+  reads no plugin's groups or tables (it knows Neovim, not what the person
+  installed). A plugin's menu drawn in a float keeps its own glyphs.
 - _Labels_ (the kind's name, `PmenuKind`; the item's source, `PmenuExtra`;
   `*Sel` on the selected row) are in the UI face a step under the
   editor's size: words about the word, not code.

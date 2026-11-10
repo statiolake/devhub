@@ -219,6 +219,6 @@ that should not simply be their legacy group (`@variable*`, `@property`,
 `@type.builtin`, `@markup.*`, `@diff.*`, `@tag*`, …), LSP semantic tokens
 where Neovim's default links fall short (`@lsp.type.variable` cleared so
 Tree-sitter's finer captures show, `defaultLibrary` to the built-in captures,
-`unresolvedReference` as an error undercurl), diagnostics, diffs, and
-gitsigns, blink.cmp, snacks, fidget and nvim-tree. The full table is
-`neovimColorscheme()`.
+`unresolvedReference` as an error undercurl), diagnostics and diffs. No
+plugin's groups: DevHub knows Neovim, not the plugins; a plugin's groups link
+to these by its own defaults. The full table is `neovimColorscheme()`.

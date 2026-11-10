@@ -41,7 +41,6 @@ import {
   type GlyphBox,
   type Shape,
 } from "./glyphs";
-import { familyOf, markPath, type KindFamily } from "./kinds";
 import { placeDecor, wordsOf, type Decor } from "./decor";
 import {
   floatClusters,
@@ -3122,14 +3121,6 @@ export class GridPainter {
     // After every background of the row: an icon may reach into the blank
     // cell after it, which a later run would otherwise paint over.
     for (const icon of this.icons) {
-      // A completion kind's glyph (the person's own `kind_icons` say which
-      // kind it is) in a menu: the kind's mark (`kinds.ts`).
-      const kind = box.float ? this.theme.kinds?.icons.get(icon.c) : undefined;
-      if (kind) {
-        const colour = this.theme.kinds?.colours.get(kind) ?? icon.fg;
-        this.paintKind(ctx, familyOf(kind), icon.x, y, colour);
-        continue;
-      }
       ctx.fillStyle = cssColor(icon.fg);
       this.paintIcon(
         ctx,
@@ -3443,37 +3434,6 @@ export class GridPainter {
   fontsLoaded(): void {
     this.inks.clear();
     this.capHeight = 0;
-  }
-
-  /**
-   * A kind's mark on its cell, a cap height square standing on the
-   * baseline: as tall as the capitals of the word beside it, centred on
-   * the cell, in the kind's colour (`kindGroups`, else the cell's).
-   */
-  private paintKind(
-    ctx: CanvasRenderingContext2D,
-    family: KindFamily,
-    x: number,
-    y: number,
-    fg: number,
-  ): void {
-    const { width: cw, baseline } = this.metrics;
-    const size = this.capHeightOf(ctx);
-    const mark = markPath(family, size);
-    ctx.save();
-    ctx.translate(x + (cw - size) / 2, y + baseline - size);
-    const path = new Path2D(mark.d);
-    if (mark.fill) {
-      ctx.fillStyle = cssColor(fg);
-      ctx.fill(path);
-    } else {
-      ctx.strokeStyle = cssColor(fg);
-      ctx.lineWidth = mark.stroke;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.stroke(path);
-    }
-    ctx.restore();
   }
 
   /** A run's background, `winblend` applied. */

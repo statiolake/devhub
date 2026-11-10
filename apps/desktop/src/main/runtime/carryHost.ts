@@ -527,16 +527,14 @@ vim.cmd('qa!')
 
 /**
  * Run by the sync, headless with the carried config: each enabled language
- * server whose command is not there (on the PATH or in Mason's `bin`), each
+ * server whose command is not executable there (the PATH as the carried
+ * config leaves it: a plugin that installs servers puts its own there), each
  * common tool that is missing, and whether github.com answers.
  */
 export const CARRY_PROBE_LUA = `
 local function probe()
   local out = { lsp = {}, tools = {} }
-  local mason = vim.fn.stdpath('data') .. '/mason/bin/'
-  local function there(cmd)
-    return vim.fn.executable(cmd) == 1 or vim.fn.executable(mason .. cmd) == 1
-  end
+  local function there(cmd) return vim.fn.executable(cmd) == 1 end
   local enabled = vim.lsp._enabled_configs or {}
   local names = vim.tbl_keys(enabled)
   table.sort(names)
@@ -1075,10 +1073,10 @@ export function composeReport(facts: {
 			if (servers.length > 0) {
 				sentences.push(
 					facts.probe.github === "unreachable"
-						? `Mason cannot install them: ${facts.machine} has no route to github.com.`
+						? `Nothing can download them there: ${facts.machine} has no route to github.com.`
 						: facts.probe.github === undefined
-							? `Mason cannot install them: ${facts.machine} has no curl.`
-							: "Install them there, with Mason or the host's packages.",
+							? `Nothing can download them there: ${facts.machine} has no curl.`
+							: "Install them on that host.",
 				);
 			}
 		}
