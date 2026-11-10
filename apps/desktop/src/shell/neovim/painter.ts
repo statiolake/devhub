@@ -46,12 +46,13 @@ import {
   floatClusters,
   cutClip,
   frameCuts,
+  hugClip,
+  insideLines,
   scrollbarLine,
   withRightLine,
   framePieces,
   type FloatCorners,
   type FramedMember,
-  type EdgeRoom,
   type FrameShape,
 } from "./floats";
 import {
@@ -89,7 +90,6 @@ import {
   distinctGround,
   frameBands,
   frameGeometry,
-  lineWidth,
   labelBox,
   labelFillsSide,
   labelTab,
@@ -504,7 +504,7 @@ function radii(corners: FloatCorners): string {
  * element per `GridBox.z` (`GridPainter.level`): the windows' at 1, each
  * float zindex's at 100 + zindex, a tmux popup's at its own. Inside it a
  * window's pane (its ground out to the boundaries beside it), the
- * shadow under a panel of floats, then a float's frame (its padding's
+ * shadow under a panel of floats, then a float's frame (its border's
  * ground and its line), then
  * the grids (a canvas, or a window's scroll port), then what rides a grid's
  * text (inline images, cards, line decorations), then what lies over a grid
@@ -1210,8 +1210,9 @@ export class GridPainter {
     const shown = boxes;
     const cuts = frameCuts(boxes);
     const shapes = new Map<number, FrameShape>();
+    const hugs = new Map<number, FrameShape>();
     const scrollbars = floatScrollbars(state, shown);
-    this.placeClusters(state, shown, cuts, shapes, scrollbars);
+    this.placeClusters(state, shown, cuts, shapes, hugs, scrollbars);
     const footers = this.footersOn ? this.layoutFooters(state, shown) : [];
     this.placePanes(state, shown);
     let grid1Painted = false;
@@ -1267,6 +1268,7 @@ export class GridPainter {
       // as an overlay scrollbar.
       const part = scrollbars.get(box.grid);
       const cut = cuts.get(box.grid);
+      const hug = hugs.get(box.grid);
       canvas.style.clipPath =
         part === "thumb"
           ? this.thumbClip()
@@ -1277,7 +1279,12 @@ export class GridPainter {
                   x: (box.col + crop.left) * this.metrics.width,
                   y: (box.row + crop.top) * this.metrics.height,
                 })
-              : "";
+              : hug !== undefined
+                ? hugClip(hug, {
+                    x: (box.col + crop.left) * this.metrics.width,
+                    y: (box.row + crop.top) * this.metrics.height,
+                  })
+                : "";
       // A blank blended float (a picker's or a dialog's backdrop) is one
       // tint over everything: a layer of its colour, no bitmap to paint.
       const backdrop = box.float ? this.backdropOf(state, box) : undefined;
@@ -2082,25 +2089,6 @@ export class GridPainter {
   }
 
   /**
-   * How far past grid 1 a float's frame may be drawn, in cells
-   * (`clearEdges`): the reach, less the frame's line — none at the
-   * editor's own edge, where it is cut.
-   */
-  edgeRoom(): EdgeRoom {
-    const { width: cw, height: ch } = this.metrics;
-    const line = lineWidth(this.dpr);
-    const r = this.reach;
-    const room = (px: number, cell: number) =>
-      cell > 0 ? Math.max(0, px - line) / cell : 0;
-    return {
-      left: room(r.left, cw),
-      right: room(r.right, cw),
-      top: room(r.top, ch),
-      bottom: room(r.bottom, ch),
-    };
-  }
-
-  /**
    * How far each grid laid out by someone else (tmux's panes) reaches past
    * its cells: to the hairline on each side (`Bleed`, sideways only).
    */
@@ -2561,8 +2549,9 @@ export class GridPainter {
    * cluster under its members, holding a ground for each member and seam,
    * whose drop shadow follows their union's outline. Every float is in a
    * frame (`frame.ts`; docs/neovim-editor.md, "Floating surfaces"): one
-   * rounded 1px line half a cell from its text, the ground between them its
-   * border's (or, without a border, its own), the title and footer cells
+   * rounded 1px line through its border's cells, half a cell from its text,
+   * the ground between them its border's (without a border, along its
+   * cells' edge, its text reaching the line, the canvas cut inside it), the title and footer cells
    * on the line — the float is cut at it. Not a picker's box under framed
    * floats (cut by them, `frameCuts`), a float that blends, or a border
    * drawn cell for cell. Kept while the cluster looks the same, so a
@@ -2573,6 +2562,7 @@ export class GridPainter {
     boxes: readonly GridBox[],
     cuts: ReadonlyMap<number, readonly GridBox[]>,
     shapes: Map<number, FrameShape>,
+    hugs: Map<number, FrameShape>,
     scrollbars: ReadonlyMap<number, unknown>,
   ): void {
     const { width: cw, height: ch } = this.metrics;
@@ -2595,8 +2585,8 @@ export class GridPainter {
     const px = (v: number) => `${String(v)}px`;
     const radius = this.floatRadius();
     const look = floatLook(this.theme, state.defaults);
-    // A member's frame: its border's, or the padding round a float without
-    // one; none for a box the frames over it cut, a menu's scrollbar drawn
+    // A member's frame: its border's, or a line on the cells' edge of a
+    // float without one; none for a box the frames over it cut, a menu's scrollbar drawn
     // as floats, or a border drawn cell for cell.
     const marginsOf = (box: GridBox): Margins | undefined => {
       if (box.frame) return box.frame.margins;
@@ -2641,7 +2631,15 @@ export class GridPainter {
         });
       }
       const framedPieces = framePieces(framed, this.dpr);
-      for (const piece of framedPieces) shapes.set(piece.grid, piece);
+      for (const piece of framedPieces) {
+        shapes.set(piece.grid, piece);
+        // A side without a border has its line on the cells' edge: the
+        // canvas is cut inside it, round at the corners.
+        const member = framed.find((f) => f.grid === piece.grid);
+        const m = member?.box.frame?.margins ?? NO_CROP;
+        if (member && Math.min(m.top, m.right, m.bottom, m.left) === 0)
+          hugs.set(piece.grid, insideLines(piece, member.geometry.widths));
+      }
       return { cluster, framed, framedPieces };
     });
     for (const { cluster, framed, framedPieces } of panels) {
@@ -2878,7 +2876,7 @@ export class GridPainter {
 
   /**
    * A float's own ground: the commonest along its edges (a menu's first
-   * row may be its selection), its padding's colour where it has no border.
+   * row may be its selection), its frame's ground where it has no border.
    */
   private floatGround(state: NeovimUiState, box: GridBox): number {
     const grid = state.grids.get(box.grid);

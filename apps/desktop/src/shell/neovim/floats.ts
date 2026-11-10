@@ -215,7 +215,7 @@ export function floatClusters(boxes: readonly GridBox[]): FloatCluster[] {
 
 /**
  * A member of a panel in a frame (`frame.ts`): its border's, or, without a
- * border, the padding DevHub puts round its cells.
+ * border, a line along its cells' edge.
  */
 export interface FramedMember {
   readonly grid: number;
@@ -537,161 +537,83 @@ export function cutClip(
   }
   for (const f of cutters) {
     const s = shapes.get(f.grid);
-    if (!s) continue;
-    const { tl, tr, br, bl } = s.radii;
-    const x = s.x - origin.x;
-    const y = s.y - origin.y;
-    // A corner without a radius is where the line before it ends.
-    const arc = (rad: number, ex: number, ey: number) =>
-      rad > 0 ? `A${n(rad)} ${n(rad)} 0 0 1 ${n(ex)} ${n(ey)}` : "";
-    parts.push(
-      `M${n(x + tl)} ${n(y)}L${n(x + s.w - tr)} ${n(y)}${arc(tr, x + s.w, y + tr)}` +
-        `L${n(x + s.w)} ${n(y + s.h - br)}${arc(br, x + s.w - br, y + s.h)}` +
-        `L${n(x + bl)} ${n(y + s.h)}${arc(bl, x, y + s.h - bl)}` +
-        `L${n(x)} ${n(y + tl)}${arc(tl, x + tl, y)}Z`,
-    );
+    if (s) parts.push(roundedPath(s, origin));
   }
   return `path("${parts.join("")}")`;
 }
 
-/**
- * Whether a float is padded by DevHub (`frameGeometry`): no border of its
- * own, so its frame's line is half a cell outside its cells. Not a box the
- * frames over it cut, a float drawn bare, or a one-column float (a menu's
- * scrollbar: `fuseScrollbar` puts it in its menu's frame).
- */
-function paddedFloats(boxes: readonly GridBox[]): (b: GridBox) => boolean {
-  const cuts = frameCuts(boxes);
-  return (b) =>
-    b.float &&
-    b.frame === undefined &&
-    b.lined !== true &&
-    b.bare !== true &&
-    b.width > 1 &&
-    !cuts.has(b.grid);
+/** `s` as one closed SVG path, in the coordinates of an element at `origin`. */
+function roundedPath(
+  s: FrameShape,
+  origin: { readonly x: number; readonly y: number },
+): string {
+  const n = (v: number) => String(Math.round(v * 1000) / 1000);
+  const { tl, tr, br, bl } = s.radii;
+  const x = s.x - origin.x;
+  const y = s.y - origin.y;
+  // A corner without a radius is where the line before it ends.
+  const arc = (rad: number, ex: number, ey: number) =>
+    rad > 0 ? `A${n(rad)} ${n(rad)} 0 0 1 ${n(ex)} ${n(ey)}` : "";
+  return (
+    `M${n(x + tl)} ${n(y)}L${n(x + s.w - tr)} ${n(y)}${arc(tr, x + s.w, y + tr)}` +
+    `L${n(x + s.w)} ${n(y + s.h - br)}${arc(br, x + s.w - br, y + s.h)}` +
+    `L${n(x + bl)} ${n(y + s.h)}${arc(bl, x, y + s.h - bl)}` +
+    `L${n(x)} ${n(y + tl)}${arc(tl, x + tl, y)}Z`
+  );
 }
 
 /**
- * The boxes with a panel moved half a row off the cursor's row, where a
- * float without a border in it is next to that row (a completion menu
- * under the line being typed, a signature above it): such a float's
- * padding is half a cell outside its cells (`frameGeometry`), and on the
- * cursor's row it would cover the text being typed. The whole panel moves
- * (a menu's scrollbar floats with it); Neovim's cells do not, and a click
- * is read back by the pixel (`mouse.ts`). `cursorRow` is in grid 1's rows.
+ * Inside a framed piece's lines: the piece less the lines it draws, its
+ * corners round by what is left of their radius inside the line.
  */
-export function clearCursorRow(
-  boxes: readonly GridBox[],
-  cursorRow: number | undefined,
-): GridBox[] {
-  if (cursorRow === undefined) return [...boxes];
-  const padded = paddedFloats(boxes);
-  const byGrid = new Map(boxes.map((b) => [b.grid, b]));
-  const shift = new Map<number, number>();
-  for (const cluster of floatClusters(boxes.filter((b) => b.bare !== true))) {
-    const members = cluster.members.flatMap((m) => byGrid.get(m.grid) ?? []);
-    const pads = members.filter(padded);
-    if (pads.length === 0) continue;
-    const top = Math.min(...members.map((b) => b.row));
-    const bottom = Math.max(...members.map((b) => b.row + b.height));
-    const by =
-      top > cursorRow && pads.some((b) => b.row === cursorRow + 1)
-        ? 0.5
-        : bottom <= cursorRow &&
-            pads.some((b) => b.row + b.height === cursorRow)
-          ? -0.5
-          : 0;
-    if (by !== 0) for (const b of members) shift.set(b.grid, by);
-  }
-  return boxes.map((b) => {
-    const by = shift.get(b.grid);
-    return by === undefined ? b : { ...b, row: b.row + by };
-  });
-}
-
-/**
- * How far past grid 1 DevHub may draw on each side, in cells: the editor's
- * reach (a tmux pane's half border cell, `GridPainter.setReach`) less the
- * frame's line — 0 at a window's edge, where the editor is cut.
- */
-export interface EdgeRoom {
-  readonly left: number;
-  readonly right: number;
-  readonly top: number;
-  readonly bottom: number;
-}
-
-/**
- * The boxes with a panel moved in from the editor's edge, a whole cell,
- * where a float without a border in it is at that edge (a cmdline menu at
- * column 0, a hover on the last column): its padding and line are half a
- * cell outside its cells (`frameGeometry`), and past grid 1 they would be
- * cut by the editor's clip (or, at a tmux pane's border, drawn over the
- * hairline). Moved a cell, its line runs through the middle of the edge
- * cell, as a bordered float's does, its text still on whole cells. Floats are over the windows and never cut by a window's
- * boundary inside the editor; only the editor's own edge cuts, so only
- * there is the panel moved — whole, with its scrollbar, as
- * `clearCursorRow` moves it; Neovim's cells do not move, and a click is
- * read back by the pixel (`mouse.ts`). A panel too wide or tall to clear
- * both edges stays where it is on that axis, and one already moved off
- * the cursor's row keeps its rows: what is typed comes first.
- * `size` is grid 1's, in cells.
- */
-export function clearEdges(
-  boxes: readonly GridBox[],
-  size: { readonly width: number; readonly height: number },
-  room: EdgeRoom,
-): GridBox[] {
-  const padded = paddedFloats(boxes);
-  const byGrid = new Map(boxes.map((b) => [b.grid, b]));
-  const shift = new Map<number, { dx: number; dy: number }>();
-  // In whole cells, so the text stays on the cells' pixels; a line on
-  // the edge itself is half cut, so in too.
-  const nudge = (lo: number, hi: number, min: number, max: number) => {
-    const inward = lo <= min ? Math.max(1, Math.ceil(min - lo)) : 0;
-    const outward = hi >= max ? Math.max(1, Math.ceil(hi - max)) : 0;
-    if (inward > 0 && hi + inward <= max) return inward;
-    if (outward > 0 && lo - outward >= min) return -outward;
-    return 0;
+export function insideLines(
+  piece: FramePiece,
+  widths: Readonly<Record<Side, number>>,
+): FrameShape {
+  const w = (side: Side) => (piece.draw[side] ? widths[side] : 0);
+  const left = w("left");
+  const top = w("top");
+  const right = w("right");
+  const bottom = w("bottom");
+  const inner = (r: number, a: number, b: number) =>
+    r > 0 ? Math.max(0, r - Math.max(a, b)) : 0;
+  return {
+    x: piece.x + left,
+    y: piece.y + top,
+    w: Math.max(0, piece.w - left - right),
+    h: Math.max(0, piece.h - top - bottom),
+    radii: {
+      tl: inner(piece.radii.tl, top, left),
+      tr: inner(piece.radii.tr, top, right),
+      br: inner(piece.radii.br, bottom, right),
+      bl: inner(piece.radii.bl, bottom, left),
+    },
   };
-  for (const cluster of floatClusters(boxes.filter((b) => b.bare !== true))) {
-    const members = cluster.members.flatMap((m) => byGrid.get(m.grid) ?? []);
-    const pads = members.filter(padded);
-    if (pads.length === 0) continue;
-    // The frame's outer edges: half a cell outside the padded members.
-    const left = Math.min(...pads.map((b) => b.col)) - 0.5;
-    const thin = members.filter((b) => b.width === 1);
-    const right = Math.max(
-      ...pads.map((b) => b.col + b.width + 0.5),
-      ...pads.map((b) => scrollbarLine(b, thin) ?? 0),
-    );
-    const top = Math.min(...pads.map((b) => b.row)) - 0.5;
-    const bottom = Math.max(...pads.map((b) => b.row + b.height)) + 0.5;
-    const dx = nudge(left, right, -room.left, size.width + room.right);
-    const moved = members.some((b) => !Number.isInteger(b.row));
-    const dy = moved
-      ? 0
-      : nudge(top, bottom, -room.top, size.height + room.bottom);
-    if (dx !== 0 || dy !== 0)
-      for (const b of members) shift.set(b.grid, { dx, dy });
-  }
-  return boxes.map((b) => {
-    const by = shift.get(b.grid);
-    return by === undefined
-      ? b
-      : { ...b, col: b.col + by.dx, row: b.row + by.dy };
-  });
 }
 
 /**
- * Where the right line of a framed menu with a scrollbar beside it runs,
- * in cells of grid 1 (the cell edge it is centred on), or `undefined` when
- * it has none. blink.cmp and nvim-cmp draw a menu's scrollbar as one-column
- * floats on the menu's last column (its border) or the one after
- * (`floatScrollbars`); DevHub's frame would put its line through the
- * middle of that column, the thumb straddling it and the gutter half
- * outside the menu. The scrollbar's column is the frame's right padding
- * instead: the line along its outer edge, the thumb inside the frame.
+ * The clip of a float whose frame hugs its cells (no border on a side,
+ * `frameGeometry`): its text, a selection's band, cut at the inside of
+ * its line, the corners round — as a CSS `clip-path` in the coordinates of
+ * its canvas at `origin`.
+ */
+export function hugClip(
+  inside: FrameShape,
+  origin: { readonly x: number; readonly y: number },
+): string {
+  return `path("${roundedPath(inside, origin)}")`;
+}
+
+/**
+ * Where the right edge of a framed menu with a scrollbar beside it is, in
+ * cells of grid 1, or `undefined` when it has none. blink.cmp and nvim-cmp
+ * draw a menu's scrollbar as one-column floats on the menu's last column
+ * (its border) or the one after (`floatScrollbars`); DevHub's frame would
+ * put its line through the middle of that column (a border) or on the
+ * menu's text (none), the thumb straddling it and the gutter outside the
+ * menu. The scrollbar's column is folded into the frame's right side
+ * instead: the line along its outer edge, inside it, the thumb inside the
+ * frame.
  */
 export function scrollbarLine(
   menu: CellRect,
@@ -710,12 +632,16 @@ export function scrollbarLine(
   return edge;
 }
 
-/** `geometry` with its right line centred on `middle` (CSS pixels), if further out. */
+/**
+ * `geometry` with its right line along `edge` (CSS pixels), inside it, if
+ * further out than its own: nothing of the frame past the scrollbar's cells.
+ */
 export function withRightLine(
   geometry: FrameGeometry,
-  middle: number,
+  edge: number,
   dpr: number,
 ): FrameGeometry {
+  const middle = edge - geometry.widths.right / 2;
   if (middle <= geometry.middles.right) return geometry;
   const [, x1] = lineSpan(middle, geometry.widths.right, dpr);
   return {

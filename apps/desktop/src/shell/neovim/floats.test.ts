@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  clearCursorRow,
-  clearEdges,
   floatClusters,
+  framePieces,
+  hugClip,
+  insideLines,
   scrollbarLine,
   touching,
   withRightLine,
@@ -92,82 +93,6 @@ describe("floats that make one panel", () => {
   });
 });
 
-describe("a panel next to the cursor's row", () => {
-  it("moves half a row off it when a float without a border touches it", () => {
-    // blink's menu under the line being typed, its scrollbar beside it.
-    const menu = float(4, 6, 10, 20, 5);
-    const bar = float(5, 6, 30, 1, 5);
-    const boxes = clearCursorRow([menu, bar], 5);
-    expect(boxes.map((b) => b.row)).toEqual([6.5, 6.5]);
-    // Above the cursor: up.
-    expect(clearCursorRow([float(4, 1, 10, 20, 4)], 5)[0]?.row).toBe(0.5);
-  });
-
-  it("stays where Neovim put it otherwise", () => {
-    expect(clearCursorRow([float(4, 8, 10, 20, 5)], 5)[0]?.row).toBe(8);
-    const margins = { top: 1, right: 1, bottom: 1, left: 1 };
-    const framed = float(4, 6, 10, 20, 5, {
-      lined: true,
-      frame: { margins, sides: {}, corners: {}, labels: [] },
-    });
-    // A border's line is in its cells: nothing to clear.
-    expect(clearCursorRow([framed], 5)[0]?.row).toBe(6);
-    expect(clearCursorRow([float(4, 6, 10, 20, 5)], undefined)[0]?.row).toBe(6);
-  });
-});
-
-describe("a panel at the editor's edge", () => {
-  const size = { width: 80, height: 24 };
-  const none = { left: 0, right: 0, top: 0, bottom: 0 };
-
-  it("moves a cell in, so its padding and line are not cut", () => {
-    // Left (a cmdline menu at column 0) and right.
-    expect(clearEdges([float(4, 5, 0, 20, 4)], size, none)[0]?.col).toBe(1);
-    expect(clearEdges([float(4, 5, 60, 20, 4)], size, none)[0]?.col).toBe(59);
-    // Top and bottom.
-    expect(clearEdges([float(4, 0, 10, 20, 4)], size, none)[0]?.row).toBe(1);
-    expect(clearEdges([float(4, 20, 10, 20, 4)], size, none)[0]?.row).toBe(19);
-    // A corner: both ways.
-    const corner = clearEdges([float(4, 0, 0, 20, 4)], size, none)[0];
-    expect([corner?.row, corner?.col]).toEqual([1, 1]);
-  });
-
-  it("moves with its scrollbar, which its frame takes in", () => {
-    // blink.cmp's menu at the right edge, its scrollbar in the last column.
-    const menu = float(4, 5, 59, 20, 4, { z: 150 });
-    const gutter = float(5, 5, 79, 1, 4, { z: 151 });
-    const thumb = float(6, 5, 79, 1, 1, { z: 152 });
-    const out = clearEdges([menu, gutter, thumb], size, none);
-    expect(out.map((b) => b.col)).toEqual([58, 78, 78]);
-  });
-
-  it("stays where Neovim put it inside the editor, or where there is room", () => {
-    expect(clearEdges([float(4, 5, 1, 20, 4)], size, none)[0]?.col).toBe(1);
-    // A tmux pane's border beside it, more than the padding's half cell.
-    const room = { left: 0.6, right: 0, top: 0, bottom: 0 };
-    expect(clearEdges([float(4, 5, 0, 20, 4)], size, room)[0]?.col).toBe(0);
-    // A float with a border of its own: its line is inside its cells.
-    const margins = { top: 1, right: 1, bottom: 1, left: 1 };
-    const framed = float(4, 0, 0, 20, 4, {
-      lined: true,
-      frame: { margins, sides: {}, corners: {}, labels: [] },
-    });
-    expect(clearEdges([framed], size, none)[0]).toBe(framed);
-  });
-
-  it("stays on an axis it cannot clear both edges of", () => {
-    const wide = clearEdges([float(4, 5, 0, 80, 4)], size, none)[0];
-    expect(wide?.col).toBe(0);
-  });
-
-  it("keeps the rows it was moved to off the cursor's row", () => {
-    // A menu above the cursor at the top: off the cursor's row first.
-    const off = clearCursorRow([float(4, 0, 10, 20, 4)], 4);
-    expect(off[0]?.row).toBe(-0.5);
-    expect(clearEdges(off, size, none)[0]?.row).toBe(-0.5);
-  });
-});
-
 describe("a menu's scrollbar in its frame", () => {
   const cell = { width: 8, height: 16 };
 
@@ -189,17 +114,87 @@ describe("a menu's scrollbar in its frame", () => {
     ).toBeUndefined();
   });
 
-  it("widens the frame to it, the thumb inside the right padding", () => {
+  it("widens the frame to it, the line inside its outer edge", () => {
     const none = { top: 0, right: 0, bottom: 0, left: 0 };
     const place = { row: 5, col: 10, width: 20, height: 8 };
     const g = frameGeometry(none, place, cell, 2, 4);
-    // Half a cell outside the text: through the scrollbar's column.
-    expect(g.middles.right).toBe(30 * 8 + 4);
+    // No border: the line along the menu's own edge, inside it.
+    expect(g.x + g.w).toBe(30 * 8);
     const wide = withRightLine(g, 31 * 8, 2);
-    expect(wide.middles.right).toBe(31 * 8);
+    expect(wide.middles.right).toBe(31 * 8 - wide.widths.right / 2);
     expect(wide.x).toBe(g.x);
-    expect(wide.x + wide.w).toBe(31 * 8 + 0.5);
+    // Nothing past the scrollbar's cells.
+    expect(wide.x + wide.w).toBe(31 * 8);
     // Never pulled in.
     expect(withRightLine(g, 29 * 8, 2)).toBe(g);
+  });
+});
+
+describe("a float without a border, its frame on its cells", () => {
+  const cell = { width: 8, height: 16 };
+  const none = { top: 0, right: 0, bottom: 0, left: 0 };
+
+  for (const dpr of [1, 1.5, 2, 3]) {
+    it(`cuts its canvas inside the line, the corners round, at DPR ${String(dpr)}`, () => {
+      const place = { row: 2, col: 0, width: 20, height: 6 };
+      const g = frameGeometry(none, place, cell, dpr, 4);
+      const [piece] = framePieces(
+        [{ grid: 4, rect: place, geometry: g, ruled: false }],
+        dpr,
+      );
+      if (!piece) throw new Error("no piece");
+      // The piece is the cells, at the editor's left edge too: nothing to
+      // clear there.
+      expect([piece.x, piece.y, piece.x + piece.w, piece.y + piece.h]).toEqual([
+        0, 32, 160, 128,
+      ]);
+      const line = g.widths.left;
+      const inside = insideLines(piece, g.widths);
+      const want = {
+        x: line,
+        y: 32 + line,
+        w: 160 - 2 * line,
+        h: 96 - 2 * line,
+        r: 4 - line,
+      };
+      expect(inside.x).toBeCloseTo(want.x, 9);
+      expect(inside.y).toBeCloseTo(want.y, 9);
+      expect(inside.w).toBeCloseTo(want.w, 9);
+      expect(inside.h).toBeCloseTo(want.h, 9);
+      for (const r of Object.values(inside.radii))
+        expect(r).toBeCloseTo(want.r, 9);
+      // In the canvas's own coordinates.
+      expect(hugClip(inside, { x: 0, y: 32 })).toMatch(
+        /^path\("M[\d.]+ [\d.]+L.*A.*Z"\)$/,
+      );
+    });
+  }
+
+  it("leaves no line, and no inset, where it meets another without one", () => {
+    // blink's menu and its documentation under it, both borderless.
+    const menu = { row: 5, col: 10, width: 20, height: 6 };
+    const doc = { row: 11, col: 10, width: 20, height: 4 };
+    const geo = (r: typeof menu) => frameGeometry(none, r, cell, 2, 4);
+    const pieces = framePieces(
+      [
+        { grid: 4, rect: menu, geometry: geo(menu), ruled: false },
+        { grid: 5, rect: doc, geometry: geo(doc), ruled: false },
+      ],
+      2,
+    );
+    const [m, d] = pieces;
+    if (!m || !d) throw new Error("no pieces");
+    // They meet on the cells' shared edge, square there, no line.
+    expect(m.y + m.h).toBe(11 * 16);
+    expect(d.y).toBe(11 * 16);
+    expect(m.draw.bottom).toBe(false);
+    expect(d.draw.top).toBe(false);
+    expect([m.radii.bl, m.radii.br, d.radii.tl, d.radii.tr]).toEqual([
+      0, 0, 0, 0,
+    ]);
+    // The menu's selection band reaches the doc: no inset at the bottom.
+    const inside = insideLines(m, geo(menu).widths);
+    expect(inside.y + inside.h).toBe(11 * 16);
+    expect(inside.x).toBe(m.x + geo(menu).widths.left);
   });
 });

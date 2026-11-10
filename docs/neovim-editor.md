@@ -289,25 +289,21 @@ one layer model and pane motion.
   its content is its cells, monospace and plain, where Neovim put them,
   and whatever its border (`'none'`, `'solid'`, `'single'`, `'rounded'`,
   `'double'`, a table of characters) the frame is one 1px rounded line
-  half a cell from its text, the ground between them the border's own
-  (`frame.ts`, `GridBox.frame`). Neovim says where a border is with
-  `win_viewport_margins`; its line is centred on the middle of the border's
-  cells, across and down, on whole device pixels rounded to the nearest
-  (`lineSpan`: no floor or ceil, so no ratio or row height moves it one
-  way); nothing of the cells outside it drawn — the windows behind show there,
-  and a click there goes to them. A float without a border is padded as
-  much outside its cells; a panel where such a float is next to the
-  cursor's row (a completion menu under the line being typed) is drawn
-  half a row off it, so the padding never covers what is typed
-  (`clearCursorRow`; a click is read back by the pixel). Floats are over
-  the windows: a window's boundary inside the editor never cuts a frame.
-  The editor's own edge does (its clip, or a tmux pane's border past its
-  half cell), so a panel whose frame would go past it — a cmdline menu at
-  column 0, a float on the first or last row or column — is drawn a whole
-  cell in from that edge, its line through the middle of the edge cell as
-  a bordered float's is, its text still on whole cells (`clearEdges`; a
-  panel that cannot clear both edges of an axis, or was moved off the
-  cursor's row, stays on that axis). The `title` and
+  through the middle of its border's cells, half a cell from its text, the
+  ground between them the border's own (`frame.ts`, `GridBox.frame`).
+  Neovim says where a border is with `win_viewport_margins`; its line is
+  centred on the middle of the border's cells, across and down, on whole
+  device pixels rounded to the nearest (`lineSpan`: no floor or ceil, so no
+  ratio or row height moves it one way); nothing of the cells outside it
+  drawn — the windows behind show there, and a click there goes to them.
+  DevHub adds no padding of its own: a float without a border (or a side
+  without one) has its line along its cells' outer edge, inside them, its
+  text and a full-width selection band reaching the line, its canvas cut
+  inside the line so the corners are round (`hugClip`). Nothing of a frame
+  is outside its float's cells, so a float is never moved off where Neovim
+  put it: not off the cursor's row, not in from the editor's edge (a
+  cmdline menu at column 0 has its line on the column's first pixels).
+  The `title` and
   `footer` are the cells Neovim put in the border, its blanks too, in the
   columns Neovim put them (`title_pos`/`footer_pos`), inside the frame:
   a side with one is a band (`frameBands`), its line moved to the outer
@@ -325,8 +321,8 @@ one layer model and pane motion.
   faint tint, the same in light and dark, even when `FloatTitle`'s ground
   is the float's (DevHub's scheme's). A label across its whole side (the
   `:messages` pager's header and footer) is a band with no tab, its cells
-  drawn in their grounds. The other sides' lines stay half a cell out,
-  so a titled side has a row more inside the line. The page asks
+  drawn in their grounds. The other bordered sides' lines stay half a
+  cell out, so a titled side has a row more inside the line. The page asks
   `nvim_win_get_config` when a border holds
   text, and when the config does not explain that text the float is
   drawn cell for cell, as Neovim drew it. A float that opens with text in
@@ -456,10 +452,10 @@ one layer model and pane motion.
     How a changed line and its changed text look is the colorscheme's.
   - A menu's scrollbar made of one-column floats (blink.cmp, nvim-cmp) on
     a menu's right edge is an overlay scrollbar inside the menu's frame:
-    its column is the frame's right padding, the line along its outer edge
-    (`scrollbarLine`), the gutter not drawn, the thumb a thin bar in the
-    padding — not a strip half outside the frame with the line through
-    the thumb.
+    its column is folded into the frame's right side, the line along its
+    outer edge, inside it (`scrollbarLine`), the gutter not drawn, the
+    thumb a thin bar in that column — not a strip half outside the frame
+    with the line through the thumb.
   - Status lines are drawn by DevHub in the rows Neovim keeps for them
     (below, "Status lines"). Winbars, folds (a closed fold's `foldtext` and its
     `fold:` fill, the fold column's marks), indent guides and
@@ -749,8 +745,15 @@ A Neovim float:
 
 - one rounded border whatever its border type: a 1px line, the floats'
   corner (`--float-radius`, 4px) and shadow (`--float-shadow-filter`);
-- half a cell of padding between the line and the text, in the border's
-  ground (without a border, the float's own, outside its cells);
+- no padding of DevHub's own: the padding is what the float's border says,
+  exactly as in the TUI. With a border (any characters, `'solid'` and a
+  blank `padded` table included) the line runs through the middle of the
+  border's cells, so half of each is the padding, in the border's ground;
+  with `border = 'none'` the line hugs the cells, on their outer edge,
+  the text and a selected row's band reaching it and the corners clipped
+  round. A plugin that wants space asks for it with its border spec
+  (CUI-faithful: a borderless Atom-style completion list fills its frame
+  edge to edge, its selection band touching the line);
 - its content as-is: monospace cells, a title or footer the cells Neovim
   put in the border, inside the line on a faint tab; no header band, no UI-font title, no
   rounded selection band, nothing grown into a blank border;
@@ -758,7 +761,10 @@ A Neovim float:
   else the float's ground 18 % toward its ink (a config that links
   `FloatBorder` to `NormalFloat`, so `'solid'` draws nothing, names none);
 - floats edge to edge are one panel ("The page", above): one shadow, the
-  outer corners rounded, one line where two members with borders meet.
+  outer corners rounded, one line where two members with borders meet,
+  none where two without meet (a borderless menu and its documentation
+  under it are one surface), a bordered member's rule kept beside a
+  borderless one.
 
 DevHub's own floating surfaces — `gui.popup`, the completion menu, the
 command line's box and its window, the messages pager, the quick pick, and

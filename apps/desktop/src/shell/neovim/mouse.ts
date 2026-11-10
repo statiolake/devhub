@@ -52,9 +52,7 @@ export function hitTest(
     // inside their lines, where they take the click themselves.
     const cut = cuts.get(box.grid);
     if (cut !== undefined && inFrameCells(cut, row, col)) continue;
-    // Rows and columns by the pointer's place, not its screen cell: a
-    // panel may be drawn half a cell off Neovim's (`clearCursorRow`,
-    // `clearEdges`).
+    // Rows and columns by the pointer's place in the box.
     const at = Math.floor(y / cell.height - box.row);
     const across = Math.floor(x / cell.width - box.col);
     if (box.frame) {

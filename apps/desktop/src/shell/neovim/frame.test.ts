@@ -204,21 +204,30 @@ describe("where a frame's line is", () => {
       expect((v * 2) % 1).toBe(0);
   });
 
-  it("pads a float without a border as much, the line half a cell outside its cells", () => {
+  it("adds no padding to a float without a border: the line along its cells' edge, inside", () => {
     const none = { top: 0, right: 0, bottom: 0, left: 0 };
+    for (const dpr of [1, 1.5, 2, 3]) {
+      const at = { row: 1, col: 2, width: 10, height: 3 };
+      const g = frameGeometry(none, at, cell, dpr, 4);
+      // The frame is the cells, nothing outside them.
+      expect(g.x).toBeCloseTo(2 * 8, 9);
+      expect(g.y).toBeCloseTo(20, 9);
+      expect(g.x + g.w).toBeCloseTo(12 * 8, 9);
+      expect(g.y + g.h).toBeCloseTo(4 * 20, 9);
+      expect(g.widths.left).toBe(lineWidth(dpr));
+    }
+    // A border on some sides only: those through their cells, the others
+    // along the cells' edge.
     const g = frameGeometry(
-      none,
-      { row: 1, col: 2, width: 10, height: 3 },
+      { top: 1, right: 0, bottom: 1, left: 0 },
+      { row: 1, col: 2, width: 10, height: 5 },
       cell,
       2,
       4,
     );
-    expect([g.x + 0.5, g.y + 0.5, g.x + g.w - 0.5, g.y + g.h - 0.5]).toEqual([
-      2 * 8 - 4,
-      20 - 10,
-      12 * 8 + 4,
-      4 * 20 + 10,
-    ]);
+    expect(g.y + g.widths.top / 2).toBe(2 * 20 - 10);
+    expect(g.x).toBe(2 * 8);
+    expect(g.x + g.w).toBe(12 * 8);
   });
 
   it("keeps the line on the cells' middle at fractional ratios and row heights", () => {

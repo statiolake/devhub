@@ -7,7 +7,8 @@
  * "Floating surfaces"): a 1px rounded line through the middle of the
  * border's cells, half a cell from the text — the float's edge, nothing of
  * the cells outside it drawn, the windows behind showing there — with the
- * border's own ground inside it. A title and footer are the cells Neovim
+ * border's own ground inside it; without a border, along the cells' own
+ * edge, the text reaching it. A title and footer are the cells Neovim
  * put in the border, in the columns Neovim put them, inside the frame on a
  * small tab.
  *
@@ -18,8 +19,10 @@
  *   frame, and the float is drawn cell for cell, as Neovim drew it.
  * - `frameGeometry` is where the line is, in CSS pixels on whole device
  *   pixels: centred on the middle of the border's cells, half a cell
- *   outside the text area on every side, a border or not (a float without
- *   one is padded as much, outside its cells).
+ *   outside the text area; on a side without a border, along the cells'
+ *   outer edge, inside them. DevHub adds no padding of its own: what space
+ *   there is round the text is what the float's border asks for, as in the
+ *   TUI.
  * - A side with a title or footer is a band (`frameBands`): its line goes
  *   along the outer edge of the label's row, not through its middle, and
  *   the label sits inside the frame, centred on its row, the line unbroken
@@ -337,9 +340,12 @@ export function lineSpan(
  * Where a float's line is: through the middle of its border's cells — the
  * top and bottom rows, the left and right columns — where Neovim draws its
  * line (`margins`, the border's cells), so the text is half a cell inside
- * it; a float without a border is padded as much, the line half a cell
- * outside its cells. The line is centred on that middle, on whole device
- * pixels (`lineSpan`), `radius` round at every corner.
+ * it. DevHub adds no padding of its own: a side without a border has its
+ * line along the cells' outer edge, inside them, the text and a row's
+ * ground reaching it (the corners cut by `radius`), as a band's side does
+ * (`frameBands`). The line is centred on that middle, on whole device
+ * pixels (`lineSpan`), `radius` round at every corner. Nothing of the frame
+ * is outside the float's cells.
  */
 export function frameGeometry(
   margins: Margins,
@@ -352,18 +358,24 @@ export function frameGeometry(
   const { width: cw, height: ch } = cell;
   const m = margins;
   const line = lineWidth(dpr);
-  // A labelled side: the line inside the row's outer edge, round the label.
+  // A side with a border: through the middle of its cells. A labelled one
+  // (a band) and one without a border: along the cells' outer edge, inside
+  // it — the label, or the float's own text, reaching the line.
+  const left = (place.col + m.left) * cw;
+  const right = (place.col + place.width - m.right) * cw;
+  const top = (place.row + m.top) * ch;
+  const bottom = (place.row + place.height - m.bottom) * ch;
   const middles = {
-    left: (place.col + m.left) * cw - cw / 2,
-    right: (place.col + place.width - m.right) * cw + cw / 2,
+    left: m.left > 0 ? left - cw / 2 : left + line / 2,
+    right: m.right > 0 ? right + cw / 2 : right - line / 2,
     top:
-      bands.top === true && m.top > 0
+      m.top === 0 || bands.top === true
         ? place.row * ch + line / 2
-        : (place.row + m.top) * ch - ch / 2,
+        : top - ch / 2,
     bottom:
-      bands.bottom === true && m.bottom > 0
+      m.bottom === 0 || bands.bottom === true
         ? (place.row + place.height) * ch - line / 2
-        : (place.row + place.height - m.bottom) * ch + ch / 2,
+        : bottom + ch / 2,
   };
   const [x0] = lineSpan(middles.left, line, dpr);
   const [, x1] = lineSpan(middles.right, line, dpr);
