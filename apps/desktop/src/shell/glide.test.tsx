@@ -9,11 +9,15 @@
 import { cleanup, render } from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useGlide } from "./glide";
+import { GLIDE_MS, useGlide } from "./glide";
 
 /** Where each item is laid out, by its key: what the test says the layout is. */
 const layout = new Map<string, number>();
-const animations: { key: string; frames: Keyframe[] }[] = [];
+const animations: {
+  key: string;
+  frames: Keyframe[];
+  options?: KeyframeAnimationOptions;
+}[] = [];
 
 beforeEach(() => {
   layout.clear();
@@ -27,9 +31,15 @@ beforeEach(() => {
   HTMLElement.prototype.animate = function (
     this: HTMLElement,
     frames: Keyframe[],
+    options?: KeyframeAnimationOptions,
   ) {
-    animations.push({ key: this.dataset["key"] ?? "", frames });
-    return { cancel() {}, onfinish: null } as unknown as Animation;
+    animations.push({ key: this.dataset["key"] ?? "", frames, options });
+    return {
+      cancel() {},
+      onfinish: null,
+      currentTime: 0,
+      addEventListener() {},
+    } as unknown as Animation;
   } as HTMLElement["animate"];
   window.matchMedia = ((query: string) => ({
     matches: false,
@@ -112,6 +122,24 @@ describe("useGlide", () => {
       opacity: 1,
       transform: "none",
     });
+  });
+
+  it("lets what arrives in only once the rows making room for it have moved", () => {
+    place(["a", "b"]);
+    const view = render(<Board items={["a", "b"]} />);
+    // c arrives above b, which glides down out of its slot: c is not drawn
+    // (opacity 0, held through the delay) until b has gone.
+    place(["a", "c", "b"]);
+    view.rerender(<Board items={["a", "c", "b"]} />);
+    const c = animations.find((each) => each.key === "c")!;
+    expect(c.frames[0]).toMatchObject({ opacity: 0 });
+    expect(c.options).toMatchObject({ delay: GLIDE_MS, fill: "backwards" });
+    // Arriving where nothing moves, it rises in at once.
+    animations.length = 0;
+    place(["a", "c", "b", "d"]);
+    view.rerender(<Board items={["a", "c", "b", "d"]} />);
+    expect(animations.map((each) => each.key)).toEqual(["d"]);
+    expect(animations[0]!.options).toMatchObject({ delay: 0 });
   });
 
   it("moves nothing under Reduce Motion", () => {

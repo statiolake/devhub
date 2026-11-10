@@ -205,7 +205,8 @@ keyboard and the pointer (`orchestratorGroup.ts`, `useSettledArrangement`):
   the standard curve, transform only), and the rows between make room by
   the same glide; a row that passes over others (more than 64 px) dips to
   faint on the way so the words it crosses stay readable (opacity 1, 0.3,
-  1). What arrives rises in (`--motion-rise`, 180 ms). Only a change of the
+  1). What arrives rises in (`--motion-rise`, 180 ms) once the rows making
+  room for it have landed: until then its slot is empty. Only a change of the
   group's shape moves anything: the rail folding, a rename or a Workspace
   opened below are drawn where they land. Reduce Motion: nothing glides.
 - **The pointer holds it back.** While the pointer is in the group and in

@@ -98,6 +98,9 @@ export function useGlide(
   const places = useRef<Map<string, Place> | undefined>(undefined);
   const lastCause = useRef(cause);
   const glides = useRef(new WeakMap<HTMLElement, Animation>());
+  // The changes of place still running (not the arrivals): what an arrival
+  // waits for.
+  const moving = useRef(new Set<Animation>());
   const keyOfNow = useRef(keyOf);
   keyOfNow.current = keyOf;
 
@@ -126,6 +129,7 @@ export function useGlide(
     lastCause.current = cause;
     const still =
       !caused || reducedMotion() || typeof element.animate !== "function";
+    const arrivals: HTMLElement[] = [];
     for (const item of element.querySelectorAll<HTMLElement>(selector)) {
       const key = keyOfNow.current(item);
       if (key === undefined) continue;
@@ -141,14 +145,7 @@ export function useGlide(
       if (before === undefined || still) continue;
       const was = before.get(key);
       if (was === undefined) {
-        const arrival = item.animate(
-          [
-            { opacity: 0, transform: `translateY(${ARRIVE_RISE_PX}px)` },
-            { opacity: 1, transform: "none" },
-          ],
-          { duration: ARRIVE_MS, easing: ARRIVE_EASING },
-        );
-        track(arrival);
+        arrivals.push(item);
         continue;
       }
       // Where it is drawn now: its last place, and the glide it is on.
@@ -156,7 +153,10 @@ export function useGlide(
       const offset = running ? translation(item) : { x: 0, y: 0 };
       const dx = was.x + offset.x - place.x;
       const dy = was.y + offset.y - place.y;
-      running?.cancel();
+      if (running !== undefined) {
+        running.cancel();
+        moving.current.delete(running);
+      }
       glides.current.delete(item);
       if (Math.abs(dx) < STILL_PX && Math.abs(dy) < STILL_PX) continue;
       const from = `translate(${String(dx)}px, ${String(dy)}px)`;
@@ -173,6 +173,40 @@ export function useGlide(
         { duration: GLIDE_MS, easing: GLIDE_EASING },
       );
       track(glide);
+      moving.current.add(glide);
+      const settled = () => {
+        moving.current.delete(glide);
+      };
+      glide.addEventListener?.("finish", settled);
+      glide.addEventListener?.("cancel", settled);
+    }
+    // What arrives comes into a place that is clear: until every row that is
+    // making room for it has got out of the way, it is not drawn at all
+    // (opacity 0 through the delay), so in no frame is it over a row still
+    // passing through its slot. Then it rises in, in its place.
+    const wait = Math.max(
+      0,
+      ...[...moving.current].map(
+        (glide) => GLIDE_MS - Number(glide.currentTime ?? 0),
+      ),
+    );
+    for (const item of arrivals) {
+      const arrival = item.animate(
+        [
+          { opacity: 0, transform: `translateY(${ARRIVE_RISE_PX}px)` },
+          { opacity: 1, transform: "none" },
+        ],
+        {
+          duration: ARRIVE_MS,
+          easing: ARRIVE_EASING,
+          delay: wait,
+          fill: "backwards",
+        },
+      );
+      glides.current.set(item, arrival);
+      arrival.onfinish = () => {
+        if (glides.current.get(item) === arrival) glides.current.delete(item);
+      };
     }
     places.current = now;
   }, [container, selector, revision, cause, dimBeyond]);

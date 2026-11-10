@@ -160,7 +160,11 @@ running glide is not mistaken for the layout. One that was elsewhere is
 translated back to where it was _seen_ (its last place plus how far a glide
 still running had it) and let go. A change mid-glide therefore starts from
 exactly where the element is drawn, and every glide ends on the layout.
-Name leaves, never their containers, or a child glides twice. The
+What arrives comes into a place that is clear: while rows are still gliding
+out of its slot to make room for it, it is not drawn (opacity 0, held by the
+arrival's delay), and it rises in once the last of them has landed — so in no
+frame is a new row over one still passing through. Name leaves, never their
+containers, or a child glides twice. The
 Orchestrator board uses it for its cards and lane headings, and the Sidebar
 for its rows when the Orchestrator row's group changes shape (a lane
 change, an arrival, a fold): `cause` says which commits may move things
