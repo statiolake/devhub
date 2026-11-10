@@ -161,7 +161,12 @@ translated back to where it was _seen_ (its last place plus how far a glide
 still running had it) and let go. A change mid-glide therefore starts from
 exactly where the element is drawn, and every glide ends on the layout.
 Name leaves, never their containers, or a child glides twice. The
-Orchestrator board uses it for its cards and lane headings.
+Orchestrator board uses it for its cards and lane headings, and the Sidebar
+for its rows when the Orchestrator row's group changes shape (a lane
+change, an arrival, a fold): `cause` says which commits may move things
+(every commit is still measured), and `dimBeyond` dips a row that passes
+over others to faint on the way (`docs/orchestrator.md`, "The
+orchestrator's work in the Sidebar").
 
 Anything positioned from a measurement (the Smart Buttons on the
 composer) is placed in the frame the measurement changes in — a

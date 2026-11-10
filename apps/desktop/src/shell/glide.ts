@@ -76,8 +76,27 @@ export function useGlide(
   selector: string,
   keyOf: (element: HTMLElement) => string | undefined,
   revision: unknown,
+  options: {
+    /**
+     * What may move things, when not every commit may: a commit whose
+     * `cause` is the one before's is measured (so the next glide starts from
+     * where things really were) and nothing glides or rises. The Sidebar's
+     * tree glides when the Orchestrator row's group changes, and not when
+     * the rail folds or a row is renamed. Absent: every commit may. `""`
+     * is "not ready yet": the first cause after it moves nothing either.
+     */
+    readonly cause?: string;
+    /**
+     * A glide longer than this many pixels passes over the rows between
+     * its ends, so it dips to faint on the way (opacity 1, 0.3, 1) and the
+     * words it crosses stay readable. Absent: nothing dips.
+     */
+    readonly dimBeyond?: number;
+  } = {},
 ): void {
+  const { cause, dimBeyond } = options;
   const places = useRef<Map<string, Place> | undefined>(undefined);
+  const lastCause = useRef(cause);
   const glides = useRef(new WeakMap<HTMLElement, Animation>());
   const keyOfNow = useRef(keyOf);
   keyOfNow.current = keyOf;
@@ -101,7 +120,12 @@ export function useGlide(
     const before = places.current;
     const box = element.getBoundingClientRect();
     const now = new Map<string, Place>();
-    const still = reducedMotion() || typeof element.animate !== "function";
+    const caused =
+      cause === undefined ||
+      (cause !== lastCause.current && lastCause.current !== "");
+    lastCause.current = cause;
+    const still =
+      !caused || reducedMotion() || typeof element.animate !== "function";
     for (const item of element.querySelectorAll<HTMLElement>(selector)) {
       const key = keyOfNow.current(item);
       if (key === undefined) continue;
@@ -135,17 +159,23 @@ export function useGlide(
       running?.cancel();
       glides.current.delete(item);
       if (Math.abs(dx) < STILL_PX && Math.abs(dy) < STILL_PX) continue;
+      const from = `translate(${String(dx)}px, ${String(dy)}px)`;
+      const crossing =
+        dimBeyond !== undefined && Math.hypot(dx, dy) > dimBeyond;
       const glide = item.animate(
-        [
-          { transform: `translate(${String(dx)}px, ${String(dy)}px)` },
-          { transform: "none" },
-        ],
+        crossing
+          ? [
+              { transform: from, opacity: 1 },
+              { opacity: 0.3, offset: 0.4 },
+              { transform: "none", opacity: 1 },
+            ]
+          : [{ transform: from }, { transform: "none" }],
         { duration: GLIDE_MS, easing: GLIDE_EASING },
       );
       track(glide);
     }
     places.current = now;
-  }, [container, selector, revision]);
+  }, [container, selector, revision, cause, dimBeyond]);
 }
 
 function measure(

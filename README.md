@@ -340,6 +340,14 @@ is a field of the agent, kept in `state.json` and under its CLI session in
 wears a pale wash of the orchestrator's accent (its tooltip says "Managed by
 the orchestrator").
 
+**The orchestrator's work in the Sidebar.** A folder the orchestrator (or an
+agent it manages) opens with `workspace open` or `issue assign` is recorded
+as the orchestrator's (`opened_by` in `state.json`) and drawn under the
+Orchestrator row with its helpers, grouped by the board's lanes — 要回答,
+要対応, 対応中, 待機中, 完了 — rather than among your own rows; it stays
+there until it is closed. A folder you opened never moves
+(`docs/orchestrator.md`, "The orchestrator's work in the Sidebar").
+
 **Metadata.** `agent meta`, and `--meta KEY=VALUE` on `agent new` and
 `issue assign`, keep an agent's own pairs — `role=reviewer`, `ticket=123`,
 `parent=<agent id>` — with it in `state.json` across restarts. A key is a

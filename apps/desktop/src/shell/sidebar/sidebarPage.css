@@ -236,3 +236,195 @@
 .orchestrator-row.is-selected .row-label {
   font-weight: 590;
 }
+
+/*
+ * ------------------------------------------ the Orchestrator's work, by lane
+ *
+ * Under the Orchestrator row: the board's lanes as headings, each with the
+ * board's colour as a dot (要対応 wears the needs-action mark instead: it is
+ * not a board lane) and a count, and the items in them a column further in
+ * (`orchestratorLanes.ts`). One indent step per level, the step every
+ * Agent is indented by (`--sidebar-agent-indent`): the heading's chevron
+ * stands in an Agent's mark column, its dot in the column its items' marks
+ * stand in, its word where their words start. Nothing here has a size of its
+ * own: the row height, the glyph column and the gaps are the density's
+ * tokens, so compact and comfortable draw it alike.
+ */
+
+/* The hairline air under the row goes under its group instead. */
+[data-orchestrator="true"][data-open="true"] > .orchestrator-row {
+  margin-bottom: 0;
+}
+
+.orchestrator-lanes,
+.orchestrator-lane-items {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.orchestrator-lanes {
+  margin-bottom: var(--sidebar-row-gap);
+}
+
+/* The disclosure is the row's own mark, in the mark's column: the chevron
+   takes its place while the pointer or the keyboard is on the row. Raised
+   over the select button's hit area, like every control in a row. */
+.orchestrator-disclosure {
+  position: relative;
+  z-index: 1;
+  height: var(--sidebar-glyph-width);
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--row-glyph-ink);
+}
+
+.orchestrator-disclosure > * {
+  flex: none;
+  transition: opacity var(--motion-fast) var(--ease-standard);
+}
+
+/* The chevron over the mark, in the same column. */
+.orchestrator-disclosure .sidebar-chevron {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: -5px 0 0 -5px;
+  transform-origin: center;
+  opacity: 0;
+}
+
+.orchestrator-row:is(:hover, :focus-within)
+  .orchestrator-disclosure
+  .orchestrator-disclosure-mark {
+  opacity: 0;
+}
+
+.orchestrator-row:is(:hover, :focus-within)
+  .orchestrator-disclosure
+  .sidebar-chevron {
+  opacity: 1;
+}
+
+.sidebar-chevron,
+.row-glyph .sidebar-chevron {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+  transition: transform var(--motion-fast) var(--ease-standard);
+}
+
+[aria-expanded="true"] > .sidebar-row .sidebar-chevron,
+.orchestrator-disclosure[aria-expanded="true"] .sidebar-chevron {
+  transform: rotate(90deg);
+}
+
+/* Folded, the row says how many items it holds: quiet, before the badge. */
+.orchestrator-total {
+  color: var(--tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A lane's heading. */
+.lane-row {
+  --lane-ink: var(--tertiary);
+}
+
+.lane-row[data-lane="ask"] {
+  --lane-ink: var(--accent);
+}
+
+.lane-row[data-lane="action"] {
+  --lane-ink: var(--status-waiting);
+}
+
+.lane-row[data-lane="progress"] {
+  --lane-ink: var(--status-working);
+}
+
+.lane-row[data-lane="waiting"] {
+  --lane-ink: var(--status-idle);
+}
+
+.lane-row .row-glyph {
+  margin-left: var(--sidebar-agent-indent);
+  color: var(--tertiary);
+  transform: none;
+}
+
+.lane-row .lane-mark {
+  display: flex;
+  width: var(--sidebar-glyph-width);
+  flex: 0 0 var(--sidebar-glyph-width);
+  align-items: center;
+  justify-content: center;
+  color: var(--lane-ink);
+}
+
+.lane-row .lane-mark:empty::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lane-ink);
+  content: "";
+}
+
+.lane-row .lane-mark .sidebar-glyph {
+  width: 11px;
+  height: 11px;
+}
+
+.lane-row .row-label {
+  color: var(--secondary);
+  font-size: 11px;
+  font-weight: 510;
+}
+
+.lane-count {
+  padding-right: var(--space-2);
+  color: var(--tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The items: a column further in than the heading's chevron, so their marks
+   stand under the heading's dot. A helper or a Workspace drawn as its one
+   Agent is an Agent's row with no connector — the heading above it is what
+   it is under — and a Workspace with several keeps its Agents' connector,
+   moved in with it. */
+.orchestrator-lane-items .sidebar-row .row-glyph {
+  margin-left: calc(2 * var(--sidebar-agent-indent));
+}
+
+.orchestrator-lane-items > li > .agent-row::before,
+.orchestrator-lane-items > li > .agent-row::after {
+  content: none;
+}
+
+.orchestrator-lane-items .agent-tree .agent-row .row-glyph {
+  margin-left: calc(3 * var(--sidebar-agent-indent));
+}
+
+.orchestrator-lane-items .agent-tree .agent-row::before,
+.orchestrator-lane-items .agent-tree .agent-row::after {
+  translate: calc(2 * var(--sidebar-agent-indent)) 0;
+}
+
+/* What a Workspace drawn as its one Agent is about: `#128`, `PR #517`. */
+.row-reference {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orchestrator-disclosure > *,
+  .sidebar-chevron {
+    transition: none;
+  }
+}

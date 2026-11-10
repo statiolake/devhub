@@ -8,6 +8,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
+  type ReactNode,
 } from "react";
 import {
   type AgentProfile,
@@ -36,7 +37,27 @@ import { devhub } from "../../sidebar/client";
 import { isImeComposing } from "../../accessibility/ime";
 import { Glyph, type GlyphName } from "./icons";
 import { RowTooltip } from "./RowTooltip";
-import { agentMenuItems, openRowMenu, workspaceMenuItems } from "./rowMenu";
+import {
+  agentMenuItems,
+  openRowMenu,
+  workspaceMenuItems,
+  type RowMenuItem,
+} from "./rowMenu";
+import {
+  arrangementOf,
+  groupByLane,
+  orchestratorItems,
+  type LaneGroup,
+  type LaneId,
+  type LaneSpec,
+  type OrchestratorItem,
+} from "./orchestratorLanes";
+import {
+  useOrchestratorFolds,
+  useSettledArrangement,
+  type OrchestratorFolds,
+} from "./orchestratorGroup";
+import { useGlide } from "../../glide";
 import { StatusMark, unreadShows } from "./StatusMark";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
 import {
@@ -158,7 +179,16 @@ function WorkspaceRow({
   onAgentMenu,
   onWorkspaceMenu,
   reorder,
+  level = 1,
+  underOrchestrator = false,
 }: {
+  /** `aria-level`: 1 at the top, 3 under one of the Orchestrator's lanes. */
+  readonly level?: number;
+  /**
+   * Under the Orchestrator row, in a lane: where it stands is the lanes'
+   * to say, so it is not picked up, and its managed Agents wear no wash.
+   */
+  readonly underOrchestrator?: boolean;
   /** The digit that selects this row while the prefix is armed, if it has one. */
   readonly chordDigit?: number | undefined;
   readonly workspace: WorkspaceSnapshot;
@@ -179,10 +209,7 @@ function WorkspaceRow({
    * decided in one place by whether there is anything in it to lose.
    */
   readonly onCloseWorkspace: (workspace: WorkspaceSnapshot) => void;
-  readonly onAgentMenu: (
-    agent: AgentSnapshot,
-    at: { x: number; y: number },
-  ) => void;
+  readonly onAgentMenu: AgentMenu;
   /**
    * A right-click on the row: reopening an editor that is in a dev container
    * on the Workspace's own machine, and the row's close. Scratch outside a dev
@@ -245,8 +272,8 @@ function WorkspaceRow({
       // A Workspace on its way out is not somewhere to put anything, and is
       // not something to pick up: it is leaving. Scratch is not picked up
       // either: it is first because it is Scratch, not because it was put there.
-      draggable={!closing && !identity.fixed}
-      aria-level={1}
+      draggable={!closing && !identity.fixed && !underOrchestrator}
+      aria-level={level}
       aria-selected={selected}
       aria-busy={closing || undefined}
       // A Workspace is always open. The attribute states that, and there is
@@ -460,6 +487,8 @@ function WorkspaceRow({
         closing={closing}
         onAgentMenu={onAgentMenu}
         reorder={reorder}
+        level={level + 1}
+        underOrchestrator={underOrchestrator}
       />
     </li>
   );
@@ -467,9 +496,9 @@ function WorkspaceRow({
 
 /**
  * A Workspace's Agents, under its row: Scratch's, an ordinary Workspace's,
- * and the Orchestrator row's (its Workspace's agents but the orchestrator
- * itself). One tree, so indentation, status marks, unread and the drag rules
- * are the same wherever an Agent is listed.
+ * and a Workspace's under the Orchestrator row. One tree, so indentation,
+ * status marks, unread and the drag rules are the same wherever an Agent is
+ * listed.
  */
 function AgentTree({
   workspace,
@@ -480,6 +509,8 @@ function AgentTree({
   closing,
   onAgentMenu,
   reorder,
+  level = 2,
+  underOrchestrator = false,
 }: {
   readonly workspace: WorkspaceSnapshot;
   /** The Agents drawn: the orchestrator agent is drawn on its own row. */
@@ -488,11 +519,91 @@ function AgentTree({
   readonly snapshot: AppSnapshot;
   readonly agentProfiles: readonly AgentProfile[];
   readonly closing: boolean;
-  readonly onAgentMenu: (
-    agent: AgentSnapshot,
-    at: { x: number; y: number },
-  ) => void;
+  readonly onAgentMenu: AgentMenu;
   readonly reorder: Reorder;
+  /** `aria-level` of the Agents: their Workspace's, and one. */
+  readonly level?: number;
+  /** Drawn under the Orchestrator row: the place says "managed". */
+  readonly underOrchestrator?: boolean;
+}) {
+  if (agents.length === 0) return null;
+  return (
+    <ul
+      className="agent-tree"
+      role="group"
+      aria-label={`${workspace.label} agents`}
+    >
+      {agents.map((agent) => (
+        <AgentRowItem
+          key={agent.id}
+          agent={agent}
+          workspace={workspace}
+          identity={identity}
+          snapshot={snapshot}
+          agentProfiles={agentProfiles}
+          closing={closing}
+          onAgentMenu={onAgentMenu}
+          reorder={reorder}
+          level={level}
+          underOrchestrator={underOrchestrator}
+        />
+      ))}
+    </ul>
+  );
+}
+
+/** A right-click on an Agent's row; `more`, what that row adds to the menu. */
+type AgentMenu = (
+  agent: AgentSnapshot,
+  at: { x: number; y: number },
+  more?: readonly RowMenuItem[],
+) => void;
+
+/**
+ * What an Agent's row says for its Workspace, when the two are one row: a
+ * Workspace under the Orchestrator row with one Agent in it is drawn as that
+ * Agent's row (`ManagedWorkspaceItem`).
+ */
+interface MergedWorkspace {
+  /** `#128`, `PR #517`: what it is about, quiet, after the Agent's words. */
+  readonly reference: string | undefined;
+  /** The Workspace's own tooltip lines, after the Agent's. */
+  readonly tooltip: ReturnType<typeof tooltipLines>;
+  /** The Workspace's half of the row's name, for a screen reader. */
+  readonly description: string;
+  /** The Workspace's items, after the Agent's: Show Editor, Close. */
+  readonly menu: readonly RowMenuItem[];
+  /** The Workspace's editor is selected: the row is the one highlighted. */
+  readonly selected: boolean;
+}
+
+/** One Agent's row: under its Workspace, a helper, or a merged row. */
+function AgentRowItem({
+  agent,
+  workspace,
+  identity,
+  snapshot,
+  agentProfiles,
+  closing,
+  onAgentMenu,
+  reorder,
+  level,
+  underOrchestrator = false,
+  draggable = true,
+  merged,
+}: {
+  readonly agent: AgentSnapshot;
+  readonly workspace: WorkspaceSnapshot;
+  readonly identity: RowIdentity;
+  readonly snapshot: AppSnapshot;
+  readonly agentProfiles: readonly AgentProfile[];
+  readonly closing: boolean;
+  readonly onAgentMenu: AgentMenu;
+  readonly reorder: Reorder;
+  readonly level: number;
+  readonly underOrchestrator?: boolean;
+  readonly draggable?: boolean;
+  readonly merged?: MergedWorkspace;
 }) {
   const dispatch = useSidebarDispatch();
   const selectRow = useSelectRow();
@@ -504,201 +615,204 @@ function AgentTree({
     snapshot.selection.context.kind === "agent"
       ? snapshot.selection.context.agentId
       : undefined;
-  if (agents.length === 0) return null;
+  const alsoSelected = merged?.selected === true;
+  const agentSelected = selectedAgentId === agent.id || alsoSelected;
+  const control = agent.controlState;
+  const stopFailed = control.kind === "stop-failed";
+  // A stop that failed says why, in the vocabulary every other
+  // reason is said in. DevHub computed the diagnostic when the stop
+  // failed and it now crosses the wire with the state that carries
+  // it, so the row states it rather than saying "Stop failed" and
+  // leaving the person to guess at a reason DevHub already knows.
+  // A refusal about *this* Agent leads, because it is the newest
+  // news about it and it is news nothing else on screen carries: it
+  // is delivered to this Agent rather than to an app-wide banner,
+  // and it is retired by the next reconcile that reads the Agent.
+  // It is computed beside the sentence that says it
+  // (`rowDescription`), so the line the row draws and the name a
+  // screen reader hears cannot disagree about what stopped.
+  const note = agentNote(agent);
+  /**
+   * A row leads with whatever tells it from the rows beside it.
+   *
+   * For a Workspace that is its name. For an Agent it is not: the
+   * Agents under one Workspace are "Codex" and "Claude", and reading
+   * a column of those tells you nothing you did not already know
+   * from having started them. What tells them apart is what each one
+   * is doing, so that is what leads, at the size a row's own name is
+   * set in.
+   *
+   * Unless somebody named it. A name a person gave an Agent — in the
+   * rename sheet, or with `devhub --tell` when it was started — is
+   * not "Claude" again: it is the word they chose to tell this one
+   * from the rest, and the word they will scan the column for. So it
+   * leads, and what the Agent is doing follows it, dimmed.
+   *
+   * An Agent that has not said anything yet leads with its name
+   * instead. The leading text is never empty: a row whose only words
+   * were 11px dimmed would be a row you cannot read the name of.
+   * The rule is `agentLeadingText`, which the window title reads too.
+   */
+  const leading = agentLeadingText(agent);
+  const agentFacts = agentRowFacts(agent, {
+    label: workspace.label,
+    icon: identity.glyph,
+  });
+  const agentDescription = describe(agentFacts);
+  /**
+   * The Agent's own name, when the name is a name.
+   *
+   * `agentLabelFor` gives the only Claude under a Workspace the bare
+   * word "Claude", and two of them "Claude 1" and "Claude 2". The
+   * bare word is the *kind* of Agent and nothing else — it is on the
+   * row's status mark, it is what you chose when you started it, and
+   * a row that spent its remaining width repeating it was spending it
+   * on the one fact nobody was going to read. What is worth keeping
+   * is what tells two Agents apart: the ordinal. So the kind word is
+   * dropped and anything else is kept.
+   *
+   * A named Agent's name is already leading, so what follows it is
+   * the other thing: what it is doing.
+   */
+  const profileName = agentProfiles.find(
+    (profile) => profile.id === agent.profileId,
+  )?.displayName;
+  const naming = agent.named
+    ? agent.activity
+    : agent.activity && agent.displayName !== profileName
+      ? agent.displayName
+      : undefined;
   return (
-    <ul
-      className="agent-tree"
-      role="group"
-      aria-label={`${workspace.label} agents`}
-    >
-      {agents.map((agent) => {
-        const agentSelected = selectedAgentId === agent.id;
-        const control = agent.controlState;
-        const stopFailed = control.kind === "stop-failed";
-        // A stop that failed says why, in the vocabulary every other
-        // reason is said in. DevHub computed the diagnostic when the stop
-        // failed and it now crosses the wire with the state that carries
-        // it, so the row states it rather than saying "Stop failed" and
-        // leaving the person to guess at a reason DevHub already knows.
-        // A refusal about *this* Agent leads, because it is the newest
-        // news about it and it is news nothing else on screen carries: it
-        // is delivered to this Agent rather than to an app-wide banner,
-        // and it is retired by the next reconcile that reads the Agent.
-        // It is computed beside the sentence that says it
-        // (`rowDescription`), so the line the row draws and the name a
-        // screen reader hears cannot disagree about what stopped.
-        const note = agentNote(agent);
-        /**
-         * A row leads with whatever tells it from the rows beside it.
-         *
-         * For a Workspace that is its name. For an Agent it is not: the
-         * Agents under one Workspace are "Codex" and "Claude", and reading
-         * a column of those tells you nothing you did not already know
-         * from having started them. What tells them apart is what each one
-         * is doing, so that is what leads, at the size a row's own name is
-         * set in.
-         *
-         * Unless somebody named it. A name a person gave an Agent — in the
-         * rename sheet, or with `devhub --tell` when it was started — is
-         * not "Claude" again: it is the word they chose to tell this one
-         * from the rest, and the word they will scan the column for. So it
-         * leads, and what the Agent is doing follows it, dimmed.
-         *
-         * An Agent that has not said anything yet leads with its name
-         * instead. The leading text is never empty: a row whose only words
-         * were 11px dimmed would be a row you cannot read the name of.
-         * The rule is `agentLeadingText`, which the window title reads too.
-         */
-        const leading = agentLeadingText(agent);
-        const agentFacts = agentRowFacts(agent, {
-          label: workspace.label,
-          icon: identity.glyph,
-        });
-        const agentDescription = describe(agentFacts);
-        /**
-         * The Agent's own name, when the name is a name.
-         *
-         * `agentLabelFor` gives the only Claude under a Workspace the bare
-         * word "Claude", and two of them "Claude 1" and "Claude 2". The
-         * bare word is the *kind* of Agent and nothing else — it is on the
-         * row's status mark, it is what you chose when you started it, and
-         * a row that spent its remaining width repeating it was spending it
-         * on the one fact nobody was going to read. What is worth keeping
-         * is what tells two Agents apart: the ordinal. So the kind word is
-         * dropped and anything else is kept.
-         *
-         * A named Agent's name is already leading, so what follows it is
-         * the other thing: what it is doing.
-         */
-        const profileName = agentProfiles.find(
-          (profile) => profile.id === agent.profileId,
-        )?.displayName;
-        const naming = agent.named
-          ? agent.activity
-          : agent.activity && agent.displayName !== profileName
-            ? agent.displayName
-            : undefined;
-        return (
-          <li
-            key={agent.id}
-            role="treeitem"
-            {...reorder.rowProps({
-              kind: "agent",
-              id: agent.id,
-              workspaceId: workspace.id,
-            })}
-            draggable={!closing}
-            aria-level={2}
-            aria-selected={agentSelected}
-          >
-            <div
-              className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}${unreadShows(agent.status, agent.unread) ? " is-unread" : ""}${agent.managed === true ? " is-managed" : ""}`}
-              data-control-state={agent.controlState.kind}
-              // The one fact, for the rail — where the words are off and
-              // the pointer is the only way to ask which Agent this is.
-              // Not the accessible name: a reader has no mark to look at
-              // and is told the status in words, and a person looking at
-              // the box can see the mark and the row it belongs to. See
-              // `agentTooltipFacts`.
-              //
-              // On the row and not on the select button, and on the rail
-              // that is the difference between a tooltip and none. In the
-              // rail an Agent's button holds nothing — its mark is the
-              // sibling beside it and its words are off — so it is a
-              // zero-by-zero box, and a tooltip anchored on it had no
-              // rectangle to be beside: `RowTooltip` clips the anchor to
-              // the column and drops what comes back empty, which is
-              // exactly what a row with no height does. The row is what
-              // the tooltip is about in either state, so the row is what
-              // it is anchored on.
-              data-tooltip-lines={JSON.stringify(
-                tooltipLines(agentTooltipFacts(agent, agentStates[agent.id])),
-              )}
-              // The prompt cache's line is a countdown, composed when the
-              // tooltip is drawn (`RowTooltip`), not when the row is.
-              data-tooltip-cache={
-                agent.promptCache === undefined
-                  ? undefined
-                  : JSON.stringify(agent.promptCache)
-              }
-              onContextMenu={(event) => {
-                event.preventDefault();
-                onAgentMenu(agent, {
-                  x: event.clientX,
-                  y: event.clientY,
-                });
-              }}
-            >
-              <div className="row-head">
-                {/* An Agent's icon column, and what it puts in it: its
-                    one status mark — the unread dot included, see
-                    `unreadShows` in `StatusMark.tsx`.
-
-                    Indented the way a file tree draws a child: right of
-                    the connector, under its Workspace's name, so which
-                    Workspace an Agent belongs to is said by where it
-                    stands as well as by the guide. In the rail it comes
-                    back to the one column every row leads with. The
-                    button's hit area covers the whole row
-                    (`.sidebar-context-button::after`), so the mark is
-                    still part of what selects the row. */}
-                <span className="row-glyph">
-                  <StatusMark status={agent.status} unread={agent.unread} />
-                </span>
-                <button
-                  className="sidebar-context-button"
-                  type="button"
-                  data-tree-item-id={`agent:${agent.id}`}
-                  tabIndex={agentSelected ? 0 : -1}
-                  aria-current={agentSelected ? "page" : undefined}
-                  aria-label={agentDescription}
-                  disabled={agent.controlState.kind === "stopping"}
-                  // Option-click opens the Agent beside its workbench; a
-                  // plain click gives it the whole content area. The same
-                  // pair as Return and Option-Return in the picker, because
-                  // it is the same choice, and it is stated in the intent
-                  // rather than applied afterwards.
-                  onClick={(event) =>
-                    selectRow(event, {
-                      type: "select_context",
-                      context: { kind: "agent", agentId: agent.id },
-                      split: event.altKey,
-                    })
-                  }
-                >
-                  {/* What it is doing, then which Agent it is — or, for an
-                      Agent somebody named, the other way round — then why
-                      it may not be doing it: one line, fading out under
-                      the row's own controls. */}
-                  <span className="row-text">
-                    <span className="row-label">{leading}</span>
-                    {naming ? <span className="row-name">{naming}</span> : null}
-                    {note ? <span className="row-note">{note}</span> : null}
-                  </span>
-                </button>
-                <AgentMarks orchestration={agentStates[agent.id]} />
-                {agent.controlState.kind === "stopping" ? null : (
-                  <button
-                    className="row-action-button agent-row-action"
-                    type="button"
-                    aria-label={`Stop ${agent.displayName}`}
-                    onClick={() =>
-                      dispatch(
-                        stopFailed
-                          ? { type: "retry_stop_agent", agentId: agent.id }
-                          : { type: "stop_agent", agentId: agent.id },
-                      )
-                    }
-                  >
-                    <Glyph name="close" />
-                  </button>
-                )}
-              </div>
-            </div>
-          </li>
-        );
+    <li
+      role="treeitem"
+      {...reorder.rowProps({
+        kind: "agent",
+        id: agent.id,
+        workspaceId: workspace.id,
       })}
-    </ul>
+      draggable={!closing && draggable}
+      aria-level={level}
+      aria-selected={agentSelected}
+    >
+      <div
+        className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}${unreadShows(agent.status, agent.unread) ? " is-unread" : ""}${agent.managed === true && !underOrchestrator ? " is-managed" : ""}${merged === undefined ? "" : " is-merged"}`}
+        data-control-state={agent.controlState.kind}
+        // The one fact, for the rail — where the words are off and
+        // the pointer is the only way to ask which Agent this is.
+        // Not the accessible name: a reader has no mark to look at
+        // and is told the status in words, and a person looking at
+        // the box can see the mark and the row it belongs to. See
+        // `agentTooltipFacts`.
+        //
+        // On the row and not on the select button, and on the rail
+        // that is the difference between a tooltip and none. In the
+        // rail an Agent's button holds nothing — its mark is the
+        // sibling beside it and its words are off — so it is a
+        // zero-by-zero box, and a tooltip anchored on it had no
+        // rectangle to be beside: `RowTooltip` clips the anchor to
+        // the column and drops what comes back empty, which is
+        // exactly what a row with no height does. The row is what
+        // the tooltip is about in either state, so the row is what
+        // it is anchored on.
+        data-tooltip-lines={JSON.stringify([
+          ...tooltipLines(agentTooltipFacts(agent, agentStates[agent.id])),
+          ...(merged?.tooltip ?? []),
+        ])}
+        // The prompt cache's line is a countdown, composed when the
+        // tooltip is drawn (`RowTooltip`), not when the row is.
+        data-tooltip-cache={
+          agent.promptCache === undefined
+            ? undefined
+            : JSON.stringify(agent.promptCache)
+        }
+        onContextMenu={(event) => {
+          event.preventDefault();
+          onAgentMenu(
+            agent,
+            {
+              x: event.clientX,
+              y: event.clientY,
+            },
+            merged?.menu,
+          );
+        }}
+      >
+        <div className="row-head">
+          {/* An Agent's icon column, and what it puts in it: its
+                one status mark — the unread dot included, see
+                `unreadShows` in `StatusMark.tsx`.
+
+                Indented the way a file tree draws a child: right of
+                the connector, under its Workspace's name, so which
+                Workspace an Agent belongs to is said by where it
+                stands as well as by the guide. In the rail it comes
+                back to the one column every row leads with. The
+                button's hit area covers the whole row
+                (`.sidebar-context-button::after`), so the mark is
+                still part of what selects the row. */}
+          <span className="row-glyph">
+            <StatusMark status={agent.status} unread={agent.unread} />
+          </span>
+          <button
+            className="sidebar-context-button"
+            type="button"
+            data-tree-item-id={`agent:${agent.id}`}
+            tabIndex={agentSelected ? 0 : -1}
+            aria-current={agentSelected ? "page" : undefined}
+            aria-label={
+              merged === undefined
+                ? agentDescription
+                : `${agentDescription}, ${merged.description}`
+            }
+            disabled={agent.controlState.kind === "stopping"}
+            // Option-click opens the Agent beside its workbench; a
+            // plain click gives it the whole content area. The same
+            // pair as Return and Option-Return in the picker, because
+            // it is the same choice, and it is stated in the intent
+            // rather than applied afterwards.
+            onClick={(event) =>
+              selectRow(event, {
+                type: "select_context",
+                context: { kind: "agent", agentId: agent.id },
+                split: event.altKey,
+              })
+            }
+          >
+            {/* What it is doing, then which Agent it is — or, for an
+                  Agent somebody named, the other way round — then why
+                  it may not be doing it: one line, fading out under
+                  the row's own controls. */}
+            <span className="row-text">
+              <span className="row-label">{leading}</span>
+              {naming ? <span className="row-name">{naming}</span> : null}
+              {note ? <span className="row-note">{note}</span> : null}
+              {merged?.reference === undefined ? null : (
+                <span className="row-name row-reference">
+                  {merged.reference}
+                </span>
+              )}
+            </span>
+          </button>
+          <AgentMarks orchestration={agentStates[agent.id]} />
+          {agent.controlState.kind === "stopping" ? null : (
+            <button
+              className="row-action-button agent-row-action"
+              type="button"
+              aria-label={`Stop ${agent.displayName}`}
+              onClick={() =>
+                dispatch(
+                  stopFailed
+                    ? { type: "retry_stop_agent", agentId: agent.id }
+                    : { type: "stop_agent", agentId: agent.id },
+                )
+              }
+            >
+              <Glyph name="close" />
+            </button>
+          )}
+        </div>
+      </div>
+    </li>
   );
 }
 
@@ -994,29 +1108,23 @@ function SidebarResizeHandle({
 }
 
 /**
- * A row that has finished closing, on its way off the list.
- *
- * Deliberately not a `treeitem`: it is not an item, it is the picture of one
- * that has just stopped existing, and putting it in the tree would give a
- * screen reader a row to land on that answers nothing. `aria-hidden` says so,
- * and the tree's own arrow-key walk skips it for the same reason — it carries
- * no `data-tree-item-id`.
- */
-/**
  * The Orchestrator row, above Scratch: the board, and the agent that
  * coordinates the others (`docs/orchestrator.md`).
  *
  * It leads with its own mark and ends with what the board has for the person:
  * the number of escalations waiting for an answer, as the one filled badge in
- * the Sidebar.
- * The orchestrator agent's own status mark sits before them, so its row says
- * what it is doing the way an Agent row does.
+ * the Sidebar. The orchestrator agent's own status mark sits before them, so
+ * its row says what it is doing the way an Agent row does.
  *
  * It is also its Workspace's row — the orchestrator's folder, as Scratch's
- * row is Scratch's (`orchestratorWorkspaceId`): the other Agents there are
- * drawn under it with the same tree as any Workspace's, `+` starts one, and
- * its right-click shows the folder's editor (the Workspace selected, the row
- * still the one highlighted).
+ * row is Scratch's (`orchestratorWorkspaceId`): `+` starts an Agent there,
+ * and its right-click shows the folder's editor (the Workspace selected, the
+ * row still the one highlighted).
+ *
+ * Under it is the orchestrator's work, by lane (`orchestratorLanes.ts`): its
+ * helpers and the Workspaces it opened, under the board's lane headings. With
+ * nothing there it is one row, as it always was: no disclosure, no count.
+ * Folded, it is one row again, with how many items it holds beside the badge.
  */
 function OrchestratorRow({
   snapshot,
@@ -1025,8 +1133,12 @@ function OrchestratorRow({
   agentProfiles,
   agentProfilesAvailability,
   onCreateAgent,
-  onAgentMenu,
-  reorder,
+  groups,
+  folds,
+  onFoldGroup,
+  onFoldLane,
+  pointerHandlers,
+  renderItem,
 }: {
   readonly snapshot: AppSnapshot;
   readonly collapsed: boolean;
@@ -1035,11 +1147,15 @@ function OrchestratorRow({
   readonly agentProfiles: readonly AgentProfile[];
   readonly agentProfilesAvailability: AgentProfilesAvailabilityWire;
   readonly onCreateAgent: (workspaceId: string) => void;
-  readonly onAgentMenu: (
-    agent: AgentSnapshot,
-    at: { x: number; y: number },
-  ) => void;
-  readonly reorder: Reorder;
+  /** The lanes with something in them, as drawn (`useSettledArrangement`). */
+  readonly groups: readonly LaneGroup<OrchestratorItem>[];
+  readonly folds: OrchestratorFolds;
+  readonly onFoldGroup: (folded: boolean) => void;
+  readonly onFoldLane: (lane: LaneId, folded: boolean) => void;
+  readonly pointerHandlers: ReturnType<
+    typeof useSettledArrangement
+  >["pointerHandlers"];
+  readonly renderItem: (item: OrchestratorItem) => ReactElement;
 }) {
   // A Sidebar mounted without a board (a test, a page between loads) has
   // nothing on it: the empty board.
@@ -1053,14 +1169,14 @@ function OrchestratorRow({
       context.kind === "workspace" &&
       context.workspaceId === workspace.id);
   const closing = workspace?.close.kind === "running";
-  const children =
-    workspace?.agents.filter(
-      (one) => one.id !== snapshot.orchestratorAgentId,
-    ) ?? [];
   const agent = snapshot.workspaces
     .flatMap((workspace) => workspace.agents)
     .find((one) => one.id === snapshot.orchestratorAgentId);
   const waiting = board.needsAnswer.length;
+  const total = groups.reduce((sum, group) => sum + group.items.length, 0);
+  // The rail draws the row alone, as it always has: its mark and the badge.
+  const hasGroup = total > 0 && !collapsed;
+  const open = hasGroup && !folds.group;
   const facts = [
     "Orchestrator",
     agent === undefined
@@ -1071,6 +1187,7 @@ function OrchestratorRow({
       ? [`${String(board.inProgress.length)} in progress`]
       : []),
     ...(board.paused ? ["events paused"] : []),
+    ...(total > 0 ? [`${String(total)} under it`] : []),
   ];
   return (
     <li
@@ -1078,8 +1195,10 @@ function OrchestratorRow({
       role="treeitem"
       aria-level={1}
       aria-selected={selected}
-      aria-expanded={children.length > 0 ? true : undefined}
+      aria-expanded={hasGroup ? open : undefined}
       data-orchestrator="true"
+      data-open={open ? "true" : undefined}
+      {...(hasGroup ? pointerHandlers : {})}
     >
       <div
         className={`sidebar-row orchestrator-row${selected ? " is-selected" : ""}${agent !== undefined && unreadShows(agent.status, agent.unread) ? " is-unread" : ""}`}
@@ -1116,7 +1235,33 @@ function OrchestratorRow({
         }
       >
         <div className="row-head">
-          {collapsed ? null : <WorkspaceGlyph glyphName="orchestrator" />}
+          {collapsed ? null : hasGroup ? (
+            // The mark, and the disclosure in its place under the pointer or
+            // the keyboard: a column, not a new one. Not a stop of its own —
+            // the row's → and ← fold it — so it takes no tab.
+            <button
+              className="row-glyph orchestrator-disclosure"
+              type="button"
+              tabIndex={-1}
+              aria-label={
+                open
+                  ? "Fold the orchestrator's work"
+                  : "Show the orchestrator's work"
+              }
+              aria-expanded={open}
+              onClick={() => {
+                onFoldGroup(open);
+              }}
+            >
+              <Glyph
+                name="orchestrator"
+                className="orchestrator-disclosure-mark"
+              />
+              <Chevron />
+            </button>
+          ) : (
+            <WorkspaceGlyph glyphName="orchestrator" />
+          )}
           <button
             className="sidebar-context-button"
             type="button"
@@ -1146,6 +1291,13 @@ function OrchestratorRow({
                   <StatusMark status={agent.status} unread={agent.unread} />
                 </span>
               )}
+              {/* Folded, the row still says what it holds: the total, quiet,
+                  and the badge, which is a request to you and never folds. */}
+              {hasGroup && !open ? (
+                <span className="orchestrator-total" aria-hidden="true">
+                  {total}
+                </span>
+              ) : null}
               {waiting > 0 ? (
                 <span className="orchestrator-badge" aria-hidden="true">
                   {waiting}
@@ -1174,19 +1326,252 @@ function OrchestratorRow({
           ) : null}
         </div>
       </div>
-      {workspace === undefined ? null : (
-        <AgentTree
-          workspace={workspace}
-          agents={children}
-          identity={{ glyph: "orchestrator", fixed: true }}
-          snapshot={snapshot}
-          agentProfiles={agentProfiles}
-          closing={closing}
-          onAgentMenu={onAgentMenu}
-          reorder={reorder}
-        />
+      {open ? (
+        <ul
+          className="orchestrator-lanes"
+          role="group"
+          aria-label="The orchestrator's work"
+        >
+          {groups.map((group) => (
+            <LaneHeading
+              key={group.lane.id}
+              lane={group.lane}
+              count={group.items.length}
+              folded={folds.lanes[group.lane.id]}
+              onFold={(folded) => {
+                onFoldLane(group.lane.id, folded);
+              }}
+            >
+              {group.items.map(renderItem)}
+            </LaneHeading>
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
+/** The disclosure's chevron: right when folded, down when open (CSS). */
+function Chevron() {
+  return (
+    <svg className="sidebar-chevron" viewBox="0 0 10 10" aria-hidden="true">
+      <path d="M3.5 2 L6.5 5 L3.5 8" />
+    </svg>
+  );
+}
+
+/**
+ * One lane under the Orchestrator row: the board's word for it, its colour as
+ * a dot (要対応, the one that is not a board lane, wears the needs-action
+ * mark instead), and how many items are in it. A tree item of its own, so the
+ * arrows walk it and fold it; a click folds it too. Only drawn with something
+ * in it.
+ */
+function LaneHeading({
+  lane,
+  count,
+  folded,
+  onFold,
+  children,
+}: {
+  readonly lane: LaneSpec;
+  readonly count: number;
+  readonly folded: boolean;
+  readonly onFold: (folded: boolean) => void;
+  readonly children: ReactNode;
+}) {
+  return (
+    <li
+      className="sidebar-tree-item orchestrator-lane-item"
+      role="treeitem"
+      aria-level={2}
+      aria-selected={false}
+      aria-expanded={!folded}
+      data-lane={lane.id}
+    >
+      <div
+        className="sidebar-row lane-row"
+        data-lane={lane.id}
+        data-tooltip-lines={JSON.stringify(
+          tooltipLines([
+            { text: `${lane.title} · ${String(count)}` },
+            { text: lane.hint },
+          ]),
+        )}
+      >
+        <div className="row-head">
+          <span className="row-glyph lane-chevron" aria-hidden="true">
+            <Chevron />
+          </span>
+          <button
+            className="sidebar-context-button"
+            type="button"
+            data-tree-item-id={`lane:${lane.id}`}
+            tabIndex={-1}
+            aria-label={`${lane.title}, ${String(count)}`}
+            onClick={() => {
+              onFold(!folded);
+            }}
+          >
+            <span className="lane-mark" aria-hidden="true">
+              {lane.id === "action" ? (
+                <Glyph name="orchestratorNeedsAction" />
+              ) : null}
+            </span>
+            <span className="row-text">
+              <span className="row-label">{lane.title}</span>
+            </span>
+          </button>
+          <span className="lane-count" aria-hidden="true">
+            {count}
+          </span>
+        </div>
+      </div>
+      {folded ? null : (
+        <ul
+          className="orchestrator-lane-items"
+          role="group"
+          aria-label={lane.title}
+        >
+          {children}
+        </ul>
       )}
     </li>
+  );
+}
+
+/**
+ * A Workspace the orchestrator opened, in its lane.
+ *
+ * With one Agent it is one row — that Agent's, with what the Workspace is
+ * about (`#128`, `PR #517`) quiet after its words, and the Workspace's own
+ * acts (Show Editor, Close) in its right-click: a worktree the orchestrator
+ * made almost always holds one Agent, and a folder row over an Agent row
+ * would say the same thing twice. With none, or several, it is the
+ * Workspace's own row, its Agents under it, as anywhere else in the Sidebar.
+ */
+function ManagedWorkspaceItem({
+  workspace,
+  repository,
+  snapshot,
+  agentProfiles,
+  agentProfilesAvailability,
+  onCreateAgent,
+  onCloseWorkspace,
+  onAgentMenu,
+  onWorkspaceMenu,
+  reorder,
+}: {
+  readonly workspace: WorkspaceSnapshot;
+  readonly repository: WorkspaceRepositoryWire | undefined;
+  readonly snapshot: AppSnapshot;
+  readonly agentProfiles: readonly AgentProfile[];
+  readonly agentProfilesAvailability: AgentProfilesAvailabilityWire;
+  readonly onCreateAgent: (workspaceId: string) => void;
+  readonly onCloseWorkspace: (workspace: WorkspaceSnapshot) => void;
+  readonly onAgentMenu: AgentMenu;
+  readonly onWorkspaceMenu: (
+    workspace: WorkspaceSnapshot,
+    at: { x: number; y: number },
+    menu: { readonly deletesWorktree: boolean; readonly fixed: boolean },
+  ) => void;
+  readonly reorder: Reorder;
+}) {
+  const selectRow = useSelectRow();
+  const identity = rowIdentity(workspace, snapshot.scratchWorkspaceId);
+  const closing = workspace.close.kind === "running";
+  const agents = workspace.agents.filter(
+    (agent) => agent.id !== snapshot.orchestratorAgentId,
+  );
+  const only = agents.length === 1 && !closing ? agents[0] : undefined;
+  if (only === undefined)
+    return (
+      <WorkspaceRow
+        workspace={workspace}
+        identity={identity}
+        repository={repository}
+        snapshot={snapshot}
+        agentProfiles={agentProfiles}
+        agentProfilesAvailability={agentProfilesAvailability}
+        onCreateAgent={onCreateAgent}
+        onCloseWorkspace={onCloseWorkspace}
+        onAgentMenu={onAgentMenu}
+        onWorkspaceMenu={onWorkspaceMenu}
+        reorder={reorder}
+        level={3}
+        underOrchestrator
+      />
+    );
+  const facts = workspaceRowFacts(workspace, repository);
+  const context = snapshot.selection.context;
+  const deletesWorktree = closingDeletesWorktree(repository, workspace.root);
+  const issue = repository?.issue;
+  const pullRequest = repository?.pullRequest;
+  return (
+    <AgentRowItem
+      agent={only}
+      workspace={workspace}
+      identity={identity}
+      snapshot={snapshot}
+      agentProfiles={agentProfiles}
+      closing={closing}
+      onAgentMenu={onAgentMenu}
+      reorder={reorder}
+      level={3}
+      underOrchestrator
+      draggable={false}
+      merged={{
+        reference:
+          issue !== undefined
+            ? `#${String(issue.number)}`
+            : pullRequest !== undefined
+              ? `PR #${String(pullRequest.number)}`
+              : undefined,
+        tooltip: tooltipLines(facts),
+        description: describe(facts),
+        selected:
+          context.kind === "workspace" && context.workspaceId === workspace.id,
+        menu: [
+          {
+            id: "show-editor",
+            label: "Show Editor",
+            separated: true,
+            run: () => {
+              selectRow(
+                { detail: 1 },
+                {
+                  type: "select_context",
+                  context: { kind: "workspace", workspaceId: workspace.id },
+                },
+              );
+            },
+          },
+          ...workspaceMenuItems(workspace, {
+            close: onCloseWorkspace,
+            deletesWorktree,
+            fixed: false,
+          }),
+        ],
+      }}
+    />
+  );
+}
+
+/**
+ * A row that has finished closing, on its way off the list.
+ *
+ * Deliberately not a `treeitem`: it is not an item, it is the picture of one
+ * that has just stopped existing, and putting it in the tree would give a
+ * screen reader a row to land on that answers nothing. `aria-hidden` says so,
+ * and the tree's own arrow-key walk skips it for the same reason — it carries
+ * no `data-tree-item-id`.
+ */
+/** A row's identity for the glide: the id its button walks the tree by. */
+function sidebarRowKey(row: HTMLElement): string | undefined {
+  return (
+    row.querySelector<HTMLElement>("[data-tree-item-id]")?.dataset[
+      "treeItemId"
+    ] ?? undefined
   );
 }
 
@@ -1239,6 +1624,37 @@ export function Sidebar({ snapshot }: SidebarProps) {
     orchestrator,
     rows: workspaces,
   } = useMemo(() => sidebarWorkspaces(snapshot), [snapshot]);
+  // What is under the Orchestrator row, and in which lane
+  // (`orchestratorLanes.ts`). A change of lane, or a new item, is drawn when
+  // the pointer is not in the middle of using the group
+  // (`useSettledArrangement`); every row's own content is live.
+  const board = (useSidebar() as Partial<SidebarValue>).board ?? EMPTY_BOARD;
+  const items = useMemo(
+    () => orchestratorItems(snapshot, board),
+    [snapshot, board],
+  );
+  const liveArrangement = useMemo(() => arrangementOf(items), [items]);
+  // Before the board's first reading every lane is a guess: it is drawn as
+  // soon as it comes, without a wait or a glide.
+  const boardRead = board.revision > 0;
+  const settled = useSettledArrangement(liveArrangement, boardRead);
+  const groups = useMemo(() => {
+    const drawnItems = items.flatMap((item) => {
+      const lane = settled.drawn.get(item.key);
+      return lane === undefined ? [] : [{ ...item, lane }];
+    });
+    return groupByLane(drawnItems, (item) => item.lane);
+  }, [items, settled.drawn]);
+  const { folds, setGroupFolded, setLaneFolded } = useOrchestratorFolds();
+  // What the group looks like, as one string: a change of it is the one
+  // cause the tree's rows glide for (`useGlide`'s `cause`).
+  const groupShape = [
+    folds.group ? "folded" : "open",
+    ...groups.map(
+      (group) =>
+        `${group.lane.id}${folds.lanes[group.lane.id] ? "-" : "+"}:${group.items.map((item) => item.key).join(",")}`,
+    ),
+  ].join("|");
   // Rows that have finished closing, still on screen for as long as it takes
   // them to leave. See `closingExit.ts`.
   const armed = useChordArmed();
@@ -1292,6 +1708,11 @@ export function Sidebar({ snapshot }: SidebarProps) {
   const pickerTriggerRef = useRef<HTMLButtonElement>(null);
   const workspaceTreeRef = useRef<HTMLUListElement>(null);
   const treeFocusId = useRef<string | undefined>(undefined);
+  // Whether the keyboard is in the tree: set as a row takes focus, cleared
+  // as focus leaves for somewhere that is still there. A focused row that is
+  // removed (a lane change draws it anew) blurs with nothing to go to, and
+  // that is not leaving: the layout effect puts the keyboard back on it.
+  const treeHadFocus = useRef(false);
 
   /**
    * `focus_sidebar`: put the keyboard on the row that is selected. (Palette
@@ -1342,13 +1763,25 @@ export function Sidebar({ snapshot }: SidebarProps) {
       return;
     }
     const active = document.activeElement;
+    // The keyboard was on a row that is not there any more. Either it went
+    // (a close, a fold): the tab stop's row takes it. Or it moved — a lane
+    // change draws the row anew under another heading — and it is still
+    // here by its id: the keyboard goes with it.
+    const lost =
+      Boolean(previousId) &&
+      treeHadFocus.current &&
+      (active === document.body || active === tree || active === null);
+    // Only when the keyboard was in the tree: a row folded or closed while
+    // the person is elsewhere (the mouse on a disclosure, the page blurred)
+    // takes nothing anywhere.
     const activeWasRemoved =
       Boolean(previousId) &&
+      treeHadFocus.current &&
       !requested &&
       (active === document.body || active === tree || tree.contains(active));
     treeFocusId.current = target.dataset.treeItemId;
-    if (activeWasRemoved) target.focus();
-  }, [snapshot.selection.context, snapshot.workspaces]);
+    if (activeWasRemoved || (lost && requested !== undefined)) target.focus();
+  }, [snapshot.selection.context, snapshot.workspaces, groupShape]);
 
   /**
    * Everything main asks this page to do, in one subscription.
@@ -1406,11 +1839,18 @@ export function Sidebar({ snapshot }: SidebarProps) {
    * nothing about it is state here — macOS keeps exactly one up.
    */
   const openAgentMenu = useCallback(
-    (agent: AgentSnapshot, at: { x: number; y: number }) => {
+    (
+      agent: AgentSnapshot,
+      at: { x: number; y: number },
+      more: readonly RowMenuItem[] = [],
+    ) => {
       openRowMenu(
-        agentMenuItems(agent, dispatchIntent, openRename, (each) => {
-          continueAgent(each.id);
-        }),
+        [
+          ...agentMenuItems(agent, dispatchIntent, openRename, (each) => {
+            continueAgent(each.id);
+          }),
+          ...more,
+        ],
         at,
       );
     },
@@ -1475,6 +1915,52 @@ export function Sidebar({ snapshot }: SidebarProps) {
    */
   const paneRef = useRef<HTMLElement>(null);
   const overlay = useSidebarOverlay(collapsed, paneRef, reorder.active);
+
+  /**
+   * Folding the group or a lane. A row the keyboard is on that the fold takes
+   * away hands the keyboard to the row that folded, so it is never lost.
+   */
+  const keepFocusOn = (holder: string) => {
+    const tree = workspaceTreeRef.current;
+    const active = document.activeElement;
+    if (!tree || !(active instanceof HTMLElement)) return;
+    const row = tree.querySelector<HTMLButtonElement>(
+      `[data-tree-item-id="${holder}"]`,
+    );
+    const branch = row?.closest<HTMLElement>("[role=treeitem]");
+    if (row && branch?.contains(active) && active !== row) {
+      treeFocusId.current = holder;
+      setTreeTabStop(tree, row);
+      row.focus();
+    }
+  };
+  const foldGroup = (folded: boolean) => {
+    if (folded) keepFocusOn("orchestrator");
+    setGroupFolded(folded);
+  };
+  const foldLane = (lane: LaneId, folded: boolean) => {
+    if (folded) keepFocusOn(`lane:${lane}`);
+    setLaneFolded(lane, folded);
+  };
+  /** What `item` folds, if it folds: the Orchestrator row's group, a lane. */
+  const foldTarget = (
+    item: HTMLElement,
+  ):
+    | { readonly folded: boolean; readonly set: (folded: boolean) => void }
+    | undefined => {
+    if (item.getAttribute("aria-expanded") === null) return undefined;
+    if (item.dataset["orchestrator"] === "true")
+      return { folded: folds.group, set: foldGroup };
+    const lane = item.dataset["lane"] as LaneId | undefined;
+    if (lane === undefined) return undefined;
+    return {
+      folded: folds.lanes[lane],
+      set: (folded) => {
+        foldLane(lane, folded);
+      },
+    };
+  };
+
   const drawnCollapsed = collapsed && overlay.phase === "closed";
   const drawn = useMemo(
     () =>
@@ -1485,6 +1971,21 @@ export function Sidebar({ snapshot }: SidebarProps) {
             sidebar: { ...snapshot.sidebar, collapsed: drawnCollapsed },
           },
     [drawnCollapsed, snapshot],
+  );
+
+  // Rows that change place because the Orchestrator's group did — a lane
+  // change, an item arriving, a fold — glide there (240 ms, the standard
+  // curve), and what arrives rises in (`glide.ts`, docs/motion.md). Every commit is measured, but only a change
+  // of the group's shape moves anything: the rail folding, a row renamed or
+  // a Workspace opened below are drawn where they land, as before.
+  useGlide(
+    workspaceTreeRef,
+    ".sidebar-row",
+    sidebarRowKey,
+    [snapshot, groups, folds, drawnCollapsed],
+    // A row that changes lane passes over the rows between: it dips while
+    // it does. Its neighbours, moved a row or two, only glide.
+    { cause: boardRead ? groupShape : "", dimBeyond: 64 },
   );
 
   return (
@@ -1547,7 +2048,18 @@ export function Sidebar({ snapshot }: SidebarProps) {
             const treeItemId = button.dataset.treeItemId;
             if (!treeItemId) return;
             treeFocusId.current = treeItemId;
+            treeHadFocus.current = true;
             setTreeTabStop(event.currentTarget, button);
+          }}
+          onBlurCapture={(event) => {
+            const tree = event.currentTarget;
+            const next = event.relatedTarget;
+            if (next instanceof Node && tree.contains(next)) return;
+            const left = event.target;
+            // Removed while focused: not a decision to leave.
+            queueMicrotask(() => {
+              if (left.isConnected) treeHadFocus.current = false;
+            });
           }}
           onKeyDown={(event) => {
             if (
@@ -1610,11 +2122,21 @@ export function Sidebar({ snapshot }: SidebarProps) {
             }
             const item = activeItem.closest<HTMLElement>("[role=treeitem]");
             if (!item) return;
-            // Nothing here collapses: a Workspace is always open, so the
-            // horizontal keys only walk between a Workspace and its Agents.
+            // The tree's horizontal keys, as WAI-ARIA's tree has them. A
+            // Workspace is always open, so on one → and ← only walk between
+            // it and its Agents. What folds — the Orchestrator row's group
+            // and each of its lanes — → opens, and → again enters its first
+            // child; ← folds an open one, and on anything else goes to the
+            // parent.
+            const folding = foldTarget(item);
             if (event.key === "ArrowRight") {
+              if (folding !== undefined && folding.folded) {
+                event.preventDefault();
+                folding.set(false);
+                return;
+              }
               const child = item.querySelector<HTMLButtonElement>(
-                ".agent-tree [data-tree-item-id]:not([disabled])",
+                ":scope > [role=group] [data-tree-item-id]:not([disabled])",
               );
               if (!child) return;
               event.preventDefault();
@@ -1622,6 +2144,11 @@ export function Sidebar({ snapshot }: SidebarProps) {
               return;
             }
             if (event.key === "ArrowLeft") {
+              if (folding !== undefined && !folding.folded) {
+                event.preventDefault();
+                folding.set(true);
+                return;
+              }
               const parent =
                 item.parentElement?.closest<HTMLElement>("[role=treeitem]");
               if (!parent) return;
@@ -1643,8 +2170,43 @@ export function Sidebar({ snapshot }: SidebarProps) {
             agentProfiles={agentProfiles.profiles}
             agentProfilesAvailability={agentProfiles.availability}
             onCreateAgent={openAgentPicker}
-            onAgentMenu={openAgentMenu}
-            reorder={reorder}
+            groups={groups}
+            folds={folds}
+            onFoldGroup={foldGroup}
+            onFoldLane={foldLane}
+            pointerHandlers={settled.pointerHandlers}
+            renderItem={(item) =>
+              item.kind === "helper" ? (
+                <AgentRowItem
+                  key={item.key}
+                  agent={item.agent}
+                  workspace={item.workspace}
+                  identity={{ glyph: "orchestrator", fixed: true }}
+                  snapshot={drawn}
+                  agentProfiles={agentProfiles.profiles}
+                  closing={item.workspace.close.kind === "running"}
+                  onAgentMenu={openAgentMenu}
+                  reorder={reorder}
+                  level={3}
+                  underOrchestrator
+                  draggable={false}
+                />
+              ) : (
+                <ManagedWorkspaceItem
+                  key={item.key}
+                  workspace={item.workspace}
+                  repository={repositories.get(item.workspace.id)}
+                  snapshot={drawn}
+                  agentProfiles={agentProfiles.profiles}
+                  agentProfilesAvailability={agentProfiles.availability}
+                  onCreateAgent={openAgentPicker}
+                  onCloseWorkspace={closeWorkspaceRow}
+                  onAgentMenu={openAgentMenu}
+                  onWorkspaceMenu={openWorkspaceMenu}
+                  reorder={reorder}
+                />
+              )
+            }
           />
           {/* Scratch first, as the tree's first row: it is a Workspace, so it
                 is walked, selected and focused the way every Workspace is. */}

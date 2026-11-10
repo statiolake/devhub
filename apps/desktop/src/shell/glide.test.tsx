@@ -54,6 +54,27 @@ function Board({ items }: { readonly items: readonly string[] }) {
   );
 }
 
+function Caused({
+  items,
+  cause,
+}: {
+  readonly items: readonly string[];
+  readonly cause: string;
+}) {
+  const container = useRef<HTMLDivElement>(null);
+  useGlide(container, "[data-key]", (each) => each.dataset["key"], items, {
+    cause,
+    dimBeyond: 30,
+  });
+  return (
+    <div ref={container}>
+      {items.map((key) => (
+        <div key={key} data-key={key} />
+      ))}
+    </div>
+  );
+}
+
 function place(items: readonly string[]): void {
   items.forEach((key, index) => layout.set(key, index * 20));
 }
@@ -102,6 +123,37 @@ describe("useGlide", () => {
     const view = render(<Board items={["a", "b"]} />);
     place(["b", "a", "c"]);
     view.rerender(<Board items={["b", "a", "c"]} />);
+    expect(animations).toEqual([]);
+  });
+
+  it("moves things only when its cause changed, and measures every commit", () => {
+    place(["a", "b", "c"]);
+    const view = render(<Caused items={["a", "b", "c"]} cause="one" />);
+    place(["c", "a", "b"]);
+    view.rerender(<Caused items={["c", "a", "b"]} cause="one" />);
+    expect(animations).toEqual([]);
+    // The next glide starts from the commit before, not from the first.
+    place(["a", "b", "c"]);
+    view.rerender(<Caused items={["a", "b", "c"]} cause="two" />);
+    const c = animations.find((each) => each.key === "c")!;
+    // c went 40px down: past `dimBeyond`, so it dips on the way.
+    expect(c.frames).toEqual([
+      { transform: "translate(0px, -40px)", opacity: 1 },
+      { opacity: 0.3, offset: 0.4 },
+      { transform: "none", opacity: 1 },
+    ]);
+    // a moved one row: a plain glide.
+    expect(animations.find((each) => each.key === "a")!.frames).toEqual([
+      { transform: "translate(0px, 20px)" },
+      { transform: "none" },
+    ]);
+  });
+
+  it("moves nothing on the first cause after not being ready", () => {
+    place(["a", "b"]);
+    const view = render(<Caused items={["a", "b"]} cause="" />);
+    place(["b", "a"]);
+    view.rerender(<Caused items={["b", "a"]} cause="ready" />);
     expect(animations).toEqual([]);
   });
 });

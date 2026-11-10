@@ -193,8 +193,9 @@ Conversations page needs nothing of the kind: no view is laid over it.
 Scratch's row is Scratch's Workspace's: the orchestrator's folder is not
 drawn as an ordinary row (`sidebarWorkspaces` hands it out as `orchestrator`,
 apart from `scratch` and `rows`), and its Agents other than the orchestrator
-are the row's children, drawn by the same `AgentTree` every Workspace's
-Agents are. A child selected is an ordinary Agent selection — its pane, full
+are the row's children, with the Workspaces the orchestrator opened
+(`managed`, by `Workspace.openedBy`), grouped by lane
+(`docs/orchestrator.md`, "The orchestrator's work in the Sidebar"). A child selected is an ordinary Agent selection — its pane, full
 or beside the root's editor. The root's editor itself is that Workspace
 selected, and the content area is its editor as for Scratch; the
 Orchestrator row stays highlighted, and its right-click **Show Editor** is
@@ -224,8 +225,9 @@ same. So are the Orchestrator row's: that row is its Workspace's row (the
 orchestrator's folder, `docs/orchestrator.md`), so closing its last helper
 lands on the row itself — the board, not the orchestrator agent drawn as a
 pane. A Workspace is held by the Sidebar, so closing one lands on the next
-row as drawn — the Orchestrator row's Workspace, Scratch, each Workspace
-followed by its Agents, the same list `Cmd+Q N` and `]` walk — which is the next Workspace's row, because its
+row as drawn — the Orchestrator row's Workspace, the Workspaces the
+orchestrator opened, Scratch, each Workspace followed by its Agents
+(`sidebarOrder`), the same list `Cmd+Q N` and `]` walk — which is the next Workspace's row, because its
 own Agents are removed first by the Agent rule; when it was drawn last, the
 row above it. The rule is one method, `AppModel.repairSelection`, handed the
 rows of what held the removed row and run by every removal: an Agent stopped

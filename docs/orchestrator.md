@@ -33,9 +33,8 @@ orchestrator's folder.
   Workspace's (`AppModel.orchestratorWorkspaceId`, `orchestratorWorkspaceId`
   on the wire). The orchestrator's folder is never an ordinary row: its other
   agents — helpers the person or the orchestrator start there — are listed
-  under the Orchestrator row with the tree every Workspace's agents use
-  (indentation, status marks, unread, the row menu, drag within the row), and
-  its `+` starts one there. Selecting one shows its pane as usual. The
+  under the Orchestrator row, in their lanes (below, "The orchestrator's
+  work in the Sidebar"), and its `+` starts one there. Selecting one shows its pane as usual. The
   Workspace is labelled `Orchestrator` (the window title, `workspaces`, the
   board's chips), takes no digit (`Cmd+Q 1` is still the first row below
   Scratch), and is walked by `Cmd+Q N`/`]` through its helpers only. Closing
@@ -106,6 +105,130 @@ orchestrator's folder.
   known ([window-and-pages.md](window-and-pages.md#the-windows-title)). The
   subject and file name are put on one line and cut near 80 characters; no thread or answer text is ever in the title. It follows
   every open, Back, Forward and tab, and the screen coming back as it was.
+
+## The orchestrator's work in the Sidebar
+
+```text
+ Orchestrator        ✓ 1        (folded:  Orchestrator   ✓ 6 1)
+   ⌄ ● 要回答           1
+       ✓ rounding-migration
+   ⌄ △ 要対応           1
+       ✓ research          △
+   ⌄ ● 対応中           2
+       ◌ investigate-500s
+       ◌ review-517  PR #517
+   › ● 待機中           1
+ Scratch
+ dotfiles  main
+   └ ◌ Claude                   (the person's: a managed agent here keeps its wash)
+ notes  main
+```
+
+Under the Orchestrator row is what the orchestrator is doing, grouped by the
+board's lanes (`shell/components/sidebar/orchestratorLanes.ts`). The rest of
+the Sidebar is the person's places, as before.
+
+**What is there.** Two kinds of item:
+
+- **its helpers**: the agents in the orchestrator's own folder, the
+  orchestrator agent itself apart (it is the row);
+- **the Workspaces the orchestrator opened** — by provenance, not by who is
+  in them. When the orchestrator's side opens a folder that was not open —
+  `devhub --tell workspace open` (a worktree included, `issue=pending` work
+  included) or `issue assign`, asked by the orchestrator agent or by an agent
+  it manages — the Workspace records it (`Workspace.openedBy`,
+  `"orchestrator"`; the `open_folder` intent's `openedBy`, set by
+  `tell/service.ts` `openedBy()` and applied by the coordinator only to a
+  Workspace that open adds). It is kept with the Workspace in `state.json`
+  (`opened_by`; an older DevHub ignores the key) and never taken away.
+
+What that means:
+
+- **A Workspace the person opened is never moved**, whatever its agents are:
+  opening a folder that is already open does not record anything, and a
+  managed agent in the person's Workspace stays there with its wash
+  (`.agent-row.is-managed`, "Managed agents" below).
+- **A Workspace the orchestrator opened stays under the Orchestrator row
+  while it is open** — when its last agent closes, and when the person starts
+  an agent of their own in it. It is the orchestrator's piece of work, which
+  the person has stepped into; it leaves when it is closed (the
+  orchestrator's `workspace close`, or the person's). With no agents left it
+  is in 完了 (below).
+
+**Which lane.** The board's lanes in the board's order, with 要対応 — the
+invariant's needs action, which the board lists above its lanes — after
+要回答. An item is in the first that holds of it:
+
+| lane   | when                                                                                                                       | heading                     |
+| ------ | -------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| 要回答 | an open escalation about it is 要回答                                                                                      | accent dot                  |
+| 要対応 | one of its agents breaks the invariant (`agentStates.needsAction`)                                                         | the needs-action mark       |
+| 対応中 | an escalation about it is 対応中, or one of its agents is at work (working, background, on a prompt, still being read)    | the working dot             |
+| 待機中 | an escalation about it is 待機中, or one of its agents is stopped and fine (on a 待機中 escalation, or `agent keep`)      | the idle dot                |
+| 完了   | nothing about it is open: no agent left, or its agents idle with nothing waiting on them (their escalation closed)        | tertiary dot                |
+
+An escalation is about an item when its `workspaceId` is the item's
+Workspace or one of its agents is the item's. 完了 is the board's word for the
+same fact the board files there: nothing open.
+
+**What a heading is.** The board's word, its colour as a dot, and how many
+items are in it. A lane with nothing in it has no heading. 待機中 and 完了
+start folded, as on the board; what is folded — each lane, and the group as a
+whole — is kept for the session (`sessionStorage`; a restart starts afresh).
+Folded, the Orchestrator row shows how many items it holds, quiet, before
+the badge; the badge (要回答) never folds. The disclosure is the row's own
+mark: under the pointer or the keyboard the orchestrator glyph turns into a
+chevron, which folds the group. With nothing under it the row is exactly the
+row it was: no disclosure, no count, not expandable. The collapsed rail draws
+the row alone, its mark carrying the badge.
+
+**What an item is.** A helper is its agent's row. A Workspace with one agent
+— almost every worktree the orchestrator makes — is drawn as that agent's
+row, with what the Workspace is about (`#128`, `PR #517`) quiet after its
+words, the Workspace's tooltip lines after the agent's, and its right-click
+adding **Show Editor** and **Close Worktree…**; one with none, or several,
+is the Workspace's own row with its agents under it, as anywhere in the
+Sidebar. Items wear no managed wash: where they are says it. They are not
+dragged (their place is the lane's); agents under a Workspace still are.
+
+**A lane change moves the row, calmly.** One rule each for the eye, the
+keyboard and the pointer (`orchestratorGroup.ts`, `useSettledArrangement`):
+
+- **It waits until it stands.** A change of lane, or a new item, is drawn
+  once it has stood for 600 ms (`SETTLE_MS`): an agent that has just started
+  reads idle, needs action and working within a fraction of a second, and a
+  worktree is followed by its agent a moment later; none of that moves a row.
+  An item that has gone leaves at once. The rows' own content (status marks,
+  words, the badge) is live throughout. The board's first reading is drawn at
+  once.
+- **It glides.** The row goes to its new place by FLIP (`glide.ts`, 240 ms,
+  the standard curve, transform only), and the rows between make room by
+  the same glide; a row that passes over others (more than 64 px) dips to
+  faint on the way so the words it crosses stay readable (opacity 1, 0.3,
+  1). What arrives rises in (`--motion-rise`, 180 ms). Only a change of the
+  group's shape moves anything: the rail folding, a rename or a Workspace
+  opened below are drawn where they land. Reduce Motion: nothing glides.
+- **The pointer holds it back.** While the pointer is in the group and in
+  use — moved within the last 1.5 s (`POINTER_IDLE_MS`), or a button held —
+  what is drawn is what was drawn: each item in the lane it stood in, a new
+  one not yet. The change lands when the pointer leaves the group, or rests
+  there 1.5 s with no button down. So a row is never taken from under a hand
+  on its way to it, and a pointer left lying there does not hide a change.
+- **The keyboard follows the row.** The roving tab stop is the row's id, and
+  a row drawn anew under another heading takes the keyboard with it; a row a
+  fold takes away hands it to the heading (or the Orchestrator row) that
+  folded. Nothing is held back for the keyboard.
+
+**Keys.** The headings are tree items (`aria-level` 2, `aria-expanded`), the
+items level 3, a Workspace's agents level 4. `↑`/`↓`/`Home`/`End` walk the
+rows drawn; `→` opens a folded heading or group, and on an open one enters
+its first child; `←` folds an open one, and anywhere else goes to the
+parent. Return on a heading folds or opens it. **Digits** (`Cmd+Q 1..9`) are
+the person's Workspaces only, counted below Scratch as before: the
+orchestrator's come and go, so a digit that pointed at one would point at
+another a minute later. They are reached by the row, `Cmd+Q Shift+O`,
+`focus`, `devhub:` links and `Cmd+Q N`/`]`, which walk them after the
+Orchestrator row's helpers in the order they were opened.
 
 ## Escalations
 
@@ -439,12 +562,14 @@ It is kept with the agent in `state.json`, and under its CLI session in
 Closed and `/resume` keep it. `agents` and `sessions` say `managed`,
 `agent status` (and `--json` `managed`) too.
 
-**In the Sidebar**, a managed Agent's row wears a pale wash of the accent —
+**In the Sidebar**, a managed Agent's row in a Workspace the person opened
+wears a pale wash of the accent —
 the orchestrator's colour — over its whole width (`.agent-row.is-managed`,
 `--managed-tint`, light and dark), so the agents the person started
 themselves are the plain rows at a glance; hover still shows through it and a
 selected row is the selection fill alone. The tooltip says it in words
-("Managed by the orchestrator"). An Agent row also carries small marks after
+("Managed by the orchestrator"). Under the Orchestrator row (above) there is
+no wash: the place says it. An Agent row also carries small marks after
 its words (`AgentMarks`, off the board's `agentStates`), each said in words in
 the row's tooltip:
 

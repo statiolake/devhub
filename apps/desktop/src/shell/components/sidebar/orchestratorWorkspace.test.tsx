@@ -20,6 +20,7 @@ import { EMPTY_BOARD } from "../../../ipc/contract";
 import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
+import { forgetOrchestratorFolds } from "./orchestratorGroup";
 import { ON_SCRATCH, SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
 
 const showContextMenu = vi.fn(() => Promise.resolve("show-editor"));
@@ -39,6 +40,7 @@ window.devhub = {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  forgetOrchestratorFolds();
 });
 
 const ROOT_ID = "orchestrator-ws";
@@ -151,25 +153,35 @@ describe("the Orchestrator row's Workspace", () => {
     ).toBeNull();
   });
 
-  it("lists its agents under the Orchestrator row, the orchestrator itself being the row", () => {
+  it("lists its agents under the Orchestrator row by lane, the orchestrator itself being the row", () => {
     mount(snapshot());
     const row = topRows()[0]!;
     expect(row).toHaveAttribute("aria-expanded", "true");
     const group = within(row).getByRole("group", {
-      name: "Orchestrator agents",
+      name: "The orchestrator's work",
     });
-    const children = within(group).getAllByRole("treeitem");
-    expect(children).toHaveLength(2);
-    for (const child of children) {
-      expect(child).toHaveAttribute("aria-level", "2");
-      expect(child.querySelector(".row-glyph")).not.toBeNull();
-    }
+    // The working helper is 対応中; the idle one, with nothing open on it, is
+    // 完了, which starts folded: its heading and count, not its row.
+    const headings = [
+      ...group.querySelectorAll<HTMLElement>("[role=treeitem][aria-level='2']"),
+    ];
+    expect(headings.map((one) => one.dataset["lane"])).toEqual([
+      "progress",
+      "closed",
+    ]);
+    expect(headings[1]).toHaveAttribute("aria-expanded", "false");
+    const children = [
+      ...group.querySelectorAll<HTMLElement>("[role=treeitem][aria-level='3']"),
+    ];
+    expect(children).toHaveLength(1);
+    expect(children[0]!.querySelector(".row-glyph")).not.toBeNull();
     expect(
       within(group).queryByRole("button", { name: /^orch\b/u }),
     ).toBeNull();
     expect(
       within(group).getByRole("button", { name: /^researcher/u }),
     ).toBeVisible();
+    fireEvent.click(within(group).getByRole("button", { name: "完了, 1" }));
     expect(
       within(group).getByRole("button", { name: /^reviewer/u }),
     ).toBeVisible();
@@ -184,18 +196,24 @@ describe("the Orchestrator row's Workspace", () => {
 
   it("selects a child agent's pane", () => {
     const dispatch = mount(snapshot());
-    const group = screen.getByRole("group", { name: "Orchestrator agents" });
-    fireEvent.click(within(group).getByRole("button", { name: /^reviewer/u }));
+    const group = screen.getByRole("group", {
+      name: "The orchestrator's work",
+    });
+    fireEvent.click(
+      within(group).getByRole("button", { name: /^researcher/u }),
+    );
     expect(dispatch).toHaveBeenCalledWith({
       type: "select_context",
-      context: { kind: "agent", agentId: "reviewer" },
+      context: { kind: "agent", agentId: "researcher" },
       split: false,
     });
   });
 
   it("highlights the Orchestrator row while its child is selected, on the child", () => {
     mount(snapshot({ kind: "agent", agentId: "researcher" }));
-    const group = screen.getByRole("group", { name: "Orchestrator agents" });
+    const group = screen.getByRole("group", {
+      name: "The orchestrator's work",
+    });
     expect(
       within(group).getByRole("button", { name: /^researcher/u }),
     ).toHaveAttribute("aria-current", "page");
