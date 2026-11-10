@@ -340,7 +340,8 @@ because a followed transcript moves by every pixel of it.
   height and fades out in place. The same test holds the gutter rule's
   completion-menu exception to its place: `scrollbar-gutter: auto`, the
   declaration that gives the gutter up on purpose, is written in
-  `completionMenu.css` and nowhere else. Panes moving as a layout changes are
+  `completionMenu.css` and nowhere else, and `scrollbars.test.ts` lists
+  the menu as the one growing list that gives its gutter up. Panes moving as a layout changes are
   `docs/pane-motion.md`'s, held by `paneMotion.test.ts`,
   `controlMotion.test.ts` and `windowMotion.test.ts`: every transition
   ends on the resting placement exactly.

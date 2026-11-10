@@ -107,7 +107,6 @@ describe("scrollbars", () => {
       ["shell/agents/orchestrator.css", ".orchestrator-lanes"],
       ["shell/agents/orchestrator.css", ".orchestrator-files"],
       ["shell/agents/orchestrator.css", ".orchestrator-thread"],
-      ["shell/completion/completionMenu.css", ".completion-menu"],
       ["shell/conversation/conversation.css", ".conversation-scroll"],
       ["shell/conversation/conversation.css", ".conversation-background-list"],
       ["settings/settings.css", ".sf-form"],
@@ -123,6 +122,19 @@ describe("scrollbars", () => {
       )?.[1];
       expect(body, `${file} ${selector}`).toMatch(/scrollbar-gutter:\s*stable/);
     }
+  });
+
+  /*
+   * The written exception (docs/motion.md): the completion menu's rows are
+   * bands inset alike on both sides, and a kept gutter made every menu
+   * lopsided. It gives the room up on purpose, and says so; only past
+   * sixteen candidates does it narrow, once.
+   */
+  it("are given up on purpose in the completion menu, and said so", () => {
+    const body = /\n\.completion-menu \{([^}]*)\}/.exec(
+      read("shell/completion/completionMenu.css"),
+    )?.[1];
+    expect(body).toMatch(/scrollbar-gutter:\s*auto/);
   });
 
   it("are drawn nowhere else", () => {
