@@ -301,6 +301,19 @@ cannot write one.
   open one and write to it (that moves it to 対応中); there is no button.
 - **完了** — closed escalations, the last 30, most recent first.
 
+The board speaks one language, Japanese — the tabs, the lanes, the counts,
+the chips on a card (選択肢 3, 優先, 停滞) and each lane's empty line
+(対応中のものはありません。) — because the lane names are the CLI's own
+vocabulary (`待機中`, `--tell board`), and a lane called 対応中 that says
+"Nothing in progress." under itself is two voices in one place. The header's
+Events switch and GitHub pill keep their names: they name a setting
+(`[orchestrator] events`) and a service, not something the board says.
+
+An escalation's chips — its agents, its Workspace, its links — are all one
+look, a hairline pill on no ground: each is a link to somewhere, and that is
+all the shape says. What state an agent is in is its mark alone (the status
+mark), and what a chip leads to is its glyph (a folder for a Workspace).
+
 待機中 and 完了 fold: the chevron on the left of the heading shows or hides the
 lane's cards, with the count kept in the heading. 完了 starts folded; what was
 folded is kept for the session (`orchestratorMemory.ts`).

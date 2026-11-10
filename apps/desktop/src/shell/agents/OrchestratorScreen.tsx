@@ -532,7 +532,7 @@ function BoardPage({
           hint="Needs your answer: the orchestrator cannot go on without it. Oldest first."
           tone="ask"
           count={board.needsAnswer.length}
-          empty="Nothing is waiting for you."
+          empty="回答を待っているものはありません。"
         >
           {board.needsAnswer.map((one) => (
             <EscalationCard
@@ -550,7 +550,7 @@ function BoardPage({
           hint="In progress: you answered, and the orchestrator is carrying it out."
           tone="progress"
           count={board.inProgress.length}
-          empty="Nothing in progress."
+          empty="対応中のものはありません。"
         >
           {board.inProgress.map((one) => (
             <EscalationCard
@@ -568,7 +568,7 @@ function BoardPage({
           hint="Waiting: parked on an outside condition (a date, someone's reply), its trigger in words. Soonest first. The orchestrator is reminded of them."
           tone="waiting"
           count={board.waiting.length}
-          empty="Nothing is waiting on a condition."
+          empty="条件を待っているものはありません。"
           folded={folded.waiting}
           onFold={() => {
             fold("waiting");
@@ -590,7 +590,7 @@ function BoardPage({
           hint="Closed escalations, most recent first."
           tone="closed"
           count={board.closed.length}
-          empty="Nothing closed yet."
+          empty="完了したものはまだありません。"
           folded={folded.closed}
           onFold={() => {
             fold("closed");
@@ -790,7 +790,7 @@ function EscalationCard({
           {question?.options !== undefined &&
           escalation.state === "needs_answer" ? (
             <span className="orchestrator-chip">
-              {question.options.length} options
+              選択肢 {question.options.length}
             </span>
           ) : null}
           {escalation.agents.map((agent) => (

@@ -244,7 +244,7 @@ describe("folding lanes", () => {
     expect(waiting).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(waiting);
     expect(waiting).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("Nothing is waiting on a condition.")).toBeNull();
+    expect(screen.queryByText("条件を待っているものはありません。")).toBeNull();
   });
 
   it("has no Closed button in the header any more", () => {

@@ -857,9 +857,21 @@
   color: var(--primary);
 }
 
+/* A chip that leads somewhere — an agent, a Workspace, a link — is one look
+   whatever it leads to: a hairline pill on no ground. They stand side by
+   side in an escalation's header, and an agent outlined beside a Workspace
+   filled read as two kinds of thing; they are one. What state an agent is
+   in is its mark alone, and what a chip leads to is its glyph. */
 .orchestrator-chip.is-link {
   height: 20px;
   padding: 0 8px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+
+/* A `devhub:` link among them is the same chip. */
+.orchestrator-reading-refs .devhub-link:not(:hover) {
+  background: transparent;
 }
 
 .orchestrator-chip.is-link:hover:not(:disabled) {
