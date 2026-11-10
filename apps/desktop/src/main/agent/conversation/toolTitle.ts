@@ -73,6 +73,16 @@ const TITLES: Readonly<
 	},
 };
 
+/**
+ * A tool whose name is the CLI's internal word, called in its row by the
+ * human one. AskUserQuestion's row stands over the card asking the same
+ * question, and its fold keeps the questions once answered: it is a
+ * question, and says so.
+ */
+const SPOKEN: Readonly<Record<string, string>> = {
+	AskUserQuestion: "Question",
+};
+
 /** The arguments that most often say what a call does, most telling first. */
 const TELLING = [
 	"description",
@@ -91,7 +101,10 @@ const TELLING = [
 
 export function toolTitle(name: string, input: JsonObject): string {
 	const mcp = /^mcp__(.+?)__(.+)$/u.exec(name);
-	const shown = mcp === null ? name : `${mcp[1]} · ${mcp[2]}`;
+	const shown =
+		mcp === null
+			? ((Object.hasOwn(SPOKEN, name) ? SPOKEN[name] : undefined) ?? name)
+			: `${mcp[1]} · ${mcp[2]}`;
 	const known = mcp === null ? TITLES[name] : undefined;
 	const what =
 		known !== undefined

@@ -2382,11 +2382,23 @@ span.conversation-picture-box > img {
   font-weight: 600;
 }
 
+/* A known tool's request: what the call is for, as the sentence it is, over
+   the exact thing it acts on (`toolRequest.ts`). */
+.conversation-request-heading {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
 .conversation-request-reason,
 .conversation-request-cwd {
   margin: var(--space-1) 0;
   color: var(--secondary);
   font-size: 0.9em;
+}
+
+/* What makes the call riskier than its target says (outside the sandbox). */
+.conversation-request-cwd[data-warning] {
+  color: var(--danger);
 }
 
 .conversation-request .conversation-json,
@@ -2439,17 +2451,19 @@ span.conversation-picture-box > img {
   background: var(--wash);
 }
 
-.conversation-request-choice[data-tone="allow"] {
+/* One answer filled, the rest outlined: the filled one is what Return and
+   1 press, the answer that goes ahead as asked. Two filled buttons side by
+   side ("Allow once", "Always allow …") left the default unsaid. A refusal
+   is outlined and in the text colour like any other answer: it is the safe
+   answer, and the danger colour would say otherwise. */
+.conversation-request-choice[data-primary] {
   background: var(--accent);
+  box-shadow: none;
   color: var(--accent-ink);
 }
 
-.conversation-request-choice[data-tone="allow"]:hover:not(:disabled) {
+.conversation-request-choice[data-primary]:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 88%, var(--primary));
-}
-
-.conversation-request-choice[data-tone="deny"] {
-  color: var(--danger);
 }
 
 .conversation-request-choice:disabled {
@@ -2671,7 +2685,21 @@ label.conversation-question-option:hover,
 }
 
 /* The mark: a ring for one of many, a box for any of many, filled with the
-   accent and its check when chosen. */
+   accent and its check when chosen. It is centred on the label's first line,
+   from that line's own height: `--question-line` is registered as a length,
+   so `1lh` is resolved on the row, in the label's font, and not in the mark's
+   9px one (which put the ring 2px above the line's middle). */
+@property --question-line {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+.conversation-question-option,
+.conversation-question-other-row {
+  --question-line: 1lh;
+}
+
 .conversation-question-mark {
   display: inline-flex;
   flex: none;
@@ -2682,7 +2710,7 @@ label.conversation-question-option:hover,
   box-sizing: border-box;
   border: 1.5px solid var(--tertiary);
   border-radius: 50%;
-  margin-top: 0.2em;
+  margin-top: calc((var(--question-line) - 14px) / 2);
   color: var(--accent-ink);
   font-size: 9px;
   font-weight: 700;
@@ -2745,11 +2773,9 @@ label.conversation-question-option:hover,
   font-size: 0.85em;
 }
 
-/* Rows as wide as a picker's, not the card's. */
-.conversation-question-body:not([data-previewed]) {
-  max-width: 36em;
-}
-
+/* The options run the card's width, so their right edge is the one the
+   answers under them end at: the card is one column, and what answers a
+   question lines up with it. */
 /* A single-select question whose options carry previews: the options on the
    left, the preview of the one pointed at, focused or picked on the right —
    or under them, when the card is narrow. */

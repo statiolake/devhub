@@ -1,6 +1,10 @@
 /**
  * A question the Agent is waiting on, drawn as a card.
  *
+ * A permission request about a tool whose shape DevHub knows says what the
+ * call is for and, monospace, exactly what it acts on (`toolRequest.ts`);
+ * any other tool's is drawn as its input.
+ *
  * The card lays out what the request carries and nothing else. Which answers
  * exist, what they are called and whether one takes a sentence are all in
  * `choices`, decided by the adapter; the page does not know which CLI asked,
@@ -14,8 +18,15 @@
  * fields, which may be none — has a form, whose submit is the first answer
  * in the row, before the adapter's choices.
  *
+ * One answer is primary, drawn filled: the first in the row, unless the
+ * first is a refusal — the answer that goes ahead as asked, and the one
+ * Return on the focused card presses. The rest are outlined, a refusal
+ * included: refusing is the safe answer, not a dangerous one, so it is not
+ * drawn in the danger colour.
+ *
  * From the keyboard, as in the CLIs' own dialogs: with the card focused, 1–9
- * press its answers in order, and Esc goes back to the composer. What is typed
+ * press its answers in order, Return the primary one, and Esc goes back to
+ * the composer. What is typed
  * into it is written under the composer's keys (`messageKeys.ts`): Return is a
  * new line and ⌘Return answers.
  */
@@ -42,20 +53,45 @@ import {
 import { DiffView, JsonView } from "./EntryParts";
 import { ExternalLink, Markdown } from "./Markdown";
 import { SEND_KEY, useMessageKeys, type MessageKeys } from "./messageKeys";
+import { knownToolRequest } from "./toolRequest";
 
 function Subject({ request }: { readonly request: PendingRequest }) {
   const { subject } = request;
   switch (subject.kind) {
-    case "tool":
+    case "tool": {
+      const known = knownToolRequest(subject.tool, subject.input);
       return (
         <>
-          <div className="conversation-request-title">{subject.title}</div>
-          <JsonView value={subject.input} />
+          {known === undefined ? (
+            <>
+              <div className="conversation-request-title">{subject.title}</div>
+              <JsonView value={subject.input} />
+            </>
+          ) : (
+            <>
+              <div className="conversation-request-heading">
+                {known.heading}
+              </div>
+              <pre className="conversation-request-command">
+                <code>{known.target}</code>
+              </pre>
+              {known.notes.map((note) => (
+                <div
+                  key={note.text}
+                  className="conversation-request-cwd"
+                  data-warning={note.warning || undefined}
+                >
+                  {note.text}
+                </div>
+              ))}
+            </>
+          )}
           {subject.reason ? (
             <p className="conversation-request-reason">{subject.reason}</p>
           ) : null}
         </>
       );
+    }
     case "command":
       return (
         <>
@@ -143,6 +179,7 @@ function Choices({
             type="submit"
             className="conversation-request-choice"
             data-tone={writing.tone}
+            data-primary=""
             title={`${writing.label} (${SEND_KEY})`}
             disabled={busy}
           >
@@ -161,6 +198,7 @@ function Choices({
           form={submit.form}
           className="conversation-request-choice"
           data-tone="allow"
+          data-primary=""
           data-choice-index={0}
           aria-keyshortcuts="1"
           title={`${submit.label} (${SEND_KEY})`}
@@ -178,6 +216,9 @@ function Choices({
             type="button"
             className="conversation-request-choice"
             data-tone={choice.tone}
+            data-primary={
+              index === 0 && choice.tone !== "deny" ? "" : undefined
+            }
             data-choice-index={index}
             aria-keyshortcuts={index < 9 ? `${index + 1}` : undefined}
             disabled={busy}
@@ -852,6 +893,24 @@ export function RequestCard({ request }: { readonly request: PendingRequest }) {
           return;
         }
         const target = event.target as HTMLElement;
+        if (
+          event.key === "Enter" &&
+          target === event.currentTarget &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !event.shiftKey
+        ) {
+          // Return on the card is its primary answer, the one drawn filled.
+          const primary =
+            event.currentTarget.querySelector<HTMLButtonElement>(
+              "[data-primary]",
+            );
+          if (!primary || primary.disabled) return;
+          event.preventDefault();
+          primary.click();
+          return;
+        }
         if (target.matches("input, textarea")) return;
         if (event.metaKey || event.ctrlKey || event.altKey) return;
         if (!/^[1-9]$/.test(event.key)) return;

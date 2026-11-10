@@ -45,7 +45,7 @@ describe("a tool call's title", () => {
 		[
 			"AskUserQuestion",
 			{ questions: [{ question: "Which one?" }] },
-			"AskUserQuestion: Which one?",
+			"Question: Which one?",
 		],
 		["ListAgents", {}, "ListAgents"],
 	])("names %s by what it does", (name, input, title) => {

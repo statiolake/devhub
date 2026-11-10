@@ -507,9 +507,29 @@ rest of DevHub uses. A question's header is a small caption over its words;
 its options are rows of a list as DevHub's pickers draw them — the label, and
 its description on one quiet line under it — the pointer washing a row and a
 chosen one drawn as the picker's selection, with a check (the radio or
-checkbox behind each row is there for the keyboard). _Submit_, and a
-permission's _Allow_ / _Deny…_, are the small buttons of an inline
-confirmation such as Rewind's, at the trailing end.
+checkbox behind each row is there for the keyboard). The rows run the card's
+width, so their right edge is the one the answers under them end at, and each
+row's ring is centred on its label's first line (from that line's own
+height, not the ring's). _Submit_, and a permission's _Allow once_ /
+_Always allow …_ / _Deny…_, are the small buttons of an inline confirmation
+such as Rewind's, at the trailing end, and exactly one of them is filled: the
+first, the answer that goes ahead as asked, which 1 and Return on the
+focused card press. The rest are outlined, a refusal too — refusing is the
+safe answer, so it is not drawn in the danger colour. The digits 1–9 press
+the answers in order.
+
+**A permission** for a tool whose input DevHub knows the shape of (Bash,
+Read, Edit, MultiEdit, Write, NotebookEdit, WebFetch, WebSearch, Glob, Grep,
+Skill: `shell/conversation/toolRequest.ts`) is two things: what the call is
+for, as the heading — a Bash call's own `description`, else what the tool
+does ("Read a file") — and exactly what it acts on, once, in a monospace
+block: the command, the path, the URL, the pattern. Anything else that
+changes what allowing it means is a quiet line under it ("Lines 10–14", "In
+src", and "Outside the sandbox" in the danger colour). The raw input as JSON
+is drawn only for a tool DevHub does not know, or an input with a key it
+does not know, so nothing a call carries is ever left off the card. The call's
+row above the card stays as it is; an AskUserQuestion's row is called
+_Question_, not by the tool's internal name.
 
 The answer is said **once**, as your message (below). The answered call has
 no readable view; its fold keeps **what it asked** for reference
