@@ -689,6 +689,17 @@
   overflow: hidden;
 }
 
+/* A float over it covers a source whole (`coverGroups`): it fades in
+   place, nothing sliced at the float's edge, and takes no clicks there. */
+.nvim-toast-group[data-covered="true"] {
+  opacity: 0;
+  transition-duration: var(--motion-fast, 120ms);
+}
+
+.nvim-toast-group[data-covered="true"] .nvim-toast {
+  pointer-events: none;
+}
+
 /* Sources apart by half a line: grouping by space alone. */
 .nvim-toast-group + .nvim-toast-group > .nvim-toast-group-body {
   padding-top: calc(var(--nvim-line, 18px) / 2);

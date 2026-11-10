@@ -98,6 +98,7 @@ export function Toasts({
       const stack = stackRef.current;
       const veil = veilRef.current;
       if (!stack || !veil) return;
+      coverGroups(stack);
       const origin = veil.getBoundingClientRect();
       const lines: VeilLine[] = [];
       for (const el of stack.querySelectorAll<HTMLElement>(
@@ -176,6 +177,66 @@ export function Toasts({
       </div>
     </div>
   );
+}
+
+/**
+ * What covers the notifications: the floats over their level — a picker, a
+ * hover, a plugin's window, its frame — as boxes in the page.
+ */
+function coversOver(ambient: HTMLElement): DOMRect[] {
+  const z = Number(ambient.dataset.z ?? "0");
+  const out: DOMRect[] = [];
+  for (const level of ambient.parentElement?.children ?? []) {
+    if (!(level instanceof HTMLElement) || level === ambient) continue;
+    if (!level.classList.contains("nvim-level")) continue;
+    if (Number(level.dataset.z ?? "0") <= z) continue;
+    for (const el of level.querySelectorAll<HTMLElement>(
+      ".nvim-grid.nvim-float, .nvim-view-frame, .nvim-float-shadow > *",
+    )) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) out.push(r);
+    }
+  }
+  return out;
+}
+
+/**
+ * A float over the corner covers the notifications in it, as fidget's
+ * window is under a picker; but a notification here is drawn by lines, and
+ * a float's edge cut through one mid-word ("…が1件失敗しました"). So a
+ * source whose lines a float's box reaches gives way whole — it fades,
+ * its source's name and all, and comes back when the float is gone — and
+ * nothing is ever sliced. The others stay where they are.
+ */
+function coverGroups(stack: HTMLElement): void {
+  const ambient = stack.closest<HTMLElement>(".nvim-ambient");
+  const covers = ambient ? coversOver(ambient) : [];
+  for (const group of stack.querySelectorAll<HTMLElement>(
+    ".nvim-toast-group",
+  )) {
+    let covered = false;
+    if (covers.length > 0) {
+      for (const el of group.querySelectorAll<HTMLElement>(
+        ".nvim-toast-source, .nvim-toast",
+      )) {
+        const r = el.getBoundingClientRect();
+        if (
+          covers.some(
+            (c) =>
+              r.left < c.right &&
+              c.left < r.right &&
+              r.top < c.bottom &&
+              c.top < r.bottom,
+          )
+        ) {
+          covered = true;
+          break;
+        }
+      }
+    }
+    const want = covered ? "true" : "false";
+    if (group.dataset.covered !== want) group.dataset.covered = want;
+  }
 }
 
 /** A notification as it is now: an update is a new line, its time anew. */
