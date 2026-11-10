@@ -9,6 +9,7 @@
 import {
   createContext,
   useContext,
+  useMemo,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -128,6 +129,62 @@ function clickable(
   };
 }
 
+/**
+ * A `markdown` node. Its renderers are made once per look (and per marks),
+ * not at each render: react-markdown takes each renderer as a component
+ * type, so a new one would mount its code blocks anew at every redraw of
+ * the Neovim — a popup's code drawn plain again before it is coloured.
+ */
+function MarkdownView({
+  node,
+  grow,
+  extra,
+}: {
+  readonly node: Extract<ComponentNode, { type: "markdown" }>;
+  readonly grow: CSSProperties;
+  readonly extra: Record<string, unknown>;
+}): ReactNode {
+  const theme = useTheme();
+  const { dark, openLink } = theme;
+  // The groups are needed only to draw marks; the code that marks name
+  // (`source`) only then too.
+  const marked = node.marks ? theme.hl : undefined;
+  const source = node.marks ? node.text : undefined;
+  const components = useMemo(
+    () =>
+      markdownComponents(
+        dark,
+        openLink,
+        node.marks && marked && source !== undefined
+          ? {
+              source,
+              marks: node.marks,
+              style: (name) => markStyle(marked, name),
+            }
+          : undefined,
+      ),
+    [dark, openLink, marked, source, node.marks],
+  );
+  return (
+    <div
+      className="nvc-markdown"
+      style={{
+        ...grow,
+        ...(node.size ? { fontSize: FONT_SIZE[node.size] } : {}),
+      }}
+      {...extra}
+    >
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        skipHtml
+        components={components}
+      >
+        {node.text}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 function Node({ node }: { readonly node: ComponentNode }): ReactNode {
   const theme = useTheme();
   const { hl } = theme;
@@ -198,34 +255,7 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
       );
     }
     case "markdown":
-      return (
-        <div
-          className="nvc-markdown"
-          style={{
-            ...grow,
-            ...(node.size ? { fontSize: FONT_SIZE[node.size] } : {}),
-          }}
-          {...extra}
-        >
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            skipHtml
-            components={markdownComponents(
-              theme.dark,
-              theme.openLink,
-              node.marks
-                ? {
-                    source: node.text,
-                    marks: node.marks,
-                    style: (name) => markStyle(theme.hl, name),
-                  }
-                : undefined,
-            )}
-          >
-            {node.text}
-          </ReactMarkdown>
-        </div>
-      );
+      return <MarkdownView node={node} grow={grow} extra={extra} />;
     case "badge": {
       const color = fgOf(hl, node.hl) ?? rgbCss(theme.fg);
       const ground = bgOf(hl, node.hl);

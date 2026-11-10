@@ -12,6 +12,7 @@
  */
 
 import {
+  useCallback,
   useLayoutEffect,
   useRef,
   useState,
@@ -19,6 +20,7 @@ import {
   type ReactNode,
 } from "react";
 import { ComponentTree, fgOf, type ComponentTheme } from "./ComponentView";
+import { ColouringWait } from "./DecorationViews";
 import {
   clampScroll,
   isDark,
@@ -525,6 +527,13 @@ export function Popups({
 /** A popup's line, for j/k: its prose's line height. */
 const POPUP_LINE = 19;
 
+/**
+ * How long a popup's first frame waits for the colouring of its code when
+ * the grammar is still loading (the first hover in a language): long enough
+ * for the app's own chunks, short enough that a popup never feels late.
+ */
+export const POPUP_COLOURING_HOLD_MS = 400;
+
 function Popup({
   content,
   place,
@@ -547,6 +556,24 @@ function Popup({
     { readonly width: number; readonly height: number } | undefined
   >();
   const [more, setMore] = useState({ above: false, below: false });
+  // Code blocks whose grammar is still loading: until they are coloured (or
+  // the hold runs out) a popup not yet shown stays hidden, so that it opens
+  // coloured and is never drawn plain first.
+  const [colouring, setColouring] = useState(0);
+  const shown = useRef(false);
+  const waitColouring = useCallback((coloured: Promise<unknown>) => {
+    if (shown.current) return;
+    setColouring((n) => n + 1);
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(hold);
+      setColouring((n) => n - 1);
+    };
+    const hold = setTimeout(settle, POPUP_COLOURING_HOLD_MS);
+    void coloured.finally(settle);
+  }, []);
   const edges = () => {
     const el = scroller.current;
     if (!el) return;
@@ -605,6 +632,10 @@ function Popup({
             : undefined,
       })
     : undefined;
+  const visible = layout !== undefined && (shown.current || colouring === 0);
+  useLayoutEffect(() => {
+    if (visible) shown.current = true;
+  }, [visible]);
   const theme = themeFor(host, content.hl, (action) => {
     host.lua("_layers_click", ["popup", place.id, null, null, action]);
     host.refocus();
@@ -624,7 +655,7 @@ function Popup({
         top: layout?.top ?? 0,
         height: layout?.height,
         maxWidth,
-        visibility: layout ? undefined : "hidden",
+        visibility: visible ? undefined : "hidden",
         color: rgbCss(fg),
         background: rgbCss(bg),
         ["--nvim-ring" as string]: ringColor(content.hl, fg),
@@ -641,10 +672,12 @@ function Popup({
     >
       <div ref={scroller} className="nvim-popup-scroll" onScroll={edges}>
         <div ref={body} className="nvim-popup-body" style={{ maxWidth }}>
-          <ComponentTree
-            node={content.node}
-            theme={{ ...theme, fg, bg, dark: isDark(bg) }}
-          />
+          <ColouringWait.Provider value={waitColouring}>
+            <ComponentTree
+              node={content.node}
+              theme={{ ...theme, fg, bg, dark: isDark(bg) }}
+            />
+          </ColouringWait.Provider>
         </div>
       </div>
       {more.above ? (

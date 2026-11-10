@@ -5,7 +5,9 @@
  */
 
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -15,6 +17,7 @@ import {
 } from "react";
 import type { Components } from "react-markdown";
 import {
+  colouringNow,
   grammarFor,
   highlight,
   type Colouring,
@@ -451,6 +454,22 @@ export function markdownComponents(
   };
 }
 
+/**
+ * Told of a code block drawn plain because its grammar is still loading (the
+ * first block of a language), with the promise of its colouring: a popup
+ * holds its first frame for it, so it opens coloured (`Popup`).
+ */
+export const ColouringWait = createContext<
+  ((coloured: Promise<unknown>) => void) | undefined
+>(undefined);
+
+/**
+ * Fenced code in its language's colours. The colouring is made in the render
+ * itself (`colouringNow`), so a block drawn again, or mounted anew, is
+ * coloured in its first frame. Only while
+ * its grammar is still loading is it drawn plain, and drawn again coloured
+ * once it has.
+ */
 export function HighlightedCode({
   code,
   language,
@@ -463,20 +482,27 @@ export function HighlightedCode({
   readonly marks?: readonly LineMark[];
 }) {
   const grammar = grammarFor(language);
-  const [colouring, setColouring] = useState<Colouring | undefined>();
-  useEffect(() => {
-    if (grammar === undefined) return undefined;
+  // The colouring itself is kept by `highlight`; this state only says that
+  // one has arrived, so the block draws again to show it.
+  const [, setColoured] = useState<Colouring | undefined>();
+  const colouring =
+    grammar === undefined ? undefined : colouringNow(code, grammar);
+  const wait = useContext(ColouringWait);
+  // A layout effect: a popup hears of the wait before its first paint.
+  useLayoutEffect(() => {
+    if (grammar === undefined || colouring !== undefined) return undefined;
     let live = true;
-    highlight(code, grammar).then(
+    const coloured = highlight(code, grammar).then(
       (result) => {
-        if (live) setColouring(result);
+        if (live) setColoured(result);
       },
       () => undefined,
     );
+    wait?.(coloured);
     return () => {
       live = false;
     };
-  }, [code, grammar]);
+  }, [code, grammar, colouring, wait]);
   const lines: readonly (readonly { text: string; colour?: string }[])[] =
     colouring
       ? colouring.map((line) =>

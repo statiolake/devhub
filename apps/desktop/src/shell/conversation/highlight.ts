@@ -102,7 +102,11 @@ interface Palette {
 }
 
 let palette: Promise<Palette> | undefined;
+/** The palette once it has loaded, for `colouringNow`. */
+let paletteReady: Palette | undefined;
 const grammarsLoaded = new Map<GrammarId, Promise<void>>();
+/** The grammars that have finished loading, for `colouringNow`. */
+const grammarsReady = new Set<GrammarId>();
 
 async function createPalette(): Promise<Palette> {
   const [{ createHighlighterCore }, { createJavaScriptRegexEngine }] =
@@ -132,7 +136,9 @@ function loadGrammar(
 ): Promise<void> {
   let loading = grammarsLoaded.get(grammar);
   if (!loading) {
-    loading = highlighter.loadLanguage(GRAMMARS[grammar]());
+    loading = highlighter.loadLanguage(GRAMMARS[grammar]()).then(() => {
+      grammarsReady.add(grammar);
+    });
     grammarsLoaded.set(grammar, loading);
   }
   return loading;
@@ -180,17 +186,48 @@ export function colouringOf(
   return colourings.get(colouringKey(code, grammar));
 }
 
+/**
+ * `code`, coloured now, without waiting: the colouring `highlight` already
+ * made, or one made here when the highlighter and the grammar have loaded
+ * (the tokenizer itself is synchronous). `undefined` only while they are
+ * still loading, the first time a grammar is asked for; `highlight` is then
+ * what waits for them.
+ */
+export function colouringNow(
+  code: string,
+  grammar: GrammarId,
+): Colouring | undefined {
+  const kept = colourings.get(colouringKey(code, grammar));
+  if (kept) return kept;
+  if (paletteReady === undefined || !grammarsReady.has(grammar)) {
+    return undefined;
+  }
+  return colour(paletteReady, code, grammar);
+}
+
 /** `code`, coloured by `grammar`: one array of tokens per line. */
 export async function highlight(
   code: string,
   grammar: GrammarId,
 ): Promise<Colouring> {
-  const key = colouringKey(code, grammar);
-  const kept = colourings.get(key);
+  const kept = colourings.get(colouringKey(code, grammar));
   if (kept) return kept;
-  palette ??= createPalette();
-  const { highlighter, lightForeground, darkForeground } = await palette;
-  await loadGrammar(highlighter, grammar);
+  palette ??= createPalette().then((made) => {
+    paletteReady = made;
+    return made;
+  });
+  const ready = await palette;
+  await loadGrammar(ready.highlighter, grammar);
+  return colour(ready, code, grammar);
+}
+
+/** Tokenize and keep: the highlighter and the grammar have loaded. */
+function colour(
+  { highlighter, lightForeground, darkForeground }: Palette,
+  code: string,
+  grammar: GrammarId,
+): Colouring {
+  const key = colouringKey(code, grammar);
   const { tokens } = highlighter.codeToTokens(code, {
     lang: grammar,
     themes: { light: LIGHT, dark: DARK },
