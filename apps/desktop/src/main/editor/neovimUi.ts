@@ -155,14 +155,23 @@ end
  * (`_attached_first`, before Neovim goes on to the config), and the value
  * the config leaves is the person's, read once Neovim has started
  * (`_keep_cmdheight`, or at `VimEnter` when Neovim answered that while the
- * config waited on something). These calls follow the setup and
+ * config waited on something), and `background` is the theme's (above). These calls follow the setup and
  * `FIRST_UI_LUA` in its request.
  */
 function firstAttach(
 	cols: number,
 	rows: number,
+	background: "dark" | "light" | undefined,
 ): readonly (readonly [string, readonly unknown[]])[] {
 	return [
+		// The `background` DevHub's theme has, before the config: a TUI's
+		// Neovim asks its terminal for it at the same point, and a config that
+		// names no colorscheme (`--clean`) would otherwise draw its first
+		// screen dark, and light only once DevHub's theme is told after it
+		// started. The person's config sets its own over it.
+		...(background === undefined
+			? []
+			: ([["nvim_set_option_value", ["background", background, {}]]] as const)),
 		[
 			"nvim_exec_lua",
 			[
@@ -1177,6 +1186,7 @@ export class NeovimUi {
 		sink: NeovimUiSink,
 		cols: number,
 		rows: number,
+		background?: "dark" | "light",
 	): Promise<NeovimUiAttach> {
 		this.sink = sink;
 		// Both answered at once, even while Neovim is starting (fast calls):
@@ -1232,7 +1242,7 @@ export class NeovimUi {
 			// Messages: cmdheight held through the attach, the pager, `q:`.
 			["nvim_exec_lua", [MESSAGES_LUA, []]],
 			["nvim_exec_lua", [FIRST_UI_LUA, []]],
-			...firstAttach(cols, rows),
+			...firstAttach(cols, rows, background),
 		];
 		const setup = await this.atomically(calls).catch((error: unknown) => {
 			if (

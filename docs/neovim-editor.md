@@ -199,7 +199,11 @@ host): its check for a first UI (`FIRST_UI_LUA`) fails for any other
 Neovim, which ends the request before the attach and leads to the one
 below. Before it, the channel and whether Neovim waits at a prompt are
 asked together (`nvim_get_api_info`, `nvim_get_mode`, both answered while
-Neovim starts): two round trips from connecting to attached.
+Neovim starts): two round trips from connecting to attached. That first
+attach also sets `background` to DevHub's theme's before the config runs,
+as a TUI's Neovim takes its terminal's: a config that names no
+colorscheme (`--clean`) drew its first screen dark and turned light only
+when the theme was told, after it had started.
 
 **Attaching again** (a reloaded page, a restarted DevHub) needs care: Neovim
 keeps its window grids and assumes a new multigrid UI has them too. So the

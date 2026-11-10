@@ -49,6 +49,8 @@ export interface NeovimEditorsOptions {
 	readonly host?: NeovimHostClient;
 	/** How main connects to a socket when the UIs are its own. */
 	readonly connect?: (socketPath: string) => Promise<NeovimRpc>;
+	/** DevHub's theme's `background` now (`NeovimUiTarget.background`). */
+	readonly background?: () => "dark" | "light" | undefined;
 	/** A failure to say in the log. */
 	readonly log?: (line: string) => void;
 	/** A UI's current buffer changed (`bufferName`). */
@@ -282,12 +284,14 @@ export class NeovimEditors {
 			const workspaceId = request.workspaceId;
 			const { socketPath, server, machine } =
 				await this.options.overlays.connection(workspaceId);
+			const background = this.options.background?.();
 			const ui = {
 				workspaceId,
 				socketPath,
 				server,
 				cols: request.cols,
 				rows: request.rows,
+				...(background === undefined ? {} : { background }),
 			};
 			const where = machine === "local" ? "" : machine;
 			const host = this.options.host;

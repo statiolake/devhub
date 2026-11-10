@@ -325,7 +325,7 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			const socket = join(scratch, "n.sock");
 			const file = join(scratch, "text.txt");
 			writeFileSync(file, "first line of the file\nsecond\n");
-			const start = async (config: string) => {
+			const start = async (config: string, background?: "light") => {
 				const init = join(scratch, `init-${String(children.length)}.lua`);
 				writeFileSync(init, config);
 				rmSync(socket, { force: true });
@@ -368,7 +368,7 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 					guiClose: () => undefined,
 					guiSend: () => undefined,
 				};
-				await ui.attach(sink, 60, 40);
+				await ui.attach(sink, 60, 40, background);
 				return { client, ui, asked, state, sink };
 			};
 			const sizes = `return { vim.o.lines, vim.o.columns, vim.o.cmdheight, vim.api.nvim_win_get_height(0), vim.g.config_saw }`;
@@ -452,6 +452,18 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 				(await ui3.request("nvim_exec_lua", [sizes, []])) as unknown[],
 			).toEqual([30, 60, 3, 26, "waited"]);
 			later.close();
+			// The theme's background, before the config, as a TUI's terminal's.
+			const light = await start(
+				"vim.g.config_saw_background = vim.o.background",
+				"light",
+			);
+			expect(
+				await light.ui.request("nvim_exec_lua", [
+					"return vim.g.config_saw_background",
+					[],
+				]),
+			).toBe("light");
+			light.client.close();
 		},
 	);
 

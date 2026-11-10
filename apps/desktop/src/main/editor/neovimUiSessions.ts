@@ -52,6 +52,12 @@ export interface NeovimUiTarget {
 	readonly server: number;
 	readonly cols: number;
 	readonly rows: number;
+	/**
+	 * DevHub's theme's `background`, for a Neovim's first UI to start its
+	 * config with (`NeovimUi.attach`), as a TUI starts it with its
+	 * terminal's.
+	 */
+	readonly background?: "dark" | "light";
 }
 
 interface Session<P> {
@@ -132,6 +138,7 @@ export class NeovimUiSessions<P> {
 			this.sinkOf(workspaceId, session),
 			target.cols,
 			target.rows,
+			target.background,
 		);
 	}
 

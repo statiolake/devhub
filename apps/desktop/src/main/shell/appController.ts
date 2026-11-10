@@ -1215,6 +1215,7 @@ export class AppController {
 		});
 		this.neovimEditors = new NeovimEditors({
 			overlays: this.terminalNeovims,
+			background: () => themePublicationIfInstalled()?.current()?.background,
 			neovims: this.managedNeovims,
 			clipboard,
 			...(this.neovimHost === undefined ? {} : { host: this.neovimHost }),
