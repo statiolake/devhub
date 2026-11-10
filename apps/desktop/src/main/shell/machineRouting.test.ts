@@ -142,6 +142,10 @@ class FakeMachine implements Runtime {
 		return Promise.resolve({ kind: "resolved" as const, path: "nvim" });
 	}
 
+	devhubProgram(): Promise<NeovimProgram> {
+		return Promise.resolve({ kind: "resolved" as const, path: "devhub" });
+	}
+
 	tmuxProgram(): Promise<TmuxProgram> {
 		return Promise.resolve({
 			kind: "resolved" as const,

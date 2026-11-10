@@ -457,6 +457,7 @@ export abstract class RemoteShellRuntime {
 	#tmux: Promise<TmuxProgram> | undefined;
 	#bash: Promise<string> | undefined;
 	#nvim: Promise<string> | undefined;
+	#devhub: Promise<string> | undefined;
 
 	/**
 	 * `$HOME` on that machine, and the check that it is a machine DevHub speaks.
@@ -772,6 +773,18 @@ export abstract class RemoteShellRuntime {
 			return { kind: "resolved", path: await this.#nvim };
 		} catch (failure: unknown) {
 			this.#nvim = undefined;
+			return { kind: "unavailable", reason: describeFailure(failure) };
+		}
+	}
+
+	/** The `devhub` command, installed as `terminalLauncher` installs it. */
+	async devhubProgram(): Promise<NeovimProgram> {
+		const delivery = this.delivery("devhub");
+		this.#devhub ??= this.#installTool(delivery).then(({ program }) => program);
+		try {
+			return { kind: "resolved", path: await this.#devhub };
+		} catch (failure: unknown) {
+			this.#devhub = undefined;
 			return { kind: "unavailable", reason: describeFailure(failure) };
 		}
 	}

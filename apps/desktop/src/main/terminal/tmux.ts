@@ -102,12 +102,15 @@ import { agentTerminalSessionName } from "../../model/agentTerminal.js";
 import {
 	NVIM_OVERLAY_OPTION,
 	NVIM_SOCKET_OPTION,
-	NVIM_UI_OPTION,
+	NVIM_SHIM_FACTS_FILE,
+	NVIM_SHIM_KEYS_FILE,
 	NVIM_SHIM_VARIABLE,
 	NVIM_SHIM_ZSH_DIRECTORY,
+	INSTALL_NEOVIM_SHIM_SH,
 	paneTmuxScript,
 	USER_ZDOTDIR_VARIABLE,
-	neovimShimScript,
+	neovimShimFacts,
+	neovimShimKeys,
 	neovimShimZshenv,
 } from "../editor/terminalNeovimShim.js";
 import {
@@ -4004,15 +4007,53 @@ export class TmuxTerminalRuntime {
 					this.neovimShimWritten = undefined;
 					return false;
 				}
+				// The `nvim` is the `devhub` command, copied (`cli/nvim.go`); its
+				// facts and its tty reader beside it, written first, so a copy is
+				// never there without them.
+				const devhub = await this.host.devhubProgram();
+				if (devhub.kind === "unavailable") {
+					console.error(
+						`[devhub] DevHub's nvim is not on panes${this.where}: ${devhub.reason}`,
+					);
+					await this.host.removeTree(join(shim.directory, "nvim"));
+					this.neovimShimWritten = undefined;
+					return false;
+				}
 				await this.host.writeTextFile(
-					join(shim.directory, "nvim"),
-					neovimShimScript({
-						nvim: nvim.path,
-						tmux: this.tmuxPath(),
-						sessionPrefixes: [terminalSessionName(""), "ws-"],
-					}),
-					0o755,
+					join(shim.directory, NVIM_SHIM_KEYS_FILE),
+					neovimShimKeys(),
+					0o644,
 				);
+				await this.host.writeTextFile(
+					join(shim.directory, NVIM_SHIM_FACTS_FILE),
+					neovimShimFacts(
+						{
+							nvim: nvim.path,
+							tmux: this.tmuxPath(),
+							sessionPrefixes: [terminalSessionName(""), "ws-"],
+						},
+						shim.directory,
+					),
+					0o644,
+				);
+				const copied = await this.host.exec({
+					argv: [
+						"/bin/sh",
+						"-c",
+						INSTALL_NEOVIM_SHIM_SH,
+						"sh",
+						devhub.path,
+						shim.directory,
+					],
+					deadline: OperationDeadline.in(this.timeoutMs),
+					cancel: new CancellationToken(),
+					limits: TMUX_LIMITS,
+				});
+				if (copied.code !== 0) {
+					throw new Error(
+						`${devhub.path} could not be copied to ${join(shim.directory, "nvim")}: ${copied.stderr.toString("utf8").trim()}`,
+					);
+				}
 				return true;
 			} catch (failure: unknown) {
 				console.error(
@@ -4129,13 +4170,12 @@ export class TmuxTerminalRuntime {
 	}
 
 	/**
-	 * What the overlays ask of tmux: tell a pane's `nvim` its UI is attached,
-	 * make a pane the active one, put DevHub's client in the prefix table.
+	 * What the overlays ask of tmux: make a pane the active one, put
+	 * DevHub's client in the prefix table.
 	 * Every target is a pane id or a client name a reading just gave.
 	 */
 	async terminalNeovimCommand(
 		command:
-			| { readonly kind: "claim"; readonly paneId: string }
 			| { readonly kind: "select"; readonly paneId: string }
 			| { readonly kind: "prefix"; readonly client: string },
 		cancel = new CancellationToken(),
@@ -4145,11 +4185,9 @@ export class TmuxTerminalRuntime {
 			throw portFailure("failed");
 		}
 		const args =
-			command.kind === "claim"
-				? ["set-option", "-p", "-t", target, NVIM_UI_OPTION, "1"]
-				: command.kind === "select"
-					? ["select-pane", "-t", target]
-					: ["switch-client", "-c", target, "-T", "prefix"];
+			command.kind === "select"
+				? ["select-pane", "-t", target]
+				: ["switch-client", "-c", target, "-T", "prefix"];
 		const release = await this.gate.acquireOperation(cancel);
 		try {
 			const output = await this.runTmux(

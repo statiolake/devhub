@@ -19,7 +19,7 @@ import { MsgpackExt, decode } from "./msgpack.js";
 import { DECOR_LUA } from "./neovimDecor.js";
 import { MESSAGES_LUA } from "./neovimMessages.js";
 import { LAYERS_LUA } from "./neovimGuiLayers.js";
-import { RESTART_STATE_LUA } from "./neovimRestart.js";
+import { NVIM_STATE_VARIABLE, RESTART_STATE_LUA } from "./neovimRestart.js";
 import {
 	LAYOUT_RESTORE_LUA,
 	LAYOUT_SAVE_LUA,
@@ -109,6 +109,24 @@ export function uiAttachOptions(): Record<string, boolean> {
 		ext_messages: true,
 	};
 }
+
+/**
+ * What tells the program keeping a pane's Neovim (the pane's `nvim`,
+ * `cli/nvim.go`) that DevHub's UI is attached: `ui` in the directory named
+ * in the server's environment (`DEVHUB_NVIM_STATE`, `neovimRestart.ts`). Run
+ * once the attach is answered — after the Neovim has started, as the requests
+ * after an `--embed` Neovim's first attach are — so that program starts its
+ * tty reader (`terminalNeovimTtyKeys.ts`) when Neovim has the keys, and
+ * stops waiting to run the TUI instead.
+ */
+export const UI_ATTACHED_LUA = `
+do
+  local state = vim.env.${NVIM_STATE_VARIABLE}
+  if state and state ~= "" and vim.fn.isdirectory(state) == 1 then
+    pcall(vim.fn.writefile, {}, state .. "/ui")
+  end
+end
+`;
 
 /**
  * Whether this attach is the Neovim's first UI (`NeovimUi.attachFirst`): it
@@ -1245,13 +1263,16 @@ export class NeovimUi {
 		await this.afterAttach();
 	}
 
-	/** Once attached: cmdheight the person's again, the GUI windows told again. */
+	/**
+	 * Once attached: cmdheight the person's again, the GUI windows told
+	 * again, and the pane's `nvim` told its UI is here (`UI_ATTACHED_LUA`).
+	 */
 	private async afterAttach(): Promise<void> {
 		// The GUI windows already open (a DevHub restart, a page reload) are
 		// told again: the page knew none of them.
 		await this.client
 			.request("nvim_exec_lua", [
-				"local M = package.loaded['devhub_gui']; if M and M._keep_cmdheight then M._keep_cmdheight() end; if M and M._replay then M._replay() end",
+				`local M = package.loaded['devhub_gui']; if M and M._keep_cmdheight then M._keep_cmdheight() end; if M and M._replay then M._replay() end\n${UI_ATTACHED_LUA}`,
 				[],
 			])
 			.catch(() => undefined);

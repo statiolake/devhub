@@ -7,11 +7,11 @@
  * `send-prefix` (the prefix pressed twice), a `send-keys` binding,
  * `paste-buffer`, a `devhub tell` typed into the terminal — and before this
  * the pane's tty took those bytes and nobody read them. So while DevHub's UI
- * is attached the shim puts the tty in raw mode and runs this Lua, in a
- * second, bare `nvim -l` (the one program the shim knows is there, on this
- * Mac and on an SSH host alike), which reads the tty and hands each key to
- * the Neovim over its own socket: `nvim_input` in `<>` notation, and a
- * bracketed paste as one `nvim_paste`.
+ * is attached the pane's `nvim` (`cli/nvim.go`) puts the tty in raw mode and
+ * runs this Lua, written beside it (`NVIM_SHIM_KEYS_FILE`), in a second, bare
+ * `nvim -l` (DevHub's Neovim, there on this Mac and on an SSH host alike),
+ * which reads the tty and hands each key to the Neovim over its own socket:
+ * `nvim_input` in `<>` notation, and a bracketed paste as one `nvim_paste`.
  *
  * Like Neovim's TUI it asks the terminal (tmux) for bracketed paste
  * (`CSI ? 2004 h`, which `paste-buffer -p` — tmux's `]` — honours) and for
@@ -19,8 +19,8 @@
  * on`), and it reads every encoding tmux may answer with: the legacy bytes,
  * CSI u (`extended-keys-format csi-u`), xterm's `CSI 27 ; m ; c ~`, cursor
  * and function keys with their modifiers, and ESC before a key as Alt. The
- * shim states the modes before it runs this and resets them, and the tty,
- * once Neovim has exited.
+ * pane's `nvim` states the modes before it runs this and resets them, and
+ * the tty, once Neovim has exited.
  *
  * Nothing typed in the overlay comes this way, so nothing comes twice: the
  * overlay's keys are RPC, and a key the terminal page would hand to the pane
@@ -208,31 +208,3 @@ while true do
 	vim.wait(3600000)
 end
 `;
-
-/**
- * The shim's half (`terminalNeovimShim.ts`): `start_tty_keys` once DevHub's
- * UI is attached, `stop_tty_keys` once Neovim has exited. `$real`, `$dir`
- * and `$socket` are the shim's.
- */
-export function ttyKeysShim(): string {
-	return `start_tty_keys() {
-	tty_mode=$(stty -g 2>/dev/null) || return 0
-	cat >"$dir/keys.lua" <<'DEVHUB_TTY_KEYS'
-${TTY_KEYS_LUA}DEVHUB_TTY_KEYS
-	stty -icanon -echo -isig -ixon -ixoff -iexten -icrnl -inlcr -istrip min 1 time 0 2>/dev/null || return 0
-	printf '\\033[?2004h\\033[>4;2m'
-	exec 4<&0
-	"$real" -u NONE -i NONE -n --headless -l "$dir/keys.lua" "$socket" "$$" <&4 >/dev/null 2>&1 4<&- &
-	tty_keys=$!
-	exec 4<&-
-}
-stop_tty_keys() {
-	[ -n "\${tty_keys-}" ] || return 0
-	kill "$tty_keys" 2>/dev/null
-	wait "$tty_keys" 2>/dev/null
-	printf '\\033[>4m\\033[?2004l'
-	stty "$tty_mode" 2>/dev/null
-	tty_keys=
-}
-`;
-}

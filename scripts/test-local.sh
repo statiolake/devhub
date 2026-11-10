@@ -302,7 +302,7 @@ provision() {
 # --- the stages -------------------------------------------------------------
 stage_vitest() {
 	prepare_test_user || return 1
-	(cd apps/desktop && pnpm run build:nvim && pnpm run build:bash && pnpm run build:tmux) || return 1
+	(cd apps/desktop && pnpm run build:devhub-cli && pnpm run build:nvim && pnpm run build:bash && pnpm run build:tmux) || return 1
 	(cd apps/desktop && as_test_user node_modules/.bin/vitest run)
 }
 

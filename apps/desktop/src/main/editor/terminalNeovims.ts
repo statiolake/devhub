@@ -428,8 +428,6 @@ export interface TerminalNeovimPorts {
 		terminal: OverlayTerminal,
 		announce: boolean,
 	): Promise<TerminalNeovimReading | undefined>;
-	/** Tell the pane's `nvim` its UI is attached (`@devhub-nvim-ui`). */
-	claim(terminal: OverlayTerminal, paneId: string): Promise<void>;
 	selectPane(terminal: OverlayTerminal, paneId: string): Promise<void>;
 	/** Put DevHub's client in tmux's prefix table. */
 	enterPrefix(terminal: OverlayTerminal, client: string): Promise<void>;
@@ -749,18 +747,14 @@ export class TerminalNeovims {
 		};
 	}
 
-	/** The page's UI is attached: the `nvim` stops waiting for one. */
+	/**
+	 * The page's UI is attached (the pane's `nvim` hears it from the attach
+	 * itself, `neovimUi.ts`): the overlay can have the keys.
+	 */
 	attached(key: string): void {
 		const overlay = this.byKey.get(key);
 		if (overlay === undefined) return;
 		overlay.attached = true;
-		void this.options.ports
-			.claim(overlay.terminal, overlay.paneId)
-			.catch((error: unknown) => {
-				this.options.ports.log?.(
-					`[devhub] could not tell ${overlay.paneId}'s nvim its UI is attached: ${String(error)}`,
-				);
-			});
 		void overlay.localPath?.then((path) => this.options.ports.attached?.(path));
 		this.changed();
 	}

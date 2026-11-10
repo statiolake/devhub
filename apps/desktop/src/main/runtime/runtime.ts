@@ -523,6 +523,13 @@ export interface Runtime {
 	neovimProgram(): Promise<NeovimProgram>;
 
 	/**
+	 * DevHub's own `devhub` command on this machine (`docs/devhub-cli.md`):
+	 * the app's here, the delivered one on a host. A pane's `nvim` is a copy
+	 * of it (`terminalNeovimShim.ts`). Idempotent like `neovimProgram`.
+	 */
+	devhubProgram(): Promise<NeovimProgram>;
+
+	/**
 	 * What a Claude Agent started on this machine adds to its environment for
 	 * the shell Claude Code runs its Bash tool in: DevHub's own bash as
 	 * `CLAUDE_CODE_SHELL`, for that Agent's process alone — the

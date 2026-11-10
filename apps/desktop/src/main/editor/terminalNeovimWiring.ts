@@ -101,11 +101,6 @@ export function wireTerminalNeovims(
 					? undefined
 					: parseTerminalNeovimReading(output);
 			},
-			claim: async (terminal, paneId) => {
-				await (
-					await options.tmuxOf(terminal.machine)
-				).terminalNeovimCommand({ kind: "claim", paneId });
-			},
 			selectPane: async (terminal, paneId) => {
 				await (
 					await options.tmuxOf(terminal.machine)

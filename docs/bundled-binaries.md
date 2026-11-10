@@ -44,7 +44,7 @@ Every place DevHub starts a program at runtime, with its category:
 | Claude Agents' `CLAUDE_CODE_SHELL`, here | `LocalRuntime.claudeShell` | **(b)** | was: nothing set, so Claude Code took `$SHELL` (zsh) or the PATH's bash. Now `out/bash/bin/bash`, for the Agent's process only. `SHELL` is not set: tmux gives a pane its `default-shell` as `SHELL` whatever the session's environment says, and Claude Code reads `CLAUDE_CODE_SHELL` first |
 | Claude Agents' `CLAUDE_CODE_SHELL`, on a host | `RemoteShellRuntime.claudeShell` | **(a)** | was: the host's bash or zsh when it had one, the delivered bash only when it had neither. Now always the delivered bash; the probe of the host's shells is deleted |
 | `sh -c` (the Neovim keeper, a host's Neovim socket directory, the Agent session readers in `resume.ts`, `find -exec sh`) | `managedNeovim.ts`, `neovimMachines.ts`, `resume.ts`, `remoteShellRuntime.ts` | **(a)** | were the PATH's `sh`; now `/bin/sh` by path, like every other script |
-| `/bin/sh` — the GUI Agent host and its `STREAM`/`WRITE`/`RESTART`/`SENT_LOG`/`ENDING` scripts, `pathLinks`, `embedFiles`, tool installs, every host command, popups, the `nvim` shim and the `devhub` launchers (`#!/bin/sh`) | many | **(c)** | the POSIX bootstrap: the one shell every macOS and Linux (busybox included) has at that path, and the only one a host has before DevHub has delivered anything. The scripts are POSIX `sh` and exec DevHub's own binaries by path |
+| `/bin/sh` — the GUI Agent host and its `STREAM`/`WRITE`/`RESTART`/`SENT_LOG`/`ENDING` scripts, `pathLinks`, `embedFiles`, tool installs, every host command, popups, the `devhub` launchers (`#!/bin/sh`) | many | **(c)** | the POSIX bootstrap: the one shell every macOS and Linux (busybox included) has at that path, and the only one a host has before DevHub has delivered anything. The scripts are POSIX `sh` and exec DevHub's own binaries by path |
 | node | — | — | no system `node` runs anywhere: the login-environment printer and every utility process are Electron's Node; the `devhub` command is Go |
 | bash | — | — | no runtime script runs bash or has a `#!/usr/bin/env bash`; only build and development scripts do (`scripts/*.sh`, `apps/desktop/scripts/dev.sh`, which a checkout's launcher starts), and those are not part of the app |
 | the person's login shell (`$SHELL -i -l -c`) to import their environment | `loginEnvironment.ts`; on a host `$SHELL -lc 'env -0'` (then `/bin/sh -lc`) | **(c)** | the environment being read *is* their shell's: their PATH for their own tools (git, gh, the Agent CLIs). The printer is Electron (`ELECTRON_RUN_AS_NODE`), not a node |
@@ -54,10 +54,10 @@ Every place DevHub starts a program at runtime, with its category:
 
 | what | where | |
 | --- | --- | --- |
-| Neovim: the keeper's `nvim --headless --listen`, the shim's `nvim --embed`, the shim's tty-key reader `nvim -l`, the shim's launcher `nvim -l` (the pane's foreground process) | `managedNeovim.ts`, `terminalNeovimShim.ts`, `terminalNeovimTtyKeys.ts` | bundled/delivered, by absolute path (`$real`) |
+| Neovim: the keeper's `nvim --headless --listen`, the shim's `nvim --embed`, the shim's tty-key reader `nvim -l` | `managedNeovim.ts`, `cli/nvim.go`, `terminalNeovimTtyKeys.ts` | bundled/delivered, by absolute path (`nvim-shim.json`) |
 | tmux, the server and every client (node-pty, `tmux -C`, bounded commands) | `terminal/tmux.ts`, `ptyHost/`, `surfaces.ts` | bundled (`terminal/bundledTmux.ts`) / delivered, by absolute path |
 | a pane's `tmux` (typed, a binding's `run-shell`, `copy-pipe`, a popup's) | `paneTmuxScript`, beside the `nvim` shim and first on every pane's PATH | bundled/delivered, by absolute path (`docs/terminal-mode.md`, "DevHub's tmux") |
-| the `devhub` command | the launcher (`cli/install.ts`), a host's shim (`terminal/launcher.ts`) | bundled/delivered |
+| the `devhub` command | the launcher (`cli/install.ts`), a host's shim (`terminal/launcher.ts`); copied as a pane's `nvim` (`terminalNeovimShim.ts`) | bundled/delivered |
 | `devhub-exec-clean`, `devhub-footprint`, `devhub-input-source`, `devhub-whisper{,-server}` | `cleanSpawn.ts`, `taskManagerReading.ts`, `inputSourceHelper.ts`, `voice/` | bundled |
 
 ### The system's (category c)

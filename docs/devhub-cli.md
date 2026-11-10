@@ -148,6 +148,17 @@ script or a `package.json`, and installs no Node. Left behind from earlier
 versions and safe to delete by hand: `~/.devhub-server/node/` and
 `~/.devhub/terminal/js/`.
 
+## As a pane's `nvim`
+
+Run under the name `nvim` (`cli/nvim.go`), the binary is DevHub's `nvim`
+instead: DevHub copies it into the directory in front of every pane's PATH
+(`terminalNeovimShim.ts`, `docs/neovim-editor.md` "Neovim in a terminal"),
+with `nvim-shim.json` beside it naming DevHub's Neovim and tmux on that
+machine. It was a POSIX `sh` script; the Go program starts the Neovim DevHub
+attaches to after one `tmux` client instead of a dozen processes, which is
+most of the time between Enter and an editor in a DevHub terminal that a
+plain terminal does not spend.
+
 ## Tests
 
 - `cli/*_test.go` (`pnpm run test:cli`, the `cli` stage of

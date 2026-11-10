@@ -1,5 +1,12 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,8 +19,12 @@ import {
   type ControlToPage,
 } from "../../src/main/ptyHost/control/controlClient";
 import { TEST_NVIM } from "../../src/main/editor/testNeovim";
+import { TEST_DEVHUB } from "../../src/main/cli/testDevhub";
 import {
-  neovimShimScript,
+  NVIM_SHIM_FACTS_FILE,
+  NVIM_SHIM_KEYS_FILE,
+  neovimShimFacts,
+  neovimShimKeys,
   paneTmuxScript,
 } from "../../src/main/editor/terminalNeovimShim";
 import type { PopupPty } from "../../src/main/ptyHost/control/popup";
@@ -773,10 +784,11 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     20000,
   );
 
-  // The shim (`terminalNeovimShim.ts`) in a DevHub pane with no DevHub to
-  // draw its Neovim: after the wait it says so and runs the TUI, which takes
-  // the keys typed in the terminal and ends with the editor's status.
-  it.skipIf(TEST_NVIM === undefined)(
+  // DevHub's `nvim` (`terminalNeovimShim.ts`, `cli/nvim.go`) in a DevHub
+  // pane with no DevHub to draw its Neovim: after the wait it says so and
+  // runs the TUI, which takes the keys typed in the terminal and ends with
+  // the editor's status.
+  it.skipIf(TEST_NVIM === undefined || TEST_DEVHUB === undefined)(
     "falls back to a Neovim TUI that takes the keys when no UI attaches",
     async () => {
       const socket = `devhub-shim-${String(process.pid)}`;
@@ -784,15 +796,20 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       const directory = mkdtempSync(join(tmpdir(), "devhub-shim-"));
       const bin = join(directory, "bin");
       mkdirSync(bin);
+      copyFileSync(TEST_DEVHUB ?? "", join(bin, "nvim"));
+      chmodSync(join(bin, "nvim"), 0o755);
+      writeFileSync(join(bin, NVIM_SHIM_KEYS_FILE), neovimShimKeys());
       writeFileSync(
-        join(bin, "nvim"),
-        neovimShimScript({
-          nvim: TEST_NVIM ?? "",
-          tmux: TMUX ?? "tmux",
-          sessionPrefixes: ["ws-"],
-          uiWaitTenths: 5,
-        }),
-        { mode: 0o755 },
+        join(bin, NVIM_SHIM_FACTS_FILE),
+        neovimShimFacts(
+          {
+            nvim: TEST_NVIM ?? "",
+            tmux: TMUX ?? "tmux",
+            sessionPrefixes: ["ws-"],
+            uiWaitTenths: 5,
+          },
+          bin,
+        ),
       );
       const file = join(directory, "note.txt");
       tmux(
@@ -847,8 +864,8 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
         type(
           `clear; printf '\\033[3J'; nvim --clean -n -i NONE ${file}; echo "status=$?"\r`,
         );
-        // While it waits for DevHub's UI the pane's program is `nvim`, not
-        // the script's `sh`: the window is named after it.
+        // While it waits for DevHub's UI the pane's program is `nvim`: the
+        // window is named after it.
         await until(
           "the socket named",
           () =>

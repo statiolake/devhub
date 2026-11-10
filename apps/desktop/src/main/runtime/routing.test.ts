@@ -114,6 +114,10 @@ class RecordingRuntime implements Runtime {
 		});
 	}
 
+	devhubProgram(): Promise<NeovimProgram> {
+		return Promise.resolve({ kind: "resolved" as const, path: "devhub" });
+	}
+
 	tmuxProgram(): Promise<TmuxProgram> {
 		return Promise.resolve({
 			kind: "resolved" as const,

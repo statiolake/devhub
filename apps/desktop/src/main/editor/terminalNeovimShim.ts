@@ -4,57 +4,74 @@
  * DevHub over the pane it was typed in (`docs/neovim-editor.md`, "Neovim in
  * a terminal").
  *
- * # Why a program on the PATH, and what it does
+ * # Why a program on the PATH, and which
  *
  * It has to catch `nvim` typed at a prompt and `nvim` run by another program —
  * `git commit`, `crontab -e`, `$EDITOR` — and the one thing both go through is
  * the PATH. `EDITOR`/`VISUAL` alone would miss the first, and a dotfile that
- * sets `EDITOR=nvim` (most do) would undo them. So the directory this script
- * is in goes in front of every DevHub pane's PATH, as the host's `devhub` does
+ * sets `EDITOR=nvim` (most do) would undo them. So the directory it is in
+ * goes in front of every DevHub pane's PATH, as the host's `devhub` does
  * (`TmuxTerminalRuntime.panePath`).
  *
- * The script runs DevHub's Neovim — its absolute path is written in, never
- * looked up on the PATH (`Runtime.neovimProgram`) — with the person's own
- * arguments, in the pane, as the pane's foreground program,
- * so its exit status, its environment (`GIT_*` under `git commit`), its cwd
- * and its life are the pane's, exactly as a TUI's would be. What changes is
- * only who draws it: `--embed --listen <socket>` instead of the TUI, and DevHub
- * attaches to that socket as its only UI. `--embed` waits for that UI before
- * it reads the config or opens a file, so a swap-file question or a config
- * error is drawn, never answered blind by a headless Neovim. Its stdin and
- * stdout are the embedder's channel, which nothing uses: a FIFO held open by
- * Neovim itself (EOF there would end it) and `/dev/null`.
+ * It is the `devhub` command itself (`cli/nvim.go`), copied into that
+ * directory under the name `nvim`: the binary is DevHub's on every machine
+ * (`Runtime.devhubProgram`), and run as `nvim` it is this. A copy, not a
+ * link, because the pane's foreground program is what tmux names the window
+ * by — `/proc/<pid>/cmdline` on Linux, `p_comm` on macOS, which is the name
+ * of the file executed — and the window is to read `nvim`. What it cannot
+ * discover is in a file beside it (`NVIM_SHIM_FACTS_FILE`): DevHub's Neovim
+ * and tmux by their absolute paths, never looked up on the PATH, and the tty
+ * reader (`NVIM_SHIM_KEYS_FILE`).
+ *
+ * It used to be a POSIX `sh` script that ran `tmux`, `mktemp`, `cat`,
+ * `mkfifo`, a second `tmux` and an `nvim -l` launcher before the Neovim, and
+ * polled tmux every 100 ms after it: about 40 ms between Enter and a Neovim
+ * DevHub could attach to, against a few for this.
+ *
+ * It runs DevHub's Neovim with the person's own arguments, in the pane, as
+ * its child, so its exit status, its environment (`GIT_*` under `git
+ * commit`), its cwd and its life are the pane's, exactly as a TUI's would
+ * be. What changes is only who draws it: `--embed --listen <socket>` instead
+ * of the TUI, and DevHub attaches to that socket as its only UI. `--embed`
+ * waits for that UI before it reads the config or opens a file, so a
+ * swap-file question or a config error is drawn, never answered blind by a
+ * headless Neovim. Its stdin and stdout are the embedder's channel, which
+ * nothing uses: a FIFO held open by Neovim itself (EOF there would end it)
+ * and `/dev/null`.
  *
  * # How DevHub learns of it — tmux, on every machine
  *
- * Nothing new is opened between the pane and DevHub. The script writes the
- * socket into a pane option of DevHub's own tmux server (`@devhub-nvim`),
- * which DevHub reads while that terminal is on screen, and DevHub answers on
- * another (`@devhub-nvim-ui` = 1) once its UI is attached. That is the same
- * channel on this Mac and on an SSH host — the host's tmux is DevHub's there
- * too — and needs no Node, no `devhub` command and no forwarded control socket
- * on the far side; the socket itself is reached the way the managed Neovim's
- * is (`neovimMachines.ts`).
+ * Nothing new is opened between the pane and DevHub. In one tmux client it
+ * reads the pane and, if DevHub draws over it, names the socket in a pane
+ * option of DevHub's own tmux server (`@devhub-nvim`), while the Neovim
+ * starts; once that Neovim listens it writes an OSC tmux does not know
+ * (`NVIM_NAMED_OSC`) into the pane, which a control client sees at once.
+ * DevHub reads the option while that terminal is on screen. Its attach
+ * answers in the directory named in the Neovim's environment
+ * (`DEVHUB_NVIM_STATE`): `ui`, once the UI is attached and Neovim has
+ * started (`neovimUi.ts`). That is the same channel on this Mac and on an
+ * SSH host — the host's tmux is DevHub's there too — and needs no forwarded
+ * control socket on the far side; the socket itself is reached the way the
+ * managed Neovim's is (`neovimMachines.ts`).
  *
  * # When it is just `nvim`
  *
  * It `exec`s the same Neovim as a TUI, untouched, whenever DevHub would not
- * draw it:
- * outside a DevHub pane (no `$TMUX_PANE`, or a session that is neither an
- * Agent terminal's nor a Workspace's), with the overlay off (`@devhub-nvim-overlay`, a server option
- * DevHub states while it is on), inside a DevHub GUI Neovim already
- * (`$DEVHUB_NEOVIM_GUI`, a `:terminal` in it), with stdin or stdout not a
- * terminal, with arguments that are not an editing session (`--headless`,
- * `-es`, `--remote*`, `--version`, `-`…), in a pane that already has one, and
- * when no UI attaches within ten seconds (the terminal is not on screen, say):
- * then the Neovim waiting for it is ended and the TUI runs instead, with the
- * same arguments.
+ * draw it: outside a DevHub pane (no `$TMUX_PANE`, or a session that is
+ * neither an Agent terminal's nor a Workspace's), with the overlay off
+ * (`@devhub-nvim-overlay`, a server option DevHub states while it is on),
+ * inside a DevHub GUI Neovim already (`$DEVHUB_NEOVIM_GUI`, a `:terminal` in
+ * it), with stdin or stdout not a terminal, with arguments that are not an
+ * editing session (`--headless`, `-es`, `--remote*`, `--version`, `-`…), in
+ * a pane that already has one, and when no UI attaches within ten seconds
+ * (the terminal is not on screen, say): then the Neovim waiting for it is
+ * ended and the TUI runs in its place, with the same arguments.
  *
  * # `:restart`
  *
- * `:restart` replaces the server with one it starts itself, on
- * the same socket: the script keeps the pane, and its exit status is the
- * last server's (`neovimRestart.ts`).
+ * `:restart` replaces the server with one it starts itself, on the same
+ * socket: the program keeps the pane, and its exit status is the last
+ * server's (`neovimRestart.ts`).
  *
  * # What tmux writes into the pane
  *
@@ -63,64 +80,18 @@
  */
 
 import { shellQuote } from "../runtime/quote.js";
-import { NVIM_STATE_VARIABLE, followRestartSh } from "./neovimRestart.js";
-import { ttyKeysShim } from "./terminalNeovimTtyKeys.js";
-import { NVIM_NAMED_OSC } from "../../ipc/terminalControl.js";
+import { TTY_KEYS_LUA } from "./terminalNeovimTtyKeys.js";
 
-/** `NVIM_NAMED_OSC` as `printf` writes it. */
-function shNamedOsc(): string {
-	return NVIM_NAMED_OSC.replace("\u001b", "\\033").replace("\u0007", "\\007");
-}
-
-/** The pane option the script names its socket in. */
+/** The pane option the program names its socket in. */
 export const NVIM_SOCKET_OPTION = "@devhub-nvim";
-/** The pane option DevHub sets once its UI is attached: the script waits on it. */
-export const NVIM_UI_OPTION = "@devhub-nvim-ui";
 /** The server option that says the overlay is on (`1`). */
 export const NVIM_OVERLAY_OPTION = "@devhub-nvim-overlay";
-/** How long the script waits for DevHub's UI before it runs the TUI, in tenths. */
+/** How long it waits for DevHub's UI before it runs the TUI, in tenths. */
 export const NVIM_UI_WAIT_TENTHS = 100;
-
-/** The variable the launcher runs the script again with: its directory. */
-export const NVIM_BODY_VARIABLE = "DEVHUB_NVIM_BODY";
-
-/**
- * What the script runs under (`nvim -l`) once it is to draw the Neovim: the
- * script again, with the same arguments, as a child that has the pane's
- * terminal, and its exit status. The pane's foreground process — the job
- * the shell started, which tmux names the window by, from
- * `/proc/<pid>/cmdline` on Linux and `p_comm` on macOS — is then DevHub's
- * Neovim binary, `nvim`, rather than `/bin/sh` (a window read `sh:demo`).
- *
- * Ctrl-C and Ctrl-\\ are the script's to ignore, so they are caught here.
- * Ctrl-Z too, until the script runs the TUI (it says so with `SIGUSR1`):
- * then a suspended TUI stops this too, or the shell would wait on a job
- * that never stops.
- */
-export const NVIM_LAUNCH_LUA = `local uv = vim.uv
-local tui = false
-local function on(name, handler)
-  local signal = uv.new_signal()
-  signal:start(name, handler or function() end)
-end
-on("sigint")
-on("sigquit")
-on("sigusr1", function() tui = true end)
-on("sigtstp", function()
-  if tui then uv.kill(uv.os_getpid(), "sigstop") end
-end)
-local status
-local args = {}
-for i = 1, #arg do args[i] = arg[i] end
-local child = uv.spawn("/bin/sh", { args = args, stdio = { 0, 1, 2 } }, function(code, signal)
-  status = signal ~= 0 and 128 + signal or code
-end)
-if not child then os.exit(127) end
-while status == nil do
-  vim.wait(60000, function() return status ~= nil end)
-end
-os.exit(status)
-`;
+/** Beside the `nvim` copy: what it cannot discover (`cli/nvim.go`'s `NvimFacts`). */
+export const NVIM_SHIM_FACTS_FILE = "nvim-shim.json";
+/** Beside it too: the tty reader it runs once attached (`TTY_KEYS_LUA`). */
+export const NVIM_SHIM_KEYS_FILE = "nvim-keys.lua";
 
 export interface NeovimShimFacts {
 	/** DevHub's Neovim on that machine, by its absolute path. */
@@ -133,125 +104,34 @@ export interface NeovimShimFacts {
 	readonly uiWaitTenths?: number;
 }
 
+/** The facts file, for a `nvim` in `directory` (the tty reader beside it). */
+export function neovimShimFacts(
+	facts: NeovimShimFacts,
+	directory: string,
+): string {
+	return `${JSON.stringify({
+		nvim: facts.nvim,
+		tmux: facts.tmux,
+		sessionPrefixes: facts.sessionPrefixes,
+		uiWaitTenths: facts.uiWaitTenths ?? NVIM_UI_WAIT_TENTHS,
+		keys: `${directory}/${NVIM_SHIM_KEYS_FILE}`,
+	})}\n`;
+}
+
+/** The tty reader's file (`NVIM_SHIM_KEYS_FILE`). */
+export function neovimShimKeys(): string {
+	return TTY_KEYS_LUA;
+}
+
 /**
- * The script, with the machine's facts written in. POSIX `sh`, like every
- * script DevHub sends a host (`docs/remote-ssh.md`); `sleep 0.1` is the one
- * thing beyond POSIX, and every `sleep` DevHub meets (GNU, BSD, BusyBox) takes
- * a fraction.
+ * POSIX `sh` that puts the `devhub` binary at `program` in `directory` as
+ * `nvim` (`$1` the binary, `$2` the directory): copied beside its final name
+ * and renamed over it, so a `nvim` running from the old copy keeps its file
+ * and a new one never starts from half a copy; nothing is written when the
+ * copy there is already that binary.
  */
-export function neovimShimScript(facts: NeovimShimFacts): string {
-	const tmux = shellQuote(facts.tmux);
-	const waitTenths = facts.uiWaitTenths ?? NVIM_UI_WAIT_TENTHS;
-	return `#!/bin/sh
-# Generated by DevHub - do not edit. DevHub's \`nvim\`: in a DevHub terminal,
-# DevHub's Neovim drawn by DevHub over this pane; otherwise the same Neovim
-# as a TUI. Only DevHub's panes have this on their PATH.
-shim_tmux=${tmux}
-real=${shellQuote(facts.nvim)}
-if ! [ -x "$real" ]; then
-	echo "nvim: DevHub's Neovim ($real) is not there; reconnect or restart DevHub" >&2
-	exit 127
-fi
-# It finds its runtime beside itself; one inherited from another Neovim is
-# that Neovim's.
-unset VIMRUNTIME VIM
-
-# DEVHUB_NVIM_DEBUG=1 says on stderr why it runs the TUI.
-why() {
-	[ -z "\${DEVHUB_NVIM_DEBUG-}" ] || echo "DevHub's nvim runs $real as it is: $*" >&2
-	return 1
-}
-
-overlay() {
-	[ -n "\${TMUX_PANE-}" ] && [ -n "\${TMUX-}" ] || { why "not in a tmux pane (TMUX_PANE, TMUX)"; return 1; }
-	[ -z "\${DEVHUB_NEOVIM_GUI-}" ] || { why "inside a Neovim DevHub draws (DEVHUB_NEOVIM_GUI)"; return 1; }
-	[ -t 0 ] && [ -t 1 ] || { why "stdin or stdout is not a terminal"; return 1; }
-	for argument in "$@"; do
-		case $argument in
-		--) break ;;
-		-|--headless|--embed|--listen|-es|-Es|-e|-E|-l|-L|-r|-h|-v|-\\?|--help|--version|--api-info|--server|--remote*) why "not an editing session ($argument)"; return 1 ;;
-		esac
-	done
-	state=$("$shim_tmux" display-message -p -t "$TMUX_PANE" '#{${NVIM_OVERLAY_OPTION}}|#{session_name}|#{${NVIM_SOCKET_OPTION}}' 2>/dev/null) || { why "$shim_tmux could not read pane $TMUX_PANE (not DevHub's tmux server?)"; return 1; }
-	case $state in
-	${facts.sessionPrefixes.map((prefix) => `"1|${prefix}"*"|"`).join(" | ")}) return 0 ;;
-	esac
-	why "overlay|session|socket is $state (wants 1|${facts.sessionPrefixes.join(" or ")}...|empty)"
-}
-
-if [ -n "\${${NVIM_BODY_VARIABLE}-}" ]; then
-	# Run again by the launcher below, the overlay already settled.
-	dir=$${NVIM_BODY_VARIABLE}
-	unset ${NVIM_BODY_VARIABLE}
-else
-	overlay "$@" || exec "$real" "$@"
-	dir=$(mktemp -d "\${TMPDIR:-/tmp}/devhub-nvim.XXXXXX") || exec "$real" "$@"
-	# The rest runs under \`$real -l\` (\`NVIM_LAUNCH_LUA\`), DevHub's Neovim:
-	# the pane's foreground process, which tmux names the window by, is
-	# then \`nvim\`, not \`sh\`, while this script waits on the server and
-	# follows its \`:restart\`s.
-	cat >"$dir/launch.lua" <<'DEVHUB_NVIM_LAUNCH'
-${NVIM_LAUNCH_LUA}DEVHUB_NVIM_LAUNCH
-	${NVIM_BODY_VARIABLE}=$dir exec "$real" -u NONE -i NONE -n --headless -l "$dir/launch.lua" "$0" "$@"
-fi
-socket=$dir/s
-cleanup() {
-	"$shim_tmux" set-option -p -u -t "$TMUX_PANE" ${NVIM_SOCKET_OPTION} 2>/dev/null
-	"$shim_tmux" set-option -p -u -t "$TMUX_PANE" ${NVIM_UI_OPTION} 2>/dev/null
-	rm -rf "$dir"
-}
-if ! mkfifo "$dir/i" || ! exec 3<>"$dir/i"; then
-	rm -rf "$dir"
-	exec "$real" "$@"
-fi
-${ttyKeysShim()}# Ctrl-C, Ctrl-\\ and Ctrl-Z typed at the pane under the GUI are not Neovim's:
-# its keys are the GUI's. A hangup (the pane killed) still ends both.
-trap '' INT QUIT TSTP
-"$shim_tmux" set-option -p -t "$TMUX_PANE" ${NVIM_SOCKET_OPTION} "$socket" 2>/dev/null
-# Said in the pane too, for a DevHub in tmux control mode, which sees the
-# pane's bytes (tmux drops an OSC it does not know).
-printf '${shNamedOsc()}'
-DEVHUB_NEOVIM_GUI=1 ${NVIM_STATE_VARIABLE}=$dir "$real" --embed --listen "$socket" "$@" <&3 >/dev/null 3>&- &
-pid=$!
-exec 3>&-
-waited=0
-while kill -0 "$pid" 2>/dev/null; do
-	ui=$("$shim_tmux" display-message -p -t "$TMUX_PANE" '#{${NVIM_UI_OPTION}}' 2>/dev/null)
-	[ "$ui" = 1 ] && break
-	if [ "$waited" -ge ${String(waitTenths)} ]; then
-		# With no UI it has read no config and opened no file (\`--embed\`
-		# waits), so there is nothing to keep; SIGTERM would only have it say
-		# "Caught deadly signal" in the pane.
-		kill -KILL "$pid" 2>/dev/null
-		wait "$pid" 2>/dev/null
-		cleanup
-		why "no DevHub UI attached within ${String(waitTenths / 10)} s"
-		# Said once, dim, without DEVHUB_NVIM_DEBUG too: DevHub was asked to
-		# draw this Neovim and did not, which is worth knowing (it stays in
-		# the scrollback above the shell once the TUI's screen is gone).
-		[ -n "\${DEVHUB_NVIM_DEBUG-}" ] || printf '\\033[2m%s\\033[22m\\n' "nvim: DevHub did not draw it within ${String(waitTenths / 10)} s (DevHub not running, the terminal not on screen, or the overlay failed): running it in the terminal" >&2
-		trap - INT QUIT TSTP
-		# The launcher stops with the TUI when it suspends (\`:suspend\`, ^Z).
-		kill -USR1 "$PPID" 2>/dev/null
-		exec "$real" "$@"
-	fi
-	waited=$((waited + 1))
-	sleep 0.1
-done
-# What tmux writes into this pane is that Neovim's input.
-kill -0 "$pid" 2>/dev/null && start_tty_keys
-wait "$pid"
-status=$?
-# :restart: the server it started takes over on the same socket, the
-# old one's child and not this script's; the pane stays the Neovim's until
-# the last of them ends, with its status (neovimRestart.ts).
-state=$dir
-${followRestartSh()}
-stop_tty_keys
-cleanup
-exit "$status"
-`;
-}
+export const INSTALL_NEOVIM_SHIM_SH = `cmp -s "$1" "$2/nvim" 2>/dev/null && exit 0
+cp "$1" "$2/.nvim.$$" && chmod 755 "$2/.nvim.$$" && mv -f "$2/.nvim.$$" "$2/nvim" || { rm -f "$2/.nvim.$$"; exit 1; }`;
 
 /**
  * The `tmux` beside DevHub's `nvim`: DevHub's own tmux on that machine (the

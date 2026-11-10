@@ -15,7 +15,7 @@ import {
 	type KeyInput,
 	type TerminalNeovimReading,
 } from "./terminalNeovims.js";
-import { neovimShimScript, neovimShimZshenv } from "./terminalNeovimShim.js";
+import { neovimShimZshenv } from "./terminalNeovimShim.js";
 import { gridSizeFor } from "../../shell/neovim/gridSize.js";
 
 const pane = (fields: string) => fields.split(" ").join("\t");
@@ -146,7 +146,6 @@ describe("TerminalNeovims", () => {
 	function setup(reading: TerminalNeovimReading) {
 		const ports = {
 			read: vi.fn(() => Promise.resolve(reading)),
-			claim: vi.fn(() => Promise.resolve()),
 			selectPane: vi.fn(() => Promise.resolve()),
 			enterPrefix: vi.fn(() => Promise.resolve()),
 			reach: vi.fn((_terminal: unknown, socket: string) =>
@@ -188,10 +187,6 @@ describe("TerminalNeovims", () => {
 		});
 		expect(neovims.keyboardOverlay("t")).toBeUndefined();
 		neovims.attached("tnv:1");
-		expect(ports.claim).toHaveBeenCalledWith(
-			{ terminalId: "t", machine: "local" },
-			"%1",
-		);
 		expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
 		expect(neovims.neovims("t").keys).toBe("tnv:1");
 		// The prefix is tmux's; the key after it too; then the keys come back.
@@ -480,40 +475,6 @@ describe("TerminalNeovims", () => {
 });
 
 describe("DevHub's nvim", () => {
-	it("is a POSIX sh script that runs DevHub's Neovim, never the PATH's, outside a DevHub pane", () => {
-		const directory = mkdtempSync(join(tmpdir(), "nvim-shim-"));
-		const shim = join(directory, "shim");
-		const path = join(directory, "path");
-		const devhub = join(directory, "devhub", "bin");
-		execFileSync("mkdir", ["-p", shim, path, devhub]);
-		writeFileSync(
-			join(shim, "nvim"),
-			neovimShimScript({
-				nvim: join(devhub, "nvim"),
-				tmux: "/bin/false",
-				sessionPrefixes: ["tm-", "ws-"],
-			}),
-			{ mode: 0o755 },
-		);
-		writeFileSync(
-			join(devhub, "nvim"),
-			'#!/bin/sh\necho "devhub $* runtime=${VIMRUNTIME-unset}"\n',
-			{ mode: 0o755 },
-		);
-		writeFileSync(join(path, "nvim"), '#!/bin/sh\necho "path $*"\n', {
-			mode: 0o755,
-		});
-		execFileSync("sh", ["-n", join(shim, "nvim")]);
-		const output = execFileSync(join(shim, "nvim"), ["a b", "c"], {
-			env: {
-				PATH: `${shim}:${path}:/usr/bin:/bin`,
-				VIMRUNTIME: "/opt/homebrew/share/nvim/runtime",
-			},
-		}).toString();
-		// The runtime is found beside it, not the one another Neovim set.
-		expect(output).toBe("devhub a b c runtime=unset\n");
-	});
-
 	it.runIf(existsSync("/bin/zsh") || existsSync("/usr/bin/zsh"))(
 		"stays first on a zsh's PATH whatever the person's startup files do",
 		() => {

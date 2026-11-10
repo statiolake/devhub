@@ -35,6 +35,8 @@ import { RollingTally } from "../diagnostics/rollingTally.js";
 import { runBounded } from "../terminal/command.js";
 import { openPty, type Pty, type PtyPlan } from "../terminal/pty.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
+import { cliBinaryPath } from "../cli/install.js";
+import { APP_ROOT } from "../shell/appRoot.js";
 import { bundledBash, bundledBashMissing } from "./bundledBash.js";
 import { claudeShellEnvironment } from "./agentShell.js";
 import { openByteStream } from "./byteStream.js";
@@ -190,6 +192,19 @@ export class LocalRuntime implements Runtime {
 			path === undefined
 				? { kind: "unavailable", reason: bundledTmuxMissing() }
 				: { kind: "resolved", path, environment: {} },
+		);
+	}
+
+	/** The `devhub` command the app build left in `out/cli` for this machine. */
+	devhubProgram(): Promise<NeovimProgram> {
+		const path = cliBinaryPath(APP_ROOT);
+		return Promise.resolve(
+			existsSync(path)
+				? { kind: "resolved", path }
+				: {
+						kind: "unavailable",
+						reason: `This build of DevHub has no devhub command (${path} is missing); \`pnpm --filter @devhub/desktop build:devhub-cli\` builds it.`,
+					},
 		);
 	}
 

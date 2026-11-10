@@ -1149,14 +1149,17 @@ GUI exactly over that tmux pane, in place of its TUI. The command
 blocks like any editor and returns Neovim's exit status (`:cq` fails a
 commit). It works the same in a terminal on an SSH host.
 
-**The shim** (`main/editor/terminalNeovimShim.ts`). DevHub writes a POSIX
-`sh` script named `nvim` on each machine — `<DevHub's data>/devhub/nvim-bin/`
+**The shim** (`main/editor/terminalNeovimShim.ts`, `cli/nvim.go`). DevHub
+puts a program named `nvim` on each machine — `<DevHub's data>/devhub/nvim-bin/`
 here, `~/.devhub/terminal/nvim-<tag>/` on a host — and puts its directory in
-front of the PATH of every pane it creates (the way a host's `devhub` is). PATH and not `EDITOR`/`VISUAL`: it catches `nvim` typed
+front of the PATH of every pane it creates (the way a host's `devhub` is). It
+is the `devhub` command itself (`Runtime.devhubProgram`), copied there under
+that name, and run as `nvim` it is this; a facts file beside it
+(`nvim-shim.json`) names DevHub's Neovim and tmux. PATH and not `EDITOR`/`VISUAL`: it catches `nvim` typed
 at a prompt and run by other programs alike, and a dotfile's
-`EDITOR=nvim` still reaches it. The script has DevHub's Neovim's absolute path
-written in (`Runtime.neovimProgram`; on a host it is delivered before the
-script is written), never looks one up on the PATH, and runs it with the
+`EDITOR=nvim` still reaches it. It has DevHub's Neovim's absolute path
+(`Runtime.neovimProgram`; on a host it is delivered before the facts are
+written), never looks one up on the PATH, and runs it with the
 person's arguments, in the pane, as `nvim --embed --listen <socket> args…`: the pane's environment (`GIT_*`), cwd, exit status
 and life are a TUI's; only who draws it changes. `--embed` waits for the UI
 before reading the config or a file, so a swap-file question or a config
@@ -1177,24 +1180,32 @@ one (`--remote-ui`): there is no state to keep, and a remote UI's server
 has the FIFO for a stdin, so `:!` and anything else Neovim runs on the tty
 would not have it.
 
-**How DevHub learns of it: tmux, not a socket of its own.** The script names
-its socket in a pane option of DevHub's own tmux server (`@devhub-nvim`) and
-waits for `@devhub-nvim-ui = 1`, which DevHub sets once its UI is attached.
-That channel is the same here and on a host and needs no Node, no `devhub`
-command and no forwarded control socket over there; the socket itself is
-forwarded like the managed Neovim's (`ssh -O forward`). The `devhub-nvim`
-window's pane names its Neovim's socket in the same option, which is all it
-takes for it to be drawn the same way. The server option
-`@devhub-nvim-overlay` says the editor is Neovim, so switching to VS Code
-reaches panes that already have the shim. Once it is to draw the Neovim the
-script runs the rest of itself under DevHub's Neovim as `nvim -l`
-(`NVIM_LAUNCH_LUA`), which waits on it and exits with its status: the pane's
-foreground process is then `nvim`, not `sh`, so tmux names the window after
-it (`pane_current_command` is the job's leader: `/proc/<pid>/cmdline` on
-Linux, `p_comm` on macOS; a window read `sh:demo` before). The launcher
-ignores Ctrl-C and Ctrl-\ as the script does, and once the script has run
-the TUI instead it stops itself when the TUI suspends, so `:suspend` and `fg`
-work. Every pane reading DevHub makes says `nvim` for a pane with
+**How DevHub learns of it: tmux, not a socket of its own.** In one tmux
+client it reads the pane and, when DevHub draws over it, names its socket in
+a pane option of DevHub's own tmux server (`@devhub-nvim`), while the Neovim
+starts; once the Neovim listens it writes `NVIM_NAMED_OSC` into the pane.
+DevHub's attach answers in the directory named in the Neovim's environment
+(`DEVHUB_NVIM_STATE`): `ui`, written once the UI is attached and Neovim has
+started (`UI_ATTACHED_LUA`), which the program waits for. That channel is the
+same here and on a host and needs no forwarded control socket over there;
+the socket itself is forwarded like the managed Neovim's (`ssh -O forward`).
+The `devhub-nvim` window's pane names its Neovim's socket in the same option,
+which is all it takes for it to be drawn the same way. The server option
+`@devhub-nvim-overlay` says DevHub draws Neovims, so a pane started while it
+did not runs the TUI. The program is the pane's foreground process, named
+`nvim`, so tmux names the window after it (`pane_current_command` is the
+job's leader: `/proc/<pid>/cmdline` on Linux, `p_comm` — the name of the file
+executed, hence a copy and not a link — on macOS). It ignores Ctrl-C, Ctrl-\
+and Ctrl-Z while DevHub draws its Neovim, and the TUI it runs instead
+replaces it (`exec`), so `:suspend` and `fg` work.
+
+It used to be a POSIX `sh` script that ran `tmux`, `mktemp`, `cat`, an `nvim
+-l` launcher (for the window's name), `mkfifo` and a second `tmux` before
+the Neovim, and polled `@devhub-nvim-ui` with a `tmux` every 100 ms after it:
+about 40 ms from Enter to a Neovim DevHub could attach to, against a few
+milliseconds (one `tmux` client, then the Neovim).
+
+Every pane reading DevHub makes says `nvim` for a pane with
 `@devhub-nvim` as well, so closing the terminal still asks first.
 
 **Where the overlay goes** (`main/editor/terminalNeovims.ts`,
@@ -1290,7 +1301,7 @@ over an Agent's, that terminal.
 send-prefix`), a `send-keys` binding, `paste-buffer`, a `devhub tell` typed
 into the terminal: tmux writes those into the pane's tty, which the Neovim
 does not read. So once DevHub's UI is attached the shim puts the tty in raw
-mode and runs a bare `nvim -l` beside it that reads the tty and hands each
+mode and runs a bare `nvim -l` (`nvim-keys.lua`, beside it) next to it that reads the tty and hands each
 key to the Neovim over its socket — `nvim_input` in `<>` notation (`\x11`
 is `<C-q>`), a bracketed paste as one `nvim_paste`. Like Neovim's own TUI it
 asks tmux for bracketed paste (which `paste-buffer -p`, tmux's `]`, honours)
