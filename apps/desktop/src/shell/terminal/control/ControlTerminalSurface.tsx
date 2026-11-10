@@ -41,6 +41,8 @@ import {
 import { TERMINAL_PROTOCOL_VERSION } from "../../../ipc/terminal";
 import type { TerminalPanesWire } from "../../../ipc/contract";
 import { inNeovim, type PaneNeovim } from "../../pane/PaneNeovims";
+import type { NeovimHandle } from "../../neovim/NeovimApp";
+import { UnpaintedNeovims } from "./neovimPaints";
 import type { MotionGroup } from "../../neovim/painter";
 import type {
   ControlToPage,
@@ -481,6 +483,8 @@ export function ControlTerminalSurface({
     };
     const neovimGround = (entry: PaneNeovim) =>
       cssColor(entry.handle?.background() ?? view.state.defaults.background);
+    /** Asked for a committed layout, not drawn at it yet (`UnpaintedNeovims`). */
+    const unpaintedNeovims = new UnpaintedNeovims<NeovimHandle>();
     /** Each moving pane's Neovim group, for `applyMotion`. */
     const neovimMotion = () => {
       const out = new Map<number, { group: MotionGroup; ground: string }>();
@@ -532,6 +536,10 @@ export function ControlTerminalSurface({
         el.style.position = "absolute";
         el.style.left = `${String(box.x * width)}px`;
         el.style.top = `${String(box.y * height)}px`;
+        // At the pane's first cell, where its motion group puts the pane;
+        // still at its old size while it shows its old picture, for the
+        // motion's first frame (`unpaintedNeovims`).
+        if (unpaintedNeovims.has(entry.key)) continue;
         el.style.width = `${String(box.width * width)}px`;
         el.style.height = `${String(box.height * height)}px`;
         if (!moving) {
@@ -598,6 +606,9 @@ export function ControlTerminalSurface({
         commit = undefined;
         startMotion(before, now);
       }
+      // A motion starting in this frame draws the old places: the held
+      // Neovims keep their old picture for it (`unpaintedNeovims`).
+      const startsHere = motion?.transition.t0 === now;
       const merged = changes.reduce((a, b) => {
         for (const g of b.grids) a.grids.add(g);
         a.layout ||= b.layout;
@@ -863,7 +874,7 @@ export function ControlTerminalSurface({
         );
         requestTick();
       }
-      placeNeovims();
+      if (!unpaintedNeovims.painted(startsHere, placeNeovims)) placeNeovims();
       if (ime.preedit !== "") placePreedit();
       if (lastSeq > ackedSeq) {
         ackedSeq = lastSeq;
@@ -1006,6 +1017,9 @@ export function ControlTerminalSurface({
     const tick = (stamp: number) => {
       tickRequested = false;
       if (disposed || motion === undefined) return;
+      // The first frame that has moved: the held Neovims' new pictures, at
+      // their new sizes, with it.
+      unpaintedNeovims.ticked(placeNeovims);
       if (motion.transition.done(stamp)) {
         // The last frame is the resting one, drawn by the resting path.
         stopMotion();
@@ -1370,6 +1384,7 @@ export function ControlTerminalSurface({
           clearTimeout(gate.timer);
           gate = undefined;
         }
+        unpaintedNeovims.resume();
         const ended = receipt;
         receipt = undefined;
         const lived = typed || Date.now() - connectedAt >= REATTACH_ON_EXIT_MS;
@@ -1424,10 +1439,13 @@ export function ControlTerminalSurface({
     /**
      * A Neovim in a pane the held layout resizes is asked for its new grid
      * now (`NeovimHandle.resizeFor`), and the commit waits for it as for a
-     * tty's new picture: its content and its pane's edges start moving in
-     * the same frame. What each was asked, by its key.
+     * tty's new picture: its content and its pane's edges start moving
+     * together. What each was asked, by its key.
      */
     const askedNeovims = new Map<string, { cols: number; rows: number }>();
+    const neovimFlushed = () => {
+      if (!disposed && gate !== undefined && gateOpen()) release();
+    };
     const askNeovims = (messages: readonly ControlToPage[]) => {
       let layout: Extract<ControlToPage, { kind: "layout" }> | undefined;
       for (const m of messages) if (m.kind === "layout") layout = m;
@@ -1435,12 +1453,16 @@ export function ControlTerminalSurface({
       const { width, height } = cell();
       for (const p of layout.panes) {
         const entry = live.current.neovims?.onPane(p.pane);
-        const asked = entry?.handle?.resizeFor(
+        const handle = entry?.handle;
+        const asked = handle?.resizeFor(
           p.width * width,
           p.height * height,
+          neovimFlushed,
         );
-        if (entry !== undefined && asked !== undefined)
-          askedNeovims.set(entry.key, asked);
+        if (entry === undefined || handle === undefined || asked === undefined)
+          continue;
+        askedNeovims.set(entry.key, asked);
+        unpaintedNeovims.add(entry.key, handle);
       }
     };
     const neovimsWaiting = () => {
@@ -1958,6 +1980,7 @@ export function ControlTerminalSurface({
       serial += 1;
       observer.disconnect();
       if (gate !== undefined) clearTimeout(gate.timer);
+      unpaintedNeovims.resume();
       if (noticeTimer !== undefined) clearTimeout(noticeTimer);
       host.removeEventListener("click", focusInput);
       offNeovims?.();

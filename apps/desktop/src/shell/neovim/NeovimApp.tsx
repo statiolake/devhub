@@ -42,7 +42,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { decorOf } from "./decor";
 import { NeovimEditor } from "./editor";
 import { terminalCellFont } from "./cellFont";
@@ -128,11 +128,18 @@ export interface NeovimSurfaceBridge {
 
 /** What the page that places a Neovim asks of it (`PaneNeovims`). */
 export interface NeovimHandle {
-  /** Ask for the grid a view this size holds (`NeovimEditor.resizeFor`). */
+  /**
+   * Ask for the grid a view this size holds, for a held layout: what it
+   * flushes is drawn only at `resumePaint`, and `flushed` hears each flush
+   * (`NeovimEditor.resizeFor`).
+   */
   resizeFor(
     width: number,
     height: number,
+    flushed: () => void,
   ): { cols: number; rows: number } | undefined;
+  /** Its pane has moved off the old place: draw what came, now. */
+  resumePaint(): void;
   /** Grid 1 as Neovim last drew it. */
   drawnSize(): { cols: number; rows: number } | undefined;
   /** Neovim's default background: its pane's ground. */
@@ -258,7 +265,15 @@ export function NeovimSurface({
     };
     (debug.neovimEditors ??= {})[workspaceId] = editor;
     handleRef.current({
-      resizeFor: (width, height) => editor.resizeFor(width, height),
+      resizeFor: (width, height, flushed) =>
+        editor.resizeFor(width, height, flushed),
+      // What React draws from the paint (the corner's notifications, the
+      // command line, menus) is committed with it, in the same frame.
+      resumePaint: () => {
+        flushSync(() => {
+          editor.resumePaint();
+        });
+      },
       drawnSize: () => editor.drawnSize(),
       background: () =>
         editor.state.grids.has(1)

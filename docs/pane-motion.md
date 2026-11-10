@@ -149,7 +149,15 @@ itself, and the resting path draws the frame after the last.
   Neovim for its new grid at once (`NeovimHandle.resizeFor`) and waits
   for the flush at that size as it waits for a tty's new picture, within
   the same 100 ms. So the Neovim moves at its final size, clipped, like a
-  tty pane. The element is never moved to another parent while it moves,
+  tty pane. That flush is taken in but not drawn (`PaintHold`) until its
+  pane has moved: the motion's first frame draws every pane at its old
+  place, so the Neovim keeps its old picture, at its old size, through
+  it, and is given its new size and draws its new picture in the first
+  frame that has moved (`UnpaintedNeovims`; with no motion, in the frame
+  that places the layout). Drawn as it came, the new picture showed for
+  a frame at the old place, in the old layout, before anything moved. A
+  flush later than the 100 ms is drawn when it comes, in the motion. The
+  element is never moved to another parent while it moves,
   since an iframe in it (a GUI window) would load again. Typing during
   the motion goes to the Neovim as usual and shows where it stays.
 - **A closing pane's Neovim leaves as its last picture.** Main says a

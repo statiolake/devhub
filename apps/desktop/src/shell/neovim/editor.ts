@@ -51,6 +51,7 @@ import type { Decor } from "./decor";
 import { cmdlinePlace, type CmdlinePlace } from "./place";
 import { SCROLL_LUA, replied, type ScrollRequest } from "./smoothScroll";
 import { rideAnchor, rideArea, rideStyle, type BufposAnchor } from "./riders";
+import { PaintHold } from "./paintHold";
 
 import {
   IDLE,
@@ -501,14 +502,39 @@ export class NeovimEditor {
   resizeFor(
     width: number,
     height: number,
+    flushed: () => void,
   ): { cols: number; rows: number } | undefined {
     if (this.size.cols === 0) return undefined;
     const next = gridSizeFor(width, height, this.painter.cell());
     if (next.cols !== this.size.cols || next.rows !== this.size.rows) {
       this.size = next;
+      this.hold.hold(flushed);
       this.port.call("nvim_ui_try_resize", [next.cols, next.rows]);
+    } else if (this.hold.holding) {
+      this.hold.hold(flushed);
     }
     return next;
+  }
+
+  /**
+   * What Neovim flushes for a resize asked for a held layout (`resizeFor`)
+   * is drawn only when the page says (`resumePaint`), in the first frame
+   * its pane has moved (`PaintHold`).
+   */
+  private readonly hold = new PaintHold();
+
+  /**
+   * Draw now what came while held (`resizeFor`): called in the frame the
+   * page shows it in, with its pane's place and size for that frame.
+   */
+  resumePaint(): void {
+    const waiting = this.hold.release();
+    if (waiting === undefined || this.disposed) return;
+    if (this.frame !== 0) {
+      cancelAnimationFrame(this.frame);
+      this.frame = 0;
+    }
+    this.paint(waiting.force);
   }
 
   /** Grid 1 as Neovim last drew it, or nothing yet. */
@@ -561,6 +587,7 @@ export class NeovimEditor {
 
   redraw(batches: readonly unknown[]): void {
     applyRedraw(this.state, batches, this.pending);
+    if (this.pending.flushed) this.hold.flushed();
     if (this.pending.flushed && this.frame === 0) {
       this.frame = requestAnimationFrame(() => {
         this.frame = 0;
@@ -619,6 +646,7 @@ export class NeovimEditor {
 
   private paint(forceAll = false): void {
     if (this.disposed) return;
+    if (this.hold.defer(forceAll)) return;
     const changes = this.pending;
     this.pending = emptyChanges();
     if (changes.options) this.applyFont();
