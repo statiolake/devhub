@@ -72,7 +72,11 @@ export async function bootstrapShell(userDataPath: string): Promise<void> {
 	//
 	// Which of the two is the appearance's answer, so the appearance the
 	// settings ask for is applied first; the controller applies it again on
-	// every change.
+	// every change. `nativeTheme.themeSource` is what carries it: what
+	// Electron reports the appearance to be, to `shouldUseDarkColors` (and so
+	// to the half of the theme worn) and to every page's
+	// `prefers-color-scheme`.
+	appearanceMode().ownNativeTheme(electron.nativeTheme);
 	appearanceMode().apply(settings.config.appearance.mode);
 	// What the programs in DevHub's terminals are told about the theme
 	// (`themePublication.ts`); the controller publishes into it.

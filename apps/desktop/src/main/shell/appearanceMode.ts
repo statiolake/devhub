@@ -12,8 +12,11 @@
  * recolours DevHub at once.
  */
 
+/** What Electron's `nativeTheme.themeSource` accepts. */
+type ThemeSource = "system" | "light" | "dark";
+
 /** What DevHub tells Electron, for each appearance it can be asked for. */
-const THEME_SOURCE: Readonly<Record<string, string>> = {
+const THEME_SOURCE: Readonly<Record<string, ThemeSource>> = {
 	// `system` is the only value under which Electron reports the real OS.
 	auto: "system",
 	light: "light",
@@ -21,19 +24,33 @@ const THEME_SOURCE: Readonly<Record<string, string>> = {
 };
 
 export class AppearanceMode {
-	private write: ((value: unknown) => void) | undefined;
+	private write: ((value: ThemeSource) => void) | undefined;
 	private mode = "auto";
 
 	/**
-	 * Take ownership of `themeSource`, from the fence that took it off everyone
-	 * else.
+	 * Take ownership of Electron's `nativeTheme.themeSource`: from here on,
+	 * every appearance applied is written there.
 	 *
-	 * Called once, from `installAppFence()`, before any workbench exists. The
-	 * appearance starts at `auto` because the config has not been read yet, and
+	 * Called once, from `bootstrapShell`, before the settings' appearance is
+	 * applied and before any window exists. Until it is, nothing reaches
+	 * Electron: `appearance.mode` is remembered and Electron goes on reporting
+	 * the OS, which is how `mode = "dark"` once left a light OS's DevHub light
+	 * (the call lived in the VS Code app fence and went with it).
+	 */
+	ownNativeTheme(nativeTheme: { themeSource: ThemeSource }): void {
+		this.own((value) => {
+			nativeTheme.themeSource = value;
+		});
+	}
+
+	/**
+	 * Take ownership of `themeSource` through `writer`.
+	 *
+	 * The appearance starts at `auto` if the config has not been read yet, and
 	 * `auto` is both its default and the honest answer: report the OS until
 	 * somebody says otherwise.
 	 */
-	own(writer: (value: unknown) => void): void {
+	own(writer: (value: ThemeSource) => void): void {
 		if (this.write) {
 			throw new Error("DevHub's appearance already has an owner");
 		}
@@ -61,10 +78,8 @@ export class AppearanceMode {
 			throw new Error(`DevHub has no appearance called ${mode}`);
 		}
 		this.mode = mode;
-		// Before `installAppFence()` there is nothing to write to. That cannot
-		// happen in the app, where the fence is installed before the config is
-		// read, and remembering the answer is enough if it ever does: taking
-		// ownership applies whatever the latest one is.
+		// Before `ownNativeTheme()` there is nothing to write to. Remembering
+		// the answer is enough: taking ownership applies the latest one.
 		this.write?.(source);
 	}
 

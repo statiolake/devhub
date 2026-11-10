@@ -55,6 +55,10 @@ class Launch(unittest.TestCase):
 		config_home = Path(self.environment["XDG_CONFIG_HOME"])
 		self.assertTrue(config_home.is_relative_to(self.state))
 
+	def test_publishes_its_theme_into_the_throwaway_state(self) -> None:
+		"""`XDG_STATE_HOME` moves the theme file the appearance check reads."""
+		self.assertTrue(Path(self.environment["XDG_STATE_HOME"]).is_relative_to(self.state))
+
 	def test_keeps_the_rest_of_the_environment(self) -> None:
 		"""The app still needs a HOME and a PATH to start at all."""
 		self.assertEqual(self.environment["HOME"], "/home/tester")
@@ -89,7 +93,7 @@ class SourceLaunch(unittest.TestCase):
 		self.assertEqual(self.environment["DEVHUB_PROFILE"], SMOKE_PROFILE)
 
 	def test_moves_home_config_and_tmux_into_the_throwaway_state(self) -> None:
-		for name in ("HOME", "XDG_CONFIG_HOME", "TMUX_TMPDIR"):
+		for name in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "TMUX_TMPDIR"):
 			self.assertTrue(Path(self.environment[name]).is_relative_to(self.state), name)
 
 	def test_keeps_the_path(self) -> None:

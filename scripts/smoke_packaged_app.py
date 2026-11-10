@@ -22,6 +22,13 @@ its version. Once the file is open, `check_tmux_server` asks the tmux server
 the app started whether it is that tmux — the executable, not one from the
 PATH — and whether its panes find it first on theirs.
 
+It also starts the app with `[appearance] mode = "dark"` and a split
+`light:…,dark:…` theme, and requires the theme it publishes for its terminals
+and Neovims to be the dark half, then the light half once the file says
+`mode = "light"` (`check_appearance`). That is main's `nativeTheme` handling,
+which only a real Electron has: once nothing wrote `themeSource`, and a
+DevHub told to be dark wore the OS's light theme everywhere.
+
 It starts the app under its own profile, `smoke`, and that is not a detail. A
 DevHub launched on the *default* profile is the user's DevHub: it reads
 `~/.config/devhub`, it attaches to the tmux socket `devhub`, and on startup it
@@ -102,6 +109,80 @@ def outlives(process: subprocess.Popen, settle: float) -> str | None:
 		if code is not None:
 			return f"the app exited after opening the file (exit status {code}; a negative status is the signal that ended it)"
 		time.sleep(0.25)
+	return None
+
+
+# Both halves of `[appearance] theme`, named as `model/themes/theme.ts` names
+# its built-in themes.
+SMOKE_THEME_LIGHT = "DevHub Light"
+SMOKE_THEME_DARK = "DevHub Dark"
+
+
+def config_schema_version(app_dir: Path) -> int:
+	"""The `version` a settings file must carry for this build to read it."""
+	config = app_dir / "out" / "model" / "config.js"
+	match = re.search(r"CONFIG_SCHEMA_VERSION = (\d+)", config.read_text())
+	if match is None:
+		raise RuntimeError(f"no CONFIG_SCHEMA_VERSION in {config}")
+	return int(match.group(1))
+
+
+def settings_path(environment: dict[str, str]) -> Path:
+	"""The smoke profile's settings file (`model/profile.ts`)."""
+	return Path(environment["XDG_CONFIG_HOME"]) / f"devhub-{environment['DEVHUB_PROFILE']}" / "settings.toml"
+
+
+def published_theme_path(environment: dict[str, str]) -> Path:
+	"""Where the app publishes its theme (`model/publishedTheme.ts`)."""
+	return Path(environment["XDG_STATE_HOME"]) / f"devhub-{environment['DEVHUB_PROFILE']}" / "theme.json"
+
+
+def write_appearance(path: Path, schema: int, mode: str) -> None:
+	"""Settings that name a different theme for each appearance, in `mode`."""
+	path.parent.mkdir(parents=True, exist_ok=True)
+	# Written whole and renamed, so the app's watcher never reads half a file.
+	partial = path.with_suffix(".partial")
+	partial.write_text(
+		f"version = {schema}\n\n"
+		"[appearance]\n"
+		f'mode = "{mode}"\n'
+		f'theme = "light:{SMOKE_THEME_LIGHT},dark:{SMOKE_THEME_DARK}"\n'
+	)
+	partial.replace(path)
+
+
+def published_theme_name(path: Path) -> str | None:
+	try:
+		return json.loads(path.read_text()).get("name")
+	except (OSError, ValueError, AttributeError):
+		return None
+
+
+def wait_for_theme(path: Path, name: str, deadline: float) -> str | None:
+	"""None once the app publishes `name`; otherwise what it published."""
+	while True:
+		published = published_theme_name(path)
+		if published == name:
+			return None
+		if time.monotonic() >= deadline:
+			return f"the app published {published!r} rather than {name!r} ({path})"
+		time.sleep(0.25)
+
+
+def check_appearance(environment: dict[str, str], schema: int, timeout: float = 20.0) -> str | None:
+	"""Dark at startup, as the settings say, and light once they say so.
+
+	The settings watcher reads the file every two seconds; a change is given
+	as long as startup was.
+	"""
+	theme = published_theme_path(environment)
+	problem = wait_for_theme(theme, SMOKE_THEME_DARK, time.monotonic() + timeout)
+	if problem is not None:
+		return f'with appearance.mode = "dark", {problem}'
+	write_appearance(settings_path(environment), schema, "light")
+	problem = wait_for_theme(theme, SMOKE_THEME_LIGHT, time.monotonic() + timeout)
+	if problem is not None:
+		return f'after appearance.mode changed to "light", {problem}'
 	return None
 
 
@@ -401,6 +482,7 @@ def launch_command(
 	environment = dict(os.environ if base_environment is None else base_environment)
 	environment["DEVHUB_PROFILE"] = SMOKE_PROFILE
 	environment["XDG_CONFIG_HOME"] = str(state / "config")
+	environment["XDG_STATE_HOME"] = str(state / "state")
 	argv = [
 		str(executable),
 		"--user-data-dir",
@@ -426,6 +508,7 @@ def source_launch_command(
 	environment = dict(os.environ if base_environment is None else base_environment)
 	environment["DEVHUB_PROFILE"] = SMOKE_PROFILE
 	environment["XDG_CONFIG_HOME"] = str(state / "config")
+	environment["XDG_STATE_HOME"] = str(state / "state")
 	environment["HOME"] = str(state / "home")
 	environment["TMUX_TMPDIR"] = str(state / "tmux")
 	argv = [str(repo / "apps" / "desktop" / "scripts" / "dev.sh"), *(electron_args or [])]
@@ -475,7 +558,8 @@ def smoke_source(repo: Path, timeout: float, settle: float, electron_args: list[
 	user_data = source_user_data_directory(repo, environment)
 	print(f"    a source run (apps/desktop/scripts/dev.sh) under the {SMOKE_PROFILE} profile")
 	cli = cli_binary(repo / "apps" / "desktop", host_platform())
-	return run_and_probe(cli, argv, environment, state, user_data, timeout, settle, bundled_tmux(repo / "apps" / "desktop"))
+	app_dir = repo / "apps" / "desktop"
+	return run_and_probe(cli, argv, environment, state, user_data, timeout, settle, bundled_tmux(app_dir), app_dir)
 
 
 def host_platform() -> str:
@@ -505,7 +589,7 @@ def smoke(app: Path, timeout: float, settle: float = 5.0) -> int:
 	argv, environment = launch_command(executable, state)
 	cli = cli_binary(app / "Contents" / "Resources" / "app", host_platform())
 	tmux = bundled_tmux(app / "Contents" / "Resources" / "app")
-	return run_and_probe(cli, argv, environment, state, user_data_directory(state), timeout, settle, tmux)
+	return run_and_probe(cli, argv, environment, state, user_data_directory(state), timeout, settle, tmux, app_dir)
 
 
 def smoke_layout(repo: Path, app_dir: Path, timeout: float, settle: float, electron_args: list[str]) -> int:
@@ -536,7 +620,7 @@ def smoke_layout(repo: Path, app_dir: Path, timeout: float, settle: float, elect
 		Path(environment[directory]).mkdir(parents=True, exist_ok=True)
 	print(f"    {app_dir} under npm's Electron, the {SMOKE_PROFILE} profile")
 	cli = cli_binary(app_dir, host_platform())
-	return run_and_probe(cli, argv, environment, state, user_data_directory(state), timeout, settle, bundled_tmux(app_dir))
+	return run_and_probe(cli, argv, environment, state, user_data_directory(state), timeout, settle, bundled_tmux(app_dir), app_dir)
 
 
 def run_and_probe(
@@ -548,10 +632,13 @@ def run_and_probe(
 	timeout: float,
 	settle: float,
 	tmux: Path,
+	app_dir: Path,
 ) -> int:
-	"""Start the app, require a reply on its control socket, an opened file it
-	outlives and a tmux server that is its own, and take it and its state down
-	again whatever happened."""
+	"""Start the app, require a reply on its control socket, the appearance its
+	settings name, an opened file it outlives and a tmux server that is its
+	own, and take it and its state down again whatever happened."""
+	schema = config_schema_version(app_dir)
+	write_appearance(settings_path(environment), schema, "dark")
 	# A file rather than a pipe: nothing reads a pipe while the app runs, and
 	# an app that fills one blocks on its own console.log.
 	log_path = state / "app.log"
@@ -591,6 +678,12 @@ def run_and_probe(
 			print(f"    devhub --version: status {version.returncode}, {version.stdout!r} {version.stderr!r}", file=sys.stderr)
 			return 1
 		print(f"    {cli.relative_to(cli.parents[3])} --version answered the same")
+		problem = check_appearance(environment, schema)
+		if problem is not None:
+			print(f"    {problem}", file=sys.stderr)
+			print(log_tail(log_path), file=sys.stderr)
+			return 1
+		print(f"    it wore {SMOKE_THEME_DARK} in dark mode, then {SMOKE_THEME_LIGHT} once the settings said light")
 		(state / "smoke.txt").write_text("DevHub smoke test\n")
 		opened = run_cli(cli, socket_path, ["smoke.txt"], state, max(started + timeout - time.monotonic(), 10.0))
 		if opened.returncode != 0:

@@ -44,6 +44,7 @@ import {
 	type LoginEnvironment,
 } from "./loginEnvironment.js";
 import { SHELL_ORIGIN } from "./shellPageProtocol.js";
+import { CHANNELS } from "../../ipc/contract.js";
 import type { RunningSettings } from "./runningSettings.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
 import { DEFAULT_ORCHESTRATOR_ROOT } from "../../model/orchestratorSettings.js";
@@ -169,10 +170,18 @@ export function openSettingsWindow(): void {
 }
 
 /** True while the Settings window is the key window. */
-/** The theme changed: the window's own ground follows, as the shell's does. */
+/**
+ * The theme changed: the window's ground and its page follow.
+ *
+ * The page installs the palette like every DevHub page (`installPalette`),
+ * but it is not one of the shell window's pages, so `publishTheme` does not
+ * reach it: told nothing, an open Settings window kept the theme it was
+ * opened in through a change of `appearance.mode` or `appearance.theme`.
+ */
 export function applySettingsWindowPalette(palette: ShellPalette): void {
 	if (!window || window.isDestroyed()) return;
 	window.setBackgroundColor(palette.canvas);
+	window.webContents.send(CHANNELS.themeChanged, palette);
 }
 
 export function settingsWindowIsFocused(): boolean {

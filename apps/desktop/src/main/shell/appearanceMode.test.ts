@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AppearanceMode } from "./appearanceMode.js";
 
-/** The writer `installAppFence` hands over, and a record of what it was told. */
+/** A writer standing in for `nativeTheme.themeSource`, and what it was told. */
 function themeSourceWriter(): {
 	write: (value: unknown) => void;
 	written: string[];
@@ -48,9 +48,9 @@ describe("the appearance DevHub runs in", () => {
 	});
 
 	it("applies the config it was given the moment it takes ownership", () => {
-		// Ordering insurance. In the app the fence is installed before the config
-		// is read, but nothing in the types says so, and an appearance that were
-		// silently dropped because it arrived early would be invisible.
+		// Ordering insurance: nothing in the types says ownership comes before
+		// the config is read, and an appearance that were silently dropped
+		// because it arrived early would be invisible.
 		const mode = new AppearanceMode();
 		mode.apply("dark");
 		const writer = themeSourceWriter();
@@ -67,8 +67,25 @@ describe("the appearance DevHub runs in", () => {
 		expect(() => mode.apply("midnight")).toThrow(/no appearance called/u);
 	});
 
+	it("writes Electron's nativeTheme.themeSource once it owns it", () => {
+		// Owning nothing, `mode = "dark"` reached no one: Electron went on
+		// reporting a light OS, and the light half of the theme was worn.
+		const nativeTheme: { themeSource: "system" | "light" | "dark" } = {
+			themeSource: "system",
+		};
+		const mode = new AppearanceMode();
+		mode.apply("dark");
+		expect(nativeTheme.themeSource).toBe("system");
+		mode.ownNativeTheme(nativeTheme);
+		expect(nativeTheme.themeSource).toBe("dark");
+		mode.apply("light");
+		expect(nativeTheme.themeSource).toBe("light");
+		mode.apply("auto");
+		expect(nativeTheme.themeSource).toBe("system");
+	});
+
 	it("refuses a second owner", () => {
-		// Two owners is the thing the fence exists to prevent, one level up.
+		// One process, one `themeSource`, one writer.
 		const mode = new AppearanceMode();
 		mode.own(themeSourceWriter().write);
 		expect(() => mode.own(themeSourceWriter().write)).toThrow(

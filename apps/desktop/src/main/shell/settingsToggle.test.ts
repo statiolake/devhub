@@ -46,6 +46,7 @@ class FakeWindow {
 		this.destroyed = true;
 		this.handlers.get("closed")?.();
 	}
+	setBackgroundColor = vi.fn();
 	loadURL(): Promise<void> {
 		return Promise.resolve();
 	}
@@ -64,8 +65,12 @@ vi.mock("../electron.js", () => ({
 	},
 }));
 
-const { installSettingsWindow, openSettingsWindow, settingsWindowIsFocused } =
-	await import("./settingsWindow.js");
+const {
+	installSettingsWindow,
+	openSettingsWindow,
+	settingsWindowIsFocused,
+	applySettingsWindowPalette,
+} = await import("./settingsWindow.js");
 
 installSettingsWindow({
 	preloadPath: "/preload.js",
@@ -115,5 +120,21 @@ describe("the Settings chord", () => {
 		openSettingsWindow();
 		expect(FakeWindow.made).toHaveLength(2);
 		expect(FakeWindow.made[1].destroyed).toBe(false);
+	});
+});
+
+describe("the Settings window and the theme", () => {
+	it("wears a new theme, its ground and its page", () => {
+		// The page is not one of the shell window's, so nothing else tells it:
+		// an open Settings window kept the old theme through a change of
+		// `appearance.mode`.
+		openSettingsWindow();
+		applySettingsWindowPalette({ canvas: "#123456" } as never);
+		const [window] = FakeWindow.made;
+		expect(window.setBackgroundColor).toHaveBeenCalledWith("#123456");
+		expect(window.webContents.send).toHaveBeenCalledWith(
+			"devhub:theme-changed",
+			{ canvas: "#123456" },
+		);
 	});
 });
