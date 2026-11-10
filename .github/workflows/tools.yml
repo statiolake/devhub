@@ -1,0 +1,170 @@
+name: Tools
+
+# Publishes the DevHub tools release: the binaries DevHub carries that have no
+# good upstream distribution (tmux and bash today), built per architecture and
+# published as one release (scripts/build_tools.py, docs/bundled-binaries.md).
+#
+#   Check the tag ──> Build: tools <target> (x3) ──> Publish: tools release
+#
+# Pushing a tag `tools-<toolsVersion>` runs it. The tag must match the
+# `toolsVersion` that apps/desktop/product.json states at that commit. The
+# release is created once and never moves. An app pins each asset's sha256
+# (`toolsDownloadSha256`), so replacing an asset breaks every app built
+# against it. A change to what the release holds is a new `toolsVersion`
+# and a new tag.
+#
+# Each architecture builds on a runner of its own: each tool's build runs
+# the binary it made, and there is no cross-build.
+on:
+  push:
+    tags: ["tools-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tools-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: "Check: the tag is the pinned toolsVersion"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Compare
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="$(scripts/build_tools.py --print-version)"
+          if [ "$TAG" != "tools-$version" ]; then
+            echo "the tag is $TAG, but product.json's toolsVersion is $version at this commit." >&2
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG is published already, and a published tools release never changes." >&2
+            echo "Bump toolsVersion and push a new tag instead." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: "Build: tools ${{ matrix.target }}"
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      # All three or none: the release is published whole.
+      fail-fast: true
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-14
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # musl, not glibc: a statically linked glibc still dlopens the NSS
+      # modules of the machine that built it when getpwuid is called, which
+      # tmux and bash both call at startup (scripts/build_tmux.py).
+      - name: Install the musl toolchain
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools build-essential patch
+
+      - name: Build the tools tarball
+        run: scripts/build_tools.py ${{ matrix.target }} --out-dir dist
+
+      - name: Hand the tarball to the publishing job
+        uses: actions/upload-artifact@v4
+        with:
+          name: tools-${{ matrix.target }}
+          path: dist/*.tar.gz
+          retention-days: 3
+          if-no-files-found: error
+
+  publish:
+    name: "Publish: tools release"
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Collect the tarballs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tools-*
+          merge-multiple: true
+          path: dist
+
+      - name: Write SHA256SUMS and the notes
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd dist
+          for target in darwin-arm64 linux-x64 linux-arm64; do
+            test -f "devhub-tools-$VERSION-$target.tar.gz"
+          done
+          sha256sum devhub-tools-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+          {
+            echo "DevHub's own builds of the binaries it carries that have no good upstream distribution: a static tmux (with libevent, ncurses and a small terminfo database) and a static bash, one tarball per architecture. Linux builds are linked with musl."
+            echo
+            echo "The app build downloads these, checks each one against \`toolsDownloadSha256\` in \`apps/desktop/product.json\`, and bundles them. DevHub sends the Linux ones to SSH hosts from inside the app; nothing downloads them at runtime. See docs/bundled-binaries.md."
+            echo
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+            echo
+            echo "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+          } > ../notes.md
+          {
+            echo "Pins for apps/desktop/product.json:"
+            echo '```json'
+            printf '"toolsDownloadSha256": {'
+            sep=""
+            while read -r digest name; do
+              platform="${name#devhub-tools-"$VERSION"-}"
+              platform="${platform%.tar.gz}"
+              printf '%s\n  "%s": "%s"' "$sep" "$platform" "$digest"
+              sep=","
+            done < SHA256SUMS
+            printf '\n}\n'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --verify-tag \
+            --prerelease \
+            --title "DevHub tools $VERSION" \
+            --notes-file notes.md \
+            dist/devhub-tools-*.tar.gz dist/SHA256SUMS

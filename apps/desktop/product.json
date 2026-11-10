@@ -3,6 +3,7 @@
 	"nameLong": "DevHub",
 	"applicationName": "devhub",
 	"serverDataFolderName": ".devhub-server",
+	"toolsVersion": "1",
 	"tmuxVersion": "3.7c",
 	"tmuxDownloadUrlTemplate": "https://github.com/statiolake/devhub/releases/download/tmux-${tmuxVersion}/devhub-tmux-${os}-${arch}-${tmuxVersion}.tar.gz",
 	"tmuxDownloadSha256": {

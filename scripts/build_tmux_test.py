@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
-"""What the app fetches has to be what CI published, and what it unpacks has to
-be what the app then runs.
+"""The tmux build's names and its tarball's layout, checked against what the
+app's install expects.
 
-Neither of those is checked at runtime. The app substitutes three names into
-`tmuxDownloadUrlTemplate`, downloads whatever comes back and unpacks it into
-`~/.devhub-server/tmux/<version>/`; `scripts/build_tmux.py` names a file and
-`.github/workflows/nightly.yml` uploads it to a release named after the pinned
-version. If any of those disagree the symptom is a host on which terminals and
-Agents do not start, with a 404 in a log.
-
-So the template, the namer and the tarball layout are checked against each
-other here.
+Nothing at runtime checks them. The app unpacks the tarball DevHub's tools
+release carries (`scripts/build_tools.py`) into `out/tmux`, and sends it as it
+is to an SSH host's `~/.devhub-server/tmux/<version>/`. A name or a layout
+that changes here shows up as a host on which terminals and Agents do not
+start.
 
     python3 -m unittest discover -s scripts -p "*_test.py"
 """
@@ -18,8 +14,6 @@ other here.
 from __future__ import annotations
 
 import io
-import json
-import re
 import tarfile
 import tempfile
 import unittest
@@ -30,7 +24,6 @@ from unittest import mock
 from build_tmux import (
 	LIBEVENT,
 	NCURSES,
-	PUBLISHED_TARGETS,
 	SOURCES,
 	TARGETS,
 	TERMINFO_ENTRIES,
@@ -39,28 +32,9 @@ from build_tmux import (
 	check_system_only,
 	download,
 	pack,
-	release_tag,
 	tarball_name,
 	top_level_dir,
 )
-from product_metadata import PRODUCT as PRODUCT_OVERRIDES
-
-TEMPLATE = PRODUCT_OVERRIDES["tmuxDownloadUrlTemplate"]
-
-# The three the app substitutes, and the whole of it. `${version}` is
-# deliberately not among them: `product.json` already uses that name for VS
-# Code's version in `serverDownloadUrlTemplate`, and two templates in one file
-# whose `${version}` means two different things is a mistake waiting for
-# whoever writes the third.
-PLACEHOLDERS = ("tmuxVersion", "os", "arch")
-
-
-def resolve(template: str, **values: str) -> str:
-	for name, value in values.items():
-		template = template.replace("${" + name + "}", value)
-	return template
-
-
 class Download(unittest.TestCase):
 	"""A server that could not answer now is asked again; any other answer is final."""
 
@@ -102,39 +76,6 @@ class Download(unittest.TestCase):
 		self.assertEqual(len(calls), 6)
 
 
-class DownloadTemplate(unittest.TestCase):
-	def test_resolves_to_the_file_the_build_produces(self) -> None:
-		for target in PUBLISHED_TARGETS:
-			os_name, _, arch = target.partition("-")
-			with self.subTest(target=target):
-				url = resolve(
-					TEMPLATE, os=os_name, arch=arch, tmuxVersion=TMUX.version
-				)
-				self.assertEqual(
-					url,
-					"https://github.com/statiolake/devhub/releases/download/"
-					f"{release_tag(TMUX.version)}/"
-					f"{tarball_name(os_name, arch, TMUX.version)}",
-				)
-
-	def test_leaves_nothing_to_substitute(self) -> None:
-		url = resolve(TEMPLATE, os="linux", arch="x64", tmuxVersion=TMUX.version)
-		self.assertNotIn("${", url)
-
-	def test_names_only_placeholders_the_app_substitutes(self) -> None:
-		named = set(re.findall(r"\$\{(\w+)\}", TEMPLATE))
-		self.assertEqual(named, set(PLACEHOLDERS))
-
-	def test_does_not_reuse_a_name_the_server_template_already_means(self) -> None:
-		# `${version}` in `serverDownloadUrlTemplate` is VS Code's version —
-		# one of the six names the Open Remote - SSH install script substitutes
-		# on the host. This template is substituted by DevHub itself and could
-		# use the name for tmux's, and then `product.json` would hold two
-		# templates whose `${version}` means two different things.
-		self.assertNotIn("${version}", TEMPLATE)
-		self.assertNotIn("${commit}", TEMPLATE)
-
-
 class Pins(unittest.TestCase):
 	"""Every source is fetched over the network and linked into a binary DevHub
 	installs on other people's machines. A pin without a checksum is a promise
@@ -171,23 +112,9 @@ class Pins(unittest.TestCase):
 
 
 class Names(unittest.TestCase):
-	def test_release_tag_is_keyed_on_the_tmux_version(self) -> None:
-		# Not on a date and not on DevHub's commit: the tarball is a function of
-		# the pinned version, so the release never has to move and an app built
-		# months ago goes on finding it.
-		self.assertEqual(release_tag("3.7c"), "tmux-3.7c")
-
 	def test_every_target_has_its_own_tarball(self) -> None:
 		names = {tarball_name(*t.partition("-")[::2], TMUX.version) for t in TARGETS}
 		self.assertEqual(len(names), len(TARGETS))
-
-	def test_darwin_is_not_published(self) -> None:
-		# macOS has no static libc, so what this script builds there links
-		# against libSystem. It stays in TARGETS for the app bundle
-		# (fetch-tmux.mjs) and out of PUBLISHED_TARGETS so nothing uploads it.
-		self.assertIn("darwin-arm64", TARGETS)
-		self.assertNotIn("darwin-arm64", PUBLISHED_TARGETS)
-		self.assertEqual(set(PUBLISHED_TARGETS), {"linux-x64", "linux-arm64"})
 
 	def test_top_level_directory_is_not_the_tarball_name(self) -> None:
 		# `tar --strip-components 1` takes whatever the one directory is called;
@@ -286,24 +213,6 @@ class TarballLayout(unittest.TestCase):
 			check_layout(tarball)
 
 
-class Workflow(unittest.TestCase):
-	"""The job that publishes it, read as text: there is no other check that CI
-	builds the targets the template promises."""
-
-	def setUp(self) -> None:
-		self.workflow = (
-			Path(__file__).resolve().parent.parent / ".github" / "workflows" / "nightly.yml"
-		).read_text()
-
-	def test_builds_every_published_target(self) -> None:
-		for target in PUBLISHED_TARGETS:
-			with self.subTest(target=target):
-				self.assertIn(f"target: {target}", self.workflow)
-
-	def test_never_publishes_the_darwin_build(self) -> None:
-		self.assertNotIn("build_tmux.py darwin", self.workflow)
-
-
 class DarwinLinkage(unittest.TestCase):
 	"""The app's macOS tmux may load libSystem and nothing from outside the OS."""
 
@@ -323,19 +232,6 @@ class DarwinLinkage(unittest.TestCase):
 			with self.assertRaises(SystemExit) as raised:
 				check_system_only(Path("tmux"))
 		self.assertIn("libevent", str(raised.exception))
-
-
-class Overrides(unittest.TestCase):
-	def test_the_template_is_stated_in_the_file_the_app_reads(self) -> None:
-		# `PRODUCT_OVERRIDES` is loaded from this file; asserting on the file
-		# keeps the two from being the same typo read twice.
-		path = (
-			Path(__file__).resolve().parent.parent
-			/ "apps"
-			/ "desktop"
-			/ "product.json"
-		)
-		self.assertEqual(json.loads(path.read_text())["tmuxDownloadUrlTemplate"], TEMPLATE)
 
 
 if __name__ == "__main__":

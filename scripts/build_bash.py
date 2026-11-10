@@ -4,28 +4,21 @@
 Claude Code runs its Bash tool in a bash or a zsh (`CLAUDE_CODE_SHELL`, else
 `$SHELL`, else whichever it finds on `PATH`), and DevHub runs only the binaries
 it carries or delivers, never whatever happens to be installed
-(docs/bundled-binaries.md). So DevHub publishes a bash the same way it
-publishes tmux (`build_tmux.py`, whose helpers this script uses and whose
-conventions it keeps), and installs it the same way, into the user's own home
-directory, on a Claude Agent's first start on that host:
+(docs/bundled-binaries.md). So DevHub builds a bash the same way it builds
+tmux (`build_tmux.py`, whose helpers this script uses and whose conventions it
+keeps), publishes it beside tmux on its tools release (`build_tools.py`), and
+installs it the same way, into the user's own home directory, on a Claude
+Agent's first start on that host:
 
     ~/.devhub-server/bash/<version>/bin/bash
 
-DevHub sets `CLAUDE_CODE_SHELL` to it for that Agent's process only. The login shell, tmux's `default-shell` and every terminal stay the
-person's. The app carries the same bash as `out/bash` (`build:bash`,
-`apps/desktop/scripts/fetch-bash.mjs`): on Linux the published tarball, on
-macOS this script's `darwin-arm64` build, which links only libSystem. See
+DevHub sets `CLAUDE_CODE_SHELL` to it for that Agent's process only. The
+login shell, tmux's `default-shell` and every terminal stay the person's. The
+app carries this machine's build as `out/bash` (`build:binaries`,
+`apps/desktop/scripts/fetch-binaries.mjs`): on Linux the static one, on macOS
+the `darwin-arm64` build, which links only libSystem. See
 `apps/desktop/src/main/runtime/agentShell.ts` and docs/remote-ssh.md, "bash
 for Claude Code".
-
-## Separate from tmux, by version
-
-One tarball per tool rather than one "host tools" bundle: each release is
-keyed on its own tool's version and never moves (`tmux-3.7c`, `bash-5.3.20`),
-so a bash patch level can be published without republishing a tmux every
-DevHub already installs, and a tmux bump does not move a bash. The layout, the
-static musl link, the build-on-its-own-architecture rule and the pins are the
-same, and are `build_tmux.py`'s code rather than a copy of it.
 
 ## Static, musl, and nothing of the build machine's
 
@@ -106,7 +99,7 @@ class Patch:
 
 
 # In order: each patch assumes the ones before it. Adding one is appending its
-# digest here, which moves the published version (and so the release tag) by one.
+# digest here, which moves the version by one (and so needs a new toolsVersion).
 PATCHES = tuple(
 	Patch(level, digest)
 	for level, digest in enumerate(
@@ -142,18 +135,8 @@ VERSION = f"{BASH.version}.{len(PATCHES)}"
 
 
 def tarball_name(os_name: str, arch: str, version: str) -> str:
-	"""What the app's download URL resolves to for this target.
-
-	The same statement as `bashDownloadUrlTemplate` in
-	`apps/desktop/product.json`; `build_bash_test.py` checks that
-	the two agree.
-	"""
+	"""This tool's tarball, as the tools release carries it (`build_tools.py`)."""
 	return f"devhub-bash-{os_name}-{arch}-{version}.tar.gz"
-
-
-def release_tag(version: str) -> str:
-	"""The release that holds every architecture's tarball for this bash."""
-	return f"bash-{version}"
 
 
 def top_level_dir(os_name: str, arch: str) -> str:
@@ -294,14 +277,12 @@ def build(target: str, out_dir: Path, work: Path) -> Path:
 
 def main() -> int:
 	parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-	# The same targets as tmux, published (`PUBLISHED_TARGETS`) or self-test,
-	# for the same reasons.
+	# The same targets as tmux.
 	parser.add_argument("targets", nargs="*", choices=TARGETS)
 	parser.add_argument(
 		"--print-version",
 		action="store_true",
-		help="print the pinned bash version (with its patch level) and exit — how "
-		"CI names the release without keeping a second copy of the number",
+		help="print the pinned bash version (with its patch level) and exit",
 	)
 	parser.add_argument("--out-dir", type=Path, default=REPO_ROOT / "dist")
 	parser.add_argument(
@@ -319,7 +300,7 @@ def main() -> int:
 	if not args.targets:
 		parser.error("name at least one target, or pass --print-version")
 
-	print(f"bash {VERSION}, release {release_tag(VERSION)}")
+	print(f"bash {VERSION}")
 	for target in args.targets:
 		build(target, args.out_dir, args.work_dir / target)
 	return 0

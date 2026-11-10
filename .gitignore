@@ -22,6 +22,7 @@ apps/desktop/dist/
 tmux-build/
 # ...and where scripts/build_bash.py does the same for bash.
 bash-build/
+tools-build/
 
 # Throwaway spike scratch (captures, logs, sample folders)
 .spike/

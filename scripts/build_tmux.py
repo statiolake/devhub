@@ -10,10 +10,10 @@ output is read. A host with no tmux is a host where none of that works.
 The owner's own NAS is that host: Synology DSM, no tmux in the image, no
 package manager worth the name and no sudo. Asking people to install one is
 asking them to have root on a box they may not, and telling them "DevHub needs
-tmux" is a sentence they can do nothing with. So DevHub publishes tmux the same
-way it publishes the remote extension host, and installs it the same way: one
-tarball per platform on a release of this repository, unpacked into the user's
-own home directory on first use.
+tmux" is a sentence they can do nothing with. So DevHub builds tmux itself,
+publishes it on its tools release (`scripts/build_tools.py`, one tarball per
+architecture), bundles every architecture's in the app, and sends the host's
+from there, unpacked into the user's own home directory on first use.
 
     ~/.devhub-server/tmux/<version>/bin/tmux
 
@@ -23,7 +23,7 @@ DevHub does not look for a tmux on the machine and does not use one it finds.
 tmux's control output — the `list-sessions` format, `capture-pane -e`,
 `display-message -p` — differs between versions in ways that show up as an
 Agent whose output is subtly wrong rather than as an error, and the adapter is
-written against one version. One version, published here, is a version the
+written against one version. One version, built here, is a version the
 tests are about. See `docs/remote-ssh.md`, "tmux on the host".
 
 ## Static, because the host is unknown
@@ -52,14 +52,12 @@ There is no cross-building: each target is built on a runner of its own
 architecture, as the REH is, and this script refuses a target that is not the
 machine it is running on rather than emit something it cannot execute.
 
-`darwin-arm64` is the tmux inside DevHub.app, and is never published: hosts
-are Linux. macOS has no static libc and Apple does not ship crt0.o, so it links
+`darwin-arm64` is the tmux inside DevHub.app; hosts are Linux. macOS has no static libc and Apple does not ship crt0.o, so it links
 dynamically against libSystem — and against nothing else: libevent and ncurses
 are linked in as on Linux, and `verify` refuses a binary that loads any library
-from outside the OS. `apps/desktop/scripts/fetch-tmux.mjs` builds it on the Mac
-that builds the app, and unpacks it into `out/tmux` as it unpacks the published
-Linux tarball there for a Linux run: one build, one set of pins, for every tmux
-DevHub runs (`apps/desktop/src/main/terminal/bundledTmux.ts`).
+from outside the OS. The tools release carries it beside the Linux ones, and
+`apps/desktop/scripts/fetch-binaries.mjs` unpacks this machine's into
+`out/tmux`: one build, one set of pins, for every tmux DevHub runs (`apps/desktop/src/main/terminal/bundledTmux.ts`).
 
 ## Terminfo travels with it
 
@@ -93,11 +91,10 @@ from typing import Protocol
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# What DevHub publishes, and the one target only the app carries. The two
-# Linux pairs are what people SSH into (and what a Linux run of the app
-# bundles); see the module docstring for why darwin-arm64 is not published.
+# Every target DevHub's tools release carries (`build_tools.py`). The two
+# Linux pairs are what people SSH into; darwin-arm64 is the tmux inside
+# DevHub.app.
 TARGETS = ("linux-x64", "linux-arm64", "darwin-arm64")
-PUBLISHED_TARGETS = ("linux-x64", "linux-arm64")
 
 
 class Pinned(Protocol):
@@ -153,9 +150,8 @@ class Source:
 # release assets and, for ncurses, the digest ftp.gnu.org and
 # invisible-mirror.net both serve.
 #
-# Moving any of these three is a deliberate act: the release tag is named after
-# the tmux version, so a bump publishes a new tarball beside the old one and
-# every DevHub that was built before it goes on fetching the version it knows.
+# Moving any of these three is a deliberate act: it is a new `toolsVersion`, a
+# new tools release beside the old one, and new pins in product.json.
 TMUX = Source(
 	name="tmux",
 	version="3.7c",
@@ -215,25 +211,8 @@ MACOSX_DEPLOYMENT_TARGET = "12.0"
 
 
 def tarball_name(os_name: str, arch: str, version: str) -> str:
-	"""What the app's download URL resolves to for this target.
-
-	The same statement as `tmuxDownloadUrlTemplate` in
-	`apps/desktop/product.json`, written twice —
-	`build_tmux_test.py` checks that the two agree, because nothing at runtime
-	does.
-	"""
+	"""This tool's tarball, as the tools release carries it (`build_tools.py`)."""
 	return f"devhub-tmux-{os_name}-{arch}-{version}.tar.gz"
-
-
-def release_tag(version: str) -> str:
-	"""The release that holds every architecture's tarball for this tmux.
-
-	Named after the tmux version rather than after a date or DevHub's commit:
-	the artefact is a function of that version alone, the URL the app resolves has that
-	version in it, and a release that never moves is a download an app built
-	months ago still finds.
-	"""
-	return f"tmux-{version}"
 
 
 def top_level_dir(os_name: str, arch: str) -> str:
@@ -477,7 +456,7 @@ def build_tmux(tree: Path, prefix: Path, env: dict[str, str], static: bool) -> P
 
 	`--enable-static` is tmux's own flag for `-static`, and it is passed only
 	where a static libc exists. On macOS it is absent and the result is a
-	dynamic binary — the app's, never a release; see `verify`.
+	dynamic binary — the app's, never a host's; see `verify`.
 	"""
 	# `--disable-jemalloc` is not optional in the sense of being a preference:
 	# tmux's configure refuses to continue without one of the two, and a
@@ -597,12 +576,9 @@ def check_static(binary: Path, os_name: str) -> None:
 				"on, which is the one thing this build exists to avoid."
 			)
 	else:
+		# macOS has no static libc: the binary links libSystem, and nothing
+		# else. It is the app's own, never a host's.
 		check_system_only(binary)
-		print(
-			f"  NOT PUBLISHABLE: a {os_name} build links dynamically against the "
-			"system libraries. It is for the app bundle (fetch-tmux.mjs) and must "
-			"not be uploaded to a release, which is for hosts."
-		)
 
 
 def check_system_only(binary: Path) -> None:
@@ -637,9 +613,9 @@ def verify(staged: Path, os_name: str, version: str) -> None:
 	`file` names the linkage and `tmux -V` proves the thing runs and is the
 	version that was pinned.
 
-	On macOS the linkage assertion is inverted into a refusal to publish: the
-	binary *is* dynamic, that is not fixable, and the only correct outcome is
-	that nobody mistakes the tarball for a release artefact.
+	On macOS the linkage assertion is that the binary loads nothing from
+	outside the OS: it *is* dynamic (there is no static libc), against
+	libSystem alone.
 	"""
 	binary = staged / "bin" / "tmux"
 	check_static(binary, os_name)
@@ -767,8 +743,7 @@ def main() -> int:
 	parser.add_argument(
 		"--print-version",
 		action="store_true",
-		help="print the pinned tmux version and exit — how CI names the release "
-		"without keeping a second copy of the number",
+		help="print the pinned tmux version and exit",
 	)
 	parser.add_argument("--out-dir", type=Path, default=REPO_ROOT / "dist")
 	parser.add_argument(
@@ -786,7 +761,7 @@ def main() -> int:
 	if not args.targets:
 		parser.error("name at least one target, or pass --print-version")
 
-	print(f"tmux {TMUX.version}, release {release_tag(TMUX.version)}")
+	print(f"tmux {TMUX.version}")
 	for target in args.targets:
 		build(target, args.out_dir, args.work_dir / target)
 	return 0

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""What the app fetches for a host with no bash has to be what CI published,
-and what it unpacks has to be what the app then runs.
+"""The bash build's names, layout and command lines.
 
 The same checks `build_tmux_test.py` makes for tmux, for the same reason —
 nothing at runtime makes them — plus the command lines of a build that this
@@ -14,8 +13,6 @@ out of it are each one line that is easy to lose.
 from __future__ import annotations
 
 import io
-import json
-import re
 import shutil
 import tarfile
 import tempfile
@@ -31,55 +28,11 @@ from build_bash import (
 	check_layout,
 	configure_command,
 	patch_command,
-	release_tag,
 	reports_version,
 	tarball_name,
 	top_level_dir,
 )
-from build_tmux import PUBLISHED_TARGETS, pack
-from product_metadata import PRODUCT as PRODUCT_OVERRIDES
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-TEMPLATE = PRODUCT_OVERRIDES["bashDownloadUrlTemplate"]
-PLACEHOLDERS = ("bashVersion", "os", "arch")
-
-
-def resolve(template: str, **values: str) -> str:
-	for name, value in values.items():
-		template = template.replace("${" + name + "}", value)
-	return template
-
-
-class DownloadTemplate(unittest.TestCase):
-	def test_resolves_to_the_file_the_build_produces(self) -> None:
-		for target in PUBLISHED_TARGETS:
-			os_name, _, arch = target.partition("-")
-			with self.subTest(target=target):
-				self.assertEqual(
-					resolve(TEMPLATE, os=os_name, arch=arch, bashVersion=VERSION),
-					"https://github.com/statiolake/devhub/releases/download/"
-					f"{release_tag(VERSION)}/{tarball_name(os_name, arch, VERSION)}",
-				)
-
-	def test_names_only_placeholders_the_app_substitutes(self) -> None:
-		self.assertEqual(set(re.findall(r"\$\{(\w+)\}", TEMPLATE)), set(PLACEHOLDERS))
-
-	def test_does_not_reuse_a_name_another_template_means(self) -> None:
-		# `${version}` is VS Code's in `serverDownloadUrlTemplate`, and
-		# `${tmuxVersion}` is tmux's: the app substitutes `${bashVersion}`.
-		for name in ("${version}", "${commit}", "${tmuxVersion}"):
-			with self.subTest(name=name):
-				self.assertNotIn(name, TEMPLATE)
-
-	def test_the_app_asks_for_the_version_this_builds(self) -> None:
-		# The app installs into `bash/<bashVersion>` and resolves the URL with
-		# it; a pin moved here and not there is a 404 on every bare host.
-		self.assertEqual(PRODUCT_OVERRIDES["bashVersion"], VERSION)
-
-	def test_the_template_is_stated_in_the_file_the_app_reads(self) -> None:
-		path = REPO_ROOT / "apps" / "desktop" / "product.json"
-		self.assertEqual(json.loads(path.read_text())["bashDownloadUrlTemplate"], TEMPLATE)
-
+from build_tmux import pack
 
 class Pins(unittest.TestCase):
 	def test_every_download_states_a_sha256_and_is_https(self) -> None:
@@ -112,11 +65,6 @@ class Pins(unittest.TestCase):
 
 
 class Names(unittest.TestCase):
-	def test_release_tag_is_keyed_on_the_bash_version(self) -> None:
-		# Its own release, beside tmux's and never inside it: a bash patch does
-		# not republish a tmux, and the other way round.
-		self.assertEqual(release_tag("5.3.20"), "bash-5.3.20")
-
 	def test_names_follow_the_tmux_convention(self) -> None:
 		self.assertEqual(
 			tarball_name("linux", "x64", "5.3.20"), "devhub-bash-linux-x64-5.3.20.tar.gz"
@@ -217,25 +165,6 @@ class TarballLayout(unittest.TestCase):
 			archive.addfile(tarfile.TarInfo("stray/README"), io.BytesIO(b""))
 		with self.assertRaises(SystemExit):
 			check_layout(tarball)
-
-
-class Workflow(unittest.TestCase):
-	def setUp(self) -> None:
-		self.workflow = (REPO_ROOT / ".github" / "workflows" / "nightly.yml").read_text()
-
-	def test_builds_every_published_target(self) -> None:
-		self.assertIn("scripts/build_bash.py ${{ matrix.target }}", self.workflow)
-		bash_jobs = self.workflow[self.workflow.index("  bash:\n") :]
-		for target in PUBLISHED_TARGETS:
-			with self.subTest(target=target):
-				self.assertIn(f"target: {target}", bash_jobs)
-
-	def test_names_the_release_by_asking_the_script(self) -> None:
-		self.assertIn("scripts/build_bash.py --print-version", self.workflow)
-		self.assertIn('tag="bash-${version}"', self.workflow)
-
-	def test_never_publishes_the_darwin_self_test(self) -> None:
-		self.assertNotIn("build_bash.py darwin", self.workflow)
 
 
 if __name__ == "__main__":
