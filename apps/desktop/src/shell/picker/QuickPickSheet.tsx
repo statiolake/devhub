@@ -8,8 +8,11 @@
  * other question DevHub asks takes. The answer goes back to the program
  * (the row's index, or the text typed), which goes on from its callback.
  *
- * An input is the rule's "line of typing": no candidates, and the one row
- * that means what was typed.
+ * The heading band is the question: the program's prompt is what the sheet
+ * has to say first, so it is the title, and who is asking ("Neovim") is not
+ * drawn — the person just asked it, in the editor in front of them. An input
+ * is the field alone, and Return answers with what is in it: no list, and no
+ * row that means "what was typed".
  */
 
 import { useMemo } from "react";
@@ -22,8 +25,6 @@ export interface QuickPickSheetProps {
   readonly onDismiss: (answer?: number | string) => void;
 }
 
-const TYPED = "devhub:quick-pick-typed";
-
 export function QuickPickSheet({ request, onDismiss }: QuickPickSheetProps) {
   const items = useMemo(
     (): readonly PickerItem[] =>
@@ -35,26 +36,28 @@ export function QuickPickSheet({ request, onDismiss }: QuickPickSheetProps) {
     [request.rows],
   );
   const input = request.input;
-  const pinned = useMemo(
-    (): readonly PickerItem[] =>
-      input === undefined ? [] : [{ id: TYPED, label: "Use what is typed" }],
-    [input],
-  );
+  // A program that asks nothing in words is only who it is.
+  const asked =
+    request.question.trim() === "" ? request.title : request.question;
 
   return (
     <Picker
-      title={request.title}
-      question={request.question}
+      title={asked}
+      question={undefined}
       items={items}
-      pinned={pinned}
       {...(input === undefined
         ? {
             emptyNoMatch: "Nothing matches that.",
             emptyNoItems: "There is nothing to choose.",
           }
-        : { initialQuery: input.default })}
-      onChoose={({ id, query }) => {
-        onDismiss(id === TYPED ? query : Number(id));
+        : {
+            initialQuery: input.default,
+            onTyped: (text: string) => {
+              onDismiss(text);
+            },
+          })}
+      onChoose={({ id }) => {
+        onDismiss(Number(id));
       }}
       onCancel={() => {
         onDismiss();

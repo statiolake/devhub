@@ -787,9 +787,10 @@
   text-align: start;
 }
 
-/* The footer: what the sheet has to say about itself, and the way out of it.
-   One band, so the seam above it is in the same place whether or not there is
-   a note to read. */
+/* The footer: what the sheet has to say about itself. A picker draws it only
+   for a note — the way out is Escape or the scrim, not a button here
+   (`Picker.tsx`); the sheets built on the picker's bands keep their buttons
+   in it (`.picker-actions`). */
 .picker-footer {
   display: flex;
   flex-direction: column;
@@ -842,11 +843,7 @@
 
 .picker-actions {
   display: flex;
-  /* Cancel is the only thing here and it sits at the trailing end, which is
-     where a Mac puts the one that dismisses. It used to be `space-between`
-     over two buttons, with an empty span standing in for the second whenever a
-     caller passed none; there is no second button any more — every answer this
-     control offers is a row. */
+  /* At the trailing end, which is where a Mac puts the one that dismisses. */
   justify-content: flex-end;
   align-items: center;
   gap: var(--space-2);

@@ -538,10 +538,14 @@ describe("a confirmation's Cancel", () => {
     expect(screen.queryByText("Cancel")).toBeNull();
   });
 
-  it("is the footer's button in a picker that is a choice among things", () => {
+  it("is Escape or the scrim in a picker that is a choice among things, never a button", () => {
     const { onCancel } = renderPicker({});
     expect(screen.queryByRole("option", { name: /Cancel/ })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    // With nothing to note, there is no footer band at all.
+    expect(document.querySelector(".picker-footer")).toBeNull();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.mouseDown(document.querySelector(".mac-scrim")!);
+    expect(onCancel).toHaveBeenCalledTimes(2);
   });
 });

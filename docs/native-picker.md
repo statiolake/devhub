@@ -30,7 +30,10 @@ Every "which one?" in DevHub is one of two things, and each gets one UI:
 
 One look and one keyboard model, whoever asks: a header band (what is
 asked, and why), a search field, ranked rows, Return chooses, Escape
-cancels, the arrows and `C-n`/`C-p` move. `PickerParts.tsx` holds the
+cancels, the arrows and `C-n`/`C-p` move. There is no Cancel button under
+the list: it was a band spent on a mouse-only copy of Escape (the button
+could not be reached from the keyboard), and a click outside the sheet
+closes it as well. The footer is drawn only for a note. `PickerParts.tsx` holds the
 pieces (`PickerHeader`, `PickerSearchGlyph`, `PickerRowText`); `Picker` is
 drawn from them, and so is anything that draws the quick pick for state
 that is not its own.
@@ -52,8 +55,13 @@ Lua: vim.ui.select(items, opts, on_choice)          (devhub_gui.select)
   quick pick at a time; the first is answered `nil`).
 - **Rows** are `format_item`'s text; the matching is the quick pick's own
   scorer (`model/fuzzy.ts`), as for every DevHub question. An input is the
-  rule's line of typing: the field starts with `default`, and the one row
-  means what was typed.
+  field alone (`Picker`'s `onTyped`): it starts with `default`, Return
+  answers with what is in it, and there is no list — a lone, always-selected
+  "Use what is typed" row was the field said twice.
+- **The band is the question.** The program's prompt is the title, the
+  first and largest thing on the sheet; who is asking ("Neovim", the
+  request's `title`) is not drawn — the person just asked it, in the editor
+  in front of them — unless the prompt is empty, when it is all there is.
 - **Opt-in.** devhub.nvim's `setup{ quick_pick = true }` makes
   `vim.ui.select`/`vim.ui.input` these (`gui.quick_pick()`); off by
   default until the person approves. `devhub_gui.select`/`input` exist in

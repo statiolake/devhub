@@ -26,7 +26,8 @@ export function PickerHeader({
   row,
 }: {
   readonly title: string;
-  readonly question: ReactNode;
+  /** Absent where the title is itself the question. */
+  readonly question?: ReactNode;
   readonly step?: number;
   readonly headingId?: string;
   readonly questionId?: string;
@@ -48,9 +49,11 @@ export function PickerHeader({
           <span className="picker-step mac-caption">Step {String(step)}</span>
         )}
       </div>
-      <p className="picker-question mac-caption" id={questionId}>
-        {question}
-      </p>
+      {question === undefined ? null : (
+        <p className="picker-question mac-caption" id={questionId}>
+          {question}
+        </p>
+      )}
     </header>
   );
 }

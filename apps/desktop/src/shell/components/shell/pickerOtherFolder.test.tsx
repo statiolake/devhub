@@ -100,14 +100,10 @@ describe('the picker\'s "Other…"', () => {
     expect(selectWorkspacePicker).not.toHaveBeenCalled();
   });
 
-  it("leaves the footer with Cancel and nothing else", async () => {
+  it("leaves no button under the list for it", async () => {
     mount();
     await screen.findByText("Other…");
-    const footer = document.querySelector(".picker-actions");
-    expect(
-      [...(footer?.querySelectorAll("button") ?? [])].map(
-        (button) => button.textContent,
-      ),
-    ).toEqual(["Cancel"]);
+    expect(document.querySelector(".picker-actions")).toBeNull();
+    expect(document.querySelectorAll(".picker-footer button")).toHaveLength(0);
   });
 });

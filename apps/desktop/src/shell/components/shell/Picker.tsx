@@ -2,7 +2,7 @@
  * Open Quickly, for anything.
  *
  * One control answers every "which one?" DevHub asks: a heading that says what
- * is being asked, a search field, a ranked list, and a footer. Typing filters,
+ * is being asked, a search field, and a ranked list. Typing filters,
  * the arrows move, Return chooses, Escape cancels or goes back a question —
  * and Option-Return and Command-Return choose the same row the other way,
  * which are the only things a caller may vary. There used to be two of these, a searchable one
@@ -29,8 +29,9 @@
  *
  * **Every question that takes a choice among options, or one line of typing,
  * is this control.** Not a control like this one — this one. A choice is a list
- * of rows; a line of text is a list with the pinned row that means "what I
- * typed"; and a confirmation is a list with as many rows as there are answers,
+ * of rows; a line of text is the field alone, and Return answers with what is
+ * in it (`onTyped`) — or, where the line names something a list also offers,
+ * a list with the pinned row that means "what I typed"; and a confirmation is a list with as many rows as there are answers,
  * with the safe one first, because Return takes the first row and the safe
  * answer is the one Return should take. `WorktreeCloseSheet` is what that looks
  * like with three of them: cancel, keep the folder, delete it;
@@ -56,19 +57,18 @@
  * the same answer twice, one above the other ("Cancel — Leave the Agent
  * running." and "Cancel"). So a confirmation does not make that row itself: it
  * names it (`cancelRow`), the picker draws it first, choosing it is
- * `onCancel` — the act Escape and a click on the scrim already are — and the
- * footer, which has nothing left to hold, holds no button. A picker without
- * one is a choice among things, where cancelling is not one of the answers,
- * and keeps its footer Cancel.
+ * `onCancel` — the act Escape and a click on the scrim already are. A picker
+ * without one is a choice among things, where cancelling is not one of the
+ * answers: Escape closes it, and so does a click outside it.
  *
- * **The footer holds Cancel and nothing else.** There used to be a second
- * button beside it for the answer no list could carry — "Other…", the native
- * folder chooser — and it was `tabIndex={-1}` like Cancel is, which in a
- * control that keeps focus in its field means it could only ever be clicked.
- * An answer is a row: the arrows reach a row, Return takes it, and the pinned
- * rows are already where the answers that *do* something rather than name
- * something live. So the escape hatch is a pinned row, and the footer has no
- * slot for a caller to put a mouse-only answer in again.
+ * **No button under the list.** There was a footer Cancel, and before it a
+ * second button beside it for the answer no list could carry — "Other…", the
+ * native folder chooser. Both were `tabIndex={-1}`, which in a control that
+ * keeps focus in its field means they could only ever be clicked: a band
+ * spent on a mouse-only copy of Escape. An answer is a row — the arrows reach
+ * a row, Return takes it, and the pinned rows are where the answers that *do*
+ * something rather than name something live — and leaving is Escape or the
+ * scrim, as in VS Code's quick pick. The footer is drawn only for a `note`.
  *
  * The other thing not drawn by this control is not a question at all, and so
  * is not an exception to a rule about questions: `ChordHelpSheet` is a
@@ -178,8 +178,11 @@ export interface PickerProps {
    * to exist, and the person is left reverse-engineering the question from the
    * rows. Every caller has to answer "what am I asking, and why now?", because
    * the one that does not is exactly the one that needed to.
+   *
+   * `undefined` only where the title *is* the question — a program's own
+   * prompt (`QuickPickSheet`) — and a sentence under it would say it twice.
    */
-  readonly question: string;
+  readonly question: string | undefined;
   /**
    * How many questions have been asked, for a picker that is one of several.
    *
@@ -247,6 +250,14 @@ export interface PickerProps {
   readonly onChoose: (choice: PickerChoice) => void;
   readonly onCancel: () => void;
   /**
+   * The question is a line of typing and nothing else: no list is drawn, and
+   * Return answers with what is in the field. `items` and `pinned` are then
+   * not read. A list with one row meaning "what I typed" would be a row that
+   * is always there, always selected and always the answer — the field said
+   * twice.
+   */
+  readonly onTyped?: (text: string) => void;
+  /**
    * The answer that does nothing, as the first row: for a confirmation, whose
    * other answers do something. Taking it is `onCancel`, never `onChoose`, and
    * the footer then has no Cancel button — see "Cancel is drawn once" above.
@@ -267,6 +278,9 @@ export interface CancelRow {
   /** What staying put leaves as it is. */
   readonly detail: ReactNode;
 }
+
+/** What `taken` holds once a line of typing is answered: it is no row. */
+const TYPED_LINE = "devhub:picker-typed-line";
 
 /** The id the picker gives the row it draws for `cancelRow`. */
 const CANCEL_ROW = "devhub:picker-cancel";
@@ -294,6 +308,7 @@ export function Picker({
   queryDelayMs = 150,
   onChoose,
   onCancel,
+  onTyped,
   cancelRow,
   toolbar,
   onActiveChange,
@@ -598,6 +613,11 @@ export function Picker({
     }
     if (event.key === "Enter") {
       event.preventDefault();
+      if (onTyped !== undefined) {
+        setTaken(TYPED_LINE);
+        onTyped(query);
+        return;
+      }
       const candidate = rows[active];
       if (candidate) choose(candidate.id, event.altKey, event.metaKey);
       return;
@@ -632,7 +652,7 @@ export function Picker({
         // only assistive technology could read: one title, in one place, so it
         // cannot say one thing to the eye and another to a screen reader.
         aria-labelledby={headingId}
-        aria-describedby={questionId}
+        aria-describedby={question === undefined ? undefined : questionId}
         onKeyDown={onKeyDown}
         onKeyUp={(event) => {
           setAlternate(event.metaKey);
@@ -648,14 +668,15 @@ export function Picker({
             subtitle would read as two unrelated things. */}
         <PickerHeader
           title={title}
-          question={question}
+          {...(question === undefined ? {} : { question })}
           {...(step === undefined ? {} : { step })}
           headingId={headingId}
           questionId={questionId}
         />
 
         <div className="picker-search">
-          <PickerSearchGlyph />
+          {/* A line of typing searches nothing. */}
+          {onTyped === undefined ? <PickerSearchGlyph /> : null}
           <input
             ref={input}
             className="picker-input"
@@ -692,116 +713,101 @@ export function Picker({
 
         {/* One band whatever it holds. The message and the rows can both be
             here at once — nothing you typed exists yet, but "New Project…"
-            still does — so the sheet's seams do not move with its state. */}
-        <div
-          className={`picker-body${aside === undefined ? "" : " has-aside"}`}
-        >
-          <div className="picker-list">
-            {showEmpty ? (
-              <p className="picker-empty mac-caption" role="status">
-                {emptyMessage}
-              </p>
-            ) : null}
-            <ul
-              className={`mac-list picker-results${taken === undefined ? "" : " is-answered"}`}
-              role="listbox"
-              aria-label={title}
-              aria-busy={taken === undefined ? undefined : true}
-              ref={listRef}
-              hidden={rows.length === 0}
-            >
-              {rows.map((item, index) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={index === active}
-                    aria-disabled={
-                      item.unavailable === undefined ? undefined : true
-                    }
-                    className="mac-list-row"
-                    tabIndex={-1}
-                    onMouseDown={(event) => {
-                      // The row is a target, not a place to stand: taking focus
-                      // here is what used to leave the sheet deaf to the keyboard.
-                      event.preventDefault();
-                    }}
-                    onMouseMove={(event) => {
-                      if (pointerMoved(event) && taken === undefined) {
-                        setActive(index);
+            still does — so the sheet's seams do not move with its state. A
+            line of typing has no list, and so no band. */}
+        {onTyped !== undefined ? null : (
+          <div
+            className={`picker-body${aside === undefined ? "" : " has-aside"}`}
+          >
+            <div className="picker-list">
+              {showEmpty ? (
+                <p className="picker-empty mac-caption" role="status">
+                  {emptyMessage}
+                </p>
+              ) : null}
+              <ul
+                className={`mac-list picker-results${taken === undefined ? "" : " is-answered"}`}
+                role="listbox"
+                aria-label={title}
+                aria-busy={taken === undefined ? undefined : true}
+                ref={listRef}
+                hidden={rows.length === 0}
+              >
+                {rows.map((item, index) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={index === active}
+                      aria-disabled={
+                        item.unavailable === undefined ? undefined : true
                       }
-                    }}
-                    onClick={(event) => {
-                      // The row taken is the row shown as taken: the spinner and
-                      // the selection must not end up on two different rows when
-                      // one was clicked while another was under the arrows.
-                      setActive(index);
-                      choose(item.id, event.altKey, event.metaKey);
-                    }}
-                  >
-                    <PickerRowText
-                      glyph={item.glyph}
-                      label={item.label}
-                      detail={item.detail}
-                      {...(item.unavailable === undefined
-                        ? {}
-                        : { unavailable: item.unavailable })}
-                    />
-                    {item.accessory ? (
-                      <span className="picker-accessory mac-caption">
-                        {item.accessory(alternate)}
-                      </span>
-                    ) : null}
-                    {/* On the row that was taken, so the wait is attached to the
-                      answer rather than floating at the top of the sheet. */}
-                    {taken === item.id ? (
-                      <span
-                        className="mac-spinner"
-                        role="status"
-                        aria-label="Working"
+                      className="mac-list-row"
+                      tabIndex={-1}
+                      onMouseDown={(event) => {
+                        // The row is a target, not a place to stand: taking focus
+                        // here is what used to leave the sheet deaf to the keyboard.
+                        event.preventDefault();
+                      }}
+                      onMouseMove={(event) => {
+                        if (pointerMoved(event) && taken === undefined) {
+                          setActive(index);
+                        }
+                      }}
+                      onClick={(event) => {
+                        // The row taken is the row shown as taken: the spinner and
+                        // the selection must not end up on two different rows when
+                        // one was clicked while another was under the arrows.
+                        setActive(index);
+                        choose(item.id, event.altKey, event.metaKey);
+                      }}
+                    >
+                      <PickerRowText
+                        glyph={item.glyph}
+                        label={item.label}
+                        detail={item.detail}
+                        {...(item.unavailable === undefined
+                          ? {}
+                          : { unavailable: item.unavailable })}
                       />
-                    ) : null}
-                  </button>
-                </li>
-              ))}
-            </ul>
+                      {item.accessory ? (
+                        <span className="picker-accessory mac-caption">
+                          {item.accessory(alternate)}
+                        </span>
+                      ) : null}
+                      {/* On the row that was taken, so the wait is attached to the
+                      answer rather than floating at the top of the sheet. */}
+                      {taken === item.id ? (
+                        <span
+                          className="mac-spinner"
+                          role="status"
+                          aria-label="Working"
+                        />
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            {aside === undefined ? null : (
+              <aside className="picker-aside">{aside}</aside>
+            )}
           </div>
-          {aside === undefined ? null : (
-            <aside className="picker-aside">{aside}</aside>
-          )}
-        </div>
+        )}
 
-        {/* The note is part of the footer, not a band of its own. It is the
-            sheet saying something about itself — what the modifier does, why
-            the list is short — and giving it its own band would put a rule
-            between a caption and the thing it captions, and would make the
-            sheet's seams depend on whether a caller passed one. A
-            confirmation's footer has no button (its Cancel is a row), so with
-            nothing to note it has nothing to hold, and is not drawn as an
-            empty band. */}
-        {note || cancelRow === undefined ? (
+        {/* The footer is the note's, and drawn only for one. The note is
+            the sheet saying something about itself — what the modifier does,
+            why the list is short — under the list it is about. There is no
+            button in it: leaving is Escape or a click outside the sheet. */}
+        {note ? (
           <footer className="picker-footer">
             {/* A `div` and not a `p`: a note is whatever the caller has to say
               about the question — a line of guidance, a refusal, the list of
               what a close is about to take with it — and a paragraph cannot
               legally contain a list. */}
-            {note ? (
-              <div className="picker-note mac-caption" role="status">
-                {note}
-              </div>
-            ) : null}
-            {cancelRow === undefined ? (
-              <div className="picker-actions">
-                <button
-                  type="button"
-                  className="mac-button"
-                  tabIndex={-1}
-                  onClick={onCancel}
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : null}
+            <div className="picker-note mac-caption" role="status">
+              {note}
+            </div>
           </footer>
         ) : null}
       </section>
