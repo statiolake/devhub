@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 import { makeSocketDir } from "../src/model/testScratch";
 
 // The tmux DevHub runs, inside the app (`src/main/terminal/bundledTmux.ts`,
-// `out/tmux`, fetched by `build:tmux`, which `test` runs first): never the
+// `out/tmux`, fetched by `build:binaries`, which `test` runs first): never the
 // machine's own, which is a version DevHub does not run.
 const BUNDLED_TMUX = fileURLToPath(
   new URL("../out/tmux/bin/tmux", import.meta.url),
@@ -48,7 +48,7 @@ export const TMUX = existsSync(BUNDLED_TMUX) ? BUNDLED_TMUX : undefined;
 function checkTmuxForCi(): void {
   if (TMUX === undefined && (process.env.CI ?? "") !== "") {
     throw new Error(
-      `CI is set and there is no bundled tmux at ${BUNDLED_TMUX} for the real-tmux tests: \`pnpm --filter @devhub/desktop build:tmux\` builds it (\`test\` runs it first).`,
+      `CI is set and there is no bundled tmux at ${BUNDLED_TMUX} for the real-tmux tests: \`pnpm --filter @devhub/desktop build:binaries\` builds it (\`test\` runs it first).`,
     );
   }
 }

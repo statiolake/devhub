@@ -4,24 +4,55 @@
 	"applicationName": "devhub",
 	"serverDataFolderName": ".devhub-server",
 	"toolsVersion": "2",
+	"toolsDownloadUrls": {
+		"darwin-arm64": "https://github.com/statiolake/devhub/releases/download/tools-2/devhub-tools-2-darwin-arm64.tar.gz",
+		"linux-arm64": "https://github.com/statiolake/devhub/releases/download/tools-2/devhub-tools-2-linux-arm64.tar.gz",
+		"linux-x64": "https://github.com/statiolake/devhub/releases/download/tools-2/devhub-tools-2-linux-x64.tar.gz"
+	},
+	"toolsDownloadSha256": {
+		"darwin-arm64": "d645d7f3eb8cade3e9b647d8497eac51185637255a8041baaa29f7903743b76e",
+		"linux-arm64": "acc38be9310749c312a1b74868bb2b8dc53e5260fca7fccd5be691f8e69db483",
+		"linux-x64": "ac122105cfacdb042ce6567f4462dc0911d7a198f718b48f3825041f29b45edf"
+	},
 	"tmuxVersion": "3.7c",
-	"tmuxDownloadUrlTemplate": "https://github.com/statiolake/devhub/releases/download/tmux-${tmuxVersion}/devhub-tmux-${os}-${arch}-${tmuxVersion}.tar.gz",
-	"tmuxDownloadSha256": {
-		"linux-arm64": "9e78915320c69e70a201e3da625e2b65299d52664e3004d9cf851fd10366147e",
-		"linux-x64": "7ce618f16e435a4749e13d5f82fe33936f117e7123e4fab060e65fe06e5e04b7"
-	},
 	"bashVersion": "5.3.20",
-	"bashDownloadUrlTemplate": "https://github.com/statiolake/devhub/releases/download/bash-${bashVersion}/devhub-bash-${os}-${arch}-${bashVersion}.tar.gz",
-	"bashDownloadSha256": {
-		"linux-arm64": "12ed6fdc0af911c55e700ca0ffde68657f76882f566a9bab6ef683b3ecfb50fa",
-		"linux-x64": "e6aec52011d0952aebb91ec95a3dc406e5f50245260fbc0158ce2c31c2cc2283"
-	},
 	"nvimVersion": "0.12.6",
-	"nvimDownloadUrlTemplate": "https://github.com/neovim/neovim/releases/download/v${nvimVersion}/nvim-${nvimPlatform}.tar.gz",
+	"nvimDownloadUrls": {
+		"darwin-arm64": "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-macos-arm64.tar.gz",
+		"linux-arm64": "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-arm64.tar.gz",
+		"linux-x64": "https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-x86_64.tar.gz"
+	},
 	"nvimDownloadSha256": {
 		"darwin-arm64": "1dbd148222b051ba6c307c4d17a318ed083df018a4f6a5a0ce46955ffc9ab87b",
 		"linux-arm64": "8f1f64a0bdb97247034038c3823c6cbad5bdf9ecd5751b85494b71c3ee04c815",
 		"linux-x64": "474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87"
+	},
+	"nodeVersion": "26.13.0",
+	"nodeDownloadUrls": {
+		"linux-arm64": "https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-arm64.tar.gz",
+		"linux-x64": "https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.gz"
+	},
+	"nodeDownloadSha256": {
+		"linux-arm64": "439e9c438acdf6a6ffe47418da709153d66c4bed812e30a473faacb107dd2791",
+		"linux-x64": "5848553868b402d3fabb5b09270649977780a390f832155721025a08b5104455"
+	},
+	"rgVersion": "15.2.0",
+	"rgDownloadUrls": {
+		"linux-arm64": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
+		"linux-x64": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz"
+	},
+	"rgDownloadSha256": {
+		"linux-arm64": "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
+		"linux-x64": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c"
+	},
+	"fdVersion": "10.5.1",
+	"fdDownloadUrls": {
+		"linux-arm64": "https://github.com/sharkdp/fd/releases/download/v10.5.1/fd-v10.5.1-aarch64-unknown-linux-musl.tar.gz",
+		"linux-x64": "https://github.com/sharkdp/fd/releases/download/v10.5.1/fd-v10.5.1-x86_64-unknown-linux-musl.tar.gz"
+	},
+	"fdDownloadSha256": {
+		"linux-arm64": "64c20b9b154c9d4b36d4b7df3521de771c499c4768b4b5b045ef6b01532117be",
+		"linux-x64": "f6c95edb190c241df6fddc815a5bab4051444993ac5d92ddc6eec0e0dc2342c7"
 	},
 	"darwinBundleIdentifier": "net.statiolake.devhub"
 }

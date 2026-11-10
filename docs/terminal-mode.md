@@ -210,9 +210,9 @@ managed Neovim — see `docs/window-and-pages.md`, "Terminal programs".
 Every tmux DevHub starts or runs is its own: tmux 3.7c
 (`product.json`'s `tmuxVersion`), built by `scripts/build_tmux.py` and never
 looked up on the PATH, as Neovim is (`main/terminal/bundledTmux.ts`). Here it
-is inside the app (`out/tmux`, unpacked by `build:tmux`: the published static
-Linux tarball, or the darwin-arm64 build on a Mac, which packaging signs); on
-an SSH host it is the same build delivered under
+is inside the app (`out/tmux`, unpacked by `build:binaries` from DevHub's
+tools release: the static Linux build, or the darwin-arm64 build on a Mac,
+which packaging signs); on an SSH host it is the same build delivered under
 `~/.devhub-server/tmux/<version>` (`docs/remote-ssh.md`). The server, every
 command sent to it, the control clients, the `devhub --tell` handle and the
 `tmux` a pane runs are that binary. There is no `runtimes.tmux` any more (a

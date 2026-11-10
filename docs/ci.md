@@ -26,7 +26,7 @@ Build: DevHub.app test build (macOS) ──> Test: app (macOS) ┘
 | Job | Runner | What it runs |
 | --- | --- | --- |
 | `checks` | ubuntu-latest | `pnpm run fmt`, `pnpm run lint`, `pnpm run typecheck`, `pnpm run test:scripts` |
-| `test-desktop` | macos-15 | `@devhub/desktop` tests: vitest, and node-pty under DevHub's own Electron; the real-Neovim tests run the bundled Neovim (`build:nvim`) |
+| `test-desktop` | macos-15 | `@devhub/desktop` tests: vitest, and node-pty under DevHub's own Electron; the real-Neovim tests run the bundled Neovim (`build:binaries`) |
 | `build-app` | macos-15 | `scripts/build-app.sh --without-whisper --no-zip`; hands `DevHub.app` on as a tar |
 | `test-app` | macos-15 | the app-level tests against that bundle: today `scripts/smoke_packaged_app.py`, which makes the app answer on its control socket and open a file in its editor — the Neovim inside the bundle, run by the tmux inside it — runs that Neovim and that tmux, and checks that the app's tmux server is the bundled tmux and that a pane's `tmux` runs it |
 
@@ -48,9 +48,12 @@ iterated on. The script's header lists the stages and the job each stands for.
 
 ```
 Decide ──> Build: DevHub.app ──> Test: packaged app ──> Publish: nightly release
+```
 
-Decide: tmux ──> Build: tmux linux-x64, linux-arm64 ──> Publish: tmux release
-Decide: bash ──> Build: bash linux-x64, linux-arm64 ──> Publish: bash release
+and, on a `tools-<toolsVersion>` tag (`tools.yml`):
+
+```
+Check the tag ──> Build: tools darwin-arm64, linux-x64, linux-arm64 ──> Publish: tools release
 ```
 
 - **Decide** stops a scheduled run when `main` has not moved since the last
@@ -63,30 +66,27 @@ Decide: bash ──> Build: bash linux-x64, linux-arm64 ──> Publish: bash re
   released, and tests it: today the smoke test.
 - **Publish: nightly release** replaces the rolling `nightly` prerelease, only
   after the tests pass.
-- **tmux** is independent of everything above: it is built, once, when the
-  version pinned in `scripts/build_tmux.py` has no release yet.
-- **bash** is the same again for the static bash every Claude Agent on a
-  Linux host runs in, and the Linux app carries (`scripts/build_bash.py`,
-  release `bash-<version>`; `docs/bundled-binaries.md`). Each publish job writes the tarballs' digests to its
-  summary in the form `apps/desktop/product.json` takes them
-  (`tmuxDownloadSha256`, `bashDownloadSha256`).
+- **Tools** (`.github/workflows/tools.yml`) is a workflow of its own. It runs
+  when a tag `tools-<toolsVersion>` is pushed, and builds DevHub's tools
+  release (`scripts/build_tools.py`: tmux and bash) on macos-15, ubuntu-latest
+  and ubuntu-24.04-arm. It publishes the three tarballs and their `SHA256SUMS`
+  as release `tools-<toolsVersion>`, and its summary prints the
+  `toolsDownloadSha256` that `apps/desktop/product.json` takes.
 
 The `devhub` command a host is given is not a release: it is built from
 `cli/` (Go) by the app build and carried inside the app
 (`docs/devhub-cli.md`). Every job that builds the app gets Go from
 `cli/go.mod` through `setup-node-pnpm`; `checks` runs `pnpm run test:cli`.
 
-The tmux inside the app is `scripts/build_tmux.py`'s, by `build:tmux`
-(`apps/desktop/scripts/fetch-tmux.mjs`): on Linux the published static tarball,
-checked against `tmuxDownloadSha256`; on a Mac `build_tmux.py darwin-arm64`,
-compiled once and kept in `~/.cache/devhub/tmux`, which the macOS jobs cache
-(`actions/cache`, keyed on the script and `product.json`). No job installs a
-tmux; the tests run the bundled one.
-
-The Neovim DevHub runs is Neovim's own release, pinned in
-`apps/desktop/product.json` (`nvimVersion`, `nvimDownloadSha256`): fetched
-into `out/nvim` by `build:nvim` for the app and the tests, and delivered to a
-Linux host like tmux.
+Every binary the app bundles and does not compile itself is fetched by one
+step, `build:binaries` (`apps/desktop/scripts/fetch-binaries.mjs`): the tools
+release, Neovim, Node, ripgrep and fd, each pinned in `apps/desktop/product.json`
+by URL and sha256. It unpacks this machine's Neovim, tmux and bash into
+`out/nvim`, `out/tmux` and `out/bash`, and keeps every Linux host's tools,
+compressed, in `out/host-tools`. The downloads are cached in
+`~/.cache/devhub/downloads`, which `setup-node-pnpm` restores (keyed on
+`product.json`). No job installs a tmux, a bash or a Neovim; the tests run the
+bundled ones.
 
 ## Shared setup
 

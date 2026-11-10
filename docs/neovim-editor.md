@@ -120,21 +120,23 @@ Neovim it would take. Whatever `nvim` the person has on the PATH is never
 run by DevHub, and nothing outside DevHub changes — a terminal that is not
 DevHub's runs the person's own as before.
 
-- **This Mac.** `build:nvim` (`apps/desktop/scripts/fetch-neovim.mjs`, part
-  of `build`) downloads `nvim-macos-arm64.tar.gz`, checks its digest and
+- **This Mac.** `build:binaries` (`apps/desktop/scripts/fetch-binaries.mjs`,
+  part of `build`) downloads `nvim-macos-arm64.tar.gz`, checks its digest and
   unpacks it into `out/nvim` (`bin/nvim`, `lib/nvim/parser`,
-  `share/nvim/runtime`); the archive is cached under `~/.cache/devhub/nvim`.
+  `share/nvim/runtime`); the archive is cached under
+  `~/.cache/devhub/downloads`. The same step keeps both Linux archives, still
+  compressed, in `out/host-tools` for SSH hosts.
   The packaged app carries it at `Contents/Resources/app/out/nvim`, where
   packaging signs `bin/nvim` and the parsers ad hoc, as it signs the speech
   recogniser (`sign_neovim`, `scripts/package-nightly.py`).
   `editor/bundledNeovim.ts` names it; `LocalRuntime.neovimProgram` answers
   it, and a build without one says so.
 - **An SSH host.** The same release for the host's platform
-  (`nvim-linux-x86_64`, `nvim-linux-arm64`), fetched on this Mac and
-  unpacked on the host under `~/.devhub-server/nvim/<version>` from stdin,
-  exactly as tmux and bash are (`RemoteShellRuntime.neovimProgram`,
-  `toolDelivery.ts`); the archive is cached under DevHub's data
-  (`<user data>/nvim`). Neovim's Linux build needs glibc 2.34 or later, so a
+  (`nvim-linux-x86_64`, `nvim-linux-arm64`), carried in the app
+  (`out/host-tools`) and unpacked on the host under
+  `~/.devhub-server/nvim/<version>` from stdin, exactly as tmux and bash are
+  (`RemoteShellRuntime.neovimProgram`, `toolDelivery.ts`). Nothing is
+  downloaded at runtime. Neovim's Linux build needs glibc 2.34 or later, so a
   musl host (Alpine), an older glibc (`getconf GNU_LIBC_VERSION`) and a host
   that is not Linux on x86_64 or arm64 are refused by name before anything
   is sent (`neovimHostRefusal`, `runtime/libc.ts`).
@@ -208,7 +210,7 @@ when the theme was told, after it had started.
 **The setup goes as bytecode.** It is about 100 KB of Lua, and Neovim
 compiled it at every attach (about 1.5 ms of the setup's 3; more on a busy
 machine). `build:nvim-lua` (`scripts/build-nvim-lua.mjs`, after
-`build:main` and `build:nvim`) has the bundled Neovim compile each chunk
+`build:main` and `build:binaries`) has the bundled Neovim compile each chunk
 (`SETUP_CHUNKS`) with its LuaJIT into `out/nvim-lua/setup.json`, by the
 sha256 of its source, debug info kept (an error names `devhub:<chunk>` and
 its line), and the attach sends that bytecode, which `nvim_exec_lua` loads

@@ -1,267 +1,157 @@
 /**
- * Getting a tool's tarball here — tmux's, bash's — so it can be handed to a
- * host that cannot.
+ * A host's tools come from inside the app (`out/host-tools`), checked against
+ * the digests the build wrote, and never from the network.
  */
 
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { APP_ROOT } from "../shell/appRoot.js";
 import {
-	neovimReleasePlatform,
-	ReleaseToolDelivery,
-	toolDownloadUrl,
+	BundledArchiveDelivery,
+	bundledHostTool,
+	toolBinaryPath,
 	toolInstallDirectory,
-	toolTarballName,
-	toolTopLevelDirectory,
 	toolVersionArgument,
 	type HostTool,
+	type HostToolsManifest,
 } from "./toolDelivery.js";
 
-const TEMPLATE =
-	"https://example.com/releases/download/tmux-${tmuxVersion}/" +
-	"devhub-tmux-${os}-${arch}-${tmuxVersion}.tar.gz";
+const sha = (bytes: Uint8Array | string) =>
+	createHash("sha256").update(bytes).digest("hex");
 
-const BASH_TEMPLATE =
-	"https://example.com/releases/download/bash-${bashVersion}/" +
-	"devhub-bash-${os}-${arch}-${bashVersion}.tar.gz";
+describe("a tool from the app's out/host-tools", () => {
+	let root: string;
+	beforeEach(async () => {
+		root = await mkdtemp(join(tmpdir(), "devhub-host-tools-"));
+	});
+	afterEach(async () => {
+		await rm(root, { recursive: true, force: true });
+	});
 
-function sha256Of(bytes: Uint8Array): string {
-	return createHash("sha256").update(bytes).digest("hex");
-}
+	async function bundle(
+		files: Record<string, string>,
+		pins: Record<string, string> = {},
+	): Promise<void> {
+		const platforms: Record<
+			string,
+			{ file: string; sha256: string; topLevelDirectory: string }
+		> = {};
+		for (const [platform, text] of Object.entries(files)) {
+			await mkdir(join(root, platform), { recursive: true });
+			const file = `${platform}/tmux-3.7c.tar.gz`;
+			await writeFile(join(root, file), text);
+			platforms[platform] = {
+				file,
+				sha256: pins[platform] ?? sha(text),
+				topLevelDirectory: `devhub-tmux-${platform}`,
+			};
+		}
+		const manifest: HostToolsManifest = {
+			tools: { tmux: { version: "3.7c", binary: "bin/tmux", platforms } },
+		};
+		await writeFile(join(root, "manifest.json"), JSON.stringify(manifest));
+	}
 
-describe("where a platform's tmux comes from", () => {
-	// The three names are DevHub's own. `${version}` and `${commit}` mean VS
-	// Code's version and commit in `serverDownloadUrlTemplate`, so reusing
-	// either here would give one word two meanings in one `product.json`.
-	it("substitutes the three names the template takes and no others", () => {
-		expect(toolDownloadUrl(TEMPLATE, "tmux", "linux-arm64", "3.7c")).toBe(
-			"https://example.com/releases/download/tmux-3.7c/" +
-				"devhub-tmux-linux-arm64-3.7c.tar.gz",
+	it("hands over a platform's tarball as the build wrote it", async () => {
+		await bundle({ "linux-x64": "x64 bytes", "linux-arm64": "arm bytes" });
+		const delivery = bundledHostTool("tmux", ".devhub-server/tmux", root);
+		expect(delivery.version).toBe("3.7c");
+		expect(delivery.directory).toBe(".devhub-server/tmux");
+		const tarball = await delivery.tarball("linux-arm64");
+		expect(Buffer.from(tarball.bytes).toString()).toBe("arm bytes");
+		expect(tarball.topLevelDirectory).toBe("devhub-tmux-linux-arm64");
+		expect(tarball.verifiedSha256).toBe(sha("arm bytes"));
+		expect(tarball.format).toBeUndefined();
+	});
+
+	it("refuses a copy that is not what the build pinned", async () => {
+		await bundle({ "linux-x64": "damaged" }, { "linux-x64": sha("whole") });
+		const delivery = new BundledArchiveDelivery("tmux", "d", root);
+		await expect(delivery.tarball("linux-x64")).rejects.toThrow(/damaged/u);
+	});
+
+	it("names the platforms it has when asked for another", async () => {
+		await bundle({ "linux-x64": "x" });
+		const delivery = new BundledArchiveDelivery("tmux", "d", root);
+		await expect(delivery.tarball("linux-riscv64")).rejects.toThrow(
+			/bundles tmux for linux-x64, not linux-riscv64/u,
 		);
 	});
 
-	// One statement of it, so the runtime reads it off the delivery rather than
-	// knowing it: a second copy is a copy that will disagree with product.json.
-	it("puts the version directories under the server's own data folder", () => {
-		expect(toolInstallDirectory(".devhub-server", "tmux")).toBe(
-			".devhub-server/tmux",
-		);
-		expect(toolInstallDirectory(".devhub-server", "bash")).toBe(
-			".devhub-server/bash",
+	it("names the build step when the bundle is not there", async () => {
+		const delivery = new BundledArchiveDelivery("bash", "d", join(root, "no"));
+		expect(delivery.version).toBe("");
+		await expect(delivery.tarball("linux-x64")).rejects.toThrow(
+			/build:binaries/u,
 		);
 	});
 
-	it("names the tarball and its single directory the way the build does", () => {
-		expect(toolTarballName("tmux", "linux-x64", "3.7c")).toBe(
-			"devhub-tmux-linux-x64-3.7c.tar.gz",
-		);
-		expect(toolTopLevelDirectory("tmux", "linux-x64", "")).toBe(
-			"devhub-tmux-linux-x64",
+	it("says so when the bundle has no such tool", async () => {
+		await bundle({ "linux-x64": "x" });
+		const delivery = new BundledArchiveDelivery("node", "d", root);
+		await expect(delivery.tarball("linux-x64")).rejects.toThrow(
+			/bundles no node/u,
 		);
 	});
 });
 
-describe("where a platform's bash comes from", () => {
-	// Each tool substitutes its own version name and no other tool's: a bash
-	// template that said `${tmuxVersion}` would fetch a bash named after tmux.
-	it("substitutes its own version name, not tmux's", () => {
-		expect(toolDownloadUrl(BASH_TEMPLATE, "bash", "linux-x64", "5.3.20")).toBe(
-			"https://example.com/releases/download/bash-5.3.20/" +
-				"devhub-bash-linux-x64-5.3.20.tar.gz",
+describe("how a tool is installed and asked", () => {
+	it("keeps each tool under the server folder, by name", () => {
+		expect(toolInstallDirectory(".devhub-server", "node")).toBe(
+			".devhub-server/node",
 		);
-		expect(
-			toolDownloadUrl(BASH_TEMPLATE, "tmux", "linux-x64", "3.7c"),
-		).toContain("${bashVersion}");
 	});
 
-	it("names the tarball and its single directory the way build_bash.py does", () => {
-		expect(toolTarballName("bash", "linux-arm64", "5.3.20")).toBe(
-			"devhub-bash-linux-arm64-5.3.20.tar.gz",
-		);
-		expect(toolTopLevelDirectory("bash", "linux-arm64", "")).toBe(
-			"devhub-bash-linux-arm64",
-		);
+	it("finds rg and fd at the top of their archives, the rest in bin/", () => {
+		expect(toolBinaryPath("rg")).toBe("rg");
+		expect(toolBinaryPath("fd")).toBe("fd");
+		expect(toolBinaryPath("node")).toBe("bin/node");
+		expect(toolBinaryPath("tmux")).toBe("bin/tmux");
 	});
 
 	it("asks each binary for its version the way that binary answers", () => {
 		expect(toolVersionArgument("tmux")).toBe("-V");
 		expect(toolVersionArgument("bash")).toBe("--version");
+		expect(toolVersionArgument("nvim")).toBe("--version");
+		expect(toolVersionArgument("devhub")).toBe("--help");
 	});
 });
 
-describe("where a platform's Neovim comes from", () => {
+describe("this build's out/host-tools", () => {
+	const directory = join(APP_ROOT, "out", "host-tools");
+	const manifestPath = join(directory, "manifest.json");
 	const product = JSON.parse(
 		readFileSync(join(APP_ROOT, "product.json"), "utf8"),
 	) as Record<string, unknown>;
-	const template = product.nvimDownloadUrlTemplate as string;
 
-	// Neovim's own release archive, in Neovim's own spelling of the platform.
-	it("is Neovim's release archive for that platform", () => {
-		expect(toolDownloadUrl(template, "nvim", "linux-x64", "0.12.6")).toBe(
-			"https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-x86_64.tar.gz",
-		);
-		expect(toolDownloadUrl(template, "nvim", "linux-arm64", "0.12.6")).toBe(
-			"https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-linux-arm64.tar.gz",
-		);
-		expect(toolDownloadUrl(template, "nvim", "darwin-arm64", "0.12.6")).toBe(
-			"https://github.com/neovim/neovim/releases/download/v0.12.6/nvim-macos-arm64.tar.gz",
-		);
-		expect(neovimReleasePlatform("linux-x64")).toBe("linux-x86_64");
-		expect(toolTopLevelDirectory("nvim", "linux-x64", "0.12.6")).toBe(
-			"nvim-linux-x86_64",
-		);
-		expect(toolVersionArgument("nvim")).toBe("--version");
-	});
-
-	// Hosts are Linux on both architectures; this Mac is Apple Silicon.
-	it("is pinned for every platform DevHub runs it on, at a 0.12 release", () => {
-		expect(product.nvimVersion).toMatch(/^0\.12\.\d+$/);
-		expect(
-			Object.keys(product.nvimDownloadSha256 as Record<string, string>).sort(),
-		).toEqual(["darwin-arm64", "linux-arm64", "linux-x64"]);
-	});
-});
-
-describe("fetching one", () => {
-	let cache: string;
-	let served: Uint8Array;
-	let requests: string[];
-
-	beforeEach(async () => {
-		cache = await mkdtemp("/tmp/devhub-tmux-cache-");
-		served = new Uint8Array([1, 2, 3, 4]);
-		requests = [];
-	});
-	afterEach(async () => {
-		await rm(cache, { recursive: true, force: true });
-	});
-
-	function delivery(
-		sha256: Readonly<Record<string, string>> = {},
-		tool: HostTool = "tmux",
-		version = "3.7c",
-	) {
-		return new ReleaseToolDelivery({
-			tool,
-			version,
-			directory: `.devhub-server/${tool}`,
-			urlTemplate: tool === "tmux" ? TEMPLATE : BASH_TEMPLATE,
-			sha256,
-			cacheDirectory: cache,
-			fetchBytes: (url) => {
-				requests.push(url);
-				return Promise.resolve(served);
-			},
-		});
-	}
-
-	it("downloads once and reads the cache afterwards", async () => {
-		const first = await delivery().tarball("linux-x64");
-		expect(first.bytes).toEqual(served);
-		expect(requests).toHaveLength(1);
-		// A second DevHub start, a second host, the same platform: the bytes are
-		// already on this Mac and the release is not asked again.
-		const again = await delivery().tarball("linux-x64");
-		expect(again.bytes).toEqual(served);
-		expect(requests).toHaveLength(1);
-		expect(
-			new Uint8Array(
-				await readFile(
-					join(cache, toolTarballName("tmux", "linux-x64", "3.7c")),
-				),
-			),
-		).toEqual(served);
-	});
-
-	it("hands out the digest it checked, so a caller can say it checked one", async () => {
-		const pin = sha256Of(served);
-		const tarball = await delivery({ "linux-x64": pin }).tarball("linux-x64");
-		expect(tarball.verifiedSha256).toBe(pin);
-	});
-
-	// The pin is the point: bytes that are not the ones this build was made
-	// against are not unpacked onto somebody's machine on the strength of the
-	// URL they came from.
-	it("refuses bytes that are not what the build is pinned to", async () => {
-		await expect(
-			delivery({ "linux-x64": "0".repeat(64) }).tarball("linux-x64"),
-		).rejects.toThrow(/pinned to/u);
-		// And leaves nothing behind for the next start to read as whole.
-		await expect(
-			readFile(join(cache, toolTarballName("tmux", "linux-x64", "3.7c"))),
-		).rejects.toThrow();
-	});
-
-	it("throws away a cache entry that no longer matches the pin", async () => {
-		await writeFile(
-			join(cache, toolTarballName("tmux", "linux-x64", "3.7c")),
-			new Uint8Array([9, 9, 9]),
-		);
-		const tarball = await delivery({ "linux-x64": sha256Of(served) }).tarball(
-			"linux-x64",
-		);
-		expect(tarball.bytes).toEqual(served);
-		expect(requests).toHaveLength(1);
-	});
-
-	// Two hosts of the same platform coming up together are one download, not
-	// two that race onto the same cache file.
-	it("downloads once for however many hosts ask at once", async () => {
-		const one = delivery();
-		const [left, right] = await Promise.all([
-			one.tarball("linux-x64"),
-			one.tarball("linux-x64"),
-		]);
-		expect(left.bytes).toEqual(right.bytes);
-		expect(requests).toHaveLength(1);
-	});
-
-	// One cache directory may hold both tools: the key names the tool, so a
-	// bash is never handed out as the tmux of the same platform, or the other
-	// way round.
-	it("keys the cache on the tool as well as the platform and version", async () => {
-		await delivery({}, "tmux", "3.7c").tarball("linux-x64");
-		served = new Uint8Array([5, 6, 7]);
-		const bash = await delivery({}, "bash", "5.3.20").tarball("linux-x64");
-		expect(bash.bytes).toEqual(served);
-		expect(bash.topLevelDirectory).toBe("devhub-bash-linux-x64");
-		expect(requests).toEqual([
-			"https://example.com/releases/download/tmux-3.7c/devhub-tmux-linux-x64-3.7c.tar.gz",
-			"https://example.com/releases/download/bash-5.3.20/devhub-bash-linux-x64-5.3.20.tar.gz",
-		]);
-		expect(
-			new Uint8Array(
-				await readFile(
-					join(cache, toolTarballName("bash", "linux-x64", "5.3.20")),
-				),
-			),
-		).toEqual(served);
-		expect(
-			new Uint8Array(
-				await readFile(
-					join(cache, toolTarballName("tmux", "linux-x64", "3.7c")),
-				),
-			),
-		).toEqual(new Uint8Array([1, 2, 3, 4]));
-	});
-
-	it("checks a bash against its own pin", async () => {
-		await expect(
-			delivery({ "linux-x64": "0".repeat(64) }, "bash", "5.3.20").tarball(
-				"linux-x64",
-			),
-		).rejects.toThrow(/bash 5\.3\.20 tarball for linux-x64 .* pinned to/u);
-	});
-
-	// A build whose product.json names no release for a tool has no URL to
-	// fetch; saying so beats a 404 for `devhub-bash-linux-x64-.tar.gz`.
-	it("refuses, saying why, when the build states no release for the tool", async () => {
-		await expect(delivery({}, "bash", "").tarball("linux-x64")).rejects.toThrow(
-			/states no bash release/u,
-		);
-		expect(requests).toHaveLength(0);
-	});
+	// `pnpm test` runs `build:binaries` first.
+	it.skipIf(!existsSync(manifestPath) && process.env.CI !== "true")(
+		"holds every host tool for both Linux architectures, at the pinned versions",
+		() => {
+			const manifest = JSON.parse(
+				readFileSync(manifestPath, "utf8"),
+			) as HostToolsManifest;
+			const tools: HostTool[] = ["tmux", "bash", "nvim", "node", "rg", "fd"];
+			expect(Object.keys(manifest.tools).sort()).toEqual([...tools].sort());
+			for (const tool of tools) {
+				const entry = manifest.tools[tool];
+				expect(entry?.version).toBe(product[`${tool}Version`]);
+				expect(entry?.binary).toBe(toolBinaryPath(tool));
+				expect(Object.keys(entry?.platforms ?? {}).sort()).toEqual([
+					"linux-arm64",
+					"linux-x64",
+				]);
+				for (const bundled of Object.values(entry?.platforms ?? {})) {
+					expect(
+						sha(readFileSync(join(directory, bundled.file))),
+						bundled.file,
+					).toBe(bundled.sha256);
+				}
+			}
+		},
+	);
 });

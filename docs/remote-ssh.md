@@ -16,10 +16,37 @@ remote extension host copied there; that went with VS Code
 The `devhub` command on a host is the app's own static Go binary for that
 platform (`cli/`, `docs/devhub-cli.md`), carried inside the app in
 `out/cli/<os>-<arch>/devhub` and installed the same way as tmux and bash —
-the same `ToolDelivery`, unpacked over the connection, here from the app
-rather than from a release (`BundledToolDelivery`, `runtime/bundledTool.ts`)
+the same `ToolDelivery`, written over the connection as one file rather than
+unpacked from a tarball (`BundledToolDelivery`, `runtime/bundledTool.ts`),
 into `~/.devhub-server/devhub/<build>`. It needs no Node and no particular
 libc, so a musl host gets it too. Nothing has to be published for it.
+
+## Everything a host is given comes from inside the app
+
+tmux, bash, Neovim, Node, ripgrep and fd reach a host the same way. The app
+build (`apps/desktop/scripts/fetch-binaries.mjs`, `build:binaries`) downloads
+every pinned asset for both Linux architectures, checks it against the sha256
+`apps/desktop/product.json` pins, and keeps it compressed in the app:
+
+```
+out/host-tools/manifest.json                 per tool: version, binary path; per platform: file, sha256, directory
+out/host-tools/linux-x64/tmux-3.7c.tar.gz    DevHub's tools release (tools-<toolsVersion>)
+out/host-tools/linux-x64/bash-5.3.20.tar.gz  DevHub's tools release
+out/host-tools/linux-x64/nvim-0.12.6.tar.gz  Neovim's release
+out/host-tools/linux-x64/node-26.13.0.tar.gz nodejs.org, the official LTS
+out/host-tools/linux-x64/rg-15.2.0.tar.gz    ripgrep's static musl build
+out/host-tools/linux-x64/fd-10.5.1.tar.gz    fd's static musl build
+out/host-tools/linux-arm64/…                 the same for arm64
+```
+
+On a host, DevHub asks `~/.devhub-server/<tool>/<version>/<binary>` for its
+version. If nothing answers, it checks the app's tarball against the
+manifest, sends it as bytes over the connection already open, and unpacks
+it from a `tar` reading stdin (`runtime/toolDelivery.ts`,
+`BundledArchiveDelivery`). Then it asks again. **Nothing downloads at
+runtime**, not this Mac and not the host. A NAS behind a firewall has no
+route to github.com, and a laptop on a plane still connects to the machine
+on the next desk.
 
 ## Everything DevHub sends a host is POSIX `sh`
 
@@ -55,7 +82,7 @@ The machine DevHub runs on is no different: the app carries the same build
 there either. A host's panes find the delivered binary first on their PATH,
 ahead of the host's own (`docs/terminal-mode.md`, "DevHub's tmux").
 
-### What is published, and where
+### What is built, and where it is published
 
 `scripts/build_tmux.py` builds tmux from a pinned release tarball together with
 pinned libevent and ncurses, links all three in statically, and packs:
@@ -71,27 +98,24 @@ The three pins, their checksums and the reasons behind them are at the top of
 the script; the versions as of writing are tmux 3.7c, libevent 2.1.13-stable
 and ncurses 6.6. The tarball is a couple of megabytes.
 
-`linux-x64` and `linux-arm64` are published, each built on a runner of its own
-architecture — there is no cross-build. They go to a release named after the
-tmux version and nothing else:
+It is published on DevHub's **tools release**, beside bash. tmux and bash
+have no good upstream distribution, so DevHub builds them itself. Each
+architecture is one tarball (`scripts/build_tools.py`) holding each tool's
+tarball as it was built, plus a `tools.json` naming them:
 
 ```
-https://github.com/statiolake/devhub/releases/download/tmux-${tmuxVersion}/devhub-tmux-${os}-${arch}-${tmuxVersion}.tar.gz
+https://github.com/statiolake/devhub/releases/download/tools-<toolsVersion>/devhub-tools-<toolsVersion>-<os>-<arch>.tar.gz
+                                                                            …/SHA256SUMS
 ```
 
-stated once, in `apps/desktop/product-overrides.json` as
-`tmuxDownloadUrlTemplate`, and substituted by DevHub itself rather than by
-anything on the host. The three names are its own; `${version}` and
-`${commit}`, which mean VS Code's version and commit in VS Code's own
-`serverDownloadUrlTemplate`, are deliberately not reused here.
-
-Because the release is keyed on the tmux version, it is built once per bump and
-never moved, and a DevHub built months ago goes on installing the version it
-was built against. `tmux-decide` in the nightly asks GitHub whether that
-release exists and costs a minute on every night it does. A change to the build
-that does not move the version — a terminfo entry added, a configure flag
-corrected — is republished deliberately: Actions → Nightly → Run workflow, with
-`force_tmux` ticked.
+`darwin-arm64`, `linux-x64` and `linux-arm64` are each built on a runner of
+their own architecture, with no cross-build, by `.github/workflows/tools.yml`
+when a tag `tools-<toolsVersion>` is pushed. `toolsVersion` is the release's
+own version, independent of DevHub's and of the tools'. `product.json` pins it
+and each asset's URL and sha256 (`toolsDownloadUrls`, `toolsDownloadSha256`),
+along with the tmux and bash versions the release must hold. A release never
+moves. A new tool pin, or a change to the build, is a new `toolsVersion` and
+a new tag. The run's summary prints the `toolsDownloadSha256` to paste in.
 
 ### Static, and why musl
 
@@ -127,14 +151,14 @@ writes to it.
 Beside the remote extension host, under the same `serverDataFolderName`, and
 versioned for the same reason the server is keyed on a commit: two DevHubs of
 different ages on one host each find their own and neither disturbs the other.
-DevHub installs it on first use and skips the download when the binary is
-already there.
+DevHub installs it on first use and sends nothing when the binary is already
+there.
 
 ### Installing one by hand
 
-For a host with no route to github.com, or to try a build the nightly has not
-published. `<version>` is the one the app asks for; `devhub --version` and the
-pin at the top of `scripts/build_tmux.py` are the same number.
+To try a build that is not published yet. `<version>` is the one the app asks
+for; `product.json`'s `tmuxVersion` and the pin at the top of
+`scripts/build_tmux.py` are the same number.
 
 ```sh
 # on the host
@@ -146,7 +170,7 @@ tar -xzf devhub-tmux-linux-x64-$version.tar.gz \
 ```
 
 Nothing else about the flow changes: DevHub finds the binary where it would
-have put it and does not download.
+have put it and sends nothing.
 
 ### Building one locally
 
@@ -157,11 +181,15 @@ scripts/build_tmux.py linux-x64                      # writes dist/devhub-tmux-l
 
 Only the target that matches the machine: there is no cross-build, and a binary
 this machine cannot run is a binary the build cannot ask `-V`. On a Mac,
-`scripts/build_tmux.py darwin-arm64` builds and packs the same layout, and the
-result **must not be published** — macOS has no static libc, so the binary
-links dynamically against libSystem. It exists so that the layout, the terminfo
-step and the version pins can be checked without waiting for a runner, and the
-build says so on its own output.
+`scripts/build_tmux.py darwin-arm64` builds and packs the same layout, linked
+dynamically against libSystem alone (macOS has no static libc). That is the
+tmux inside DevHub.app.
+
+`scripts/build_tools.py` builds this machine's whole tools tarball (tmux and
+bash). To build the app against one before its release exists, put the tarballs
+and a `SHA256SUMS` in one directory and set `DEVHUB_TOOLS_DIR` to it for
+`build:binaries`. The manifest then records the local build, and packaging a
+downloadable app refuses it.
 
 ## bash for Claude Code
 
@@ -174,11 +202,9 @@ CLI's "No suitable shell found. Claude CLI requires a Posix shell
 environment…", which says nothing its owner could act on.
 
 So DevHub delivers a bash as well, by the same mechanism as tmux
-(`main/runtime/toolDelivery.ts`): one static tarball per platform on a release
-of this repository, downloaded and cached here per profile (`<userData>/bash/`),
-checked against the digest `product-overrides.json` states
-(`bashDownloadSha256`), and unpacked on the host from a stream on a `tar`
-stdin, never fetched by the host.
+(`main/runtime/toolDelivery.ts`). The static tarball comes from the tools
+release, bundled in the app (`out/host-tools`), and is unpacked on the host
+from a stream on a `tar` stdin.
 
 ```
 devhub-bash-linux-x64/
@@ -201,24 +227,20 @@ pointing at it (`main/runtime/agentShell.ts`; not `SHELL`, which tmux sets
 to a pane's `default-shell` whatever the session says). The login shell,
 tmux's `default-shell` and every terminal stay the person's. A profile that
 sets either variable itself keeps its own. On this Mac the same rule holds
-with the bash inside the app (`out/bash`, `build:bash`).
+with the bash inside the app (`out/bash`, `build:binaries`).
 
-**When there is none to be had** — an architecture DevHub publishes no bash for
-(only `linux-x64` and `linux-arm64` are), a release that is not there, no route
-from this Mac for the download — the Agent does not start, and its row says, in
-DevHub's words, which host and why. DevHub does not fall back to a bash or zsh
+**When there is none to be had** — an architecture the app carries no bash for
+(only `linux-x64` and `linux-arm64` are carried), or a build without
+`out/host-tools` — the Agent does not start, and its row says, in DevHub's
+words, which host and why. DevHub does not fall back to a bash or zsh
 installed on the host.
 
-**Published as its own release**, `bash-<version>`, built by
+**Published on the tools release**, beside tmux, built by
 `scripts/build_bash.py` (which reuses `build_tmux.py`'s fetching, pinning,
-static-link check and packing) in the nightly's `bash-decide` / `bash` /
-`bash-publish` jobs, on the same two runners. The version is bash's release
-plus its patch level — every official upstream patch is applied, each pinned by
-sha256 — so `5.3.20` is bash 5.3 with patches 001–020, and `bash --version` on
-the host says so. Separate from tmux's release so that neither tool's bump
-republishes the other. The publish job writes the digests to its summary in the
-form `bashDownloadSha256` takes; until they are in `product-overrides.json` the
-download is taken unpinned over HTTPS from a tag that never moves.
+static-link check and packing). The version is bash's release plus its patch
+level: every official upstream patch is applied, each pinned by sha256. So
+`5.3.20` is bash 5.3 with patches 001–020, and `bash --version` on the host
+says so.
 
 To build one locally (`sudo apt-get install -y musl-tools build-essential
 patch` on Ubuntu): `scripts/build_bash.py linux-x64`. To install one by hand, as
@@ -232,9 +254,9 @@ typed in its panes (`docs/neovim-editor.md`, "Which Neovim") — is DevHub's,
 never the host's: Neovim's own release archive for the host's platform
 (`nvim-linux-x86_64.tar.gz`, `nvim-linux-arm64.tar.gz` from
 github.com/neovim/neovim), at the version `product.json` pins
-(`nvimVersion`) and checked against `nvimDownloadSha256`. Like tmux it is
-fetched on this Mac (cached under `<user data>/nvim`) and unpacked on the
-host from stdin, the first time a session there is made, into
+(`nvimVersion`) and checked against `nvimDownloadSha256` when the app is
+built. Like tmux it is carried in the app (`out/host-tools`) and unpacked on
+the host from stdin, the first time a session there is made, into
 
 ```
 ~/.devhub-server/nvim/<version>/bin/nvim
@@ -245,7 +267,8 @@ and run by that path (it finds its runtime beside itself). Neovim's Linux
 build needs glibc 2.34 or later: a musl host, an older glibc and a host that
 is not Linux on x86_64 or arm64 are refused before anything is sent, with
 the host and the reason in the notice; its panes' `nvim` is then the host's
-own. Nothing is published by DevHub for it. To install one by hand: unpack
+own. DevHub publishes nothing for it: Neovim's own release is what the app
+bundles. To install one by hand: unpack
 the archive and move its one directory to `~/.devhub-server/nvim/<version>`.
 
 ## Pointing one host somewhere else

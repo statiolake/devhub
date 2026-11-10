@@ -4,7 +4,7 @@
  * compile it each time (a few milliseconds; more on a loaded machine).
  *
  * `build:nvim-lua` (`scripts/build-nvim-lua.mjs`, after `build:main` and
- * `build:nvim`) has DevHub's Neovim compile each chunk with its LuaJIT
+ * `build:binaries`) has DevHub's Neovim compile each chunk with its LuaJIT
  * (`string.dump`, debug info kept, so an error still names its chunk and
  * line) into `out/nvim-lua/setup.json`: the bytecode by the sha256 of the
  * source it came from, and the Neovim version that made it. An attach sends a

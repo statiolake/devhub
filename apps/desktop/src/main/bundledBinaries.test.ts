@@ -159,6 +159,21 @@ describe("the programs DevHub runs", () => {
 		expect(offenders).toEqual([]);
 	});
 
+	// What DevHub runs or delivers is in the app (`out/`, `out/host-tools`),
+	// put there by the build (`scripts/fetch-binaries.mjs`): nothing is
+	// fetched at runtime, for this Mac or for a host.
+	it("downloads no binary at runtime", () => {
+		const downloads = sources.flatMap(({ path, text }) =>
+			text
+				.split("\n")
+				.filter((line) =>
+					/releases\/download|nodejs\.org\/dist|DownloadUrl/u.test(line),
+				)
+				.map((line) => `${path}: ${line.trim()}`),
+		);
+		expect(downloads).toEqual([]);
+	});
+
 	it("is a list that names nothing DevHub carries", () => {
 		for (const name of DEVHUB_CARRIES) {
 			expect(Object.keys(SYSTEM_PROGRAMS)).not.toContain(name);

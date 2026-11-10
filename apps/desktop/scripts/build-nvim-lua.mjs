@@ -1,7 +1,7 @@
 /**
  * DevHub's setup Lua as bytecode, for Neovim to load at each attach without
  * compiling it (`src/main/editor/neovimBytecode.ts`): `out/nvim-lua/setup.json`,
- * compiled by the Neovim `build:nvim` unpacked (`out/nvim`) from the chunks
+ * compiled by the Neovim `build:binaries` unpacked (`out/nvim`) from the chunks
  * `build:main` emitted (`SETUP_CHUNKS`). Both run before this in `build`.
  *
  * The packaged app carries it inside `out/` (`scripts/package-nightly.py`).

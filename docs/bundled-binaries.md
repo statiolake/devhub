@@ -22,14 +22,62 @@ on one that is not on its list with a reason; it also fails on any
 | binary | here (this Mac) | on an SSH host |
 | --- | --- | --- |
 | Electron 43.7.7 (its Node runs main and every utility process: process host, pty host, Neovim host, conversation engine; and the login-environment printer as `ELECTRON_RUN_AS_NODE=1`) | the app | — |
-| Neovim 0.12.6 | `out/nvim` (`build:nvim`) | delivered, `~/.devhub-server/nvim/<v>` |
-| bash 5.3.20 | `out/bash` (`build:bash`): Linux, the published static tarball; macOS, `scripts/build_bash.py darwin-arm64`, built from the same pinned source and patches, linked against libSystem only, signed by packaging | delivered, `~/.devhub-server/bash/<v>` (static, musl) |
-| tmux 3.7c | `out/tmux` (`build:tmux`): Linux, the published static tarball; macOS, `scripts/build_tmux.py darwin-arm64`, linked against libSystem only, signed by packaging. `runtimes.tmux` is retired | delivered, `~/.devhub-server/tmux/<v>` |
+| Neovim 0.12.6 | `out/nvim`: Neovim's release, signed by packaging | delivered from `out/host-tools`, `~/.devhub-server/nvim/<v>` |
+| bash 5.3.20 | `out/bash`: DevHub's tools release (`scripts/build_bash.py`); macOS links libSystem only, signed by packaging | delivered from `out/host-tools`, `~/.devhub-server/bash/<v>` (static, musl) |
+| tmux 3.7c | `out/tmux`: DevHub's tools release (`scripts/build_tmux.py`); macOS links libSystem only, signed by packaging. `runtimes.tmux` is retired | delivered from `out/host-tools`, `~/.devhub-server/tmux/<v>` (static, musl) |
+| Node 26.13.0 (LTS) | — (this Mac's Node is Electron's) | delivered from `out/host-tools`, `~/.devhub-server/node/<v>`, for the language servers the carried Neovim starts |
+| ripgrep 15.2.0, fd 10.5.1 | — | delivered from `out/host-tools`, `~/.devhub-server/{rg,fd}/<v>` (static, musl) |
 | the `devhub` command (Go) | `out/cli/<os>-<arch>/devhub`, exec'd by the launcher | delivered, `~/.devhub-server/devhub/<digest>` |
 | libghostty-vt | `out/vt/ghostty-vt.wasm` | — |
 | node-pty | its N-API prebuild in `node_modules` | — |
 | helpers | `out/native/devhub-exec-clean`, `devhub-footprint`, `devhub-input-source` (C, built by `build:native`) | — |
 | speech recogniser | `Resources/whisper/devhub-whisper{,-server}` | — |
+
+## Where they come from
+
+All of it is put in the app when the app is built. Nothing is downloaded at
+runtime, for this Mac or for an SSH host.
+
+- **Built by DevHub, released per architecture.** tmux and bash have no good
+  upstream distribution: DevHub needs a static, musl-linked tmux with its own
+  terminfo database, and a static bash with every upstream patch.
+  `scripts/build_tools.py` builds one architecture's of each, and
+  `.github/workflows/tools.yml` builds darwin-arm64, linux-x64 and
+  linux-arm64 on native runners and publishes them as one release,
+  `tools-<toolsVersion>`. Each asset is `devhub-tools-<toolsVersion>-<os>-<arch>.tar.gz`,
+  and `SHA256SUMS` sits beside them. The release is versioned on its own
+  (`toolsVersion`, in `apps/desktop/product.json`).
+- **Upstream, where it distributes well.** Neovim from Neovim's releases. Node
+  from nodejs.org's official LTS tarballs, for Linux hosts only. ripgrep and
+  fd from their static musl releases.
+- **Built with the app.** The `devhub` command (Go, `cli/`) is cross-compiled
+  by every app build (`build:devhub-cli`) and stays out of the tools
+  release. It talks to the app it came with over the app's socket, and its
+  version on a host is that build's digest, so it is part of the build,
+  not a separately versioned tool. Building it from source for all three
+  platforms takes seconds and needs nothing outside the repository. The
+  libghostty-vt module, the native helpers and the speech recogniser are
+  built with the app as before.
+
+`product.json` pins every downloaded asset: `<tool>Version`, and per
+`<os>-<arch>` its URL (`<tool>DownloadUrls`) and sha256
+(`<tool>DownloadSha256`) for `tools`, `nvim`, `node`, `rg` and `fd`, plus the
+`tmuxVersion` and `bashVersion` the tools release must hold. One step,
+`build:binaries` (`apps/desktop/scripts/fetch-binaries.mjs`), downloads all
+of them into `~/.cache/devhub/downloads`, checks each against its pin, and
+lays out:
+
+```
+out/nvim, out/tmux, out/bash      this machine's, unpacked (darwin-arm64 in the app)
+out/host-tools/linux-x64/         tmux, bash, nvim, node, rg, fd: one .tar.gz each, as published
+out/host-tools/linux-arm64/       the same
+out/host-tools/manifest.json      per tool: version, binary path; per platform: file, sha256, directory
+```
+
+A warm cache builds without a network. `runtime/toolDelivery.ts`
+(`BundledArchiveDelivery`) sends a host the tarball for its architecture
+from `out/host-tools`, after checking it against the manifest
+(`docs/remote-ssh.md`).
 
 ## The inventory
 
@@ -96,10 +144,15 @@ Every place DevHub starts a program at runtime, with its category:
 
 ## Checked
 
-`src/main/bundledBinaries.test.ts` (the guard), `runtime/bundledBash.test.ts`
+`src/main/bundledBinaries.test.ts` (the guard, which also fails on a runtime
+source that names a download URL), `runtime/toolDelivery.test.ts` (the
+bundle a host is given, and this build's `out/host-tools` against
+`product.json`), `runtime/bundledBash.test.ts`
 (the bundled bash is the pinned version and is what a local Claude Agent
 gets), `runtime/agentShell.test.ts` and the host install in `ssh.test.ts`; the
 smoke test (`scripts/smoke_packaged_app.py`) requires `out/bash/bin/bash` in
-the packaged layout and runs it with an empty environment, and requires
+the packaged layout and runs it with an empty environment, requires every
+host tool for both Linux architectures in `out/host-tools` and matching its
+manifest, and requires
 `out/tmux/bin/tmux`, runs it, and checks that the app's tmux server is that
 binary and that a pane's `tmux` runs it.

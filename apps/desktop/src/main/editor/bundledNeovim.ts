@@ -1,7 +1,7 @@
 /**
  * The Neovim inside DevHub: Neovim's own release archive for this platform,
  * at the version `product.json` pins (`nvimVersion`), unpacked into
- * `out/nvim` by `scripts/fetch-neovim.mjs` at build time — `apps/desktop/out/nvim`
+ * `out/nvim` by `scripts/fetch-binaries.mjs` at build time — `apps/desktop/out/nvim`
  * in a checkout, `Contents/Resources/app/out/nvim` in the packaged app, where
  * packaging signs it (`scripts/package-nightly.py`).
  *
@@ -40,6 +40,6 @@ export function bundledNeovim(appRoot = APP_ROOT): string | undefined {
 export function bundledNeovimMissing(appRoot = APP_ROOT): string {
 	return (
 		`This build of DevHub has no Neovim (${bundledNeovimPath(appRoot)} is missing). ` +
-		"A packaged DevHub carries one; in a checkout, `pnpm --filter @devhub/desktop build:nvim` fetches it."
+		"A packaged DevHub carries one; in a checkout, `pnpm --filter @devhub/desktop build:binaries` fetches it."
 	);
 }

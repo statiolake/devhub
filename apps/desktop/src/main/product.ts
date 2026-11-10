@@ -1,6 +1,6 @@
 /**
  * What DevHub says about itself: its names, where it keeps its tools on a
- * host, and the tmux, bash and Neovim releases it installs there.
+ * host, and the versions of the binaries it bundles.
  *
  * One file, `product.json` beside `out/` — `apps/desktop/product.json` in a
  * checkout, `Contents/Resources/app/product.json` in the packaged app, where
@@ -19,21 +19,23 @@ export interface DevhubProduct {
 	/** The directory under a host's home DevHub installs its tools in. */
 	readonly serverDataFolderName: string;
 	readonly darwinBundleIdentifier: string;
+	/**
+	 * The binaries the app build bundles (`scripts/fetch-binaries.mjs`,
+	 * `docs/bundled-binaries.md`): each `<tool>Version`, and per `<os>-<arch>`
+	 * its asset's URL and sha256. The app reads only the versions at runtime;
+	 * what it runs and delivers is in `out/`, and nothing is downloaded.
+	 *
+	 * `tools` is DevHub's own release (`scripts/build_tools.py`) holding tmux
+	 * and bash; `nvim`, `node`, `rg` and `fd` are upstream's.
+	 */
+	readonly toolsVersion?: string;
 	readonly tmuxVersion?: string;
-	readonly tmuxDownloadUrlTemplate?: string;
-	readonly tmuxDownloadSha256?: Readonly<Record<string, string>>;
 	/** The bash Claude Code runs in: delivered to hosts, and in the app here (`out/bash`). */
 	readonly bashVersion?: string;
-	readonly bashDownloadUrlTemplate?: string;
-	readonly bashDownloadSha256?: Readonly<Record<string, string>>;
-	/**
-	 * The Neovim DevHub runs: in the app here (`out/nvim`, fetched at build
-	 * time by `scripts/fetch-neovim.mjs`) and delivered to a host. Neovim's
-	 * own release archives, pinned by `<os>-<arch>`.
-	 */
 	readonly nvimVersion?: string;
-	readonly nvimDownloadUrlTemplate?: string;
-	readonly nvimDownloadSha256?: Readonly<Record<string, string>>;
+	readonly nodeVersion?: string;
+	readonly rgVersion?: string;
+	readonly fdVersion?: string;
 	/** Where `docker` and `devcontainer` are, when they are not on `PATH`. */
 	readonly dockerPath?: string;
 	readonly devcontainerPath?: string;

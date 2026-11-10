@@ -2,9 +2,9 @@
 """What DevHub says about itself, and which build this is.
 
 `apps/desktop/product.json` holds what DevHub is called, its bundle
-identifier, where it keeps its tools on a host and the tmux, bash and Node
-releases it installs there. The app reads it from `APP_ROOT/product.json`
-(`src/main/product.ts`): in a checkout that is this file as it is; the
+identifier, where it keeps its tools on a host, and the version, URL and
+sha256 of every binary the app build bundles (`fetch-binaries.mjs`). The app
+reads it from `APP_ROOT/product.json` (`src/main/product.ts`): in a checkout that is this file as it is; the
 packaged app gets it with two fields only a build can state, written by
 `scripts/package-nightly.py` through `packaged_product()`:
 

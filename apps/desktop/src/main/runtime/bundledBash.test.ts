@@ -1,5 +1,5 @@
 /**
- * The bash inside DevHub (`out/bash`, `build:bash`) and the Claude Agents on
+ * The bash inside DevHub (`out/bash`, `build:binaries`) and the Claude Agents on
  * this machine that run in it.
  */
 
@@ -17,7 +17,7 @@ import {
 import { LocalRuntime } from "./local.js";
 
 describe("the bundled bash", () => {
-	// `pnpm test` runs `build:bash` first, as it runs `build:nvim`.
+	// `pnpm test` runs `build:binaries` first.
 	it("is in out/bash and is the pinned version", () => {
 		const bash = bundledBash();
 		expect(bash).toBe(bundledBashPath());
@@ -42,7 +42,7 @@ describe("the bundled bash", () => {
 		const empty = await mkdtemp(join(tmpdir(), "devhub-no-bash-"));
 		try {
 			expect(bundledBash(empty)).toBeUndefined();
-			expect(bundledBashMissing(empty)).toContain("build:bash");
+			expect(bundledBashMissing(empty)).toContain("build:binaries");
 		} finally {
 			await rm(empty, { recursive: true, force: true });
 		}

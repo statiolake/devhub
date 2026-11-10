@@ -63,7 +63,7 @@ const TMUX = [
 // as in test/tmuxSockets.ts, rather than skipping the tmux tests.
 if (TMUX === undefined && (process.env.CI ?? "") !== "") {
   throw new Error(
-    "CI is set and there is no bundled tmux at out/tmux/bin/tmux for the PTY tests: `pnpm --filter @devhub/desktop build:tmux` builds it",
+    "CI is set and there is no bundled tmux at out/tmux/bin/tmux for the PTY tests: `pnpm --filter @devhub/desktop build:binaries` builds it",
   );
 }
 

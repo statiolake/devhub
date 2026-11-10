@@ -16,6 +16,7 @@ mechanism, so each is asserted separately.
 from __future__ import annotations
 
 import hashlib
+import json
 
 import subprocess
 import sys
@@ -157,6 +158,24 @@ class AppLayout(unittest.TestCase):
 			binary.chmod(0o755)
 			sums.append(f"{hashlib.sha256(binary.read_bytes()).hexdigest()}  {name}/devhub")
 		self.write("out/cli/SHA256SUMS", "\n".join(sums) + "\n")
+		tools = {}
+		for tool in ("tmux", "bash", "nvim", "node", "rg", "fd"):
+			platforms = {}
+			for name in ("linux-x64", "linux-arm64"):
+				file = f"{name}/{tool}.tar.gz"
+				self.write(f"out/host-tools/{file}", f"{tool} for {name}")
+				digest = hashlib.sha256(f"{tool} for {name}".encode()).hexdigest()
+				platforms[name] = {"file": file, "sha256": digest, "topLevelDirectory": tool}
+			tools[tool] = {"version": "1", "binary": f"bin/{tool}", "platforms": platforms}
+		self.write("out/host-tools/manifest.json", json.dumps({"tools": tools}))
+
+	def test_names_a_host_tool_that_is_missing_or_damaged(self) -> None:
+		self.lay_out()
+		self.write("out/host-tools/linux-arm64/node.tar.gz", "damaged")
+		(self.app / "out/host-tools/linux-x64/rg.tar.gz").unlink()
+		faults = check_app_layout(self.app, "linux-x64")
+		self.assertIn("out/host-tools/linux-arm64/node.tar.gz does not match its manifest", faults)
+		self.assertIn("out/host-tools/linux-x64/rg.tar.gz is missing", faults)
 
 	def test_a_whole_layout_passes(self) -> None:
 		self.lay_out()

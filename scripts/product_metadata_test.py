@@ -27,10 +27,11 @@ class Product(unittest.TestCase):
 		for key in ("extensionsGallery", "serverApplicationName", "serverCommit", "serverIdentity"):
 			self.assertNotIn(key, PRODUCT)
 
-	def test_puts_no_node_on_a_host(self) -> None:
-		# The devhub command is a Go binary carried in the app (docs/devhub-cli.md).
-		for key in ("nodeVersion", "nodeDownloadUrlTemplate", "nodeDownloadSha256"):
-			self.assertNotIn(key, PRODUCT)
+	def test_puts_node_only_on_hosts(self) -> None:
+		# The devhub command is a Go binary carried in the app (docs/devhub-cli.md),
+		# and this Mac runs Electron's Node. Node goes to SSH hosts only, for the
+		# language servers the carried Neovim starts there.
+		self.assertEqual(set(PRODUCT["nodeDownloadUrls"]), {"linux-x64", "linux-arm64"})
 
 
 class PackagedProduct(unittest.TestCase):

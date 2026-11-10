@@ -27,11 +27,13 @@ about and Node's own resolver finds every dependency in every process.
                                     node-pty with this platform's prebuild only
 
 `out/vt/ghostty-vt.wasm` (libghostty-vt, the control-mode terminal's engine),
-`out/native/` (DevHub's helpers), `out/nvim/` (the Neovim DevHub runs,
-Neovim's own release, fetched by `build:nvim`), `out/nvim-lua/` (DevHub's
-setup Lua as that Neovim's bytecode, `build:nvim-lua`), `out/bash/` (the bash
-Claude Agents run in, `build:bash`) and `out/tmux/` (the tmux DevHub runs,
-`scripts/build_tmux.py`'s, by `build:tmux`) travel inside `out/`.
+`out/native/` (DevHub's helpers), `out/nvim/` (the Neovim DevHub runs),
+`out/nvim-lua/` (DevHub's setup Lua as that Neovim's bytecode,
+`build:nvim-lua`), `out/bash/` (the bash Claude Agents run in), `out/tmux/`
+(the tmux DevHub runs) and `out/host-tools/` (every Linux host's tools, as
+tarballs) travel inside `out/`. `build:binaries`
+(`apps/desktop/scripts/fetch-binaries.mjs`) puts the Neovim, bash, tmux and
+host tools there, from the pinned tools release and upstream releases.
 
 Usage:
     scripts/package-nightly.py [--out-dir DIR] [--zip] [--zip-name NAME]
@@ -117,6 +119,7 @@ def check_inputs() -> None:
 		DESKTOP_DIR / "out" / "bash" / "bin" / "bash",
 		DESKTOP_DIR / "out" / "tmux" / "bin" / "tmux",
 		DESKTOP_DIR / "out" / "cli" / "SHA256SUMS",
+		DESKTOP_DIR / "out" / "host-tools" / "manifest.json",
 		DESKTOP_DIR / "dist" / "shell" / "index.html",
 	):
 		if not required.exists():
@@ -132,7 +135,7 @@ def check_inputs() -> None:
 	if reported != f"tmux {pinned}":
 		fail(
 			f"{tmux} answers {reported!r}, not tmux {pinned}\n"
-			"       fetch this machine's with: pnpm --filter @devhub/desktop build:tmux"
+			"       fetch this machine's with: pnpm --filter @devhub/desktop build:binaries"
 		)
 	if _newest_mtime(REPO_ROOT / "cli") > _newest_mtime(DESKTOP_DIR / "out" / "cli"):
 		fail(
@@ -456,6 +459,14 @@ def main() -> int:
 
 	step("inputs")
 	check_inputs()
+	# A bundle people download carries the published tools release, never a
+	# local build of it (`DEVHUB_TOOLS_DIR`, for testing a tools change).
+	manifest = json.loads((DESKTOP_DIR / "out" / "host-tools" / "manifest.json").read_text())
+	if "localTools" in manifest:
+		fail(
+			f"out/host-tools holds a local tools build ({manifest['localTools']}), not the pinned release\n"
+			"       rebuild without DEVHUB_TOOLS_DIR: pnpm run build:packages"
+		)
 	version = devhub_version()
 	print(f"    DevHub {version}")
 

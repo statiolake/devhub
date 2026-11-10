@@ -25,8 +25,8 @@
 #   vitest      @devhub/desktop vitest                             test-desktop
 #   pty         @devhub/desktop test:pty (node-pty under Electron) test-desktop
 #               Both run their real-Neovim and real-tmux tests on the
-#               bundled Neovim and tmux (out/nvim and out/tmux, `build:nvim`
-#               and `build:tmux`), never the machine's own.
+#               bundled Neovim and tmux (out/nvim and out/tmux, `build:binaries`),
+#               never the machine's own.
 #   scripts     pnpm run test:scripts                              checks
 #   cli         pnpm run test:cli (gofmt, go vet, go test in cli/) checks
 #   app         the app smoke test (scripts/smoke_packaged_app.py). On macOS
@@ -302,13 +302,13 @@ provision() {
 # --- the stages -------------------------------------------------------------
 stage_vitest() {
 	prepare_test_user || return 1
-	(cd apps/desktop && pnpm run build:devhub-cli && pnpm run build:nvim && pnpm run build:bash && pnpm run build:tmux) || return 1
+	(cd apps/desktop && pnpm run build:devhub-cli && pnpm run build:binaries) || return 1
 	(cd apps/desktop && as_test_user node_modules/.bin/vitest run)
 }
 
 stage_pty() {
 	prepare_test_user || return 1
-	(cd apps/desktop && pnpm run build:nvim && pnpm run build:bash && pnpm run build:tmux) || return 1
+	(cd apps/desktop && pnpm run build:binaries) || return 1
 	(cd apps/desktop && as_test_user test/terminal/run-under-electron.sh)
 }
 

@@ -97,15 +97,16 @@ it sends exactly those lines, the app asserts it accepts each one.
 
 ## Delivery: one mechanism for tmux, bash, nvim and the command
 
-`runtime/toolDelivery.ts` already carried tmux and bash (and Node) to hosts:
-this Mac fetches, the host receives the bytes on a `tar` stdin, installs
-under `~/.devhub-server/<tool>/<version>/bin/<tool>`, and the binary is asked
-its version before and after. That mechanism stays the only one; what
-changes is where the bytes come from.
+`runtime/toolDelivery.ts` carries every tool to hosts. The host receives
+the bytes on a `tar` stdin and installs them under
+`~/.devhub-server/<tool>/<version>/`, and the binary is asked its version
+before and after. That mechanism is the only one, and every tool's bytes
+come from inside the app. Nothing is downloaded at runtime.
 
-- **A release** (`ReleaseToolDelivery`): a URL template and a sha256 per
-  platform in `product.json`. tmux and bash, from this repository's
-  releases; Neovim, from Neovim's own (the Neovim bundling work).
+- **A bundled tarball** (`BundledArchiveDelivery`): tmux, bash, nvim, node,
+  rg and fd, from `out/host-tools/<os>-<arch>/`, checked against
+  `out/host-tools/manifest.json`. The app build fetched them from their
+  pinned releases (`docs/bundled-binaries.md`).
 - **The app itself** (`BundledToolDelivery`): the `devhub` command, from
   `Resources/app/out/cli/<os>-<arch>/devhub`, checked against
   `out/cli/SHA256SUMS`, which the build writes beside the binaries. Its

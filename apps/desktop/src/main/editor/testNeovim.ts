@@ -1,6 +1,6 @@
 /**
  * The Neovim the tests that need a real one run: DevHub's own (`out/nvim`,
- * fetched by `build:nvim`, which `pnpm test` runs first), never the PATH's —
+ * fetched by `build:binaries`, which `pnpm test` runs first), never the PATH's —
  * it is the one DevHub runs. Where it is missing the tests skip, except on CI
  * (`CI` set, as `scripts/test-local.sh` sets it too), where that fails.
  */

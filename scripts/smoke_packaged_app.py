@@ -210,6 +210,7 @@ def check_app_layout(app_dir: Path, platform_name: str) -> list[str]:
 		if not (app_dir / required).is_file():
 			faults.append(f"{required} is missing")
 	faults.extend(cli_faults(app_dir))
+	faults.extend(host_tools_faults(app_dir))
 	prebuild = app_dir / "node_modules" / "node-pty" / "prebuilds" / platform_name
 	if not (prebuild / "pty.node").is_file():
 		faults.append(f"node-pty has no prebuild for {platform_name}: no terminal can start")
@@ -264,6 +265,35 @@ def cli_faults(app_dir: Path) -> list[str]:
 			faults.append(f"out/cli/{name}/devhub is missing or not executable")
 		elif sums.get(f"{name}/devhub") != hashlib.sha256(binary.read_bytes()).hexdigest():
 			faults.append(f"out/cli/{name}/devhub does not match SHA256SUMS")
+	return faults
+
+
+# What an SSH host is given from inside the app (`out/host-tools`,
+# `fetch-binaries.mjs`, `runtime/toolDelivery.ts`): nothing is downloaded at
+# runtime, so a tool missing here is a host that cannot have it.
+HOST_TOOLS = ("tmux", "bash", "nvim", "node", "rg", "fd")
+HOST_PLATFORMS = ("linux-x64", "linux-arm64")
+
+
+def host_tools_faults(app_dir: Path) -> list[str]:
+	"""Every host tool for every Linux architecture, matching the manifest."""
+	root = app_dir / "out" / "host-tools"
+	manifest_file = root / "manifest.json"
+	if not manifest_file.is_file():
+		return ["out/host-tools/manifest.json is missing: no SSH host can be given its tools"]
+	tools = json.loads(manifest_file.read_text()).get("tools", {})
+	faults = []
+	for tool in HOST_TOOLS:
+		for platform_name in HOST_PLATFORMS:
+			entry = tools.get(tool, {}).get("platforms", {}).get(platform_name)
+			if entry is None:
+				faults.append(f"out/host-tools has no {tool} for {platform_name}")
+				continue
+			tarball = root / entry["file"]
+			if not tarball.is_file():
+				faults.append(f"out/host-tools/{entry['file']} is missing")
+			elif hashlib.sha256(tarball.read_bytes()).hexdigest() != entry["sha256"]:
+				faults.append(f"out/host-tools/{entry['file']} does not match its manifest")
 	return faults
 
 

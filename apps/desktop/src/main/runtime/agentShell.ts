@@ -11,13 +11,13 @@
  * Claude Code reads first):
  *
  * - **this Mac**: the bash inside the app (`out/bash`, `bundledBash.ts`);
- * - **an SSH host**: the static bash DevHub publishes
- *   (`scripts/build_bash.py`), delivered the way tmux is, under
+ * - **an SSH host**: the static bash DevHub builds (`scripts/build_bash.py`)
+ *   and carries in the app (`out/host-tools`), delivered the way tmux is, under
  *   `~/.devhub-server/bash/<version>`.
  *
  * The login shell, tmux's `default-shell` and every terminal stay the
  * person's: their zsh in their panes is theirs. When the delivery fails — an
- * architecture DevHub publishes no bash for, a release that is not there —
+ * architecture the app carries no bash for, a build without its host tools —
  * the Agent does not start, with a sentence naming the machine and why.
  */
 
@@ -53,6 +53,6 @@ export function noShellRefusal(machine: string, reason: string): string {
 		`Claude Code on ${machine} runs in DevHub's own bash, and DevHub could ` +
 		`not put it there: ${reason}. DevHub does not fall back to a bash or zsh ` +
 		`installed on ${machine}; check that ${machine} can be reached and that ` +
-		`DevHub publishes a bash for its architecture, then start the Agent again.`
+		`DevHub carries a bash for its architecture, then start the Agent again.`
 	);
 }

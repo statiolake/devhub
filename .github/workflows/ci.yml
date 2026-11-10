@@ -84,19 +84,9 @@ jobs:
       - name: Set up Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
 
-      # The tmux inside the app (out/tmux): on a Mac, scripts/build_tmux.py
-      # darwin-arm64, built by `build:tmux` (apps/desktop/scripts/fetch-tmux.mjs)
-      # and kept where a developer's Mac keeps it. A miss is a few minutes of
-      # compiling; the key is the script, which pins every source by hash.
-      - name: Restore the tmux build cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/devhub/tmux
-          key: tmux-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_tmux.py', 'apps/desktop/product.json') }}
-
-      # `test` fetches the Neovim and builds the tmux DevHub bundles
-      # (build:nvim, build:tmux) first: the tests that need a real Neovim or a
-      # real tmux run those, never the runner's own.
+      # `test` fetches the binaries DevHub bundles (build:binaries) first: the
+      # tests that need a real Neovim, tmux or bash run those, never the
+      # runner's own.
       - name: Desktop unit tests (vitest, node-pty under Electron)
         run: pnpm --filter @devhub/desktop test
 
@@ -114,16 +104,6 @@ jobs:
 
       - name: Set up Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
-
-      # The tmux inside the app (out/tmux): on a Mac, scripts/build_tmux.py
-      # darwin-arm64, built by `build:tmux` (apps/desktop/scripts/fetch-tmux.mjs)
-      # and kept where a developer's Mac keeps it. A miss is a few minutes of
-      # compiling; the key is the script, which pins every source by hash.
-      - name: Restore the tmux build cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/devhub/tmux
-          key: tmux-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_tmux.py', 'apps/desktop/product.json') }}
 
       - name: Build DevHub.app
         run: scripts/build-app.sh --without-whisper --no-zip

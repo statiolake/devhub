@@ -1,6 +1,7 @@
 /**
- * A program DevHub puts on a host from inside the app itself, rather than
- * from a release: today the `devhub` command (`cli/`, `docs/devhub-cli.md`).
+ * A program DevHub builds with the app and puts on a host as one file, rather
+ * than as a tarball (`toolDelivery.ts`): the `devhub` command (`cli/`,
+ * `docs/devhub-cli.md`).
  *
  * The same `ToolDelivery` tmux, bash and nvim are carried by, so a host
  * installs it the same way — `~/<serverDataFolderName>/<tool>/<version>/bin/
@@ -8,7 +9,9 @@
  * differs. The app build leaves one static binary per platform in
  * `out/cli/<os>-<arch>/<tool>` and their digests in `out/cli/SHA256SUMS`
  * (`scripts/build-devhub-cli.mjs`); the packaged app carries `out/` whole.
- * Nothing is downloaded and nothing has to be published.
+ * Nothing is downloaded and nothing is published: unlike tmux and bash, the
+ * command is one build with the app, and a host holds the command of the
+ * DevHub that connects to it.
  *
  * **The version is the build's.** The first 12 hex digits of the digest of
  * `SHA256SUMS`: every binary's digest, so any change to any of them is a new

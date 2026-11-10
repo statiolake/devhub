@@ -59,7 +59,15 @@ import {
 	unauthenticatedFailure,
 	unreachableFailure,
 } from "./ssh.js";
-import { toolTopLevelDirectory, type ToolDelivery } from "./toolDelivery.js";
+import type { ToolDelivery } from "./toolDelivery.js";
+
+/** The one directory a bundled tool's tarball holds: DevHub's builds name it
+ * after the tool and the platform, Neovim's after its own platform names. */
+function topLevelOf(tool: "tmux" | "bash" | "nvim", platform: string): string {
+	if (tool !== "nvim") return `devhub-${tool}-${platform}`;
+	const [os = "", arch = ""] = platform.split("-");
+	return `nvim-${os === "darwin" ? "macos" : os}-${arch === "x64" ? "x86_64" : arch}`;
+}
 import { resolveAgentProfile } from "../shell/agentProfileCommand.js";
 
 /**
@@ -234,7 +242,7 @@ const FAKE_DEVHUB: ToolDelivery = {
 			bytes: FAKE_DEVHUB_BYTES,
 			format: "binary",
 			topLevelDirectory: "",
-			verifiedSha256: undefined,
+			verifiedSha256: "0".repeat(64),
 		}),
 };
 
@@ -1059,7 +1067,7 @@ describe("the tmux DevHub installs on a host", () => {
 		version: string,
 		binary = `#!/bin/sh\necho "tmux ${version}"\n`,
 	): Promise<Uint8Array> {
-		const top = toolTopLevelDirectory("tmux", platform, "");
+		const top = topLevelOf("tmux", platform);
 		const root = join(workshop, `${top}-${version}`);
 		await mkdir(join(root, top, "bin"), { recursive: true });
 		await mkdir(join(root, top, "terminfo", "x"), { recursive: true });
@@ -1091,8 +1099,8 @@ describe("the tmux DevHub installs on a host", () => {
 				asked.push(platform);
 				return {
 					bytes: await bytes(platform),
-					topLevelDirectory: toolTopLevelDirectory("tmux", platform, ""),
-					verifiedSha256: undefined,
+					topLevelDirectory: topLevelOf("tmux", platform),
+					verifiedSha256: "0".repeat(64),
 				};
 			},
 		};
@@ -1238,7 +1246,7 @@ describe("the bash DevHub installs for Claude Code on a host", () => {
 		platform: string,
 		binary = '#!/bin/sh\necho "GNU bash, version 5.3.20(1)-release"\n',
 	): Promise<Uint8Array> {
-		const top = toolTopLevelDirectory("bash", platform, "");
+		const top = topLevelOf("bash", platform);
 		const root = join(workshop, top);
 		await mkdir(join(root, top, "bin"), { recursive: true });
 		await writeFile(join(root, top, "bin", "bash"), binary, { mode: 0o755 });
@@ -1260,8 +1268,8 @@ describe("the bash DevHub installs for Claude Code on a host", () => {
 				asked.push(platform);
 				return {
 					bytes: await bytes(platform),
-					topLevelDirectory: toolTopLevelDirectory("bash", platform, ""),
-					verifiedSha256: undefined,
+					topLevelDirectory: topLevelOf("bash", platform),
+					verifiedSha256: "0".repeat(64),
 				};
 			},
 		};
@@ -1366,7 +1374,7 @@ describe("the Neovim DevHub installs on a host", () => {
 			version: "0.12.6",
 			directory: ".devhub-server/nvim",
 			tarball: async (platform) => {
-				const top = toolTopLevelDirectory("nvim", platform, "0.12.6");
+				const top = topLevelOf("nvim", platform);
 				await mkdir(join(workshop, top, "bin"), { recursive: true });
 				await mkdir(join(workshop, top, "share", "nvim", "runtime"), {
 					recursive: true,
@@ -1382,7 +1390,7 @@ describe("the Neovim DevHub installs on a host", () => {
 				return {
 					bytes: new Uint8Array(await readFile(archive)),
 					topLevelDirectory: top,
-					verifiedSha256: undefined,
+					verifiedSha256: "0".repeat(64),
 				};
 			},
 		};

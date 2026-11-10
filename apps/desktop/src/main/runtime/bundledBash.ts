@@ -1,6 +1,6 @@
 /**
  * The bash inside DevHub, unpacked into `out/bash` by
- * `scripts/fetch-bash.mjs` at build time — `apps/desktop/out/bash` in a
+ * `scripts/fetch-binaries.mjs` at build time — `apps/desktop/out/bash` in a
  * checkout, `Contents/Resources/app/out/bash` in the packaged app, where
  * packaging signs it (`scripts/package-nightly.py`).
  *
@@ -35,6 +35,6 @@ export function bundledBashMissing(appRoot = APP_ROOT): string {
 	return (
 		`This build of DevHub has no bash (${bundledBashPath(appRoot)} is missing), ` +
 		"and Claude Code is given DevHub's own bash, never one from the PATH. " +
-		"A packaged DevHub carries one; in a checkout, `pnpm --filter @devhub/desktop build:bash` fetches it."
+		"A packaged DevHub carries one; in a checkout, `pnpm --filter @devhub/desktop build:binaries` fetches it."
 	);
 }

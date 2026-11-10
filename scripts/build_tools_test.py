@@ -14,15 +14,75 @@ that does not match.
 from __future__ import annotations
 
 import io
+import json
 import tarfile
 import tempfile
 import unittest
 from pathlib import Path
 
+import build_tools
 from build_tools import TOOLS, check_layout, pack, release_tag, tarball_name, top_level_dir
 from build_tmux import TARGETS
+from product_metadata import PRODUCT
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+class Pins(unittest.TestCase):
+	def test_product_states_the_versions_the_scripts_build(self) -> None:
+		for tool, version in TOOLS.items():
+			with self.subTest(tool=tool):
+				self.assertEqual(PRODUCT[f"{tool}Version"], version)
+
+	def test_every_target_has_a_url_on_the_tools_release(self) -> None:
+		version = build_tools.tools_version()
+		urls = PRODUCT["toolsDownloadUrls"]
+		self.assertEqual(set(urls), set(TARGETS))
+		for target in TARGETS:
+			with self.subTest(target=target):
+				self.assertEqual(
+					urls[target],
+					"https://github.com/statiolake/devhub/releases/download/"
+					f"{release_tag(version)}/{tarball_name(version, target)}",
+				)
+
+	def test_every_target_is_pinned_by_sha256(self) -> None:
+		pins = PRODUCT["toolsDownloadSha256"]
+		self.assertEqual(set(pins), set(TARGETS))
+		for target, digest in pins.items():
+			with self.subTest(target=target):
+				self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+	def test_the_upstream_tools_are_pinned_alike(self) -> None:
+		# What a host needs on every Linux, and Neovim on this Mac too.
+		expected = {
+			"nvim": set(TARGETS),
+			"node": {"linux-x64", "linux-arm64"},
+			"rg": {"linux-x64", "linux-arm64"},
+			"fd": {"linux-x64", "linux-arm64"},
+		}
+		for tool, targets in expected.items():
+			with self.subTest(tool=tool):
+				self.assertTrue(PRODUCT[f"{tool}Version"])
+				self.assertEqual(set(PRODUCT[f"{tool}DownloadUrls"]), targets)
+				self.assertEqual(set(PRODUCT[f"{tool}DownloadSha256"]), targets)
+				for url in PRODUCT[f"{tool}DownloadUrls"].values():
+					self.assertTrue(url.startswith("https://"), url)
+					self.assertIn(PRODUCT[f"{tool}Version"], url)
+					self.assertTrue(url.endswith(".tar.gz"), url)
+
+	def test_rg_and_fd_are_the_static_musl_builds(self) -> None:
+		for tool in ("rg", "fd"):
+			for url in PRODUCT[f"{tool}DownloadUrls"].values():
+				with self.subTest(url=url):
+					self.assertIn("-unknown-linux-musl.tar.gz", url)
+
+	def test_nothing_is_a_template(self) -> None:
+		# The app build reads one URL per platform; a `${...}` left in one would
+		# be a 404 that names no reason.
+		self.assertNotIn("${", json.dumps(PRODUCT))
+		for key in PRODUCT:
+			self.assertFalse(key.endswith("DownloadUrlTemplate"), key)
 
 
 class Names(unittest.TestCase):

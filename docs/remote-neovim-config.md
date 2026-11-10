@@ -30,8 +30,8 @@ loads with `--cmd` stops lazy.nvim from "repairing" the carried tree. Syncs
 run at first connect and on every local change, and send only the units that
 changed. Language servers stay the host's business. DevHub reports what is
 missing on the host instead of failing silently. Host tooling is the same
-argument `runtime/toolDelivery.ts` already makes: "This Mac fetches; the
-host receives". It works on a host with no route to github.com, no
+argument `runtime/toolDelivery.ts` already makes: the app carries it and
+the host receives. It works on a host with no route to github.com, no
 compiler and no `curl`, and those are the hosts that most need it.
 
 ## What the setup actually is

@@ -325,7 +325,7 @@ import {
 	setRuntimeProfile,
 } from "../runtime/registry.js";
 import {
-	ReleaseToolDelivery,
+	bundledHostTool,
 	toolInstallDirectory,
 	type HostTool,
 } from "../runtime/toolDelivery.js";
@@ -4712,7 +4712,7 @@ export class AppController {
 	startNeovimHostWhenIdle(): void {
 		const host = this.neovimHost;
 		// No host (`DEVHUB_NEOVIM_IN_MAIN=1`), or no Neovim on this Mac (a
-		// checkout without `build:nvim`): nothing to start ahead of time; a
+		// checkout without `build:binaries`): nothing to start ahead of time; a
 		// host's Neovim still starts it when it is named.
 		if (host === undefined || bundledNeovim() === undefined) return;
 		shellWindowIfCreated()?.onceShown(() => {
@@ -10216,30 +10216,16 @@ interface IssuePromptHow {
 
 let current: AppController | undefined;
 
-/** One of the tools DevHub installs on a host, from `product.json`'s pins. */
-function hostToolDelivery(
-	tool: HostTool,
-	userDataPath: string,
-): ReleaseToolDelivery {
-	const product = devhubProduct() as unknown as Readonly<
-		Record<string, unknown>
-	>;
-	const text = (key: string) => {
-		const value = product[key];
-		return typeof value === "string" ? value : "";
-	};
-	const pins = product[`${tool}DownloadSha256`];
-	return new ReleaseToolDelivery({
+/**
+ * One of the tools DevHub installs on a host, from the app's own
+ * `out/host-tools` (`scripts/fetch-binaries.mjs`): nothing is downloaded.
+ */
+function hostToolDelivery(tool: HostTool) {
+	return bundledHostTool(
 		tool,
-		version: text(`${tool}Version`),
-		directory: toolInstallDirectory(devhubProduct().serverDataFolderName, tool),
-		urlTemplate: text(`${tool}DownloadUrlTemplate`),
-		sha256:
-			typeof pins === "object" && pins !== null
-				? (pins as Readonly<Record<string, string>>)
-				: {},
-		cacheDirectory: join(userDataPath, tool),
-	});
+		toolInstallDirectory(devhubProduct().serverDataFolderName, tool),
+		join(APP_ROOT, "out", "host-tools"),
+	);
 }
 
 export async function createAppController(
@@ -10258,16 +10244,17 @@ export async function createAppController(
 	setRuntimeProfile({
 		userDataDirectory: userDataPath,
 		home: homedir(),
-		// Where the tmux, the bash and the `devhub` DevHub puts on a host come
-		// from: `product.json`'s pinned releases, and this app's own build.
-		// Facts about the build, not things a person configures — and read
-		// here for the same reason the profile is passed in at all.
-		tmux: hostToolDelivery("tmux", userDataPath),
-		// The bash a host with neither bash nor zsh is given for Claude Code.
-		bash: hostToolDelivery("bash", userDataPath),
-		// The Neovim DevHub draws there: the release this Mac runs from inside
-		// the app (`editor/bundledNeovim.ts`), for that host's platform.
-		nvim: hostToolDelivery("nvim", userDataPath),
+		// Where the tmux, the bash, the Neovim and the `devhub` DevHub puts on
+		// a host come from: the app itself, which carries every Linux
+		// architecture's. Facts about the build, not things a person
+		// configures — and read here for the same reason the profile is
+		// passed in at all.
+		tmux: hostToolDelivery("tmux"),
+		// The bash Claude Code runs in there.
+		bash: hostToolDelivery("bash"),
+		// The Neovim DevHub draws there: the version this Mac runs
+		// (`editor/bundledNeovim.ts`), for that host's platform.
+		nvim: hostToolDelivery("nvim"),
 		// The `devhub` command, from this app's own build of it.
 		devhub: bundledToolDelivery(
 			"devhub",

@@ -1,9 +1,6 @@
 /**
- * The programs DevHub puts on a machine, fetched here and never there.
- *
- * By one mechanism, from two kinds of source — a pinned release
- * (`ReleaseToolDelivery`, below) or the app itself (`BundledToolDelivery`,
- * `bundledTool.ts`):
+ * The programs DevHub puts on a machine it reaches over SSH. Every one comes
+ * from inside the app; none is downloaded at runtime (`docs/bundled-binaries.md`).
  *
  * - **tmux.** DevHub runs every terminal and every Agent inside tmux on the
  *   machine the Workspace lives on, and it runs *its own* tmux there — never
@@ -11,41 +8,42 @@
  *   surface as an Agent whose output is subtly wrong rather than as an error
  *   (`docs/remote-ssh.md`, `scripts/build_tmux.py`).
  * - **bash**, the shell every Claude Agent on the host runs in
- *   (`CLAUDE_CODE_SHELL`), whatever bash or zsh the host has of its own:
- *   DevHub runs only what it carries or delivers (`scripts/build_bash.py`,
- *   `agentShell.ts`, `docs/bundled-binaries.md`).
- * - **devhub**, the `devhub` command a host's panes and Agents run (`cli/`,
- *   Go, `docs/devhub-cli.md`): from inside the app, built with it, so a
- *   host holds the command of the DevHub that connects to it.
+ *   (`CLAUDE_CODE_SHELL`), whatever bash or zsh the host has of its own
+ *   (`scripts/build_bash.py`, `agentShell.ts`).
  * - **nvim**, the Neovim DevHub draws (`docs/neovim-editor.md`, "Which
- *   Neovim"): Neovim's own release archive, the same version this Mac runs
- *   from inside the app.
+ *   Neovim"): Neovim's own release archive, the same version this Mac runs.
+ * - **node, rg, fd**, beside the carried Neovim: Node's official LTS archive
+ *   (language servers run on it), and ripgrep's and fd's static musl builds.
+ * - **devhub**, the `devhub` command (`cli/`, Go, `docs/devhub-cli.md`),
+ *   built with the app (`bundledTool.ts`).
  *
- * "Install it" is not an instruction the owner of such a host can follow, so
- * DevHub publishes tmux and bash as one static tarball per platform on a
- * release of this repository, takes Node and Neovim from their upstream
- * releases, and installs all four the same way, pinned by sha256.
- *
- * **This Mac fetches; the host receives.** The tarball is downloaded here, over
- * this DevHub's own network, and handed to the host as bytes on the stdin of a
- * `tar`. Nothing on the host reaches the internet: a NAS behind a firewall has
- * no route to github.com, half the appliances that need this have no `curl` and
- * the ones that do have a `curl` too old for a modern TLS — and a design where
- * the far end downloads would have to be right about all three. The far end
- * unpacks a stream, which is the one thing every one of them can do.
- *
- * The cache is per-DevHub-profile and keyed on the exact tarball name — which
- * names the tool, the platform and the version — so a second host of the same
- * platform costs no second download, and a version bump fetches beside the old
- * one rather than over it.
+ * **The app carries them; the host receives.** The app build
+ * (`scripts/fetch-binaries.mjs`) downloads every pinned asset for every Linux
+ * architecture, checks its sha256 against `product.json`, and leaves each
+ * tool's tarball, still compressed, in `out/host-tools/<os>-<arch>/`, with
+ * `out/host-tools/manifest.json` naming them. tmux and bash come from
+ * DevHub's own tools release (`scripts/build_tools.py`), and the rest from
+ * upstream. On a host, the tarball is sent as bytes over the connection that
+ * is already open, to the stdin of a `tar`. Neither this Mac nor the host
+ * reaches the internet for it. A NAS behind a firewall has no route to
+ * github.com, and DevHub on a laptop with no network still connects to the
+ * host on the next desk.
  */
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-/** What DevHub delivers. The name is the binary's and the tarball's. */
-export type HostTool = "tmux" | "bash" | "nvim" | "devhub";
+/** What DevHub delivers. The name is the binary's. */
+export type HostTool =
+	| "tmux"
+	| "bash"
+	| "nvim"
+	| "devhub"
+	| "node"
+	| "rg"
+	| "fd";
 
 /** Where one tool comes from, as far as a `Runtime` is concerned. */
 export interface ToolDelivery {
@@ -55,13 +53,12 @@ export interface ToolDelivery {
 	/**
 	 * Where the version directories go, relative to the host's `$HOME`.
 	 *
-	 * `.devhub-server/<tool>` — beside the remote extension host, under the
-	 * same `serverDataFolderName`, and versioned for the same reason the server
-	 * is keyed on a commit: two DevHubs of different ages on one host each find
+	 * `.devhub-server/<tool>` — under the `serverDataFolderName`, and
+	 * versioned so that two DevHubs of different ages on one host each find
 	 * their own and neither disturbs the other.
 	 */
 	readonly directory: string;
-	/** The tarball for one `<os>-<arch>`, from the cache or from the release. */
+	/** The tarball for one `<os>-<arch>`, from inside the app. */
 	tarball(platform: string): Promise<ToolTarball>;
 }
 
@@ -74,84 +71,17 @@ export interface ToolTarball {
 	 */
 	readonly format?: "binary";
 	/**
-	 * The single directory inside the archive.
-	 *
-	 * The build names it after the tool and the platform and nothing else, so
-	 * the unpack can move that one directory into place rather than needing
-	 * `tar --strip-components`, which is not in every host's `tar`.
+	 * The single directory inside the archive, which the install moves into
+	 * place: no `tar --strip-components`, which is not in every host's `tar`.
 	 */
 	readonly topLevelDirectory: string;
-	/** `undefined` when this build states no digest for this platform. */
-	readonly verifiedSha256: string | undefined;
-}
-
-export interface ReleaseToolDeliveryOptions {
-	readonly tool: HostTool;
-	readonly version: string;
-	/** `toolInstallDirectory(serverDataFolderName, tool)`. */
-	readonly directory: string;
-	/** `product.json`'s `<tool>DownloadUrlTemplate`. */
-	readonly urlTemplate: string;
-	/**
-	 * The digest of each platform's tarball, by `<os>-<arch>`
-	 * (`product.json`'s `<tool>DownloadSha256`).
-	 *
-	 * A platform named here is a platform whose bytes must match, and a download
-	 * that does not is thrown away rather than installed. A platform *not* named
-	 * here is fetched over HTTPS from a release tag that never moves, and the
-	 * fact that it was taken unpinned is carried on the tarball and said in the
-	 * log — the release lane fills this in, and until it has, "no digest was
-	 * stated" is a thing to be able to read rather than a thing to guess about.
-	 */
-	readonly sha256: Readonly<Record<string, string>>;
-	/** Where fetched tarballs are kept, under this DevHub profile's own data. */
-	readonly cacheDirectory: string;
-	/** For tests: how the bytes are fetched. */
-	readonly fetchBytes?: (url: string) => Promise<Uint8Array>;
-}
-
-/**
- * The names a URL template takes, substituted here and nowhere else:
- * `${<tool>Version}` (`${tmuxVersion}`, `${bashVersion}`), `${os}`, `${arch}`,
- * and `${nvimPlatform}`, the platform as Neovim's release spells it
- * (`neovimReleasePlatform`).
- *
- * `${version}` and `${commit}` mean VS Code's version and commit in VS Code's
- * own `serverDownloadUrlTemplate`, so these templates deliberately do not
- * reuse them: one name, one meaning, across one `product.json`.
- */
-export function toolDownloadUrl(
-	template: string,
-	tool: HostTool,
-	platform: string,
-	version: string,
-): string {
-	const [os = "", arch = ""] = platform.split("-");
-	return template
-		.replaceAll(`\${${tool}Version}`, version)
-		.replaceAll("${os}", os)
-		.replaceAll("${arch}", arch)
-		.replaceAll("${nvimPlatform}", neovimReleasePlatform(platform));
-}
-
-/**
- * A platform as Neovim's release archives name it: `linux-x64` is
- * `linux-x86_64`, `darwin-arm64` is `macos-arm64` (`nvim-<this>.tar.gz`, whose
- * one directory is `nvim-<this>`).
- */
-export function neovimReleasePlatform(platform: string): string {
-	const [os = "", arch = ""] = platform.split("-");
-	return `${os === "darwin" ? "macos" : os}-${arch === "x64" ? "x86_64" : arch}`;
+	/** The digest the bytes were checked against. */
+	readonly verifiedSha256: string;
 }
 
 /**
  * Where a tool's version directories go on a machine, relative to its
- * `$HOME`.
- *
- * Beside the remote extension host, under the same `serverDataFolderName`, and
- * one statement of it: the runtime reads it off the delivery it was given
- * rather than knowing it, so there is no second copy to be right about when
- * `product.json` says something else.
+ * `$HOME`. One statement of it: the runtime reads it off the delivery.
  */
 export function toolInstallDirectory(
 	serverDataFolderName: string,
@@ -161,26 +91,13 @@ export function toolInstallDirectory(
 }
 
 /**
- * The single directory inside a tool's tarball for one platform: DevHub's
- * own builds name it after the tool and the platform, and Neovim's names it
- * after its own spelling of the platform.
+ * Where the binary is inside its version directory: `bin/<tool>`, except
+ * ripgrep's and fd's archives, which put it at the top. The app build
+ * checks every bundled tarball has it there (`fetch-binaries.mjs`, the
+ * manifest's `binary`).
  */
-export function toolTopLevelDirectory(
-	tool: HostTool,
-	platform: string,
-	_version: string,
-): string {
-	if (tool === "nvim") return `nvim-${neovimReleasePlatform(platform)}`;
-	return `devhub-${tool}-${platform}`;
-}
-
-/** The name a platform's tarball has, on the release and in the cache. */
-export function toolTarballName(
-	tool: HostTool,
-	platform: string,
-	version: string,
-): string {
-	return `devhub-${tool}-${platform}-${version}.tar.gz`;
+export function toolBinaryPath(tool: HostTool): string {
+	return tool === "rg" || tool === "fd" ? tool : `bin/${tool}`;
 }
 
 /**
@@ -202,128 +119,99 @@ export function toolVersionArgument(tool: HostTool): string {
 	}
 }
 
-export class ReleaseToolDelivery implements ToolDelivery {
+/** `out/host-tools/manifest.json`, as `fetch-binaries.mjs` writes it. */
+export interface HostToolsManifest {
+	readonly tools: Readonly<
+		Partial<
+			Record<
+				HostTool,
+				{
+					readonly version: string;
+					readonly binary: string;
+					readonly platforms: Readonly<
+						Record<
+							string,
+							{
+								readonly file: string;
+								readonly sha256: string;
+								readonly topLevelDirectory: string;
+							}
+						>
+					>;
+				}
+			>
+		>
+	>;
+}
+
+/**
+ * One tool from the app's `out/host-tools`.
+ *
+ * `root` is that directory. A build without it (no `manifest.json`) still
+ * makes a delivery, whose every `tarball` names the build step: a runtime is
+ * made for every host whether or not it ever asks.
+ */
+export class BundledArchiveDelivery implements ToolDelivery {
 	readonly tool: HostTool;
 	readonly version: string;
 	readonly directory: string;
-	readonly #options: ReleaseToolDeliveryOptions;
-	readonly #fetching = new Map<string, Promise<ToolTarball>>();
+	readonly #root: string;
+	readonly #entry: HostToolsManifest["tools"][HostTool];
+	readonly #missing: string | undefined;
 
-	constructor(options: ReleaseToolDeliveryOptions) {
-		this.tool = options.tool;
-		this.version = options.version;
-		this.directory = options.directory;
-		this.#options = options;
+	constructor(tool: HostTool, directory: string, root: string) {
+		this.tool = tool;
+		this.directory = directory;
+		this.#root = root;
+		const path = join(root, "manifest.json");
+		let manifest: HostToolsManifest | undefined;
+		try {
+			manifest = JSON.parse(readFileSync(path, "utf8")) as HostToolsManifest;
+		} catch {
+			manifest = undefined;
+		}
+		this.#entry = manifest?.tools[tool];
+		this.version = this.#entry?.version ?? "";
+		this.#missing =
+			manifest === undefined
+				? `${path} is not there, so no machine can be given DevHub's ${tool}. ` +
+					"It is produced by `pnpm --filter @devhub/desktop build:binaries`."
+				: this.#entry === undefined
+					? `this build of DevHub bundles no ${tool} for SSH hosts (${path})`
+					: undefined;
 	}
 
-	/**
-	 * One download per platform per DevHub start, however many hosts ask.
-	 *
-	 * The promise is cached and not the bytes, because two hosts of the same
-	 * platform coming up together must produce one download rather than two
-	 * that race onto the same cache file.
-	 */
-	tarball(platform: string): Promise<ToolTarball> {
-		const existing = this.#fetching.get(platform);
-		if (existing) return existing;
-		const pending = this.#obtain(platform);
-		// A download that failed must be tried again by the next host to ask:
-		// a rejected promise left here would answer every later ask with the
-		// failure of the first one.
-		pending.catch(() => {
-			if (this.#fetching.get(platform) === pending) {
-				this.#fetching.delete(platform);
-			}
-		});
-		this.#fetching.set(platform, pending);
-		return pending;
-	}
-
-	async #obtain(platform: string): Promise<ToolTarball> {
-		if (this.version === "" || this.#options.urlTemplate === "") {
-			// A build whose `product.json` states nothing for this tool: there is
-			// no URL to fetch, and a request for `devhub--linux-x64-.tar.gz` would
-			// arrive as a 404 that says nothing about why.
+	async tarball(platform: string): Promise<ToolTarball> {
+		if (this.#missing !== undefined) throw new Error(this.#missing);
+		const bundled = this.#entry?.platforms[platform];
+		if (bundled === undefined) {
 			throw new Error(
-				`this build of DevHub states no ${this.tool} release to install ` +
-					`(product.json has no ${this.tool}Version or ` +
-					`${this.tool}DownloadUrlTemplate)`,
+				`this build of DevHub bundles ${this.tool} for ` +
+					`${Object.keys(this.#entry?.platforms ?? {}).join(", ")}, not ${platform}`,
 			);
 		}
-		const pinned = this.#options.sha256[platform];
-		const cached = join(
-			this.#options.cacheDirectory,
-			toolTarballName(this.tool, platform, this.version),
-		);
-		const fromCache = await readFile(cached).catch(() => undefined);
-		if (fromCache !== undefined && matches(fromCache, pinned)) {
-			return this.#tarballOf(platform, fromCache, pinned);
-		}
-		const url = toolDownloadUrl(
-			this.#options.urlTemplate,
-			this.tool,
-			platform,
-			this.version,
-		);
-		const fetchBytes = this.#options.fetchBytes ?? downloadBytes;
-		const bytes = await fetchBytes(url);
-		if (!matches(bytes, pinned)) {
+		const path = join(this.#root, bundled.file);
+		const bytes = new Uint8Array(await readFile(path));
+		const digest = createHash("sha256").update(bytes).digest("hex");
+		if (digest !== bundled.sha256) {
 			throw new Error(
-				`the ${this.tool} ${this.version} tarball for ${platform} downloaded ` +
-					`from ${url} is not what this build of DevHub is pinned to: it ` +
-					`hashes to ${sha256Of(bytes)} and the pin says ${String(pinned)}`,
+				`${path} hashes to ${digest}, and the build pinned ${bundled.sha256}: ` +
+					"the app's own copy is damaged",
 			);
 		}
-		// Written under a temporary name and renamed, so a download interrupted
-		// half way through is not a cache entry the next start reads as whole.
-		await mkdir(this.#options.cacheDirectory, { recursive: true, mode: 0o700 });
-		const partial = `${cached}.part`;
-		await writeFile(partial, bytes, { mode: 0o600 });
-		await rename(partial, cached);
-		return this.#tarballOf(platform, bytes, pinned);
-	}
-
-	#tarballOf(
-		platform: string,
-		bytes: Uint8Array,
-		pinned: string | undefined,
-	): ToolTarball {
 		return {
-			// A plain `Uint8Array` whichever way it arrived: `readFile` gives a
-			// `Buffer` and `fetch` does not, and a caller that could be handed
-			// either is a caller that will one day be right about only one.
-			bytes: new Uint8Array(bytes),
-			topLevelDirectory: toolTopLevelDirectory(
-				this.tool,
-				platform,
-				this.version,
-			),
-			verifiedSha256: pinned,
+			bytes,
+			topLevelDirectory: bundled.topLevelDirectory,
+			verifiedSha256: bundled.sha256,
 		};
 	}
 }
 
-function matches(bytes: Uint8Array, pinned: string | undefined): boolean {
-	return pinned === undefined || sha256Of(bytes) === pinned;
-}
-
-function sha256Of(bytes: Uint8Array): string {
-	return createHash("sha256").update(bytes).digest("hex");
-}
-
-/**
- * The bytes of one release asset.
- *
- * A release asset URL on github.com answers with a redirect to object storage,
- * which `fetch` follows by default — the one behaviour this depends on, said
- * here so that a change to it is a change to a line rather than a mystery.
- */
-async function downloadBytes(url: string): Promise<Uint8Array> {
-	const response = await fetch(url);
-	if (!response.ok) {
-		throw new Error(
-			`${url} answered ${String(response.status)} ${response.statusText}`,
-		);
-	}
-	return new Uint8Array(await response.arrayBuffer());
+/** For `setRuntimeProfile`: a tool from `out/host-tools`. */
+export function bundledHostTool(
+	tool: HostTool,
+	directory: string,
+	root: string,
+): ToolDelivery {
+	return new BundledArchiveDelivery(tool, directory, root);
 }
