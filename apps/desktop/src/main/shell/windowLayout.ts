@@ -221,6 +221,16 @@ export interface LayoutState {
 	 * keys (docs/process-model.md, phase 6).
 	 */
 	readonly conversation?: "whole" | "beside-board";
+	/**
+	 * The Agents page has something open over the whole of its view — a
+	 * picture or page from the Orchestrator's board opened large
+	 * (`shell/conversation/Lightbox.tsx`). Its view is then above every
+	 * other child of the content area: the conversation laid right of the
+	 * board is a view of its own, stacked over the Agents view, and the
+	 * picture would otherwise open under it. The page's to say, like the
+	 * floating Sidebar; absent is nothing open.
+	 */
+	readonly agentsOverlay?: boolean;
 }
 
 export interface LayoutInput {
@@ -924,6 +934,10 @@ function layer(
  * exception is compact mode's floating Sidebar (`state.sidebar.overlay`),
  * which is over the content by definition — so for as long as it floats the
  * Sidebar is moved from the bottom of the stack to just under the layers.
+ * The other is the Agents view while it has something open over it
+ * (`state.agentsOverlay`): a picture opened large from the board belongs
+ * above the conversation beside the board, so for as long as it is open the
+ * Agents view is moved to just under the layers too.
  */
 export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	const { windowSize, state } = input;
@@ -981,11 +995,13 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	// always sized; the one with the Agent on screen is drawn — and both for
 	// the Orchestrator with a GUI Agent, the conversation right of the board
 	// and so above the Agents view.
-	children.push({
+	const agents: LayoutChild = {
 		identity: { kind: "agents" },
 		rect: agentsRect(windowSize, state),
 		visible: agentsVisible(state) && state.conversation !== "whole",
-	});
+	};
+	const agentsOver = state.agentsOverlay === true && agents.visible;
+	if (!agentsOver) children.push(agents);
 	children.push({
 		identity: { kind: "conversations" },
 		rect: conversationsRect(windowSize, state),
@@ -1012,6 +1028,9 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	// floating means, and under every layer, because a notice, a question and
 	// a tooltip are above everything that is the window's own.
 	if (overlay) children.push(sidebar);
+	// The Agents view holding a picture opened large: over everything that is
+	// the window's own, the floating Sidebar included, and under the layers.
+	if (agentsOver) children.push(agents);
 	children.push(
 		layer(
 			{ kind: "toasts" },

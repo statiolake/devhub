@@ -9,6 +9,11 @@
  * overlay to pan, and a click again fits it. A page is the same sandboxed
  * frame, large; a deck is the slide viewer, large, ←/→ still flipping.
  *
+ * It is above everything in the window's content area: in its own page over
+ * the whole view, and — where another view is laid over this page's, as the
+ * conversation beside the Orchestrator's board is — with this page's view
+ * stacked over that one while it is open (`lightboxLayer.ts`).
+ *
  * Esc, the close button or a click outside the content closes it, and the
  * focus goes back where it was. It arrives the way a popover does (a fade
  * and a small scale, `conversation-popover-in` on the motion tokens), and
@@ -24,6 +29,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { CloseIcon } from "./icons";
+import { lightboxOpened } from "./lightboxLayer";
 
 export function Lightbox({
   label,
@@ -39,6 +45,9 @@ export function Lightbox({
   readonly children: ReactNode;
 }) {
   const dialog = useRef<HTMLDivElement>(null);
+  // Its view goes over any view laid over this page while it is open
+  // (`lightboxLayer.ts`).
+  useEffect(() => lightboxOpened(), []);
   useEffect(() => {
     const before = document.activeElement;
     dialog.current?.focus();

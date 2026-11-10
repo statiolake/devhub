@@ -25,6 +25,7 @@ import {
 	openExternalUrl,
 	openModal,
 	orchestratorBoardBridge,
+	previewLayout,
 	pageBridge,
 	projectionBridge,
 	repositoryStatusBridge,
@@ -42,6 +43,7 @@ const api: AgentsBridge = {
 	...repositoryStatusBridge(),
 	...agentActionsBridge(),
 	...orchestratorBoardBridge(),
+	previewLayout,
 	answerEscalation: (id: number, markdown: string) =>
 		ipcRenderer.invoke(
 			CHANNELS.answerEscalation,

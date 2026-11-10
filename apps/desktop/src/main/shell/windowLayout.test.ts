@@ -298,7 +298,7 @@ describe("where the keyboard goes", () => {
 describe("a GUI Agent's conversation, in a view of its own", () => {
 	const child = (
 		children: ReturnType<typeof windowLayout>,
-		kind: "agents" | "conversations",
+		kind: "agents" | "conversations" | "toasts" | "picker" | "tooltip",
 	) => children.find((one) => one.identity.kind === kind)!;
 
 	it("is drawn over the Agents' rectangle in place of the Agents view, and has the keys", () => {
@@ -361,6 +361,50 @@ describe("a GUI Agent's conversation, in a view of its own", () => {
 			children.indexOf(agents),
 		);
 		expect(keyboardChild(board)).toEqual({ kind: "conversations" });
+	});
+
+	it("goes under the board's view while a picture is open large over it, and only then", () => {
+		const open = windowLayout(
+			input({
+				state: state({
+					surface: { kind: "agent" },
+					keyboard: "agents",
+					conversation: "beside-board",
+					agentsOverlay: true,
+				}),
+			}),
+		);
+		const agents = child(open, "agents");
+		const conversations = child(open, "conversations");
+		// The board's page, whole, over the conversation it is beside, and
+		// still under every layer.
+		expect(agents.visible).toBe(true);
+		expect(conversations.visible).toBe(true);
+		expect(open.indexOf(agents)).toBeGreaterThan(open.indexOf(conversations));
+		for (const layer of ["toasts", "picker", "tooltip"] as const) {
+			expect(open.indexOf(child(open, layer))).toBeGreaterThan(
+				open.indexOf(agents),
+			);
+		}
+		expect(agents.rect.x).toBeLessThan(conversations.rect.x);
+		expect(agents.rect.x + agents.rect.width).toBe(
+			conversations.rect.x + conversations.rect.width,
+		);
+		// A conversation over the whole area hides the Agents view, and a
+		// picture said to be open on a page not drawn lifts nothing.
+		const whole = windowLayout(
+			input({
+				state: state({
+					surface: { kind: "agent" },
+					conversation: "whole",
+					agentsOverlay: true,
+				}),
+			}),
+		);
+		expect(child(whole, "agents").visible).toBe(false);
+		expect(whole.indexOf(child(whole, "conversations"))).toBeGreaterThan(
+			whole.indexOf(child(whole, "agents")),
+		);
 	});
 
 	it("says the board's width as its stylesheet does: 46%, never under 380 or over 720", () => {

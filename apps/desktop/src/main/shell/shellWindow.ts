@@ -776,6 +776,17 @@ export class ShellWindow {
 		contents.on("render-process-gone", restarted);
 	}
 
+	/**
+	 * The same for the Agents page: a picture it had open large, with its
+	 * view stacked over the conversation for it, went with the page.
+	 */
+	onAgentsRestarted(restarted: () => void): void {
+		const contents = this.agents.contents();
+		if (!contents) return;
+		contents.on("did-start-loading", restarted);
+		contents.on("render-process-gone", restarted);
+	}
+
 	//#endregion
 
 	/**

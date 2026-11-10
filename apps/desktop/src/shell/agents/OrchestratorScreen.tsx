@@ -45,6 +45,7 @@ import { historyDirectionOfButton } from "../historyButtons";
 import { useGlide } from "../glide";
 import { focusIsOurs, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
+import { listenForLightboxes } from "../conversation/lightboxLayer";
 import { FilesPage } from "./OrchestratorFiles";
 import { EventsSwitch } from "./OrchestratorDelivery";
 import { GitHubPill } from "./OrchestratorGitHub";
@@ -128,6 +129,19 @@ export function OrchestratorBoard({
   useEffect(() => {
     reportOrchestratorView(true);
   }, []);
+  // A picture opened large from the board goes over the conversation beside
+  // it, which is a view of its own above this page's (`lightboxLayer.ts`).
+  const failed = useRef(reportFailure);
+  failed.current = reportFailure;
+  useEffect(
+    () =>
+      listenForLightboxes((open) => {
+        void devhub()
+          .previewLayout({ agentsOverlay: open })
+          .catch((error: unknown) => failed.current(error));
+      }),
+    [],
+  );
   // A `devhub:escalation` link, followed: it is read on the board.
   useEscalationRequests(() => {
     choose("board");

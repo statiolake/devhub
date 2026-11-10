@@ -177,6 +177,18 @@ draws the board in the left part of its own rectangle beside the orchestrator
 agent's pane from the same pool — so it adds no view, no z-order and no
 keyboard rule. See [`orchestrator.md`](orchestrator.md).
 
+A GUI orchestrator is the one exception: its conversation is the
+Conversations page's, laid right of the board and so above the Agents view
+(`conversation: "beside-board"`). A picture, page or deck opened large from
+the board (`Lightbox.tsx`) is drawn in the Agents page over its whole view,
+and would open under that conversation, which no z-index inside a page can
+lift it over. So while one is open the board tells main
+(`previewLayout({ agentsOverlay })`, `shell/conversation/lightboxLayer.ts`)
+and the Agents view is moved to just under the layers, as the floating
+Sidebar is; the page is transparent where it draws nothing, so the
+conversation shows through its scrim. A reload of the page ends it. The
+Conversations page needs nothing of the kind: no view is laid over it.
+
 **The Orchestrator row is also a Workspace's row**, in the Sidebar, the way
 Scratch's row is Scratch's Workspace's: the orchestrator's folder is not
 drawn as an ordinary row (`sidebarWorkspaces` hands it out as `orchestrator`,

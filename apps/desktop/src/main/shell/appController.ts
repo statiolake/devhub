@@ -989,6 +989,12 @@ export class AppController {
 			this.sidebarOverlay = false;
 			this.publishLayoutState();
 		});
+		// The same for the Agents page and what it had open large.
+		shellWindow().onAgentsRestarted(() => {
+			if (!this.agentsOverlay) return;
+			this.agentsOverlay = false;
+			this.publishLayoutState();
+		});
 		// Loaded before any page exists, so a file that would not read is said
 		// with the other startup failures. Pruned to the Agents the model has:
 		// a draft goes when its Agent does.
@@ -4499,6 +4505,7 @@ export class AppController {
 				keyboard,
 				...(terminal === undefined ? {} : { terminal }),
 				...(conversation === undefined ? {} : { conversation }),
+				...(this.agentsOverlay ? { agentsOverlay: true } : {}),
 			},
 			{ live },
 		);
@@ -4563,6 +4570,12 @@ export class AppController {
 	 * preview, and for the same reason: see `LayoutPreviewWire.sidebarOverlay`.
 	 */
 	private sidebarOverlay = false;
+	/**
+	 * Whether the Agents page has a picture opened large over its view, which
+	 * then goes over the conversation beside the board. The page's to say:
+	 * see `LayoutPreviewWire.agentsOverlay`.
+	 */
+	private agentsOverlay = false;
 	private splitRatioPreview: number | undefined;
 	/** The divider between the Agent and its terminal, being dragged. */
 	private terminalSharePreview: number | undefined;
@@ -9947,6 +9960,9 @@ export class AppController {
 			}
 			if (preview.sidebarOverlay !== undefined) {
 				this.sidebarOverlay = preview.sidebarOverlay === true;
+			}
+			if (preview.agentsOverlay !== undefined) {
+				this.agentsOverlay = preview.agentsOverlay === true;
 			}
 			if (preview.splitRatio !== undefined) {
 				this.splitRatioPreview = preview.splitRatio ?? undefined;

@@ -929,6 +929,13 @@ export interface LayoutPreviewWire {
 	 * it. See `windowLayout.sidebarRect` and `useSidebarOverlay.ts`.
 	 */
 	readonly sidebarOverlay?: boolean | null;
+	/**
+	 * The Agents page has a picture or page from the Orchestrator's board
+	 * open large over its whole view: its view goes over the conversation
+	 * beside the board while it lasts. `false` or `null` ends it. See
+	 * `LayoutState.agentsOverlay`.
+	 */
+	readonly agentsOverlay?: boolean | null;
 }
 
 /**
@@ -1792,6 +1799,11 @@ export interface AgentsBridge
 		EscalationEmbedsBridge {
 	/** Put a modal on screen — an injection to review. */
 	openModal(request: ModalRequest): Promise<string>;
+	/**
+	 * Something opened large over the page (`agentsOverlay`), so main stacks
+	 * this view above the conversation beside the board while it is open.
+	 */
+	previewLayout(preview: LayoutPreviewWire): Promise<void>;
 	openExternalUrl(url: string): Promise<void>;
 	/**
 	 * Put text on the Mac's clipboard.

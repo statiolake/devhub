@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ConversationActionsProvider } from "./ConversationContext";
 import { Markdown } from "./Markdown";
 import { fakeActions } from "./surfaceTestKit";
+import { listenForLightboxes } from "./lightboxLayer";
 
 afterEach(cleanup);
 
@@ -44,6 +45,23 @@ describe("a drawing opened large", () => {
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(enlarge).toHaveFocus();
+  });
+
+  it("tells the page's listener while it is open, so its view goes over any view laid over it", () => {
+    const told: boolean[] = [];
+    const stop = listenForLightboxes((open) => told.push(open));
+    draw(SVG);
+    const enlarge = screen.getByRole("button", { name: "Enlarge" });
+    enlarge.focus();
+    fireEvent.click(enlarge);
+    expect(told).toEqual([true]);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(told).toEqual([true, false]);
+    // Esc closed it, and the keyboard is back where it was.
+    expect(enlarge).toHaveFocus();
+    stop();
+    fireEvent.click(enlarge);
+    expect(told).toEqual([true, false]);
   });
 
   it("opens from the header's button, and closes outside or on Close", () => {
