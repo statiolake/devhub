@@ -34,6 +34,7 @@ import { CHANNELS } from "../../ipc/contract.js";
 import { taskSnapshotText } from "../diagnostics/taskTree.js";
 import { SHELL_ORIGIN } from "./shellPageProtocol.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
+import { menuBarOptions } from "./menuBar.js";
 
 export interface TaskManagerHost {
 	readonly preloadPath: string;
@@ -84,6 +85,7 @@ export function openTaskManagerWindow(): void {
 		minHeight: 320,
 		title: WINDOW_TITLES.taskManager,
 		titleBarStyle: "hiddenInset",
+		...menuBarOptions(),
 		backgroundColor: shellThemeIfInstalled()?.palette().canvas,
 		show: false,
 		webPreferences: {

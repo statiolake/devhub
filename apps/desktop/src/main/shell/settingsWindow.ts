@@ -49,6 +49,7 @@ import type { RunningSettings } from "./runningSettings.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
 import { DEFAULT_ORCHESTRATOR_ROOT } from "../../model/orchestratorSettings.js";
 import type { ShellPalette } from "../../ipc/palette.js";
+import { menuBarOptions } from "./menuBar.js";
 
 /** Where the log folder button opens, given the app's user-data directory. */
 export { logDirectoryFor } from "../diagnostics/mainLog.js";
@@ -146,6 +147,7 @@ export function openSettingsWindow(): void {
 		minHeight: 540,
 		title: WINDOW_TITLES.settings,
 		titleBarStyle: "hiddenInset",
+		...menuBarOptions(),
 		// The ground the page paints (`windowBackground.css`), so a reload or
 		// a resize the page has not caught up with shows the theme's colour
 		// rather than Electron's white. Kept in step by

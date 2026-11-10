@@ -1049,6 +1049,14 @@ The band is the same in both chromes: with `shown` it is the bar, with `hidden`
 the Sidebar's view starts under it and `.window-drag-strip` fills it. Full
 screen changes nothing here; macOS hides the lights and the bar stays drawn.
 
+On Linux a window also carries Electron's menu bar, which GTK paints in its
+own theme's colours whatever DevHub's appearance is (a white bar over a Dark
+window; `nativeTheme.themeSource` does not reach it). So the main, Settings
+and Task Manager windows hide it until Alt is pressed (`autoHideMenuBar`,
+`main/shell/menuBar.ts`): the keyboard still reaches every menu, and every
+command in it is in the command palette as well. macOS has no bar in the
+window, and nothing is set there.
+
 ## What it costs
 
 One main process and one renderer per page (Settings and the Task Manager

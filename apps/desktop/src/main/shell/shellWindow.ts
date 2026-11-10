@@ -47,6 +47,7 @@ import {
 } from "../../ipc/contract.js";
 import { WINDOW_TITLES, type ShellWindowKind } from "../../ipc/windowTitles.js";
 import { ChromeView } from "./chromeView.js";
+import { menuBarOptions } from "./menuBar.js";
 import { supervisePage } from "./pageRecovery.js";
 import { PickerView } from "./pickerView.js";
 import { ToastsView } from "./toastsView.js";
@@ -120,6 +121,7 @@ export function shellWindowOptions(
 		minHeight: 480,
 		title: WINDOW_TITLES.shell,
 		titleBarStyle: "hiddenInset",
+		...menuBarOptions(),
 		trafficLightPosition: trafficLightPosition(),
 		// The window's material and its background are the same decision as
 		// the page's `data-window-material`, made in the same breath: a shell
