@@ -937,7 +937,7 @@ end, { desc = "Open DevHub's GUI-window demo beside the current window" })
 M.demo_html = [==[
 <!doctype html><meta charset="utf-8"><style>
 body{font:13px -apple-system,system-ui,sans-serif;margin:0;padding:12px;color:var(--fg,#ddd);background:transparent}
-h1{font-size:13px;margin:0 0 8px;opacity:.7;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+h1{font-size:13px;margin:0 0 8px;opacity:.7;font-weight:600}
 button{display:block;width:100%;text-align:left;border:0;border-radius:6px;padding:5px 8px;margin:1px 0;
   background:transparent;color:inherit;font:inherit;cursor:pointer}
 button:hover,[data-devhub-focus]{background:rgba(127,127,127,.18)}
@@ -951,7 +951,7 @@ input:focus{outline:none;border-color:var(--devhub-ring,currentColor)}
 <div class="bar"><button id="top">gg</button><button id="bottom">G</button><button id="write">:write</button></div>
 <input id="filter" placeholder="Filter" aria-label="Filter">
 <div id="items"></div>
-<p class="hint">j/k move · &lt;CR&gt; runs · i types in Filter, &lt;Esc&gt; leaves · X clears it</p><script>
+<p class="hint">j/k move · ↩ runs · i types in Filter, ⎋ leaves · X clears it</p><script>
 const $ = (id) => document.getElementById(id);
 $("top").onclick = () => devhub.send({kind:"command", command:"wincmd p | normal! gg"});
 $("bottom").onclick = () => devhub.send({kind:"command", command:"wincmd p | normal! G"});
