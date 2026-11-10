@@ -439,8 +439,8 @@ all the shape says. What state an agent is in is its mark alone (the status
 mark), and what a chip leads to is its glyph (a folder for a Workspace).
 
 待機中 and 完了 fold: the chevron on the left of the heading shows or hides the
-lane's cards, with the count kept in the heading. 完了 starts folded; what was
-folded is kept for the session (`orchestratorMemory.ts`).
+lane's cards, with the count kept in the heading. Both start folded, as in
+the sidebar; what was folded is kept for the session (`orchestratorMemory.ts`).
 
 Clicking a card opens it in place: the whole thread, drawn by the GUI
 conversation's own Markdown renderer (code, tables, KaTeX math, Mermaid, SVG,

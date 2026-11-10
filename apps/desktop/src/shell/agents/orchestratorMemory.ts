@@ -30,7 +30,7 @@ export interface ThreadScroll {
 
 export interface OrchestratorMemory {
   tab: BoardTab | undefined;
-  /** The lanes folded shut: 待機中 and 完了 fold; 完了 starts shut. */
+  /** The lanes folded shut: 待機中 and 完了 fold, and both start shut. */
   folded: { waiting: boolean; closed: boolean };
   /** The escalation open over the board, and whether it was closed then. */
   escalation: { readonly id: number; readonly closed: boolean } | undefined;
@@ -46,7 +46,7 @@ export interface OrchestratorMemory {
 function fresh(): OrchestratorMemory {
   return {
     tab: undefined,
-    folded: { waiting: false, closed: true },
+    folded: { waiting: true, closed: true },
     escalation: undefined,
     file: undefined,
     expanded: [],

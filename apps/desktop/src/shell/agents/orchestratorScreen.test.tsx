@@ -222,7 +222,7 @@ describe("folding lanes", () => {
     closed: { at: NOW },
   };
 
-  it("puts 完了 under 待機中, folded at first; both fold and unfold", () => {
+  it("puts 完了 under 待機中, both folded at first; both fold and unfold", () => {
     mount({ ...BOARD, closed: [DONE] });
     const regions = screen
       .getAllByRole("region")
@@ -241,7 +241,13 @@ describe("folding lanes", () => {
     expect(done).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("終わった件")).toBeVisible();
     const waiting = screen.getByRole("button", { name: /待機中/u });
+    expect(waiting).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("条件を待っているものはありません。")).toBeNull();
+    fireEvent.click(waiting);
     expect(waiting).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByText("条件を待っているものはありません。"),
+    ).toBeVisible();
     fireEvent.click(waiting);
     expect(waiting).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("条件を待っているものはありません。")).toBeNull();
@@ -509,6 +515,8 @@ describe("待機中", () => {
         waiting(6, "Bob から Slack で返事が来たら"),
       ],
     });
+    // 待機中 starts folded: open it.
+    fireEvent.click(screen.getByRole("button", { name: /待機中/u }));
     const lane = screen.getByRole("region", { name: "待機中" });
     const [first, second] = [
       ...lane.querySelectorAll<HTMLElement>(".orchestrator-card"),
