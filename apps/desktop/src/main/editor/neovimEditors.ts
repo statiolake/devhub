@@ -95,6 +95,19 @@ function sendEvent(page: NeovimPage, event: NeovimPageEvent): void {
 
 export class NeovimEditors {
 	private readonly attached = new Map<string, Attached>();
+	/**
+	 * Attaches main started for a page before it asked (`preattach`), by
+	 * key: the page's own attach joins one rather than attaching again.
+	 */
+	private readonly early = new Map<
+		string,
+		{
+			readonly page: NeovimPage;
+			readonly cols: number;
+			readonly rows: number;
+			readonly reply: Promise<NeovimAttachReply>;
+		}
+	>();
 	private readonly buffers = new Map<string, string>();
 	/** The pages whose end lets go of their UIs (`release`). */
 	private readonly watched = new WeakSet<NeovimPage>();
@@ -145,7 +158,35 @@ export class NeovimEditors {
 		if (entry === undefined || entry.hosted !== hosted) return;
 		this.attached.delete(key);
 		this.buffers.delete(key);
+		this.early.delete(key);
 		this.options.overlays.ended(key);
+	}
+
+	/**
+	 * Attach `page` as the UI of the overlay `request` names now, before the
+	 * page has mounted it: main learnt of the pane's Neovim from tmux
+	 * (`TerminalNeovims.paneSocket`) and knows the pane's size, so Neovim's
+	 * startup — its `--embed` wait, then the person's config — runs while
+	 * the page mounts the surface instead of after. What it draws waits in
+	 * the page for the surface (`preload/neovimApi.ts`), and the page's own
+	 * attach, at its own size, joins this one (`attach`); a size that differs
+	 * is a resize then, as any change of the pane's is.
+	 */
+	preattach(page: NeovimPage, request: NeovimAttachRequest): void {
+		const key = request.workspaceId;
+		if (page.isDestroyed() || this.early.has(key) || this.attached.has(key))
+			return;
+		const reply = this.attach(page, request);
+		this.early.set(key, {
+			page,
+			cols: request.cols,
+			rows: request.rows,
+			reply,
+		});
+		void reply.then((answer) => {
+			if (!answer.ok && this.early.get(key)?.reply === reply)
+				this.early.delete(key);
+		});
 	}
 
 	/**
@@ -162,6 +203,17 @@ export class NeovimEditors {
 		if (!isOverlayKey(request.workspaceId)) {
 			return { ok: false, message: "That Neovim is not DevHub's to draw." };
 		}
+		const early = this.early.get(request.workspaceId);
+		if (early !== undefined && early.page === page) {
+			this.early.delete(request.workspaceId);
+			const reply = await early.reply;
+			// What the page draws was attached at this size; its editor asks
+			// for its own from there.
+			return reply.ok
+				? { ...reply, cols: early.cols, rows: early.rows }
+				: reply;
+		}
+		this.early.delete(request.workspaceId);
 		if (!this.watched.has(page)) {
 			this.watched.add(page);
 			page.once("destroyed", () => {
@@ -217,6 +269,7 @@ export class NeovimEditors {
 
 	private letGo(key: string, hosted: number | undefined): void {
 		this.buffers.delete(key);
+		this.early.delete(key);
 		if (hosted === undefined) this.local.detach(key);
 		else this.options.host?.detach(key);
 	}

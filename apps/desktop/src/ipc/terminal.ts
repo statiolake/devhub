@@ -441,6 +441,21 @@ export function workspaceTerminalPageId(workspaceId: string): string {
 	return `${WORKSPACE_TERMINAL_PAGE_PREFIX}${workspaceId}`;
 }
 
+/**
+ * The terminal page (`pane.html#<id>`) a terminal surface is drawn in, by its
+ * surface key: an Agent terminal's id, or a Workspace's `ws:<id>`;
+ * `undefined` for any other surface.
+ */
+export function terminalIdOfSurface(surfaceKey: string): string | undefined {
+	if (surfaceKey.startsWith(PANE_TERMINAL_SURFACE_PREFIX))
+		return surfaceKey.slice(PANE_TERMINAL_SURFACE_PREFIX.length);
+	if (surfaceKey.startsWith(WORKSPACE_TERMINAL_SURFACE_PREFIX))
+		return workspaceTerminalPageId(
+			surfaceKey.slice(WORKSPACE_TERMINAL_SURFACE_PREFIX.length),
+		);
+	return undefined;
+}
+
 /** The Workspace a terminal page id names, or `undefined` for an Agent's terminal. */
 export function workspaceOfTerminalPage(id: string): string | undefined {
 	return id.startsWith(WORKSPACE_TERMINAL_PAGE_PREFIX)

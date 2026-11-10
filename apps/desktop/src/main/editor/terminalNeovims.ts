@@ -522,6 +522,12 @@ interface Watch {
 				panes: ControlPanes;
 				hints: string;
 				confirmed: Map<string, string>;
+				/**
+				 * The sockets the pty host's control client read from tmux
+				 * (`paneSocket`), by pane, with the reading they came at: a
+				 * reading of main's that started before one stands for it.
+				 */
+				direct: Map<string, { socket: string; at: number }>;
 		  }
 		| undefined;
 	readonly overlays: Map<string, Overlay>;
@@ -543,6 +549,8 @@ export class TerminalNeovims {
 	/** Control-mode pages that spoke before their terminal was known. */
 	private readonly earlyControl = new Map<string, ControlPanes>();
 	private serial = 1;
+	/** Counts the readings of tmux, main's and the control clients'. */
+	private readings = 0;
 	private disposed = false;
 	/** `[general] editor = "neovim"`: off, no new overlay is made. */
 	private enabled = false;
@@ -653,6 +661,7 @@ export class TerminalNeovims {
 		const control = (watch.control ??= {
 			panes,
 			hints: "",
+			direct: new Map(),
 			confirmed: new Map(
 				(watch.reading?.panes ?? [])
 					.filter((pane) => pane.socket !== "")
@@ -661,10 +670,44 @@ export class TerminalNeovims {
 		});
 		control.panes = panes;
 		this.applyControl(watch);
-		if (first || hints !== control.hints) {
+		// A hint that says what is confirmed already (a control client read
+		// it, `paneSocket`) needs no reading.
+		const agrees = panes.panes.every(
+			(pane) =>
+				(control.confirmed.get(`%${String(pane.pane)}`) ?? "") === pane.socket,
+		);
+		if (first || control.hints === "" || (hints !== control.hints && !agrees)) {
 			control.hints = hints;
 			void this.confirm(watch);
-		}
+		} else control.hints = hints;
+	}
+
+	/**
+	 * A control-mode terminal's control client read, from tmux, that pane
+	 * `paneId`'s `@devhub-nvim` is `socket` (`""`: none). It runs in the pty
+	 * host, main's own process, and asked tmux itself — on the OSC the pane's
+	 * `nvim` writes, at once — so this is confirmed as a reading of main's
+	 * would be, without the page's report and a `list-panes` after it. The
+	 * key of the overlay that is that pane's Neovim now, if there is one.
+	 */
+	paneSocket(
+		terminalId: string,
+		paneId: string,
+		socket: string,
+	): string | undefined {
+		const watch = this.watches.get(terminalId);
+		const control = watch?.control;
+		if (watch === undefined || control === undefined || this.disposed)
+			return undefined;
+		this.readings += 1;
+		control.direct.set(paneId, { socket, at: this.readings });
+		if (socket === "") control.confirmed.delete(paneId);
+		else control.confirmed.set(paneId, socket);
+		this.applyControl(watch);
+		const overlay = watch.overlays.get(paneId);
+		return socket !== "" && overlay?.socket === socket
+			? overlay.key
+			: undefined;
 	}
 
 	/** The terminals that have an overlay, or had one at the last change. */
@@ -999,6 +1042,8 @@ export class TerminalNeovims {
 	 * overlay's server option on the way): what its page names is a hint.
 	 */
 	private async confirm(watch: Watch): Promise<void> {
+		this.readings += 1;
+		const started = this.readings;
 		let reading: TerminalNeovimReading | undefined;
 		try {
 			reading = await this.options.ports.read(watch.terminal, this.enabled);
@@ -1012,6 +1057,15 @@ export class TerminalNeovims {
 				.filter((pane) => pane.socket !== "")
 				.map((pane) => [pane.paneId, pane.socket]),
 		);
+		// What a control client read after this reading started is newer.
+		for (const [paneId, direct] of control.direct) {
+			if (direct.at <= started) {
+				control.direct.delete(paneId);
+				continue;
+			}
+			if (direct.socket === "") control.confirmed.delete(paneId);
+			else control.confirmed.set(paneId, direct.socket);
+		}
 		this.applyControl(watch);
 	}
 

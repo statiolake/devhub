@@ -74,6 +74,13 @@ export type NeovimAttachResult =
 			readonly version: string;
 			/** Where it runs, for the page's sentences (`""` on this Mac). */
 			readonly where: string;
+			/**
+			 * The grid it was attached at, when not the one asked for: main
+			 * attached before the page asked (`NeovimEditors.preattach`), at
+			 * its pane's size.
+			 */
+			readonly cols?: number;
+			readonly rows?: number;
 	  }
 	| { readonly ok: false; readonly message: string };
 

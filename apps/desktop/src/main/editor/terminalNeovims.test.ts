@@ -372,6 +372,44 @@ describe("TerminalNeovims", () => {
 			neovims.dispose();
 		});
 
+		it("takes a socket its control client read from tmux, before the page or a reading of its own", async () => {
+			// tmux, read before the pane's `nvim` named its socket.
+			let release: (reading: TerminalNeovimReading) => void = () => {};
+			const { neovims, ports, views } = setup({ panes: [], client: undefined });
+			const noSocket = panes({
+				panes: [
+					{ pane: 0, inMode: false, socket: "" },
+					{ pane: 1, inMode: false, socket: "" },
+					{ pane: 2, inMode: false, socket: "" },
+				],
+			});
+			neovims.controlPanes("t", noSocket);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			// A reading of main's starts, and is slow to answer.
+			ports.read.mockImplementationOnce(
+				() =>
+					new Promise<TerminalNeovimReading>((resolve) => {
+						release = resolve;
+					}),
+			);
+			neovims.reclaim("t");
+			const reads = ports.read.mock.calls.length;
+			// The control client read it: the overlay is there at once.
+			expect(neovims.paneSocket("t", "%1", "/tmp/d/s")).toBe("tnv:1");
+			expect(views()).toEqual([{ key: "tnv:1", pane: 1, shown: true }]);
+			// The page's report saying the same asks tmux nothing more.
+			neovims.controlPanes("t", panes());
+			expect(ports.read.mock.calls.length).toBe(reads);
+			// The reading that started before it does not take it back.
+			release({ panes: [], client: undefined });
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(views()).toHaveLength(1);
+			// Its `nvim` took it back: gone.
+			expect(neovims.paneSocket("t", "%1", "")).toBeUndefined();
+			expect(views()).toEqual([]);
+			neovims.dispose();
+		});
+
 		it("hands the prefix to the terminal, and the keys come back", async () => {
 			const { neovims, ports, views } = setup(
 				parseTerminalNeovimReading(OUTPUT),

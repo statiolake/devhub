@@ -91,6 +91,16 @@ export function electronPtyHostLauncher(): PtyHostProcess {
 	};
 }
 
+/** What `onNeovimSocket` is told. */
+export type NeovimSocketListener = (said: {
+	readonly surfaceKey: string;
+	readonly page: HostedPage;
+	readonly pane: number;
+	readonly socket: string;
+	readonly cols: number;
+	readonly rows: number;
+}) => void;
+
 export interface PtyHostClientOptions {
 	readonly launch: PtyHostLauncher;
 	/** A new pair of entangled ports; Electron's `MessageChannelMain` in DevHub. */
@@ -123,6 +133,7 @@ export class PtyHostClient implements HostedPtys {
 	/** Every client the host of this generation was asked to start and has not ended. */
 	readonly #clients = new Set<string>();
 	readonly #ended = new Set<(id: string, reason: ExitReason) => void>();
+	readonly #sockets = new Set<NeovimSocketListener>();
 	#nextRequest = 1;
 	#nextPage = 1;
 
@@ -136,6 +147,15 @@ export class PtyHostClient implements HostedPtys {
 
 	get generation(): number {
 		return this.#generation;
+	}
+
+	/**
+	 * A control client in the host read a pane's `@devhub-nvim` from tmux:
+	 * the surface and the page it draws (`FromPtyHost` `nvim-socket`).
+	 */
+	onNeovimSocket(listener: NeovimSocketListener): () => void {
+		this.#sockets.add(listener);
+		return () => this.#sockets.delete(listener);
 	}
 
 	/** A client the host held has ended, as the host said or because it did. */
@@ -185,6 +205,24 @@ export class PtyHostClient implements HostedPtys {
 						cause: new Error(message.message),
 					}),
 				);
+				return;
+			}
+			case "nvim-socket": {
+				const generation = this.#generation;
+				const page = [...this.#ports.entries()].find(
+					([, port]) =>
+						port.generation === generation && port.page === message.page,
+				)?.[0];
+				if (page === undefined || page.isDestroyed()) return;
+				for (const listener of this.#sockets)
+					listener({
+						surfaceKey: message.surfaceKey,
+						page,
+						pane: message.pane,
+						socket: message.socket,
+						cols: message.cols,
+						rows: message.rows,
+					});
 				return;
 			}
 			case "ended":

@@ -835,12 +835,17 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
         "Enter",
       );
       const view = page();
+      const named: string[] = [];
       const client = new ControlClient({
         process: controlProcess(socket, "ws-fallback"),
         vt: lib,
         cols: 100,
         rows: 24,
         post: view.post,
+        // What it read of the pane's socket, as the pty host tells main.
+        socket: (_pane, said) => {
+          if (said !== "") named.push(said);
+        },
         ended: () => undefined,
       });
       const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
@@ -884,6 +889,9 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
             "#{pane_current_command}",
           ),
         ).toBe("nvim\n");
+        // The control client read it from tmux, on the OSC the `nvim` wrote.
+        await until("the socket told", () => named.length > 0, 4000);
+        named.length = 0;
         await until(
           "the TUI",
           () =>

@@ -56,6 +56,19 @@ export type FromPtyHost =
 			readonly type: "ended";
 			readonly id: string;
 			readonly reason: ExitReason;
+	  }
+	/**
+	 * A control client read a pane's `@devhub-nvim` from tmux (`""`: none):
+	 * the surface and page it draws, the pane and its size in cells.
+	 */
+	| {
+			readonly type: "nvim-socket";
+			readonly surfaceKey: string;
+			readonly page: number;
+			readonly pane: number;
+			readonly socket: string;
+			readonly cols: number;
+			readonly rows: number;
 	  };
 
 export type PageToPtyHost = {

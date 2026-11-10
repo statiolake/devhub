@@ -54,6 +54,32 @@ function emit(event: NeovimPageEvent): void {
 	for (const listener of set) listener(event);
 }
 
+/**
+ * The overlays this page has asked to attach: what the host says of any
+ * other is for a surface not mounted yet — main attached it before the page
+ * asked (`NeovimEditors.preattach`) — and waits here, in order, until the
+ * surface asks (`attach`), as many as `EARLY_MAX` each.
+ */
+const asked = new Set<string>();
+const early = new Map<string, NeovimPageEvent[]>();
+const EARLY_MAX = 20_000;
+
+function fromHost(event: NeovimPageEvent): void {
+	const key =
+		event.type === "gui-send"
+			? event.message.workspaceId
+			: event.type === "gui-event"
+				? event.event.workspaceId
+				: event.workspaceId;
+	if (asked.has(key)) {
+		emit(event);
+		return;
+	}
+	const waiting = early.get(key) ?? [];
+	if (waiting.length < EARLY_MAX) waiting.push(event);
+	early.set(key, waiting);
+}
+
 function on<K extends NeovimPageEvent["type"]>(
 	type: K,
 	listener: (event: Extract<NeovimPageEvent, { type: K }>) => void,
@@ -91,6 +117,11 @@ ipcRenderer.on(NEOVIM_CHANNELS.guiEvent, (_event, event: NeovimGuiEvent) => {
 	emit({ type: "gui-event", event });
 });
 
+// An overlay that ended before its surface asked: nothing will.
+ipcRenderer.on(NEOVIM_CHANNELS.ended, (_event, workspaceId: string) => {
+	if (!asked.has(workspaceId)) early.delete(workspaceId);
+});
+
 /** The port to the Neovim host, and which host it is. */
 let host:
 	| { readonly port: MessagePort; readonly generation: number }
@@ -120,7 +151,7 @@ ipcRenderer.on(
 				reply?.(data.result);
 				return;
 			}
-			emit(data);
+			fromHost(data);
 		};
 		port.start();
 	},
@@ -151,6 +182,11 @@ function toHost(port: MessagePort, message: PageToNeovimHost): void {
 export const neovimApi: DevhubNeovimApi = {
 	attach: async (request) => {
 		hosted.delete(request.workspaceId);
+		// The surface listens now: what came before it, then the rest.
+		asked.add(request.workspaceId);
+		const waiting = early.get(request.workspaceId);
+		early.delete(request.workspaceId);
+		for (const event of waiting ?? []) emit(event);
 		const reply = (await ipcRenderer.invoke(
 			NEOVIM_CHANNELS.attach,
 			request,
@@ -159,7 +195,14 @@ export const neovimApi: DevhubNeovimApi = {
 		if (reply.hosted !== undefined) {
 			hosted.set(request.workspaceId, reply.hosted);
 		}
-		return { ok: true, version: reply.version, where: reply.where };
+		return {
+			ok: true,
+			version: reply.version,
+			where: reply.where,
+			...(reply.cols === undefined || reply.rows === undefined
+				? {}
+				: { cols: reply.cols, rows: reply.rows }),
+		};
 	},
 	call: (call: NeovimCall) => {
 		const port = portFor(call.workspaceId);

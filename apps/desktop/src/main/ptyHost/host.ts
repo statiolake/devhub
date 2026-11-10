@@ -281,6 +281,17 @@ export class PtyHost {
 					}),
 			cols: spec.size.cols,
 			rows: spec.size.rows,
+			socket: (pane, socket, cols, rows) => {
+				this.#options.post({
+					type: "nvim-socket",
+					surfaceKey: spec.surfaceKey,
+					page: spec.page,
+					pane,
+					socket,
+					cols,
+					rows,
+				});
+			},
 			post: (message) => {
 				if (page.closed) return;
 				page.port.postMessage({

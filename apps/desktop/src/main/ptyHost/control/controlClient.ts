@@ -151,6 +151,18 @@ export interface ControlClientOptions {
 	};
 	/** A pty for a popup's command (`popup.ts`); none: popups are refused. */
 	readonly popup?: (cols: number, rows: number) => PopupPty;
+	/**
+	 * A pane's `@devhub-nvim` changed, as this client read it from tmux
+	 * (`""`: none), with the pane's size: told to main, which attaches to a
+	 * pane's Neovim from this without the page or a reading of its own
+	 * (`TerminalNeovims.paneSocket`).
+	 */
+	readonly socket?: (
+		pane: number,
+		socket: string,
+		cols: number,
+		rows: number,
+	) => void;
 }
 
 const MAX_UNACKED = 4;
@@ -2251,6 +2263,30 @@ export class ControlClient {
 		this.#postLayout();
 	}
 
+	/** Each pane's socket as last told to `socket`. */
+	readonly #toldSockets = new Map<TmuxId, string>();
+
+	/** The panes whose socket changed since last told, told. */
+	#tellSockets(): void {
+		const tell = this.#o.socket;
+		if (tell === undefined) return;
+		for (const [id, pane] of this.#panes) {
+			if ((this.#toldSockets.get(id) ?? "") === pane.socket) continue;
+			this.#toldSockets.set(id, pane.socket);
+			const window = this.#windows.get(pane.window);
+			const box =
+				window?.layout === undefined
+					? undefined
+					: layoutPanes(window.layout).find((p) => p.pane === id);
+			tell(id, pane.socket, box?.width ?? 0, box?.height ?? 0);
+		}
+		for (const id of [...this.#toldSockets.keys()]) {
+			if (this.#panes.has(id)) continue;
+			this.#toldSockets.delete(id);
+			tell(id, "", 0, 0);
+		}
+	}
+
 	async #readFacts(paneId: TmuxId): Promise<void> {
 		const state = await this.#command([
 			"display-message",
@@ -2374,6 +2410,7 @@ export class ControlClient {
 
 	#postLayout(): void {
 		if (this.#ended) return;
+		this.#tellSockets();
 		const windows = [...this.#windows.values()]
 			.sort((a, b) => a.index - b.index)
 			.map((w) => ({

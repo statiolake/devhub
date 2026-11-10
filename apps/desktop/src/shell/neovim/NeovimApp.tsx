@@ -495,7 +495,13 @@ export function NeovimSurface({
             return;
           }
           reconnectAttempt.current = 0;
-          editor.attached(size);
+          // Main may have attached it at its pane's size before this asked
+          // (`NeovimEditors.preattach`): the editor resizes from there.
+          editor.attached(
+            result.cols !== undefined && result.rows !== undefined
+              ? { cols: result.cols, rows: result.rows }
+              : size,
+          );
           setConnection({ kind: "attached", version: result.version });
           editor.focus();
         });

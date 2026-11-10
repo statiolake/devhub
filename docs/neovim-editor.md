@@ -208,7 +208,8 @@ the old, smaller size (an `--embed` Neovim's first 80x24) would give the
 difference to the command line, not the windows. A Neovim attaches only once
 the terminal surface has put its element on its pane, at the pane's size
 (`placed`): an element not yet placed is no pane's size, and a UI attached at
-it reshapes the windows the same way. A page that loads again lets go of its
+it reshapes the windows the same way — or, in control mode, before the page
+has it, at the pane's size from tmux (Neovim in a terminal, below). A page that loads again lets go of its
 old UIs and its port to the Neovim host, which died with its old document,
 and each Neovim on it attaches anew. A Neovim stopped at a prompt is let out
 of it first.
@@ -1261,8 +1262,18 @@ through a subscription (`refresh-client -B`, which tmux checks once a
 second); DevHub's `nvim` also writes an OSC tmux does not know
 (`NVIM_NAMED_OSC`) into its pane after naming its socket, which tmux drops
 and a control client sees in the pane's bytes, so the pane is read at once.
-The page's sockets are a hint: each change of them is one reading of tmux
-by main, and only a socket that reading confirms is attached to.
+The page's sockets are a hint: only a socket tmux confirms is attached to.
+What the control client read from tmux itself confirms it — it runs in the
+pty host, main's own process, which tells main (`nvim-socket`,
+`TerminalNeovims.paneSocket`) — and so the overlay is made the moment the
+OSC is read, without waiting for the page's report and a `list-panes` of
+main's after it; a hint that says anything else is one reading of tmux by
+main. Main then attaches the UI at once, at the pane's size the control
+client knows (`NeovimEditors.preattach`), while the page mounts the surface:
+the Neovim's `--embed` wait ends and its config loads during the mount
+instead of after it. What it draws waits in the page (`preload/neovimApi.ts`)
+until the surface asks to attach, which joins that attach; a surface whose
+grid differs asks for its size from there, as at any resize.
 Each Neovim is its own: a `nvim` run in a pane is never the `devhub-nvim`
 one and never reused — `devhub <file>`, a conversation's file link and Send
 to Agent go to the Workspace's `devhub-nvim` window, and a `git commit`

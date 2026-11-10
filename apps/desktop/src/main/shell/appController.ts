@@ -519,7 +519,7 @@ import {
 	inputSourceHelperPath,
 } from "./inputSourceHelper.js";
 import { ManagedNeovims, socketDirectoryFor } from "../editor/managedNeovim.js";
-import { NeovimEditors } from "../editor/neovimEditors.js";
+import { NeovimEditors, type NeovimPage } from "../editor/neovimEditors.js";
 import {
 	parseControlPanes,
 	terminalIdOfPaneUrl,
@@ -530,7 +530,10 @@ import {
 	wireTerminalNeovims,
 } from "../editor/terminalNeovimWiring.js";
 import { neovimOpenOf } from "../editor/neovimOpen.js";
-import { workspaceTerminalPageId } from "../../ipc/terminal.js";
+import {
+	terminalIdOfSurface,
+	workspaceTerminalPageId,
+} from "../../ipc/terminal.js";
 import {
 	neovimMissingMessage,
 	remoteNeovimSockets,
@@ -1221,6 +1224,27 @@ export class AppController {
 			onBuffer: () => {
 				this.refreshWindowTitle();
 			},
+		});
+		// A control client in the pty host read a pane's socket from tmux (on
+		// the OSC the pane's `nvim` writes): the overlay is made from that, and
+		// its UI attached at the pane's size from here, while the page mounts
+		// it (`NeovimEditors.preattach`) — not after the page has reported its
+		// panes, main has read tmux again and the page has placed the surface.
+		this.ptyHost?.onNeovimSocket((said) => {
+			const terminalId = terminalIdOfSurface(said.surfaceKey);
+			if (terminalId === undefined) return;
+			const key = this.terminalNeovims?.paneSocket(
+				terminalId,
+				`%${String(said.pane)}`,
+				said.socket,
+			);
+			if (key === undefined || said.cols <= 0 || said.rows <= 0) return;
+			// The page the pty host draws that terminal in: a `WebContents`.
+			this.neovimEditors?.preattach(said.page as unknown as NeovimPage, {
+				workspaceId: key,
+				cols: said.cols,
+				rows: said.rows,
+			});
 		});
 		// The theme, before any tmux server is brought up: a server is started
 		// with it, and told again on every change after (`themePublication.ts`).
