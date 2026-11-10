@@ -45,6 +45,12 @@ export type HostTool =
 	| "rg"
 	| "fd";
 
+/**
+ * The tools DevHub delivers beside the carried Neovim and appends to its
+ * `PATH` (`docs/remote-neovim-config.md`): a host's own one comes first.
+ */
+export const CARRIED_NEOVIM_TOOLS = ["rg", "fd", "node"] as const;
+
 /** Where one tool comes from, as far as a `Runtime` is concerned. */
 export interface ToolDelivery {
 	readonly tool: HostTool;

@@ -18,8 +18,8 @@ import { APP_ROOT } from "./appRoot.js";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { homedir, tmpdir, userInfo } from "node:os";
-import { dirname, join, posix } from "node:path";
+import { homedir, hostname, tmpdir, userInfo } from "node:os";
+import { basename, dirname, join, posix } from "node:path";
 import { devhubProduct } from "../product.js";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { noteMainActivity } from "../diagnostics/eventLoopLag.js";
@@ -257,6 +257,7 @@ import {
 	electronNeovimHostLauncher,
 } from "../neovimHost/client.js";
 import { bundledNeovim } from "../editor/bundledNeovim.js";
+import { NeovimConfigSource, type CarryReport } from "../runtime/carryHost.js";
 import { whenIdleAfterLaunch } from "./launchIdle.js";
 import { EscalationStore } from "../orchestrator/escalationStore.js";
 import {
@@ -4851,6 +4852,19 @@ export class AppController {
 	 * would then record the rate main *allowed* rather than the rate something
 	 * published at. The second number is the whole point of the journal.
 	 */
+	/**
+	 * A sync of the Neovim setup to a host ended (`runtime/carryHost.ts`):
+	 * logged always; a notice when something is missing there or it failed.
+	 * The carried Neovim says the same once, with `vim.notify`.
+	 */
+	neovimConfigCarried(report: CarryReport): void {
+		console.log(`[devhub] Neovim config on ${report.machine}: ${report.text}`);
+		if (report.level !== "warning") return;
+		this.publishError(
+			withSummary(errorWireAt("neovim_config_incomplete"), report.text),
+		);
+	}
+
 	private publishError(
 		error: AppErrorWire,
 		/**
@@ -10217,6 +10231,24 @@ interface IssuePromptHow {
 let current: AppController | undefined;
 
 /**
+ * This Mac's Neovim setup, for the SSH hosts DevHub draws a Neovim on
+ * (`runtime/carryHost.ts`): asked of DevHub's own Neovim here, watched, and
+ * named in a host's manifest by this machine and profile.
+ */
+function neovimConfigSource(
+	userDataPath: string,
+	report: (report: CarryReport) => void,
+): NeovimConfigSource {
+	return new NeovimConfigSource({
+		nvim: () => bundledNeovim(),
+		environment: () => process.env,
+		source: `${hostname()} (${basename(dirname(userDataPath))})`,
+		watch: true,
+		report,
+	});
+}
+
+/**
  * One of the tools DevHub installs on a host, from the app's own
  * `out/host-tools` (`scripts/fetch-binaries.mjs`): nothing is downloaded.
  */
@@ -10255,6 +10287,14 @@ export async function createAppController(
 		// The Neovim DevHub draws there: the version this Mac runs
 		// (`editor/bundledNeovim.ts`), for that host's platform.
 		nvim: hostToolDelivery("nvim"),
+		// The tools appended to the carried Neovim's PATH on a host, and your
+		// Neovim setup from this Mac (`docs/remote-neovim-config.md`).
+		rg: hostToolDelivery("rg"),
+		fd: hostToolDelivery("fd"),
+		node: hostToolDelivery("node"),
+		neovimConfig: neovimConfigSource(userDataPath, (report) =>
+			current?.neovimConfigCarried(report),
+		),
 		// The `devhub` command, from this app's own build of it.
 		devhub: bundledToolDelivery(
 			"devhub",

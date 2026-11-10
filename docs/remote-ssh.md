@@ -271,6 +271,12 @@ own. DevHub publishes nothing for it: Neovim's own release is what the app
 bundles. To install one by hand: unpack
 the archive and move its one directory to `~/.devhub-server/nvim/<version>`.
 
+It runs with your Neovim setup from this Mac: DevHub carries the config and
+the plugin tree to the host under `NVIM_APPNAME=devhub-nvim`, with `rg`,
+`fd` and Node beside it, and runs it through a launcher at
+`~/.devhub-server/nvim-config/nvim` (`docs/remote-neovim-config.md`). The
+host's own `~/.config/nvim` is never read or written.
+
 ## Pointing one host somewhere else
 
 There is no setting for this, per host or otherwise. Which servers a DevHub

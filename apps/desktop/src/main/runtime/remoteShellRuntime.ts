@@ -95,10 +95,18 @@ import {
 	type Watcher,
 } from "./runtime.js";
 import {
+	CARRIED_NEOVIM_TOOLS,
+	toolBinaryPath,
 	toolVersionArgument,
 	type HostTool,
 	type ToolDelivery,
 } from "./toolDelivery.js";
+import {
+	carriedPaths,
+	HostCarry,
+	type NeovimConfigSource,
+	type ToolOutcome,
+} from "./carryHost.js";
 import { deliveredClaudeShell, type DeliveredBash } from "./agentShell.js";
 
 /**
@@ -422,6 +430,22 @@ export abstract class RemoteShellRuntime {
 	protected abstract delivery(tool: HostTool): ToolDelivery;
 
 	/**
+	 * A tool this machine may have and need not (the ones beside the carried
+	 * Neovim): `undefined` when this runtime was built without it.
+	 */
+	protected optionalDelivery(_tool: HostTool): ToolDelivery | undefined {
+		return undefined;
+	}
+
+	/**
+	 * This Mac's Neovim setup, when it is carried to this machine
+	 * (`carryHost.ts`); `undefined`: its Neovim reads the machine's own config.
+	 */
+	protected neovimConfigSource(): NeovimConfigSource | undefined {
+		return undefined;
+	}
+
+	/**
 	 * DevHub's control socket, made answerable at `remoteSocketPath`.
 	 *
 	 * `undefined` when it is answerable; the sentence saying why it is not,
@@ -458,6 +482,7 @@ export abstract class RemoteShellRuntime {
 	#bash: Promise<string> | undefined;
 	#nvim: Promise<string> | undefined;
 	#devhub: Promise<string> | undefined;
+	#carry: Promise<HostCarry> | undefined;
 
 	/**
 	 * `$HOME` on that machine, and the check that it is a machine DevHub speaks.
@@ -769,12 +794,91 @@ export abstract class RemoteShellRuntime {
 	async neovimProgram(): Promise<NeovimProgram> {
 		const delivery = this.delivery("nvim");
 		this.#nvim ??= this.#installNeovim(delivery);
+		let real: string;
 		try {
-			return { kind: "resolved", path: await this.#nvim };
+			real = await this.#nvim;
 		} catch (failure: unknown) {
 			this.#nvim = undefined;
 			return { kind: "unavailable", reason: describeFailure(failure) };
 		}
+		const source = this.neovimConfigSource();
+		if (source === undefined) return { kind: "resolved", path: real };
+		this.#carry ??= this.#startCarry(source, real);
+		try {
+			const carry = await this.#carry;
+			// A sync that did not finish (the connection dropped, this Mac
+			// could not read its setup) is tried again by the next Neovim.
+			if (carry.stale) void carry.sync("connect");
+			return { kind: "resolved", path: carry.launcher };
+		} catch (failure: unknown) {
+			this.#carry = undefined;
+			console.error(
+				`[devhub] ${this.machineName} runs DevHub's Neovim without your config: ${describeFailure(failure)}`,
+			);
+			return { kind: "resolved", path: real };
+		}
+	}
+
+	/**
+	 * Your Neovim setup on this machine (`docs/remote-neovim-config.md`): the
+	 * launcher and the guard written, and the first sync claimed — so a
+	 * Neovim started from now on waits for it — before `neovimProgram`
+	 * answers. The sync itself, and the tools beside it, go on in the
+	 * background; a change here syncs again.
+	 */
+	async #startCarry(
+		source: NeovimConfigSource,
+		real: string,
+	): Promise<HostCarry> {
+		const { home, login } = await this.describeRemote();
+		const server = posix.dirname(this.delivery("nvim").directory);
+		const tools = CARRIED_NEOVIM_TOOLS.flatMap((tool) => {
+			const delivery = this.optionalDelivery(tool);
+			return delivery === undefined ? [] : [{ tool, delivery }];
+		});
+		const toolDirectory = (delivery: ToolDelivery) =>
+			posix.dirname(
+				posix.join(
+					home,
+					delivery.directory,
+					delivery.version,
+					toolBinaryPath(delivery.tool),
+				),
+			);
+		const carry = new HostCarry({
+			access: {
+				machine: this.machineName,
+				sh: (script, extra) => this.sh(script, extra),
+			},
+			paths: {
+				directory: posix.join(home, server, "nvim-config"),
+				...carriedPaths(home, login),
+				nvim: real,
+				toolDirectories: tools.map(({ delivery }) => toolDirectory(delivery)),
+			},
+			source,
+			installTimeoutMs: INSTALL_TIMEOUT_MS,
+		});
+		await carry.prepare();
+		const delivered = Promise.all(
+			tools.map(async ({ tool, delivery }): Promise<ToolOutcome> => {
+				try {
+					await this.#installTool(delivery);
+					return { tool };
+				} catch (failure: unknown) {
+					return { tool, failure: describeFailure(failure) };
+				}
+			}),
+		);
+		void carry.sync("connect", delivered);
+		carry.follow();
+		// The first sync's claim, not the sync: a Neovim started from here on
+		// finds `syncing` and waits for the tree, and none reads half of it.
+		await Promise.race([
+			carry.claimed(),
+			new Promise((done) => setTimeout(done, 15_000).unref()),
+		]);
+		return carry;
 	}
 
 	/** The `devhub` command, installed as `terminalLauncher` installs it. */
@@ -829,7 +933,7 @@ export abstract class RemoteShellRuntime {
 		const { home, platform, architecture } = await this.describeRemote();
 		const target = `${platformName(platform)}-${architecture}`;
 		const directory = posix.join(home, delivery.directory, version);
-		const program = posix.join(directory, "bin", tool);
+		const program = posix.join(directory, toolBinaryPath(tool));
 		const answers = async () =>
 			(
 				await this.sh(

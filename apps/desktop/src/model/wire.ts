@@ -748,6 +748,7 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "file_not_found":
     case "editor_unavailable":
     case "editor_restart_exhausted":
+    case "neovim_config_incomplete":
       return "editor";
     case "agent_not_connected":
     case "agent_exited":
@@ -797,6 +798,7 @@ export function errorWireAt(
     code === "state_migrated" ||
     code === "input_source_unavailable" ||
     code === "usage_unreadable" ||
+    code === "neovim_config_incomplete" ||
     code === "terminal_needs_agent" ||
     code === "terminal_needs_agent_view" ||
     // Pressing the chord again is the retry, and it goes further back.

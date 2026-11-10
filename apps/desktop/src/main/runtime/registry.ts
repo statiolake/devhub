@@ -15,6 +15,7 @@
  * to tell which of the two had gone stale.
  */
 
+import type { NeovimConfigSource } from "./carryHost.js";
 import {
 	sshHost,
 	workspaceRoot,
@@ -94,6 +95,16 @@ export interface RuntimeProfile {
 	 * same reasons.
 	 */
 	readonly nvim: ToolDelivery;
+	/**
+	 * The tools appended to the carried Neovim's `PATH` on a host, and this
+	 * Mac's Neovim setup itself (`carryHost.ts`,
+	 * `docs/remote-neovim-config.md`). Absent: a host's Neovim reads the
+	 * host's own config, as before.
+	 */
+	readonly rg?: ToolDelivery;
+	readonly fd?: ToolDelivery;
+	readonly node?: ToolDelivery;
+	readonly neovimConfig?: NeovimConfigSource;
 }
 
 let profile: RuntimeProfile | undefined;
@@ -158,6 +169,10 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 				bash: profile.bash,
 				devhub: profile.devhub,
 				nvim: profile.nvim,
+				rg: profile.rg,
+				fd: profile.fd,
+				node: profile.node,
+				neovimConfig: profile.neovimConfig,
 			});
 			SSH.set(location.host, runtime);
 			return runtime;

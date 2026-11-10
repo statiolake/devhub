@@ -82,6 +82,7 @@ import type {
 	RuntimeReading,
 } from "./runtime.js";
 import type { HostTool, ToolDelivery } from "./toolDelivery.js";
+import type { NeovimConfigSource } from "./carryHost.js";
 
 export {
 	errnoFromMessage,
@@ -270,6 +271,12 @@ export interface SshRuntimeOptions {
 	readonly devhub?: ToolDelivery;
 	/** Where the Neovim DevHub installs on this host comes from. */
 	readonly nvim?: ToolDelivery;
+	/** The tools appended to the carried Neovim's `PATH` (`carryHost.ts`). */
+	readonly rg?: ToolDelivery;
+	readonly fd?: ToolDelivery;
+	readonly node?: ToolDelivery;
+	/** This Mac's Neovim setup, carried to this host (`carryHost.ts`). */
+	readonly neovimConfig?: NeovimConfigSource;
 }
 
 /**
@@ -492,6 +499,7 @@ export class SshRuntime extends RemoteShellRuntime implements Runtime {
 	readonly #ptyFactory: PtyFactory;
 	readonly #localEnvironment: Readonly<Record<string, string | undefined>>;
 	readonly #deliveries: Partial<Record<HostTool, ToolDelivery>>;
+	readonly #neovimConfig: NeovimConfigSource | undefined;
 
 	readonly #latencies: number[] = [];
 	/**
@@ -530,7 +538,11 @@ export class SshRuntime extends RemoteShellRuntime implements Runtime {
 			bash: options.bash,
 			devhub: options.devhub,
 			nvim: options.nvim,
+			rg: options.rg,
+			fd: options.fd,
+			node: options.node,
 		};
+		this.#neovimConfig = options.neovimConfig;
 		if (!fitsControlPath(this.#controlDirectory)) {
 			throw new Error(
 				`the ssh control socket ${controlPathOf(this.#controlDirectory)} is ` +
@@ -569,6 +581,16 @@ export class SshRuntime extends RemoteShellRuntime implements Runtime {
 	 * product fact, and the failure it produces would arrive as "that host has
 	 * no tmux" — a sentence about the wrong machine entirely.
 	 */
+	protected override neovimConfigSource(): NeovimConfigSource | undefined {
+		return this.#neovimConfig;
+	}
+
+	protected override optionalDelivery(
+		tool: HostTool,
+	): ToolDelivery | undefined {
+		return this.#deliveries[tool];
+	}
+
 	protected override delivery(tool: HostTool): ToolDelivery {
 		const delivery = this.#deliveries[tool];
 		if (delivery === undefined) {

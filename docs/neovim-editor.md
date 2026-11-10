@@ -149,6 +149,10 @@ DevHub's runs the person's own as before.
   (`<nvim>/../share/nvim/runtime`), so the keeper and the shim unset an
   inherited `VIMRUNTIME` and `VIM` (another Neovim's, say a `:terminal`'s)
   before they start it: `:echo $VIMRUNTIME` is the bundle's.
+- **On a host, your setup.** DevHub carries this Mac's config and plugin
+  tree to the host under `NVIM_APPNAME=devhub-nvim`, and
+  `RemoteShellRuntime.neovimProgram` answers a launcher that runs the
+  delivered Neovim with it (`docs/remote-neovim-config.md`).
 - **Plugins.** `stdpath()` is the person's as ever (`~/.config/nvim`,
   `~/.local/share/nvim`), so a lazy.nvim setup, its installs, the
   parsers a plugin downloads and its build steps are what they were. A

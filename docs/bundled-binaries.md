@@ -25,8 +25,8 @@ on one that is not on its list with a reason; it also fails on any
 | Neovim 0.12.6 | `out/nvim`: Neovim's release, signed by packaging | delivered from `out/host-tools`, `~/.devhub-server/nvim/<v>` |
 | bash 5.3.20 | `out/bash`: DevHub's tools release (`scripts/build_bash.py`); macOS links libSystem only, signed by packaging | delivered from `out/host-tools`, `~/.devhub-server/bash/<v>` (static, musl) |
 | tmux 3.7c | `out/tmux`: DevHub's tools release (`scripts/build_tmux.py`); macOS links libSystem only, signed by packaging. `runtimes.tmux` is retired | delivered from `out/host-tools`, `~/.devhub-server/tmux/<v>` (static, musl) |
-| Node 26.13.0 (LTS) | — (this Mac's Node is Electron's) | delivered from `out/host-tools`, `~/.devhub-server/node/<v>`, for the language servers the carried Neovim starts |
-| ripgrep 15.2.0, fd 10.5.1 | — | delivered from `out/host-tools`, `~/.devhub-server/{rg,fd}/<v>` (static, musl) |
+| Node 26.13.0 (LTS) | — (this Mac's Node is Electron's) | delivered from `out/host-tools`, `~/.devhub-server/node/<v>`, appended to the carried Neovim's `PATH` after the host's own (`docs/remote-neovim-config.md`), for the language servers it starts |
+| ripgrep 15.2.0, fd 10.5.1 | — | delivered from `out/host-tools`, `~/.devhub-server/{rg,fd}/<v>` (static, musl), appended to the carried Neovim's `PATH` after the host's own |
 | the `devhub` command (Go) | `out/cli/<os>-<arch>/devhub`, exec'd by the launcher | delivered, `~/.devhub-server/devhub/<digest>` |
 | libghostty-vt | `out/vt/ghostty-vt.wasm` | — |
 | node-pty | its N-API prebuild in `node_modules` | — |
@@ -138,7 +138,9 @@ Every place DevHub starts a program at runtime, with its category:
   `~/.local/bin/claude`) needs none. Codex is a native binary.
 - **Codex's shell.** Codex runs its commands in the person's login shell, and
   reads no `CLAUDE_CODE_SHELL`; DevHub sets nothing for it.
-- **Neovim plugins.** What the person's Neovim config starts is theirs. The
+- **Neovim plugins.** What the person's Neovim config starts is theirs. On a
+  host, DevHub runs lazy.nvim's own build step for the specs that declare
+  one; what that step runs is the plugin's (`docs/remote-neovim-config.md`). The
   vscode-incremental-diff plugin's bundled JS server needs a `node`; its Go
   port is a separate task.
 

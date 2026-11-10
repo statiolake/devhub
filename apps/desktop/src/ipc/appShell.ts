@@ -448,6 +448,14 @@ export type AppErrorCodeWire =
 	 */
 	| "usage_unreadable"
 	/**
+	 * Your Neovim setup could not be brought to an SSH host in full
+	 * (`main/runtime/carryHost.ts`): the sync failed, or it worked and the
+	 * host lacks something — a language server, a tool, a plugin's own build
+	 * step that failed there. Its own code because the editor still runs
+	 * there; what is said is what is missing. Said once per sync.
+	 */
+	| "neovim_config_incomplete"
+	/**
 	 * `Cmd+Q V` on a Workspace with no Agent: a terminal is an Agent's own
 	 * (`model/agentTerminal.ts`), so there is none to show. Said, so the chord
 	 * is not a key that silently did nothing.
@@ -529,6 +537,8 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	state_migrated: "DevHub updated its saved Workspaces for this version.",
 	input_source_unavailable:
 		"Chords cannot switch the keyboard out of an input method: DevHub could not change the input source.",
+	neovim_config_incomplete:
+		"Your Neovim config is on the host, but something is missing there.",
 	usage_unreadable:
 		"DevHub could not read a CLI's usage limits. It tries again at the next reading.",
 	terminal_needs_agent:
