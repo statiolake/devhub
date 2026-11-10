@@ -338,7 +338,18 @@ export function describeRuntimeContract(
 			});
 		});
 
-		describe("watchGitDirectory", () => {
+		/**
+		 * A watch that is a poll (`cadence.headWatchPollMs`: ssh's, every 2 s)
+		 * sees a change on the first poll to start after it, which is the
+		 * tick after next when a poll is still in flight, and each poll is a
+		 * round trip of its own; arming the watch is a few more. On a loaded
+		 * machine that took a case past vitest's default 5 s, which was all a
+		 * case had, its wait for the watch included.
+		 */
+		const firesWithinMs = () =>
+			5000 + 2 * (runtime.cadence.headWatchPollMs ?? 0);
+
+		describe("watchGitDirectory", { timeout: 30_000 }, () => {
 			it("fires when the git directory is written to", async () => {
 				await runtime.makeDirectory(join(scratch, "repo", ".git", "refs"));
 				let fired = 0;
@@ -359,7 +370,7 @@ export function describeRuntimeContract(
 						);
 						return fired > 0;
 					},
-					{ timeout: 5000, interval: 50 },
+					{ timeout: firesWithinMs(), interval: 50 },
 				);
 				watcher.close();
 			});
@@ -388,7 +399,7 @@ export function describeRuntimeContract(
 						);
 						return fired > 0;
 					},
-					{ timeout: 5000, interval: 50 },
+					{ timeout: firesWithinMs(), interval: 50 },
 				);
 				watcher.close();
 			});
