@@ -255,8 +255,13 @@ one layer model and pane motion.
   `footer` are the cells Neovim put in the border, its blanks too, on the
   line where Neovim put them (`title_pos`/`footer_pos`), the line broken
   under them: the page asks `nvim_win_get_config` when a border holds
-  text, and until the config explains that text (or when it does not)
-  the float is drawn cell for cell, as Neovim drew it. A border wider than
+  text, and when the config does not explain that text the float is
+  drawn cell for cell, as Neovim drew it. A float that opens with text in
+  its border is drawn once its answer has come (`LabelAsks`: the flush
+  that opens it waits for it, every float of a panel together), so its
+  first frame is its final one, not the cell-for-cell frame snapping to
+  the line a moment later; a later change of that text is asked again and
+  drawn as it comes, so a float never waits on itself twice. A border wider than
   a cell or with text in a side is drawn as Neovim says, with only a
   shadow: never two frames (`floatBorder`). Floats edge to edge (or a
   cell apart) at about the same `zindex` are one panel — a picker's input,

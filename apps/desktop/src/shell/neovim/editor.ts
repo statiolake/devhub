@@ -52,6 +52,7 @@ import { cmdlinePlace, type CmdlinePlace } from "./place";
 import { SCROLL_LUA, replied, type ScrollRequest } from "./smoothScroll";
 import { rideAnchor, rideArea, rideStyle, type BufposAnchor } from "./riders";
 import { PaintHold } from "./paintHold";
+import { LabelAsks } from "./labelAsks";
 
 import {
   IDLE,
@@ -147,8 +148,10 @@ export class NeovimEditor {
    * buffer position (`false`: not, or not known yet).
    */
   private readonly anchorsAsked = new Map<number, BufposAnchor | false>();
-  /** The border text each float's labels were last asked for, by window. */
-  private readonly labelsAsked = new Map<number, string>();
+  /** The labels asked for floats whose border holds text (`LabelAsks`). */
+  private readonly labelAsks = new LabelAsks();
+  /** A paint waits for a new float's labels: whether it was a full one. */
+  private labelsPaint: { force: boolean } | undefined;
   private readonly listeners = new Set<() => void>();
   private dragging: { button: string; target: MouseTarget } | undefined;
   /** A Meta dead key's composition, dropped (`surfaces/optionKey.ts`). */
@@ -647,6 +650,19 @@ export class NeovimEditor {
   private paint(forceAll = false): void {
     if (this.disposed) return;
     if (this.hold.defer(forceAll)) return;
+    const laid = claimFloats(layoutGrids(this.state), this.claimed);
+    // A float opening with text in its border is drawn once its labels
+    // are known, its final frame from its first frame (`LabelAsks`).
+    if (this.askFloatLabels(laid)) {
+      this.labelsPaint = {
+        force: forceAll || this.labelsPaint?.force === true,
+      };
+      return;
+    }
+    if (this.labelsPaint !== undefined) {
+      forceAll ||= this.labelsPaint.force;
+      this.labelsPaint = undefined;
+    }
     const changes = this.pending;
     this.pending = emptyChanges();
     if (changes.options) this.applyFont();
@@ -655,7 +671,6 @@ export class NeovimEditor {
     // A panel next to the cursor's row is moved half a row off it, so a
     // borderless float's padding never covers what is typed
     // (`clearCursorRow`).
-    const laid = claimFloats(layoutGrids(this.state), this.claimed);
     const at = laid.find((b) => b.grid === this.state.cursor.grid);
     this.boxes = clearCursorRow(
       laid,
@@ -685,7 +700,6 @@ export class NeovimEditor {
         this.painter.paint(this.state, changes, this.boxes, forceAll);
       },
     });
-    this.askFloatLabels();
     this.askFloatAnchors();
     this.placeCursor(changes.scrolled.has(this.state.cursor.grid));
     this.scrollFrame();
@@ -877,42 +891,45 @@ export class NeovimEditor {
    * `footer`, from `nvim_win_get_config`, are what let that text be drawn
    * as a label on the line (`frame.ts`); until they are known, or when the
    * text is not theirs, the border is drawn cell for cell. Asked again only
-   * when the border's text changes.
+   * when the border's text changes. Whether the paint of `boxes` waits: a
+   * float among them has never had its answer (`LabelAsks`), and is drawn
+   * with it, when it comes.
    */
-  private askFloatLabels(): void {
+  private askFloatLabels(boxes: readonly GridBox[]): boolean {
     const request = this.port.request?.bind(this.port);
-    if (!request) return;
-    const open = new Set<number>();
-    for (const box of this.boxes) {
-      if (!box.float || box.win === undefined || box.lined !== true) continue;
-      open.add(box.win);
-      if (box.wantsLabels !== true) continue;
+    if (!request) return false;
+    const { ask, waiting } = this.labelAsks.need(boxes, (box) => {
       const grid = this.state.grids.get(box.grid);
-      if (!grid) continue;
-      const text = `${gridRowText(grid, 0)}\n${gridRowText(grid, grid.height - 1)}`;
-      if (this.labelsAsked.get(box.win) === text) continue;
-      this.labelsAsked.set(box.win, text);
-      const win = box.win;
+      return grid === undefined
+        ? undefined
+        : `${gridRowText(grid, 0)}\n${gridRowText(grid, grid.height - 1)}`;
+    });
+    const repaint = () => {
+      this.pending.layout = true;
+      if (this.frame === 0) {
+        this.frame = requestAnimationFrame(() => {
+          this.frame = 0;
+          this.paint();
+        });
+      }
+    };
+    for (const { win } of ask) {
       request("nvim_win_get_config", [win]).then(
         (config) => {
           if (this.disposed) return;
           this.state.floatLabels.set(win, floatLabelsOf(config));
-          this.pending.layout = true;
-          if (this.frame === 0) {
-            this.frame = requestAnimationFrame(() => {
-              this.frame = 0;
-              this.paint();
-            });
-          }
+          this.labelAsks.answer(win);
+          repaint();
         },
         () => {
           // Closed meanwhile, or no such window: drawn cell for cell.
+          if (this.disposed) return;
+          this.labelAsks.answer(win);
+          repaint();
         },
       );
     }
-    for (const win of this.labelsAsked.keys()) {
-      if (!open.has(win)) this.labelsAsked.delete(win);
-    }
+    return waiting;
   }
 
   /**
