@@ -1476,8 +1476,9 @@ across DevHub:
   candidate lies over the word it completes.
 - _Kinds_ are vector marks (`kinds.ts`), not Nerd Font glyphs or letters:
   eight shapes for LSP's twenty-five kinds — `∧` a callable (an action),
-  `●` a value, `○` a variable (a place a value goes), `□` a field (a slot
-  of a structure), `■` a type (the structure), `–` a keyword, `◇` a
+  `●` a value, `○` a variable (a place a value goes), `⊔` a field (a slot
+  of a structure: a tray, open at the top, since a hollow square is what
+  a missing glyph looks like), `■` a type (the structure), `–` a keyword, `◇` a
   module, `⋯` a snippet (text with gaps), `=` text. Eight are learnt at a
   glance; a glyph per kind at cap height is a puzzle. A mark is a cap
   height square on the baseline, as tall as the capitals beside it, its

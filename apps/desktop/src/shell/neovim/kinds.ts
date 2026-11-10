@@ -181,7 +181,10 @@ export const KIND_GROUPS: readonly string[] = [
  * - callable `∧`: a step up and back — an action, not a thing;
  * - value `●`: a point — a fixed value;
  * - variable `○`: the same point, open — a place a value goes;
- * - member `□`: an open box — a slot of a structure;
+ * - member `⊔`: a tray, open at the top — a slot of a structure, a place
+ *   a value is put in. Not a closed outline: a small hollow square on a
+ *   text line is what a missing glyph looks like (tofu), and a list of
+ *   them read as a font that failed;
  * - type `■`: the box filled — the structure itself;
  * - keyword `–`: a bar — a word of the language;
  * - module `◇`: a box turned — a container of names;
@@ -210,7 +213,7 @@ export function markPath(
       return { d: circle(5, 5, 2.9), fill: false, stroke };
     case "member":
       return {
-        d: `M${n(1.8)} ${n(1.8)}H${n(8.2)}V${n(8.2)}H${n(1.8)}Z`,
+        d: `M${n(1.8)} ${n(1.8)}V${n(8.2)}H${n(8.2)}V${n(1.8)}`,
         fill: false,
         stroke,
       };
