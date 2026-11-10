@@ -1289,6 +1289,31 @@ follows it wherever a Neovim lives, and nothing on screen leaves:
   the first server exits, the program waits on each restarted server by
   its pid and ends with the last one's status: `:restart` then `:wq` in a
   `git commit` makes the commit, `:cq 3` after a restart is status 3.
+- _DevHub's own windows_ (`neovimSession.ts`): `:restart` writes a
+  session with the person's 'sessionoptions'. With `blank` in it, a GUI
+  window (`gui.webview`, `devhub://<title>/<id>`) or the pager was saved as
+  an empty window: the session came back with a dead Outline in it,
+  squeezed to a column or three, and current when the cursor had been in
+  it. After any session is written (`SessionWritePost`) DevHub appends what
+  to do once it is sourced: close the windows that were DevHub's, their
+  room to the windows beside them (not evened out by 'equalalways'), and
+  make current the window edited before (`wincmd p`) if the current one
+  was DevHub's. At every attach a `devhub://` window with no GUI window
+  behind it (a session written before) is closed the same way.
+- _The sizes_: the new server sources the session once a UI is attached,
+  which is DevHub's priming attach at half the size, so the sizes saved
+  before that attach were of the server's one first window, and put back
+  after it they gave that window every column but one (a two-window
+  session came back 132 and 1 wide). An attach now puts back a tab's sizes
+  only over the windows it saved. The session DevHub appended to also
+  carries each window's size and the screen's; once it has loaded, at the
+  real attach, back at that screen size, every window is put back at its
+  size exactly (the windows that took a closed GUI window's room with that
+  room); at any other size the sizes it loaded at are scaled. A Neovim
+  still starting when DevHub attaches (`nvim -o a b`) has its windows'
+  sizes scaled the same way from `VimEnter`. Scaling counts a window's
+  status line or separator as a cell that does not grow. `cmdheight` stays
+  the person's through all of it (`_keep_cmdheight`).
 - A `devhub-nvim` Neovim that restarted is adopted again by its socket at
   the next open, as after a DevHub restart (its `$TMUX_PANE` is the
   keeper's, inherited).
@@ -1350,7 +1375,16 @@ settings with control mode, tmux.conf and Neovim config). These were checked:
 - a snacks picker (framed) and `vim.ui.select` through it;
 - fidget's and `vim.notify`'s notifications;
 - `:DevhubGuiDemo`'s GUI window;
-- `:restart`, followed with the pane, the place and the keys kept;
+- `:restart`, followed with the pane, the place and the keys kept; with
+  `:DevhubGuiDemo`'s Outline open and current beside a split: no Outline
+  after it, the window edited before current, every size as it was, the
+  Outline's columns to the window beside it, and the same after a second
+  `:restart` (`neovimSession.real.test.ts` too);
+- `cmdheight` (2) after the first attach (`nvim -o`: 19 and 18 rows), a
+  DevHub restart, `:restart`, a tmux split below the pane and its close,
+  and a zoom and unzoom: it stayed 2 each time, the windows' rows given and
+  taken by the windows (a pane made shorter takes them from the last
+  window, as Neovim does, and growing back gives them to it);
 - a window resize;
 - a DevHub restart (both Neovims attached again);
 - the Neovim host killed (both reconnect);

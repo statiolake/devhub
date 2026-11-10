@@ -20,6 +20,11 @@ import { DECOR_LUA } from "./neovimDecor.js";
 import { MESSAGES_LUA } from "./neovimMessages.js";
 import { LAYERS_LUA } from "./neovimGuiLayers.js";
 import { RESTART_STATE_LUA } from "./neovimRestart.js";
+import {
+	LAYOUT_RESTORE_LUA,
+	LAYOUT_SAVE_LUA,
+	SESSION_LUA,
+} from "./neovimSession.js";
 import type { NeovimRpc } from "./neovimRpc.js";
 
 /** What the GUI hears from its Neovim (`neovimUiSessions.ts` sends it on). */
@@ -1030,73 +1035,6 @@ export function clipboardPaste(text: string): [string[], string] {
 	return [normal.split("\n"), "v"];
 }
 
-/**
- * Each tab's window sizes, as `winrestcmd()` gives them in that tab: a
- * list of `{ window, command }`, the window one of the tab's own (not a
- * float), for `LAYOUT_RESTORE_LUA` — with the rows and columns they shared
- * then (`lines` less `cmdheight`, `columns`).
- */
-const LAYOUT_SAVE_LUA = `
-local saved = {}
-for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-    if vim.api.nvim_win_get_config(win).relative == "" then
-      local cmd = vim.api.nvim_win_call(win, vim.fn.winrestcmd)
-      table.insert(saved, { win, cmd })
-      break
-    end
-  end
-end
-return { rows = vim.o.lines - vim.o.cmdheight, cols = vim.o.columns, tabs = saved }
-`;
-
-/**
- * `LAYOUT_SAVE_LUA`'s sizes put back, each tab's in that tab. Twice, as
- * `:help winrestcmd()` asks: a window grown first can hold back the next.
- *
- * The sizes are scaled to the rows and columns there are now: they were
- * taken at the size Neovim had before this attach — the previous page's, or
- * the 80x24 an `--embed` Neovim starts at before any UI — and `:resize`
- * gives what a window lets go of to the command line when no window is
- * below it to take it. A 21-row window put back in a 48-row grid made
- * `cmdheight` 26: the command line in the middle of the pane. For the same
- * reason the person's `cmdheight` is put back after, whatever rounding
- * left over (`_keep_cmdheight`, `neovimMessages.ts`).
- */
-const LAYOUT_RESTORE_LUA = `
-local layout = ...
-local function scaled(cmd)
-  local rows = math.max(1, vim.o.lines - vim.o.cmdheight)
-  local ry = rows / math.max(1, layout.rows or rows)
-  local rx = vim.o.columns / math.max(1, layout.cols or vim.o.columns)
-  local parts = {}
-  for part in cmd:gmatch("[^|]+") do
-    local vert = part:sub(1, 5) == "vert "
-    local nr, size = part:match("^%D*(%d+)resize (%d+)$")
-    if nr then
-      local n = math.max(1, math.floor(tonumber(size) * (vert and rx or ry) + 0.5))
-      part = ("%s%sresize %d"):format(vert and "vert " or "", nr, n)
-    end
-    table.insert(parts, part)
-  end
-  return table.concat(parts, "|")
-end
-local M = package.loaded["devhub_gui"]
--- What :resize does to cmdheight is not the person's (an OptionSet for it).
-if M then M._holding = true end
-for _, entry in ipairs(layout.tabs or {}) do
-  local win, cmd = entry[1], entry[2]
-  if vim.api.nvim_win_is_valid(win) then
-    pcall(vim.api.nvim_win_call, win, function()
-      cmd = scaled(cmd)
-      vim.cmd(cmd)
-      vim.cmd(cmd)
-    end)
-  end
-end
-if M and M._keep_cmdheight then M._keep_cmdheight() end
-`;
-
 /** `g:clipboard`'s copy, as the text this Mac's clipboard gets. */
 export function clipboardCopy(
 	lines: readonly unknown[],
@@ -1162,6 +1100,8 @@ export class NeovimUi {
 		await this.client.request("nvim_exec_lua", [SETUP_LUA, [channel]]);
 		// What a pane's program needs to follow a `:restart`.
 		await this.client.request("nvim_exec_lua", [RESTART_STATE_LUA, []]);
+		// DevHub's own windows kept out of a session (`neovimSession.ts`).
+		await this.client.request("nvim_exec_lua", [SESSION_LUA, []]);
 		// Views (framed or not), inline cards and popups (`gui.view`,
 		// `gui.inline`, `gui.popup`): the same module, grown by its own file.
 		await this.client.request("nvim_exec_lua", [LAYERS_LUA, []]);
