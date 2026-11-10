@@ -651,15 +651,18 @@
   letter-spacing: 0.02em;
 }
 
-/* A folding lane's heading: the whole row is the button, the chevron left. */
+/* A folding lane's heading: the whole row is the button, the chevron left.
+   The chevron hangs in the margin, outside the column the lanes' dots and
+   names stand in, so a folding lane's dot is where every other lane's is. */
 .orchestrator-lane-fold {
+  position: relative;
   display: flex;
   height: 100%;
   flex: 1;
   align-items: center;
   gap: 7px;
-  margin: 0 calc(-1 * var(--space-2));
-  padding: 0 var(--space-2);
+  margin: 0 calc(-1 * var(--space-2)) 0 -14px;
+  padding: 0 var(--space-2) 0 14px;
   border: 0;
   border-radius: var(--radius-control);
   background: transparent;
@@ -674,9 +677,11 @@
 }
 
 .orchestrator-lane-chevron {
+  position: absolute;
+  top: calc(50% - 5px);
+  left: 2px;
   width: 10px;
   height: 10px;
-  margin-left: -3px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.4;
