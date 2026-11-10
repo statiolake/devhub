@@ -1,10 +1,9 @@
 /**
  * Where a grid's cells are a terminal's compromise, drawn as what they
  * mean: window separators as a line between two windows' grounds, `~`
- * past the end left out, a diff's filler hatched, a menu's scrollbar of
- * floats as a thin thumb. Pure — rows of colours in, decisions out — so
- * they are tested without a canvas (`chrome.test.ts`); `painter.ts` draws
- * them.
+ * past the end left out, a menu's scrollbar of floats as a thin thumb.
+ * Pure — rows of colours in, decisions out — so they are tested without a
+ * canvas (`chrome.test.ts`); `painter.ts` draws them.
  *
  * Nothing here changes what is in a cell or where: the text, the cursor and
  * every click stay on the cells Neovim says.
@@ -240,7 +239,7 @@ export function themeOf(answer: unknown): PaintTheme {
 export function fillChosen(
   theme: PaintTheme,
   win: number | undefined,
-  item: "eob" | "diff",
+  item: "eob",
 ): boolean {
   const value =
     (win !== undefined ? theme.winFillchars.get(win) : undefined) ??
@@ -368,26 +367,6 @@ export function isEndOfBuffer(
     if ((chars[base + col] ?? " ") !== " ") return false;
   }
   return true;
-}
-
-/**
- * A diff's filler row (a line the other side has): from some column on,
- * nothing but `-` in a highlight made of `DiffDelete` (`isFill`). Answers
- * that column, or `undefined`.
- */
-export function fillerStart(
-  chars: readonly string[],
-  base: number,
-  width: number,
-  isFill: (col: number) => boolean,
-): number | undefined {
-  const fill = (col: number) => chars[base + col] === "-" && isFill(col);
-  if (width === 0 || !fill(width - 1)) return undefined;
-  let start = width - 1;
-  while (start > 0 && fill(start - 1)) start -= 1;
-  // A real line of dashes is not a whole row of them in DiffDelete's
-  // colours from the text column on; still, a short run is left alone.
-  return width - start >= Math.min(8, width) ? start : undefined;
 }
 
 /** What a one-column float is to a menu beside it. */

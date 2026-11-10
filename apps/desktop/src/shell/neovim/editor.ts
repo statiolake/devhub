@@ -611,7 +611,6 @@ export class NeovimEditor {
     }
   }
 
-  /** The pointer is over another grid: its fold column's chevrons show. */
   /** Neovim went away: what is drawn stays, nothing is sent. */
   reset(): void {
     this.wheel.reset();

@@ -41,13 +41,7 @@ import {
   type Shape,
 } from "./glyphs";
 import { familyOf, markPath, type KindFamily } from "./kinds";
-import {
-  foldLineOf,
-  placeDecor,
-  wordsOf,
-  type Decor,
-  type FoldLine,
-} from "./decor";
+import { placeDecor, wordsOf, type Decor } from "./decor";
 import {
   floatClusters,
   cutClip,
@@ -60,7 +54,6 @@ import {
 import {
   NO_THEME,
   fillChosen,
-  fillerStart,
   floatScrollbars,
   boundariesOf,
   isEndOfBuffer,
@@ -361,16 +354,7 @@ interface GridCanvas {
 
 const NO_CROP = { top: 0, right: 0, bottom: 0, left: 0 } as const;
 
-/** A diff filler's hatching: pixels between its diagonals. */
-const FILLER_STEP = 6;
-
 /** A selection's or search match's corners (`chrome.ts`). */
-
-/**
- * How far a closed fold's line fill fades out (`paintFoldLine`): about a
- * dozen cells, the same in a window of any width.
- */
-const FOLD_FADE = 260;
 
 /**
  * How long lines a `dd`, `p` or `o` moved take to slide into place
@@ -656,7 +640,7 @@ export class GridPainter {
   private chromeKey = "";
   /** The window the cursor was last in, for `NormalNC`. */
   private currentWin: number | undefined;
-  /** The row's cells whose glyph is not drawn (`~`, a filler's `-`). */
+  /** The row's cells whose glyph is not drawn (`~`, a boundary's column, a decoration's words). */
   private readonly skip = new Set<number>();
   private dpr: number;
   /** The editor face's cap height: a kind mark's size. */
@@ -1878,20 +1862,6 @@ export class GridPainter {
     ctx.fillRect(0, 0, cells * cw, ch);
     if (!inside) return;
     ctx.translate(-col * cw, 0);
-    // On a closed fold (its first cell is the cursor's): the chevron, as
-    // the row draws it, not the `+` of the marker under it.
-    const win = state.gridWins.get(cursor.grid);
-    const spans = win === undefined ? undefined : this.decor.get(win);
-    const fold = spans
-      ? foldLineOf(
-          { chars: grid.chars, base, width: grid.width },
-          spans.filter((span) => span.row === row),
-        )
-      : undefined;
-    if (fold && col >= fold.start) {
-      if (col === fold.chevron) this.paintChevron(ctx, col * cw, 0, false, fg);
-      return;
-    }
     this.skip.clear();
     this.icons.length = 0;
     this.paintRun(
@@ -2363,7 +2333,6 @@ export class GridPainter {
     if (box.grid === 1)
       for (const b of this.boundaries)
         if (b.top <= row && row < b.bottom) this.skip.add(b.col);
-    if (!box.float && box.grid !== 1) this.paintFiller(ctx, state, box, row, y);
     if (
       !box.float &&
       box.grid !== 1 &&
@@ -2377,23 +2346,17 @@ export class GridPainter {
     ) {
       this.skip.add(0);
     }
-    // Decorations (virtual text, a fold's text) found where Lua says they
-    // are: their words are set in the UI face after the row's text, inside
-    // their cells (`decor.ts`), so the cells' own glyphs are not drawn.
+    // Decorations (Neovim's own virtual text) found where Lua says they are:
+    // their words are set in the UI face after the row's text, inside their
+    // cells (`decor.ts`), so the cells' own glyphs are not drawn.
     this.words.length = 0;
     const spans =
       box.win === undefined || box.float
         ? undefined
         : this.decor.get(box.win)?.filter((span) => span.row === row);
     const cells = { chars: grid.chars, base, width: grid.width };
-    // A closed fold is the fold's from its marker to the window's edge.
-    const fold = spans ? foldLineOf(cells, spans) : undefined;
-    if (fold) {
-      for (let col = fold.start; col < grid.width; col += 1) this.skip.add(col);
-    }
     if (spans && spans.length > 0) {
-      const others = spans.filter((span) => span.kind !== "fold");
-      for (const place of placeDecor(cells, others)) {
+      for (const place of placeDecor(cells, spans)) {
         const words = wordsOf(cells, place);
         if (!words) continue;
         this.words.push({ ...words, align: place.align });
@@ -2401,13 +2364,6 @@ export class GridPainter {
           this.skip.add(col);
       }
     }
-    // The fold column's open and closed marks as chevrons (mock 3), only
-    // where the config shows a fold column; its `|` levels are not drawn.
-    const marks =
-      !box.float && box.grid !== 1
-        ? this.foldColumnMarks(state, grid, base)
-        : [];
-    for (const mark of marks) this.skip.add(mark.col);
     for (const run of runs) {
       this.paintRun(
         ctx,
@@ -2448,14 +2404,6 @@ export class GridPainter {
     this.icons.length = 0;
     for (const words of this.words) {
       this.paintWords(ctx, state, grid, base, words, y, baseline);
-    }
-    if (fold) this.paintFoldLine(ctx, state, grid, base, fold, y, baseline);
-    for (const mark of marks) {
-      const fg = resolveColors(
-        state.hl.get(grid.hls[base + mark.col] ?? 0),
-        state.defaults,
-      ).fg;
-      this.paintChevron(ctx, mark.col * cw, y, mark.open, fg);
     }
     this.words.length = 0;
     ctx.restore();
@@ -2610,185 +2558,8 @@ export class GridPainter {
     this.slides.delete(grid);
   }
 
-  /**
-   * The fold column's marks on this row: its cells in `FoldColumn` whose
-   * character is Neovim's default `+` (closed) or `-` (open). A person's own
-   * `foldclose:`/`foldopen:` is theirs; `|` and `│`, the levels between,
-   * are left blank (they ruled a line down the column that says nothing a
-   * chevron does not).
-   */
-  private foldColumnMarks(
-    state: NeovimUiState,
-    grid: {
-      readonly chars: readonly string[];
-      readonly hls: ArrayLike<number>;
-      readonly width: number;
-    },
-    base: number,
-  ): { col: number; open: boolean | undefined }[] {
-    const out: { col: number; open: boolean | undefined }[] = [];
-    for (let col = 0; col < Math.min(grid.width, 12); col += 1) {
-      if (!this.hasGroup(state, grid.hls[base + col] ?? 0, "FoldColumn"))
-        continue;
-      const c = grid.chars[base + col];
-      if (c === "+") out.push({ col, open: false });
-      else if (c === "-") out.push({ col, open: true });
-      else if (c === "|" || c === "│") out.push({ col, open: undefined });
-    }
-    return out;
-  }
-
-  /**
-   * A chevron in a cell: `›` closed, `⌄` open (`undefined`: nothing), two
-   * strokes as thick as box drawing's line, so it is the same mark at any
-   * font: drawn, not a glyph that each face shapes its own way.
-   */
-  private paintChevron(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    open: boolean | undefined,
-    fg: number,
-  ): void {
-    if (open === undefined) return;
-    const { width: cw, height: ch } = this.metrics;
-    const cx = x + cw / 2;
-    const cy = y + ch / 2;
-    const s = Math.max(2, Math.min(cw, this.font.size) * 0.22);
-    ctx.save();
-    ctx.strokeStyle = cssColor(fg);
-    ctx.lineWidth = Math.max(1, this.font.size / 11);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    if (open) {
-      ctx.moveTo(cx - s, cy - s / 2);
-      ctx.lineTo(cx, cy + s / 2);
-      ctx.lineTo(cx + s, cy - s / 2);
-    } else {
-      ctx.moveTo(cx - s / 2, cy - s);
-      ctx.lineTo(cx + s / 2, cy);
-      ctx.lineTo(cx - s / 2, cy + s);
-    }
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  /**
-   * A closed fold's line (mock 3): `›` where its marker's level puts it
-   * (two cells a level: depth by place, as the marker's dashes counted it),
-   * its words in the UI face, how many lines it holds dimmer and a step
-   * smaller right after them — counted, not a heading — and the fill as
-   * one hairline fading out over about a dozen cells (`FOLD_FADE`): it
-   * leads into the lines folded without ruling a line across the editor.
-   * The ground is the cells' (`Folded`, the cursor line's), as Neovim says;
-   * the cursor and a click are on the cells as before.
-   */
-  private paintFoldLine(
-    ctx: CanvasRenderingContext2D,
-    state: NeovimUiState,
-    grid: { readonly hls: ArrayLike<number>; readonly width: number },
-    base: number,
-    fold: FoldLine,
-    y: number,
-    baseline: number,
-  ): void {
-    const { width: cw, height: ch } = this.metrics;
-    const attr = state.hl.get(grid.hls[base + fold.start] ?? 0);
-    const colors = resolveColors(attr, state.defaults);
-    const right = grid.width * cw;
-    this.paintChevron(ctx, fold.chevron * cw, y, false, colors.fg);
-    ctx.save();
-    ctx.letterSpacing = "0px";
-    ctx.textBaseline = "alphabetic";
-    let x = (fold.chevron + 1.5) * cw;
-    ctx.font = this.wordsFont(attr, Math.max(1, this.font.size - 1));
-    const words = ctx.measureText(fold.words).width;
-    const room = Math.max(0, right - x - 4 * cw);
-    const scale = words > room && words > 0 ? room / words : 1;
-    ctx.fillStyle = cssColor(colors.fg);
-    ctx.save();
-    ctx.translate(x, 0);
-    ctx.scale(scale, 1);
-    ctx.fillText(fold.words, 0, y + baseline);
-    ctx.restore();
-    x += words * scale;
-    const dim = cssColor(mixColors(colors.fg, colors.bg, 45));
-    if (fold.count !== undefined) {
-      ctx.font = this.wordsFont(undefined, Math.max(1, this.font.size - 2));
-      const label = `${String(fold.count)} line${fold.count === 1 ? "" : "s"}`;
-      x += cw * 0.8;
-      if (x + ctx.measureText(label).width < right) {
-        ctx.fillStyle = dim;
-        ctx.fillText(label, x, y + baseline);
-        x += ctx.measureText(label).width;
-      }
-    }
-    ctx.restore();
-    // The fill: box drawing's own line (its thickness and place).
-    const shapes = glyphShapes(
-      "─",
-      { x: 0, y, w: cw, h: ch },
-      this.dpr,
-      this.font.size,
-    );
-    const line = shapes?.find((shape) => shape.kind === "rect");
-    const x0 = x + cw;
-    const x1 = Math.min(right, x0 + FOLD_FADE);
-    if (!line || line.kind !== "rect" || x1 <= x0) return;
-    const fade = ctx.createLinearGradient(x0, 0, x1, 0);
-    fade.addColorStop(0, cssColor(colors.fg, 0.45));
-    fade.addColorStop(1, cssColor(colors.fg, 0));
-    ctx.fillStyle = fade;
-    ctx.fillRect(x0, line.y, x1 - x0, line.h);
-  }
-
   private wordsFont(attr: HlAttr | undefined, size: number): string {
     return `${attr?.italic === true ? "italic " : ""}${attr?.bold === true ? "bold " : ""}${String(size)}px ${ICON_FAMILY}, ${UI_FAMILY}`;
-  }
-
-  /**
-   * A diff's filler row (`-` in `DiffDelete`, the default `diff:`) as a
-   * hatched band, as GUI diff views mark lines that are not there: thin
-   * diagonals in its foreground, continuous from row to row.
-   */
-  private paintFiller(
-    ctx: CanvasRenderingContext2D,
-    state: NeovimUiState,
-    box: GridBox,
-    row: number,
-    y: number,
-  ): void {
-    const grid = state.grids.get(box.grid);
-    if (!grid || fillChosen(this.theme, box.win, "diff")) return;
-    const base = row * grid.width;
-    const colors = (col: number) =>
-      resolveColors(state.hl.get(grid.hls[base + col] ?? 0), state.defaults);
-    const start = fillerStart(grid.chars, base, grid.width, (col) =>
-      this.hasGroup(state, grid.hls[base + col] ?? 0, "DiffDelete"),
-    );
-    if (start === undefined) return;
-    const { width: cw, height: ch } = this.metrics;
-    const x0 = start * cw;
-    const x1 = grid.width * cw;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(x0, y, x1 - x0, ch);
-    ctx.clip();
-    ctx.strokeStyle = cssColor(colors(grid.width - 1).fg);
-    ctx.globalAlpha = 0.3;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    const step = FILLER_STEP;
-    // Lines x + y = k·step, so they run on across rows of the grid.
-    const first = Math.floor((x0 + y) / step) * step;
-    for (let k = first; k <= x1 + y + ch + step; k += step) {
-      ctx.moveTo(k - y, y);
-      ctx.lineTo(k - y - ch, y + ch);
-    }
-    ctx.stroke();
-    ctx.restore();
-    for (let col = start; col < grid.width; col += 1) this.skip.add(col);
   }
 
   /** Whether a highlight is made of `group` (`ext_hlstate`). */

@@ -3,7 +3,6 @@ import { initialUiState, type GridBox } from "./redraw";
 import {
   NO_THEME,
   fillChosen,
-  fillerStart,
   floatScrollbars,
   isEndOfBuffer,
   boundariesOf,
@@ -122,21 +121,6 @@ describe("the end of the buffer", () => {
     expect(fillChosen(theme, 1002, "eob")).toBe(false);
     expect(
       fillChosen(themeOf({ groups: {}, fillchars: "eob: " }), 1000, "eob"),
-    ).toBe(true);
-  });
-});
-
-describe("a diff's filler row", () => {
-  it("is the dashes in DiffDelete's highlight from the text column on", () => {
-    const chars = [..."    ----------"];
-    expect(fillerStart(chars, 0, 14, (col) => col >= 4)).toBe(4);
-    // Not a filler: dashes in the text's own highlight.
-    expect(fillerStart(chars, 0, 14, () => false)).toBeUndefined();
-  });
-
-  it("is left alone when the person chose diff:", () => {
-    expect(
-      fillChosen(themeOf({ groups: {}, fillchars: "diff:╱" }), 1000, "diff"),
     ).toBe(true);
   });
 });

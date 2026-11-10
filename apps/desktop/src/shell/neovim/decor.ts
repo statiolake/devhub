@@ -1,7 +1,7 @@
 /**
  * Decorations in a proportional face: text Neovim draws on cells that is
  * not the buffer's — virtual text at the end of a line, right-aligned or
- * inline (inlay hints), virtual lines, a closed fold's text. Lua says where
+ * inline (inlay hints), and virtual lines. Lua says where
  * each is (`main/editor/neovimDecor.ts`); this finds it in a grid row, as
  * the cells it holds now, and says where its words go. Pure, so tested
  * without a page; `painter.ts` draws.
@@ -16,7 +16,7 @@
 
 import { glyphKind } from "./glyphs";
 
-export type DecorKind = "eol" | "right" | "inline" | "lines" | "fold";
+export type DecorKind = "eol" | "right" | "inline" | "lines";
 
 /** Where Lua says a decoration is: a row and column of its window's grid. */
 export interface DecorSpan {
@@ -24,21 +24,12 @@ export interface DecorSpan {
   readonly col: number;
   readonly text: string;
   readonly kind: DecorKind;
-  /**
-   * A closed fold (`kind: "fold"`; `text` is all of its line from the
-   * marker): its level, and — with Neovim's own `foldtext` — how many lines
-   * it holds and its words without the `+--  N lines:` lead and the fold
-   * marker. A person's `foldtext` has neither: its text is their words.
-   */
-  readonly level?: number;
-  readonly count?: number;
-  readonly words?: string;
 }
 
 /** Decorations by window, as the last `decor` event said. */
 export type Decor = ReadonlyMap<number, readonly DecorSpan[]>;
 
-const KINDS = new Set<string>(["eol", "right", "inline", "lines", "fold"]);
+const KINDS = new Set<string>(["eol", "right", "inline", "lines"]);
 
 /** The `decor` event's payload (`{ wins = { [win] = spans } }`), checked. */
 export function decorOf(payload: unknown): Decor {
@@ -63,9 +54,6 @@ export function decorOf(payload: unknown): Decor {
           col: s["col"],
           text: s["text"],
           kind: s["kind"] as DecorKind,
-          ...(typeof s["level"] === "number" ? { level: s["level"] } : {}),
-          ...(typeof s["count"] === "number" ? { count: s["count"] } : {}),
-          ...(typeof s["words"] === "string" ? { words: s["words"] } : {}),
         });
       }
     }
@@ -174,7 +162,7 @@ function findSpan(
           const end = matchAt(row, col, span.text, cut);
           if (end !== undefined) return [col, end];
         }
-        // Folds and virtual lines are where Lua says, exactly.
+        // Virtual lines are where Lua says, exactly.
         if (span.kind !== "inline") break;
       }
       return undefined;
@@ -233,35 +221,4 @@ export function wordsOf(
   )
     end += 1;
   return end > start ? { start, end } : undefined;
-}
-
-/**
- * A closed fold on a row (mock 3): where its line starts (the marker's
- * first cell) and what is drawn there, when the row holds its text there
- * now. Everything from `start` to the window's edge is the fold's: the
- * marker, the words and the fill.
- */
-export interface FoldLine {
-  readonly start: number;
-  /** The chevron's cell: a level's two cells in from the marker's. */
-  readonly chevron: number;
-  readonly words: string;
-  readonly count: number | undefined;
-}
-
-export function foldLineOf(
-  row: RowCells,
-  spans: readonly DecorSpan[],
-): FoldLine | undefined {
-  const span = spans.find((s) => s.kind === "fold");
-  if (!span || matchAt(row, span.col, span.text, true) === undefined)
-    return undefined;
-  const level = Math.max(1, span.level ?? 1);
-  const chevron = Math.min(row.width - 1, span.col + (level - 1) * 2);
-  return {
-    start: span.col,
-    chevron,
-    words: (span.words ?? span.text).trim(),
-    count: span.count,
-  };
 }

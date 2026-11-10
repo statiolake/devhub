@@ -152,8 +152,7 @@ DevHub's runs the person's own as before.
 `ext_multigrid`, `ext_hlstate`, `ext_popupmenu`, `ext_cmdline`,
 `ext_messages` and `ext_tabline`. `ext_hlstate` only adds the groups each highlight is made of
 (`hl_attr_define`'s info: `ui_name`, `hi_name`); the page keeps them on the
-highlight and knows a diff's filler and the
-end-of-buffer `~` by name, not by colour.
+highlight and knows the end-of-buffer `~` by name, not by colour.
 `ext_messages` hands DevHub Neovim's messages, prompts, mode and ruler as
 events, and DevHub draws them (Messages, below); Neovim 0.12 has no
 hit-enter prompt for such a UI and asks every question through the command
@@ -370,22 +369,26 @@ one layer model and pane motion.
     the window's `fillchars` has no `eob:` of the person's
     (`isEndOfBuffer`); a `:setlocal fillchars` is seen at once
     (`OptionSet`, and on `FileType`/`BufWinEnter` when a window's differs).
-  - A diff's filler rows (the default `diff:` `-`) are hatched: thin
-    diagonals in the foreground, continuous from row to row.
+  - Diff mode is what Neovim draws, cell for cell: `DiffAdd`,
+    `DiffChange`, `DiffText` and `DiffDelete` where Neovim puts them
+    (`DiffChange` to the window's edge, as Neovim extends it), and a
+    filler row's `fillchars` `diff:` character (`-` by default) as text.
+    How a changed line and its changed text look is the colorscheme's.
   - A menu's scrollbar made of one-column floats (blink.cmp, nvim-cmp) on
     a menu's right edge is an overlay scrollbar: the gutter not drawn, the
     thumb a thin bar.
-  - Status lines, winbars, the fold column, indent guides and
+  - Status lines, winbars, folds (a closed fold's `foldtext` and its
+    `fold:` fill, the fold column's marks), indent guides and
     `MatchParen` are what Neovim and the person's config say, cell for
     cell; only the glyphs a terminal approximates are drawn as what they
     mean (box drawing, blocks and Powerline separators as geometry,
     continuous across `linespace`).
   - Decorations in a proportional face (`decor.ts`,
     `main/editor/neovimDecor.ts`): virtual text at the end of a line
-    (diagnostics, git blame), right-aligned and inline (inlay hints),
-    virtual lines, and a closed fold's text are not the buffer's content,
-    so their words are set in the UI face a step under the editor's size,
-    as the completion menu's labels are: words about the code, not code.
+    (diagnostics, git blame), right-aligned and inline (inlay hints), and
+    virtual lines are not the buffer's content, so their words are set in
+    the UI face a step under the editor's size, as the completion menu's
+    labels are: words about the code, not code.
     Does Neovim drawing them on cells make them drift? No, as long as they
     stay inside their cells. Neovim lays them out in cells, and everything
     after them — the buffer text after an inlay hint, the cursor, a
@@ -395,10 +398,9 @@ one layer model and pane motion.
     wider (rare) is set narrower to fit, never past them. What cells cannot
     say is _which_ cells are virtual: `grid_line` does not tell. So Lua
     says: after every redraw that drew a window, the extmarks in its
-    visible lines (`nvim_buf_get_extmarks` with details) and its closed
-    folds (`foldclosed`, `foldtextresult`) are placed with `screenpos` and
-    sent as rows and columns of the window's grid with their text (only
-    when they changed). The page sets one only where the grid holds exactly
+    visible lines (`nvim_buf_get_extmarks` with details) are placed with
+    `screenpos` and sent as rows and columns of the window's grid with
+    their text (only when they changed). The page sets one only where the grid holds exactly
     that text there now — a few cells off is looked for, nearest first,
     since a character typed before a hint moves it before Lua speaks
     again — and anything else is cells as before: a guess is never drawn.
@@ -410,25 +412,13 @@ one layer model and pane motion.
       any other (`: i32`, `-> T`) to the code before, the slack after,
       where reading goes on. Right-aligned text keeps to the window's
       edge. The rest starts where Neovim starts it.
-    - A closed fold is its own row (mock 3, the person's pick): from its
-      marker to the window's edge the cells are the fold's, drawn as `›`
-      where the marker's level puts it (two cells a level: depth by
-      place, as the dashes counted it), the words in the UI face, how many
-      lines it holds dimmer and a step smaller right after them (counted,
-      not a heading, so no badge), and the fill as a fading hairline
-      (below). With Neovim's own `foldtext` Lua sends the count and the
-      words without the `+--  N lines:` lead and the fold marker (the
-      marker is folding's mechanism, not words to read); a person's
-      `foldtext` is their words as they are, with no count. The cursor
-      stays on the marker's first cell, as Neovim keeps it, and shows the
-      `›` there; clicks are on the cells as before.
     - Left as cells: `overlay` and `virt_text_win_col` text (put on the
       buffer's own columns — indent guides, tables, concealed markup —
-      it only works on cells), `virt_lines_above`, and a fold whose
-      `foldtext` is empty (the line itself, content).
+      it only works on cells), `virt_lines_above`, and a closed fold's
+      line (its `foldtext`, as Neovim draws it).
     - Left as cells too: every plugin's virtual text and lines. Only
       Neovim's own standard features (namespaces `nvim.*`: diagnostics'
-      virtual text and lines, LSP inlay hints and code lenses), folds and
+      virtual text and lines, LSP inlay hints and code lenses) and
       DevHub's own (`devhub*`) are set in the UI face: they are what
       DevHub restyles on purpose. A plugin's (an inline diff's deleted
       lines, a blame line, a hunk preview) is its content, shown as it
@@ -437,17 +427,6 @@ one layer model and pane motion.
       often as right.
     - Wide characters take their two cells in the match; a CJK word in a
       proportional face is about as wide as its cells.
-  - A closed fold's fill, whatever its `fold:` character, is one hairline
-    fading out over about a dozen cells (260 px; mock C1 of round 6, and
-    mock 3): it says the row goes on into the lines it stands for, without
-    ruling a line across the editor that reads as a separator, and a row
-    of `·` says the same thing louder. Box drawing's own line (its
-    thickness and place), in the fold's colour at 45 %.
-  - The fold column, only where the config shows one: Neovim's default
-    marks as chevrons, `⌄` for an open fold and `›` for a closed one, the
-    fold line's own mark; its `|` levels are left blank. Drawn, two strokes
-    as thick as box drawing's line, not a glyph each face shapes its own
-    way. A person's `foldopen:`/`foldclose:` is theirs.
   - The underline family and strikethrough (`strokes.ts`) are drawn as type
     is: as thick as the face asks, on whole device pixels under the
     baseline; undercurl a true wave whose phase is the row's (runs side by
@@ -1429,7 +1408,7 @@ in the same textarea) and SSH hosts.
   parameter); one on prose is not drawn. A plain text float's (a
   diagnostic's) are carried.
 - No semantic styling of diagnostics yet (`ext_hlstate` names the groups,
-  only fillers and `~` use them).
+  only `~` and a few chrome groups use them).
 - A GUI buffer shown in two windows has its content (one page) in one of
   them — the current window when it is one, else the
   first — and the other says where it is; a click there moves the cursor in.
@@ -1517,8 +1496,7 @@ reason. A matter of taste is mocked first and the person picks.
 
 - Do: draw what cells only approximate as what it means — a separator as
   a true line between two grounds, a selection as a continuous fill with
-  no seam between cells, `~` past the end left out, a diff's filler
-  hatched, box drawing and Powerline glyphs as crisp geometry, a float's
+  no seam between cells, `~` past the end left out, box drawing and Powerline glyphs as crisp geometry, a float's
   border as a line with the editor showing through its gaps, underlines
   and undercurl as a typesetter strokes them. Proper vertical centring and
   bar height in status lines.
@@ -1681,25 +1659,23 @@ ENTER`) — done (round 9): `ext_messages` on, Neovim 0.12 only, which asks
    picked the corner for ordinary messages, the pager for long output and
    the command line's box for prompts (Messages). `ui2` stays off: it and
    DevHub's `ext_cmdline` exclude each other.
-7. _Sign, number and fold columns_ — fold chevrons (rounds 2–3 drew the
-   fold column's `-`/`+` as chevrons, an open fold's only on hover; taken
-   back in round 5 as an invention; back in round 9, mock 3, the person's
-   pick): `⌄` and `›` always, never on hover alone (nothing only the mouse
-   finds), and only where `foldcolumn` shows a column. Signs and numbers
-   as Neovim draws them.
+7. _Sign, number and fold columns_ — as Neovim draws them, cells. Rounds
+   2–3 drew the fold column's `-`/`+` as chevrons (an open fold's only on
+   hover), taken back in round 5 as an invention; round 9 brought them
+   back (`⌄`/`›`, mock 3) with a closed fold's line as `›`, its words in
+   the UI face, a dim line count and a fading hairline. Taken back again:
+   a fold's line is its `foldtext` and `fold:` fill, and the fold column
+   its marks, as the person's config has Neovim draw them.
 8. ~~_Indent guides_~~ — round 3 redrew any guide plugin's character as
    one light line at the cell's left edge; taken back in round 5. A guide
    is the plugin's own character where its config draws it; box-drawing
    characters are continuous across `linespace` as all box drawing is.
 9. ~~_Diagnostic virtual text and inlay hints as pills_~~ — taken back in
    round 5: square, as the highlight says.
-10. _Diff filler lines_ — done: a row that is, from some column on, only
-    `-` in `DiffDelete`'s ground (the default `diff:`) is a hatched band
-    of thin diagonals in its foreground, continuous from row to row, as
-    GUI diff views mark lines the other side has. A person's `diff:` is
-    kept. Folds are `›`, their words and a dim count (round 9, mock 3);
-    a person's own `foldtext` is their words, set in the UI face as they
-    are ("Decorations in a proportional face").
+10. ~~_Diff filler lines_~~ — a row that was, from some column on, only
+    `-` in `DiffDelete`'s ground was drawn as a hatched band of thin
+    diagonals. Taken back: a filler row is Neovim's `diff:` character in
+    `DiffDelete`, as every diff line is what Neovim says.
 11. _The block cursor and its cell_ — done: the block is square (round 5; its
     rounded corners were taken back), it still shows the character in the
     cursor's foreground, and the blink (`guicursor`'s) fades in and out

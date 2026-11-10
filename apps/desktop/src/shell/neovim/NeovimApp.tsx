@@ -418,7 +418,7 @@ export function NeovimSurface({
         return;
       }
       if (event.kind === "decor") {
-        // Where virtual text and folds' text are: set in the UI face.
+        // Where Neovim's own virtual text is: set in the UI face.
         editor.setDecor(decorOf(event.payload));
         return;
       }

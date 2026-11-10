@@ -1,31 +1,31 @@
 /**
  * Where a window's decorations are — text Neovim draws on cells that is not
  * the buffer's: virtual text at the end of a line, right-aligned or inline
- * (inlay hints), virtual lines, and a closed fold's text — so the page can
- * set them in a proportional face (`painter.ts`, `docs/neovim-editor.md`,
- * "Decorations in a proportional face").
+ * (inlay hints), and virtual lines — so the page can set them in a
+ * proportional face (`painter.ts`, `docs/neovim-editor.md`, "Decorations in
+ * a proportional face").
  *
  * Neovim lays them out in cells, as it lays out everything, and the GUI
  * receives only cells: nothing in `grid_line` says which are virtual. So
  * Lua, which knows, says where: the extmarks in each window's visible lines
- * (`nvim_buf_get_extmarks` with details) and the closed folds
- * (`foldclosed`, `foldtextresult`), placed with `screenpos`. Each is sent as
- * a row of the window's grid, a column and the text Neovim draws there; the
- * page draws one only where the grid holds exactly that text there now, so
- * one that is a redraw behind is cells as before, never a wrong guess.
+ * (`nvim_buf_get_extmarks` with details), placed with `screenpos`. Each is
+ * sent as a row of the window's grid, a column and the text Neovim draws
+ * there; the page draws one only where the grid holds exactly that text
+ * there now, so one that is a redraw behind is cells as before, never a
+ * wrong guess.
  *
  * Asked after every redraw that drew a window (a decoration provider's
  * `on_win`, sent once the redraw is over), and sent only when it changed.
  * Left out on purpose: `overlay` and `virt_text_win_col` text (it is put on
  * the buffer's own columns — indent guides, tables, concealed markup — and
- * only works on cells), `virt_lines_above`, a fold whose `foldtext` is
- * empty (the line itself, which is content), and the virtual text and lines
- * of every namespace but Neovim's own (`nvim.*`: diagnostics' virtual text
- * and lines, LSP inlay hints and code lenses) and DevHub's (`devhub*`).
- * Those are the standard features DevHub draws its way on purpose; a
- * plugin's virtual text (an inline diff's deleted lines, a blame line) is
- * its content, drawn as cells in the grid's face as the plugin drew it.
- * Neither side declares anything to the other.
+ * only works on cells), `virt_lines_above`, the extmarks inside a closed
+ * fold (its line is `foldtext`, cells as Neovim draws them), and the
+ * virtual text and lines of every namespace but Neovim's own (`nvim.*`:
+ * diagnostics' virtual text and lines, LSP inlay hints and code lenses) and
+ * DevHub's (`devhub*`). Those are the standard features DevHub draws its
+ * way on purpose; a plugin's virtual text (an inline diff's deleted lines, a
+ * blame line) is its content, drawn as cells in the grid's face as the
+ * plugin drew it. Neither side declares anything to the other.
  */
 export const DECOR_LUA = String.raw`
 local M = package.loaded["devhub_gui"]
@@ -61,8 +61,7 @@ end
 --- A window's decorations: { row, col, text, kind } in its grid's cells.
 --- kind: "eol" (col is where the line's text ends: the text is at or after
 --- it), "right" (ends at the window's edge), "inline", "lines" (a virtual
---- line), "fold" (a closed fold's line from its marker, with its level, and
---- its count and words when foldtext is Neovim's own).
+--- line).
 local function spans_of(win)
   local info = vim.fn.getwininfo(win)[1]
   if not info or info.height == 0 then return {} end
@@ -75,40 +74,6 @@ local function spans_of(win)
     return p
   end
   local folding = vim.wo[win].foldenable
-  local foldtext = vim.wo[win].foldtext
-  -- The closed folds: the line from the marker's first cell (the cursor's
-  -- cell on a closed fold), its level, and with Neovim's own foldtext its
-  -- line count and words, the "+--  N lines: " lead and the fold marker
-  -- left out (the marker is folding's mechanism, not words to read).
-  local default_text = foldtext == "foldtext()"
-  local marker_open = vim.pesc((vim.wo[win].foldmarker or "{{{,}}}"):match("^[^,]*") or "{{{")
-  local lnum = info.topline
-  while lnum <= info.botline do
-    local closed = folding and vim.api.nvim_win_call(win, function() return vim.fn.foldclosed(lnum) end) or -1
-    if closed ~= -1 then
-      local last = vim.api.nvim_win_call(win, function() return vim.fn.foldclosedend(lnum) end)
-      if foldtext ~= "" then
-        local p = pos(lnum, 1)
-        local text = vim.api.nvim_win_call(win, function() return vim.fn.foldtextresult(lnum) end)
-        -- "+-" and a dash a level: the closed fold's own level.
-        local dashes = text:match("^%+%-(%-*)")
-        local level = dashes and math.max(1, #dashes)
-          or vim.api.nvim_win_call(win, function() return vim.fn.foldlevel(lnum) end)
-        local span = { row = p and p.row - top, col = info.textoff, text = text, kind = "fold", level = level }
-        if default_text then
-          local lead = text:match("^%+%-+%s*%d+[^:]*:%s?")
-          if lead then
-            span.count = last - lnum + 1
-            span.words = text:sub(#lead + 1):gsub("%s*" .. marker_open .. "%d*%s*$", "")
-          end
-        end
-        if p and text:match("%S") then table.insert(out, span) end
-      end
-      lnum = math.max(last, lnum) + 1
-    else
-      lnum = lnum + 1
-    end
-  end
   local ok, marks = pcall(vim.api.nvim_buf_get_extmarks, buf, -1, { info.topline - 1, 0 },
     { info.botline - 1, -1 }, { details = true })
   if not ok then return out end
