@@ -93,10 +93,14 @@ itself, and the resting path draws the frame after the last.
   its own edges (a 1 px element stretched by `scale`): the hairline, and
   on tmux the active pane's 2 px outline. The shared boundaries are
   placed again by the resting path.
-- **Status lines** (Neovim, `laststatus=2`): the row of grid 1 under each
-  window is copied into a strip at its clip's foot, from its content's
-  left; a gone window keeps its old one. The new grid 1 is under the
-  groups, which cover it wherever a window is.
+- **Footers** (Neovim, `laststatus` 1 or 2): each window's footer — the
+  element DevHub draws in its status line row, a tree or Neovim's cells
+  of that row (`docs/neovim-editor.md`, "Status lines") — is a part of
+  its window's group, at the inner clip's foot and as wide as the clip,
+  so it follows the bottom edge and the width as the window grows or
+  shrinks (`placeFooter`). A gone window keeps a copy of its last one.
+  Grid 1 is not drawn: what is under the groups is the editor's ground.
+  (Before, the row of grid 1 under each window was copied into a strip.)
 - **The cursor** is in its pane's content: on tmux it is moved into the
   active pane's group while panes move; on Neovim it is already in its
   grid's clip.
@@ -579,10 +583,10 @@ What this asks of the layer model, which follows from
   centred) is drawn by the active pane, over the others.
 - **The status line moves with its window.** Neovim's multigrid draws
   every window's status line on grid 1, which does not move. In motion,
-  a window's status line row must be part of that window's group: a
-  strip of grid 1 drawn into the window's group, or the window's own
-  canvas row. Otherwise the bars stay behind while the windows move.
-  With `laststatus=3` there is one status line, which stays on grid 1.
+  a window's status line row must be part of that window's group.
+  Built: the footer DevHub draws in that row is a part of the group (As
+  built, "What moves together"). With `laststatus=3` there is one
+  footer, which stays where it is.
   The winbar is in the window's grid already.
 - **Floats** anchored to a window (`relative='win'`, `bufpos`) are placed
   from that window's visual origin during a transition, as riders are

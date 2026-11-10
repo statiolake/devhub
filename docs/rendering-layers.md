@@ -106,10 +106,11 @@ What follows the rule in code:
     Neovim window together with its status line when `laststatus` is 1 or
     2 (the status line is the window's footer, as an editor group's tab
     bar is its header). So stacked windows with their own status lines
-    meet at the status line, which divides them as the person's
-    colorscheme draws it (a band, or a line with `stl:`), with no
-    hairline added; side by side, the line between them runs down beside
-    the status lines' row too. With `laststatus` 0 or 3 there is no
+    meet at the status line, which divides them as the person's design
+    draws it (a band, a line through the row — `stl:`, `ui.line` — or
+    DevHub's default footer, which has one hairline under it); side by
+    side, the line between them runs down beside the status lines' row
+    too. With `laststatus` 0 or 3 there is no
     window status line, and stacked windows meet at a hairline across
     the separator row, as side by side ones do. The tab line, a global
     status line and the command line are no region's: the lines stop at
@@ -141,7 +142,11 @@ What follows the rule in code:
     on the pixels grid 1 draws a `│` or `─` on (one CSS pixel at the
     usual sizes, on whole device pixels), so a status line drawn as a
     line meets it (a stub to the hairline), and a line that ends on the
-    status line's junction (`┴`) ends on that line. A line on grid 1's
+    status line's junction (`┴`) ends on that line. Only a footer drawn
+    as Neovim's cells is read as cells; beside a footer whose tree draws
+    a line through its row (`ui.line`, at the same pixels) the boundary
+    ends on that line, and beside any other it runs to the row's foot,
+    where a default footer's hairline meets it at a T. A line on grid 1's
     edge runs on to the editor's reach, to meet tmux's line. tmux's is
     one CSS pixel on whole device pixels, centred on the gap cell; the
     active pane's (and synchronized panes') outline is that stretch of it
@@ -300,6 +305,12 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
   earlier left a `─` there, drawn as a tick across the separator (seen in
   the app after `:only | vsplit`). **Fixed** ("Neovim editor: windows are
   panes with a boundary between them"): panes and boundaries (above).
+  Since "Neovim editor: grid 1 is not drawn", grid 1's canvas is not on
+  screen at all: the editor's ground is an element under it, each status
+  line row is a footer element of its window's (a component tree, or
+  that row's cells copied from grid 1's canvas, kept as the cells' source
+  and for clicks), and grid 1 is drawn over the windows only while
+  Neovim shows a screen of its own on it (`:intro`).
 - The control surface's separators and outlines are elements
   (`ControlTerminalSurface.tsx:459-510`): follows the rule. Since "Control
   surface: tmux's panes reach half into its borders, the boundary centred
@@ -357,8 +368,8 @@ Lines are at a7ea595f, the commit the audit started from. Status: **fixed**
 ### A canvas shared, or a blit crossing a rect
 
 - Each window, float and pane has its own canvas; the ghost, the pin and a
-  slide copy only from their own canvas, inside its text area. Grid 1 is
-  shared by the windows' status lines and separators (above).
+  slide copy only from their own canvas, inside its text area. Grid 1's
+  canvas is not shown; a footer drawn as cells copies its own row of it.
 
 ## Remaining, in order of impact
 

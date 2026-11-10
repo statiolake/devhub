@@ -277,7 +277,8 @@ one layer model and pane motion.
   `busy_start/stop`, `flush`, the popupmenu, command line and tab line,
   and the messages (`msg_show`, `msg_clear`, `msg_showmode`, `msg_showcmd`,
   `msg_ruler`, `msg_history_show`; `messages.ts` routes them).
-  `layoutGrids` stacks the grids: grid 1, the windows, floats by `zindex`
+  `layoutGrids` stacks the grids: grid 1 (not drawn: "Status lines"),
+  the windows, floats by `zindex`
   against their anchor grid. The message grid (`msg_set_pos`) is not laid
   out: with `ext_messages` Neovim draws nothing in it.
 - `painter.ts` — a 2D canvas per grid, repainted a dirty row at a time on
@@ -459,7 +460,8 @@ one layer model and pane motion.
     (`scrollbarLine`), the gutter not drawn, the thumb a thin bar in the
     padding — not a strip half outside the frame with the line through
     the thumb.
-  - Status lines, winbars, folds (a closed fold's `foldtext` and its
+  - Status lines are drawn by DevHub in the rows Neovim keeps for them
+    (below, "Status lines"). Winbars, folds (a closed fold's `foldtext` and its
     `fold:` fill, the fold column's marks), indent guides and
     `MatchParen` are what Neovim and the person's config say, cell for
     cell; only the glyphs a terminal approximates are drawn as what they
@@ -647,7 +649,9 @@ one layer model and pane motion.
   edge with it go on to its cells' edge), drags kept on the press's grid
   (a press on grid 1 — a window border, a status line — drags in grid 1's
   cells over the windows too, so Neovim resizes: before, such a drag
-  stopped at the first window it crossed), a window's vertical wheel in
+  stopped at the first window it crossed; a press on a footer is grid 1's
+  cell under it, unless a node of its tree has an `on_click`, which runs
+  instead: `GUI_OWNED`), a window's vertical wheel in
   pixels (above); sideways, with a modifier or over anything else, pixels
   accumulated into line steps. A border a drag resizes (`sashAt`: the
   column between windows side by side, the row between a window and the
@@ -1025,7 +1029,8 @@ ring (its edge in the accent's colour; no side stripe), a ground, an indent), `t
 coloured by the conversation view's highlighter, links opened in the
 browser), `badge`, `kbd`, `button`, a tri-state `checkbox`, `progress`, a
 Nerd Font `icon`, an `avatar`, `spacer`/`divider`, `sparkline`, a small line
-`chart` and an `image`. Every colour is a highlight group's name (or a tone
+`chart`, an `image`, and for footers a `line` through the row and slots
+("Status lines"). Every colour is a highlight group's name (or a tone
 that names one), resolved by Neovim (`nvim_get_hl`) and sent with the tree,
 so a view wears the colorscheme and follows `:colorscheme`. Text is in
 DevHub's own (proportional) type, `mono` in the grid's face. There is no HTML
@@ -1149,6 +1154,108 @@ card's content virt_lines), so it works in a terminal too. A review plugin,
 for instance, makes each thread a `gui.inline` card under its lines and its
 panel a `gui.view`, with the card's buttons naming the buffer-local keys
 that do the same.
+
+### Status lines
+
+DevHub does not draw grid 1, the cells Neovim draws round its windows: its
+canvas is kept, off screen, as the cells' source and for clicks, and the
+editor's ground (`Normal`) is under the windows instead. What grid 1 held
+is drawn by DevHub: the boundaries between windows were already lines
+("Windows are panes", above); the tab line is `ext_tabline` (the tab
+strip); the command line rows are DevHub's band; and each status line row
+is a **footer** (`statusline.ts`, `painter.ts`'s `placeFooters`,
+`FooterViews.tsx`). Neovim's layout is untouched: `laststatus` is the
+person's, the rows are the ones Neovim keeps (with 1 or 2 the row under
+each window, with 3 one row across the editor, the current window's; with
+0 none), so no cell, click or float moves. A footer reaches into the half
+cells beside it to the hairlines, as its window's pane does, and is a part
+of its window's group when the window moves ("Pane motion").
+
+What each row shows, window by window (`main/editor/neovimStatusline.ts`,
+in the injected `devhub_gui`, so it always matches the page):
+
+1. The config registered `gui.statusline(fn)` and `fn(win, ctx)` answered a
+   component tree: that tree.
+2. Else the window has a `statusline` of its own (window-local: the
+   quickfix ftplugin's, a person's, a window picker's hints): Neovim's cells
+   of that row, as Neovim drew them. A local value that is the global one
+   again (a picker puts back what it read) is none of its own.
+3. Else the global `statusline` is Neovim's default (empty, or the
+   option's default value — 0.12's is an expression): DevHub's default
+   footer.
+4. Else (a global `statusline` of the person's or a plugin's — lualine):
+   Neovim's cells, as before, unless the config chooses the default footer
+   (`gui.statusline('default')`, `vim.g.devhub_statusline = 'default'`).
+   `'cells'` chooses cells everywhere.
+
+The rule keeps both promises: what Neovim draws as content stays faithful
+to the person's design (a design is never reinterpreted: round 5 dropped
+pills made of a person's status line), and a row is drawn natively only
+when the person's own config says how (`gui.statusline`) or there is no
+design of theirs at all (Neovim's default). A window's own status line is
+always the window's owner's: cells. With no devhub.nvim, or an older one on
+an SSH host that has no `gui.statusline`, rules 2–4 hold.
+
+**The trees** are made in Lua and sent as a `statusline` event (`{
+laststatus, current, wins = { [win] = entry }, keep }`: only the windows
+whose tree changed, the rest kept) on buffer, window, modified,
+diagnostic, option (`readonly`, `modifiable`, `filetype`, `buftype`,
+`statusline`, `laststatus`, `showmode`, `cmdheight`), directory, LSP and
+colorscheme events and the config's `events`, at most once per turn of the
+event loop (`vim.schedule`), each compared with what was last sent (its
+JSON). Never per key: what changes at every key is a **slot**
+(`{ type = 'slot', slot = 'position' | 'mode' | 'showcmd' }`), filled by the
+page at each flush from Neovim's own redraw — the footer's window's
+`win_viewport` (`curline`, `curcol`, `line_count`; `format` with `%l`,
+`%c`, `%L`, `%p`), `mode_change`, `msg_showcmd`. (With
+`showcmdloc=statusline` Neovim sends no `msg_showcmd`, and the slot is
+blank.) A `line` node (`ui.line`) is a hairline through the row at the
+boundaries' `─` pixels, so a boundary beside it ends on it (`┴`);
+`hstack`'s `bg`, `pad` and `round` make a chip; `ink` takes only a group's
+colour (a `Comment` that is italic stays upright). A footer's ground is
+its window's `StatusLine` (`StatusLineNC` when it is not current); its
+text is the UI face a step under the editor's size, centred down the row.
+
+```lua
+local gui = require('devhub').gui
+local ui = gui.ui
+gui.statusline(function(win, ctx)        -- ctx = { current, laststatus, width, local_statusline, default() }
+  if ctx.local_statusline then return nil end        -- quickfix, a picker's hints: Neovim's cells
+  return ui.hstack { align = 'center', gap = 4,
+    ui.line { grow = true, hl = ctx.current and 'StatusLine' or 'StatusLineNC' },
+    ui.hstack { bg = 'Pmenu', pad = { 0, 6 }, round = true, ui.text(vim.fn.bufname(vim.api.nvim_win_get_buf(win))) },
+    ctx.current and ui.position { format = '%l:%c' } or nil }
+end, { events = { 'BufAdd' } })          -- nil: the rules; false: an empty footer
+```
+
+**DevHub's default footer** (Neovim's default `statusline`):
+
+| Choice | Meaning |
+| --- | --- |
+| In the status line row, one row tall | The row Neovim keeps for the window's footer: nothing moves |
+| Its ground `StatusLine` / `StatusLineNC` | What the colorscheme says a footer's ground is |
+| The UI face, a step under the editor's size | Words about the buffer, not its content (as decorations) |
+| Left: a dim path, the name, `●` when modified, a lock when read-only | Where the file is and what state it is in; the name is the main thing (`Normal`'s ink, bold), the rest `Comment`'s |
+| Right: diagnostics; for the current window `Ln, Col`, the filetype and the branch | Where the cursor is is the current window's; other windows show their name, `●` and diagnostics only |
+| One hairline under it (`WinSeparator`) | A window and its status line are one region; regions meet at one line, which a boundary beside it meets at a T |
+| No line between the text and it | One region: the face and size tell them apart |
+| No mode (unless `noshowmode` or `cmdheight=0`, then at the current one's left) | The command line rows show it already |
+| The branch from `.git/HEAD` (a worktree's too), no git run, none for help | Cheap; DevHub knows no plugin (no `b:gitsigns_head`) |
+| No file-type icons | devicons is a plugin; DevHub's icons are its Nerd Symbols' |
+
+**A click** on a footer is Neovim's, on grid 1's cell under it (a drag of
+the row resizes, a `%@` region of a cells footer runs), unless a node of
+the tree has an `on_click`, whose Lua runs (`_statusline_click`). The
+default footer has nothing that clicks.
+
+**`:intro`** draws its screen on grid 1, over the windows' places, and
+waits for a key: with grid 1 behind the windows it could not be seen, and
+the key Neovim waited for seemed lost. Now when a flush clears grid 1 and
+draws text inside the windows' places without drawing any window (which
+Neovim never does otherwise with `ext_multigrid`), grid 1 is drawn over the
+windows, as Neovim drew it, until a flush draws a window again — which
+Neovim does once the key comes (`screenOf` in `redraw.ts`). The meaning:
+what Neovim puts on screen and waits on is seen.
 
 ### Integrations
 
