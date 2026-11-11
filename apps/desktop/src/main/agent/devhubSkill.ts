@@ -343,16 +343,21 @@ person reads a board of escalations and answers them in DevHub - only there;
 no command answers one. Raise one when work cannot go on without the
 person's decision or permission (finish read-only investigation first):
 
-    devhub --tell escalation new --title T --body - [--agent A] [--link URL] [--option TEXT]  # repeatable; body on stdin
+    devhub --tell escalation new --title T --body - [--agent A] [--link URL=WHAT] [--attach FILE=CAPTION] [--option TEXT]  # repeatable; body on stdin
     devhub --tell escalation ask 12 --body -        # a follow-up on the same ticket
     devhub --tell escalation show 12                # the thread, the person's answers too
     devhub --tell escalation close 12 [--note TEXT] # the answer is used up
     devhub --tell --json board                      # needs_answer, in_progress, waiting
 
+The person reads escalations, not your chat, and each one cold: its body needs \`## 決めてほしいこと\` (the decision) and \`## 人に聞く理由\` (why you hold it), every PR/Issue its full URL, and a title that says the decision in words (the command refuses otherwise).
 The body is Markdown drawn like a chat answer (code, math, mermaid, svg).
 Related agents, workspaces, files and escalations can be pasted as devhub: links, in \`--link\` or as \`[text](devhub:...)\` here or in chat (\`devhub --tell link agent A | workspace W | file PATH[:L] | escalation ID\` prints one).
 \`agent wait --any\` also wakes you on an answer you have not shown. DevHub also sends you each such event as a message (\`[event: ...]\`).
 See docs/orchestrator.md in DevHub for a recommended escalation template.
+
+## Handing screenshots to the orchestrator
+
+When you are a worker and a screenshot (or another picture) shows what the person should check, hand it over: \`devhub --tell attachment add shot.png=what it shows\` prints an id (\`att-1a2b3c4d\`, kept 14 days). Put the id in your report; the orchestrator attaches it to an escalation with \`--attach att-1a2b3c4d\`. It works from an SSH host too: the command reads the file where it runs.
 
 ## Your terminal
 

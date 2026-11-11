@@ -105,6 +105,17 @@ describe("the /devhub-orchestrator skill", () => {
 			"回答を書かない",
 			"focus は頼まれたときだけ",
 			"usage.threshold",
+			// The person reads escalations, not the chat: each stands alone.
+			"チャットを**基本的に読まない**",
+			"## 決めてほしいこと",
+			"## 人に聞く理由",
+			"## 確認方法",
+			"起こす前にタイトルを見直す",
+			"--link URL=説明",
+			"--attach FILE[=説明]",
+			"attachment add",
+			"悪い例",
+			"良い例",
 		])
 			expect({ word, found: ORCHESTRATOR_CHARTER.includes(word) }).toEqual({
 				word,
@@ -229,7 +240,9 @@ describe("the /devhub-orchestrator skill", () => {
 			"ヒアリング",
 			"decisions.md",
 			"背景",
-			"選択肢と推奨",
+			"人に聞く理由",
+			"attachment add",
+			"--attach",
 			"回答後に起きること",
 			"AGENTS.md",
 			"name: make-progress",

@@ -239,8 +239,8 @@ orchestrator when work cannot go on without one. It is a **thread**:
 ```text
 { id, title, entries: [{ role: orchestrator|human, markdown, at, options?,
                           kind?: direct|resumed|held|wait, agent?, dueAt? }],
-  agents: [agent ids], workspaceId?, links: [urls], createdAt, updatedAt,
-  closed?: { at, note? } }
+  agents: [agent ids], workspaceId?, links: [urls], linkLabels?: {url: label},
+  createdAt, updatedAt, closed?: { at, note? } }
 ```
 
 Its state is **read off the thread** (`model/escalations.ts`), never stored,
@@ -357,7 +357,44 @@ Workspace or the orchestrator's folder are taken (symlinks followed), at most
 file that is not there, refuses the command with the reason. Code spans and
 fences are left alone.
 
+### Attachments: screenshots from anywhere
+
+`--attach FILE[=CAPTION]` on `escalation new` and `escalation ask` (any
+number; PNG, JPEG, GIF, WebP or SVG, checked by their bytes; 10 MB each,
+25 MB a command) attaches a picture **on the machine the `devhub` command
+runs on** — an SSH host or a container as well as this Mac. The command
+reads it there and sends its bytes with the request (the `files` round trip,
+`docs/devhub-cli.md`), so nothing in the app reads another machine's disk.
+Each is copied into the escalation's folder and the entry ends with a
+`## 添付` section: each picture under its caption (or its name), drawn by the
+thread's renderer and opened large by the lightbox on a click; `escalation
+show` lists them. The card shows the first picture of its latest question —
+an attachment, or an image the body named — as a thumbnail at its right
+(`firstPicture`, read with `readEscalationEmbed`).
+
+**From a worker.** The orchestrator never does hands-on work, so the
+screenshot is a worker's. `devhub --tell attachment add FILE[=CAPTION]...`
+keeps it in a shared store, `<userData>/devhub/attachments/<id>/`, and
+prints an id (`att-1a2b3c4d`, kept 14 days); the worker puts the id in its
+report, and the orchestrator attaches it with `--attach att-1a2b3c4d` (a
+caption given there replaces the stored one)
+(`main/orchestrator/attachments.ts`). *Why a store by id, not workers
+attaching to escalations*: the worker usually takes the screenshot before
+the escalation exists, and the orchestrator is the one writing it, so a
+handle that outlives the worker's turn (and its worktree) and that any
+`--tell` can name is the simplest thing that works in both orders; the
+escalation stays one author's, written whole. *Why the bytes go over the
+socket*: a worker on a host has its file on the host; the command is the
+one thing that runs there and can read it. The `/devhub` skill tells every
+agent how.
+
 ### Links: `devhub:`
+
+A `--link` can say what it is: `--link URL=LABEL` (or `'URL LABEL'`, needed
+when the URL has a `?`: a query's `=` is the URL's). The label is kept by
+the link (`linkLabels`) and drawn on its chip, with the short form
+(`PR pay#1234`) beside it. `escalation link` takes labels too, and relabels
+a link already there.
 
 An escalation (and any agent, in chat) links to places inside DevHub the way
 it links to a web page: in `--link`, or as a Markdown link in a body or an
@@ -396,6 +433,34 @@ board's own reading view — and never reaches the system browser (main's
 `openExternalUrl` refuses a `devhub:` URL). A link whose target is gone is
 its text with a quiet 見つかりません, never a broken navigation. External
 http(s) links open in the browser as before.
+
+### Writing an escalation: it stands on its own
+
+The person reads escalations, not the orchestrator's chat (the charter's 6),
+and reads each one cold: someone seeing it for the first time must be able
+to judge it from it alone. "Can I merge PR 1234?" assumes every bit of
+context it leaves out. So the body has named sections
+(`model/escalationBrief.ts`):
+
+| section              | what                                                                 | required        |
+| -------------------- | -------------------------------------------------------------------- | --------------- |
+| `## 背景`            | what this is about, for a newcomer                                   |                 |
+| `## やったこと`      | what was done and found                                              |                 |
+| `## 決めてほしいこと` | the one decision or confirmation, as a question, with its options   | `new` and `ask` |
+| `## 人に聞く理由`    | why the orchestrator holds it instead of deciding it                 | `new`           |
+| `## 推奨`            | the recommended choice, and why                                      |                 |
+| `## 確認方法`        | a URL to try, screenshots (`--attach`), PR and Issue URLs, a diff summary |            |
+
+**It is enforced, not only stated.** `escalation new` (not `--wait`, which
+asks nothing yet) and `escalation ask` refuse, with every problem at once
+and the template: a body without `## 決めてほしいこと` (also read as
+確認してほしいこと, 判断してほしいこと, Decision needed; any heading level,
+not inside code); a first question without `## 人に聞く理由` (自分で決めない
+理由, Why I'm asking); a `#12`, `PR 1234` or `Issue 56` in the body that no
+URL in it or in `--link` points at (`/pull/1234`, `/issues/56`,
+`devhub:escalation/12`); and a title that refers to anything by number —
+the title says the decision in words, the number is a chip. The card shows
+the decision's first line in place of the body's first line.
 
 ### Ranking
 
@@ -1028,15 +1093,16 @@ devhub --tell agent manage A | agent unmanage A     # under the orchestrator's m
 devhub --tell agent keep A --note TEXT | --clear    # leave a managed agent that needs action as it is, for a reason, until its state changes
 devhub --tell --json agent status A                 # managed, invariant (settled or the clause, 待機中 escalation, kept)
 devhub --tell --json workspace status W             # branch, Issue (state, lanes), PR (state, draft, review decision), conversations, checks
-devhub --tell escalation new --title T --body -|TEXT [--agent A]... [--link URL]... [--option TEXT]... [--workspace W]
-                         [--priority high|normal|low] [--effort quick|normal|deep] [--rank-note TEXT]
+devhub --tell escalation new --title T --body -|TEXT [--agent A]... [--link URL[=LABEL]]... [--option TEXT]... [--workspace W]
+                         [--attach FILE|att-ID[=CAPTION]]... [--priority high|normal|low] [--effort quick|normal|deep] [--rank-note TEXT]
 devhub --tell escalation rank ID [--priority P] [--effort E] [--rank-note TEXT]   # re-rank; "" clears the note
-devhub --tell escalation ask ID --body -|TEXT [--option TEXT]... [--link URL]...   # back to 要回答
+devhub --tell escalation ask ID --body -|TEXT [--option TEXT]... [--link URL[=LABEL]]... [--attach FILE|att-ID[=CAPTION]]...   # back to 要回答
+devhub --tell attachment add FILE[=CAPTION]...      # a worker hands pictures over: an id each, for --attach
 devhub --tell link agent A | workspace W | file PATH[:L[:C]] | escalation ID | orchestrator | session S   # a devhub: link
 devhub --tell escalation show ID [--json]           # the thread (acknowledges the answer)
 devhub --tell escalation list [--state needs_answer|in_progress|waiting|closed] [--json]
 devhub --tell escalation close ID [--note TEXT]
-devhub --tell escalation link ID [--agent A] [--link URL]...   # more it is about, after it was raised
+devhub --tell escalation link ID [--agent A] [--link URL[=LABEL]]...   # more it is about, after it was raised
 devhub --tell escalation hold ID [--note TEXT]      # park it in 対応中 (not an answer)
 devhub --tell escalation wait ID --trigger TEXT [--at DATETIME]   # park it in 待機中 on an outside condition
 devhub --tell escalation resume ID [--note TEXT]    # off its wait, to 対応中
@@ -1120,6 +1186,13 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
    the person's answer, never taking the screen (`focus` only when asked),
    and holding back on new agents when a plan window runs high
    (`usage.threshold`, `devhub --tell usage`).
+6. **The person reads escalations, not the chat**: everything that needs
+   them goes in an escalation, and each one stands on its own for a
+   first-time reader — the sections of "Writing an escalation", full
+   URLs with a line of what each is, screenshots by `--attach` (a worker's
+   by `attachment add` and its id), the title reviewed before raising
+   (specific, understandable without context, the decision in words), and a
+   short bad and good example.
 
 How it is given: Claude (terminal and GUI) gets it appended to the system
 prompt — `--append-system-prompt`, after the profile's own, which is kept
@@ -1177,26 +1250,37 @@ writes the skill into `root`, and tells you the settings lines.
 
 ## A recommended escalation template
 
-Not enforced — a starting point for the orchestrator's own skill. Escalate
+The sections are DevHub's (see "Writing an escalation"; two are required);
+the rest is a starting point for the orchestrator's own skill. Escalate
 only what needs a person's decision or permission, after the read-only
 investigation (code, Notion, Slack) is done; when the facts are not enough,
 send an agent to dig further instead. Write in the person's language, for an
-engineer who does not know the system, the domain or the code, and make it
-self-contained: code snippets, formulas, diagrams (Mermaid, SVG) and tables
-render as they do in a chat answer.
+engineer who does not know the system, the domain or the code: code
+snippets, formulas, diagrams (Mermaid, SVG) and tables render as they do in
+a chat answer.
 
 ```markdown
 ## 背景 — what this is about, for someone new to it
 
-## 現状 — what has been done and found (with the evidence)
+## やったこと — what has been done and found
 
-## 決めてほしいこと — the one decision, stated as a question
+## 決めてほしいこと — the one decision, stated as a question, with its options
 
-## 選択肢 — each with pros, cons; and the recommendation, with why
+## 人に聞く理由 — why the orchestrator does not decide it itself
 
-## 回答の後 — what the orchestrator will have the agents do
+## 推奨 — the recommended option, and why
 
-## 参考 — PRs, Issues, documents, runbooks
+## 確認方法 — a URL to try, screenshots (--attach), PRs and Issues as full URLs, a diff summary
+
+## 回答の後 — what the orchestrator will have the agents do (optional)
+```
+
+```sh
+devhub --tell escalation new \
+    --title "決済リトライのタイムアウトを 30 秒→60 秒にする修正をマージしてよいか" \
+    --body - --agent A --option "マージする" --option "見送る" \
+    --link "https://github.com/acme/pay/pull/1234=タイムアウト延長の PR" \
+    --attach att-1a2b3c4d --attach out/staging.png=staging での再試行
 ```
 
 Add `--option` for each choice so the person can answer with one click; free
