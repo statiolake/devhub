@@ -216,6 +216,8 @@ import { AgentNotifier, type AgentNotification } from "./agentNotifications.js";
  * replaced or retracted by the next look and by nothing else.
  */
 const REPOSITORY_STATUS_CONDITION = "repository_status";
+/** The Orchestrator in saving because a plan window is over `saving_threshold`. */
+const ORCHESTRATOR_SAVING_CONDITION = "orchestrator_saving";
 import { crash, isInvariantViolation } from "./invariant.js";
 import { InvariantViolation } from "../../model/invariant.js";
 import { HostLinkFailure } from "../agent/conversation/hostLink.js";
@@ -315,6 +317,8 @@ import {
 	UsageThresholdWatch,
 	usageWindowOf,
 } from "../orchestrator/usageThresholds.js";
+import { isOrchestratorMode, savingNotice } from "../orchestrator/mode.js";
+import { inProgressCount } from "../../ipc/orchestratorLanes.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
 import { AppConditions } from "./appConditions.js";
@@ -2029,6 +2033,9 @@ export class AppController {
 			},
 			restartTerminals: () => {
 				this.terminalsWiring?.service.restart();
+			},
+			setOrchestratorMode: (mode) => {
+				this.orchestrator?.setMode(mode);
 			},
 			navigateHistory: (direction) => this.navigateHistory(direction),
 			openCommandPalette: () => {
@@ -4711,6 +4718,8 @@ export class AppController {
 	private usageLimitsChanged(limits: UsageLimitsWire): void {
 		this.send(CHANNELS.usageLimitsChanged, limits);
 		this.usageThresholds.observe(limits);
+		// Full switches to saving over `saving_threshold`, and back.
+		this.orchestrator?.observeUsage(limits);
 	}
 
 	/** The background readers of each CLI's plan limits, once started. */
@@ -7634,6 +7643,19 @@ export class AppController {
 			agents: () => this.liveAgents(),
 			settings: () => this.config.orchestrator,
 			startProblem: () => this.orchestratorStartProblem(),
+			// No `mode`: off, as every launch starts (`mode.ts`).
+			// Saving's gate: the Sidebar's 対応中, read by the Sidebar's rule.
+			inProgress: (board) => inProgressCount(this.snapshot(), board),
+			// An automatic switch says why, quietly: a notice that hides by
+			// itself and stays in the notice center, taken down when saving
+			// ends or the person chooses.
+			modeChanged: (change, auto) => {
+				const notice = savingNotice(change);
+				this.publishCondition(
+					ORCHESTRATOR_SAVING_CONDITION,
+					auto === undefined ? undefined : notice,
+				);
+			},
 			usageWindow: (cli, window) =>
 				usageWindowOf(this.usageLimits.wire(), cli, window),
 			deliver: (agentId, text) => {
@@ -7737,6 +7759,7 @@ export class AppController {
 				);
 			},
 		});
+		this.orchestrator.observeUsage(this.usageLimits.wire());
 		if (kept.refused !== undefined) {
 			console.error(`[devhub] ${kept.refused}`);
 			this.publishError(errorWire(new Error(kept.refused)));
@@ -7980,6 +8003,9 @@ export class AppController {
 				request.presentation,
 			);
 			await ports.setAgentMeta(agentId, "role", "orchestrator");
+			// Starting one is asking it to work: off (as at launch) turns on,
+			// as full; a mode already on is kept.
+			if (service.mode === "off") service.setMode("full");
 			service.assign(agentId, request.prompt);
 			this.syncOrchestrator();
 			return agentId;
@@ -8114,9 +8140,16 @@ export class AppController {
 				configuredRoot: () => this.config.orchestrator.root,
 				start: (request) => this.startOrchestrator(request),
 				pause: () => {
-					orchestrator().events.pause();
+					orchestrator().setMode("off");
 				},
-				resume: () => orchestrator().events.resume(),
+				resume: () => orchestrator().setMode("full"),
+				mode: () => ({
+					mode: orchestrator().mode,
+					...(orchestrator().autoSaving === undefined
+						? {}
+						: { auto: orchestrator().autoSaving! }),
+				}),
+				setMode: (mode) => orchestrator().setMode(mode),
 				events: (last) => orchestrator().eventLog(last),
 				emit: (type, text) => orchestrator().emit(type, text),
 				timers: () => orchestrator().timers.list(),
@@ -9874,12 +9907,10 @@ export class AppController {
 			this.orchestratorView = parsed;
 			this.refreshWindowTitle();
 		});
-		handle(CHANNELS.setOrchestratorPaused, (_event, paused: unknown) => {
-			if (typeof paused !== "boolean")
-				throw namedFailure(new Error("paused is true or false"));
-			const events = this.requireOrchestrator().events;
-			if (paused) events.pause();
-			else events.resume();
+		handle(CHANNELS.setOrchestratorMode, (_event, mode: unknown) => {
+			if (!isOrchestratorMode(mode))
+				throw namedFailure(new Error("mode is full, saving or off"));
+			this.requireOrchestrator().setMode(mode);
 		});
 		// The Files tab: the orchestrator's folder, read-only and confined to
 		// it (`orchestrator/orchestratorFiles.ts`).

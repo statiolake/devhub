@@ -228,6 +228,11 @@ export type ChordEffect =
 	/** Put the `devhub` launcher on the PATH (`cli/install.ts`). */
 	| { readonly kind: "install-cli" }
 	| { readonly kind: "restart-terminals" }
+	/** The Orchestrator's mode, as the person chooses it. */
+	| {
+			readonly kind: "orchestrator-mode";
+			readonly mode: "full" | "saving" | "off";
+	  }
 	/** Every command, by name: the registry as a picker. */
 	| { readonly kind: "open-command-palette" }
 	/** Back or Forward through the places the window has shown. */
@@ -526,6 +531,12 @@ export function resolveChord(
 
 		case "restart_terminals":
 			return { kind: "restart-terminals" };
+		case "orchestrator_full":
+			return { kind: "orchestrator-mode", mode: "full" };
+		case "orchestrator_saving":
+			return { kind: "orchestrator-mode", mode: "saving" };
+		case "orchestrator_off":
+			return { kind: "orchestrator-mode", mode: "off" };
 
 		case "show_chord_help":
 			return { kind: "open-chord-help" };

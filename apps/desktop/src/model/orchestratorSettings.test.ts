@@ -264,3 +264,40 @@ describe("GitHub polling's health", () => {
     expect(projectUrl("nope")).toBeUndefined();
   });
 });
+
+describe("saving_threshold", () => {
+  it("defaults to 80 and is not written while it is the default", () => {
+    const config = interpretConfig({});
+    expect(config.orchestrator.saving_threshold).toBe(80);
+    expect(
+      (
+        configDocument(config)["orchestrator"] as
+          | Record<string, unknown>
+          | undefined
+      )?.["saving_threshold"],
+    ).toBeUndefined();
+  });
+
+  it("is read and written back when set", () => {
+    const config = interpretConfig({ orchestrator: { saving_threshold: 90 } });
+    expect(config.orchestrator.saving_threshold).toBe(90);
+    expect(
+      (configDocument(config)["orchestrator"] as Record<string, unknown>)[
+        "saving_threshold"
+      ],
+    ).toBe(90);
+    expect(retiredKeysIn({ orchestrator: { saving_threshold: 90 } })).toEqual(
+      [],
+    );
+  });
+
+  it("is a whole percent from 1 to 100", () => {
+    for (const bad of [0, 101, 80.5])
+      expect(
+        orchestratorProblem({ ...DEFAULT_ORCHESTRATOR, saving_threshold: bad }),
+      ).toBe("saving_threshold");
+    expect(
+      orchestratorProblem({ ...DEFAULT_ORCHESTRATOR, saving_threshold: 100 }),
+    ).toBeUndefined();
+  });
+});

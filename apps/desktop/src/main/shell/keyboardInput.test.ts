@@ -117,6 +117,7 @@ function host(zoomActs = true) {
 	const chordHost: ChordHost = {
 		snapshot: () => SNAPSHOT,
 		selectContext: record("selectContext"),
+		setOrchestratorMode: record("setOrchestratorMode"),
 		interacted: (url) => {
 			interactions.push(url);
 		},

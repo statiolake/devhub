@@ -35,7 +35,13 @@
  *    any does (the nag) — and a subject that settled in between is on none.
  *    A delivery with nothing to carry is not sent.
  *
- * **Paused** holds everything, the person's words too, and the sources that
+ * **The mode** (`mode.ts`): `full` is all of the above; `saving` makes the
+ * interval `SAVING_INTERVAL_FACTOR` times as long and holds every batch
+ * while `inProgress` is `SAVING_BUSY_TASKS` or more (a batch carrying
+ * `init` excepted; the person's words are never batches); `off` is the
+ * pause below.
+ *
+ * **Paused** (`off`) holds everything, the person's words too, and the sources that
  * cost something (GitHub) are suspended (`paused`); `resume` sends at once
  * the person's words, then everything else — pending and standing — as one
  * message, whatever the interval, the orchestrator's turn or the pickup
@@ -57,6 +63,11 @@
  * `dispatch` where it happens. See `docs/orchestrator.md`, "Events".
  */
 
+import {
+	SAVING_BUSY_TASKS,
+	SAVING_INTERVAL_FACTOR,
+	type OrchestratorMode,
+} from "./mode.js";
 import {
 	EVENT_JSON_PLACEHOLDER,
 	EVENT_PLACEHOLDER,
@@ -574,6 +585,14 @@ export interface EventDelivery {
 	 */
 	readonly paused?: (paused: boolean) => void;
 	/**
+	 * How many tasks are in progress now (the Sidebar's 対応中 heading): in
+	 * saving, a batch waits while it is `SAVING_BUSY_TASKS` or more. Absent:
+	 * none.
+	 */
+	readonly inProgress?: () => number;
+	/** The mode it starts in. Absent: `full` (tests); main starts `off`. */
+	readonly mode?: OrchestratorMode;
+	/**
 	 * What every delivery carries besides what is pending, read just before
 	 * it goes: the invariant's `needs_action` lines (`InvariantWatch.due`).
 	 * While there are any, a delivery is made every `delivery_interval`.
@@ -594,8 +613,11 @@ interface PendingLine {
 	entry: EventLogEntry;
 }
 
+/** How often a batch saving holds for the work in progress looks again. */
+const SAVING_RECHECK_MS = 30_000;
+
 export class EventDispatcher {
-	#paused = false;
+	#mode: OrchestratorMode;
 	/** Pending, one line per subject, in the order the subjects came up. */
 	readonly #lines: PendingLine[] = [];
 	/** The person's words, held by a pause. */
@@ -608,14 +630,21 @@ export class EventDispatcher {
 	/** When the last batch went: the next waits `delivery_interval`. */
 	#lastBatchAt: number | undefined;
 
-	constructor(private readonly delivery: EventDelivery) {}
+	constructor(private readonly delivery: EventDelivery) {
+		this.#mode = delivery.mode ?? "full";
+	}
 
 	#now(): number {
 		return (this.delivery.now ?? Date.now)();
 	}
 
+	/** Off: everything is held. */
 	get paused(): boolean {
-		return this.#paused;
+		return this.#mode === "off";
+	}
+
+	get mode(): OrchestratorMode {
+		return this.#mode;
 	}
 
 	/** What is pending: the person's held words, then one event per subject. */
@@ -659,7 +688,7 @@ export class EventDispatcher {
 			return entry;
 		}
 		if (isHumanInput(event)) {
-			if (this.#paused) this.#human.push(entry);
+			if (this.paused) this.#human.push(entry);
 			else this.#sendHuman(orchestrator, entry);
 			this.delivery.changed?.();
 			return entry;
@@ -694,22 +723,42 @@ export class EventDispatcher {
 		this.delivery.delivered?.([event]);
 	}
 
+	/** Off: hold everything. */
 	pause(): void {
-		if (this.#paused) return;
-		this.#paused = true;
-		this.delivery.paused?.(true);
-		this.delivery.changed?.();
+		this.setMode("off");
+	}
+
+	/** On, as full: see `setMode`. How many lines went out. */
+	resume(): number {
+		return this.setMode("full");
 	}
 
 	/**
-	 * Stop holding, and deliver at once: the person's held words, then what
-	 * is pending and what needs action now as one message — no batch window,
-	 * interval, pickup wait or turn to wait for: the person asked for them.
-	 * The interval counts from this delivery. How many lines went out.
+	 * Go to `mode`. Into off: hold everything. Out of off: stop holding, and
+	 * deliver at once — the person's held words, then what is pending and
+	 * what needs action now as one message, with no batch window, interval,
+	 * pickup wait or turn to wait for: the person asked for them (in saving,
+	 * the batch still waits while two or more tasks are in progress). The
+	 * interval counts from this delivery. Between full and saving: the
+	 * interval and the gate change, and what waits is looked at again now.
+	 * How many lines went out.
 	 */
-	resume(): number {
-		if (!this.#paused) return 0;
-		this.#paused = false;
+	setMode(mode: OrchestratorMode): number {
+		const from = this.#mode;
+		if (from === mode) return 0;
+		this.#mode = mode;
+		if (mode === "off") {
+			this.#timer?.cancel();
+			this.#timer = undefined;
+			this.delivery.paused?.(true);
+			this.delivery.changed?.();
+			return 0;
+		}
+		if (from !== "off") {
+			this.#flush(false);
+			this.delivery.changed?.();
+			return 0;
+		}
 		this.delivery.paused?.(false);
 		const count = this.#lines.length + this.#human.length;
 		this.#releaseHuman();
@@ -745,8 +794,22 @@ export class EventDispatcher {
 		}
 	}
 
+	/** `delivery_interval`, made longer in saving. */
 	#intervalMs(): number {
-		return parseInterval(this.delivery.settings().delivery_interval) ?? 0;
+		const base = parseInterval(this.delivery.settings().delivery_interval) ?? 0;
+		return this.#mode === "saving" ? base * SAVING_INTERVAL_FACTOR : base;
+	}
+
+	/**
+	 * Saving's gate: how many tasks are in progress, when that holds the
+	 * batch now — never for one carrying `init` (a start is not a nudge).
+	 */
+	#savingHold(): number | undefined {
+		if (this.#mode !== "saving") return undefined;
+		if (this.#lines.some((line) => line.entry.event.type === "init"))
+			return undefined;
+		const tasks = this.delivery.inProgress?.() ?? 0;
+		return tasks >= SAVING_BUSY_TASKS ? tasks : undefined;
 	}
 
 	/** The `needs_action` lines a delivery now would carry. */
@@ -784,7 +847,7 @@ export class EventDispatcher {
 	#flush(force: boolean): number {
 		this.#timer?.cancel();
 		this.#timer = undefined;
-		if (this.#paused) return 0;
+		if (this.paused) return 0;
 		if (this.#human.length > 0) this.#releaseHuman();
 		const agentId = this.delivery.orchestrator();
 		if (agentId === undefined) {
@@ -795,6 +858,13 @@ export class EventDispatcher {
 		}
 		if (this.#lines.length === 0 && this.#standing().length === 0) return 0;
 		const now = this.#now();
+		// Saving, with two or more tasks in progress: no nudge at all, a
+		// resume's included. Looked at again on every projection, and now and
+		// then besides (an escalation moving is not one).
+		if (this.#savingHold() !== undefined) {
+			this.#retry(SAVING_RECHECK_MS);
+			return 0;
+		}
 		const hold = force ? undefined : this.#hold(agentId, now);
 		if (hold !== undefined) {
 			if (hold.kind === "busy") {
@@ -895,8 +965,11 @@ export class EventDispatcher {
 		);
 		const agentId = this.delivery.orchestrator();
 		if (agentId === undefined) return { ...plan, when: { kind: "nobody" } };
-		if (this.#paused) return { ...plan, when: { kind: "paused" } };
+		if (this.paused) return { ...plan, when: { kind: "paused" } };
 		if (plan.batch === undefined) return plan;
+		const tasks = this.#savingHold();
+		if (tasks !== undefined)
+			return { ...plan, when: { kind: "saving_busy", tasks } };
 		const hold = this.#hold(agentId, now);
 		return {
 			...plan,
@@ -959,13 +1032,16 @@ export interface DeliveryPlan {
 /**
  * When the next delivery goes: now (or within the batch window), at the
  * interval's end, when the orchestrator has taken the last message or ended
- * its turn, not while paused, never with no orchestrator.
+ * its turn, not while paused, not while saving holds it for the work in
+ * progress, never with no orchestrator.
  */
 export type DeliveryWhen =
 	| { readonly kind: "now" }
 	| { readonly kind: "at"; readonly at: number }
 	| { readonly kind: "after_turn" }
 	| { readonly kind: "paused" }
+	/** Saving, while `tasks` (two or more) are in progress. */
+	| { readonly kind: "saving_busy"; readonly tasks: number }
 	| { readonly kind: "nobody" };
 
 /** `preview()`: the plan, and when it goes (absent: nothing to send). */

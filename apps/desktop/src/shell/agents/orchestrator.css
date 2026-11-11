@@ -77,27 +77,70 @@
   gap: var(--space-2);
 }
 
-.orchestrator-pause {
+/* Full · Saving · Off: the tabs' quiet segments, in a hairline tray. The
+   chosen one is the tabs' strong wash with a small dot in its mode's ink —
+   the accent working, the waiting ink saving, the tertiary resting. */
+.orchestrator-mode {
   display: inline-flex;
   height: 22px;
   align-items: center;
-  gap: 6px;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+}
+
+.orchestrator-mode-option {
+  display: inline-flex;
+  height: 18px;
+  align-items: center;
+  gap: 5px;
   padding: 0 8px;
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: calc(var(--radius-control) - 2px);
   background: transparent;
   color: var(--secondary);
   font: inherit;
   font-size: 11px;
+  transition: background-color var(--motion-fast) var(--ease-standard);
 }
 
-.orchestrator-pause:hover:not(:disabled) {
+.orchestrator-mode-option:hover {
   background: var(--wash);
   color: var(--primary);
 }
 
-.orchestrator-pause:disabled {
-  color: var(--disabled-ink);
+.orchestrator-mode-option[aria-checked="true"] {
+  background: var(--wash-strong);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.orchestrator-mode-option:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.orchestrator-mode-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.orchestrator-mode-option[data-mode="saving"] .orchestrator-mode-dot {
+  background: var(--waiting);
+}
+
+.orchestrator-mode-option[data-mode="off"] .orchestrator-mode-dot {
+  background: var(--tertiary);
+}
+
+/* Saving entered by the usage readout: said, quietly; the card says why. */
+.orchestrator-mode-auto {
+  color: var(--tertiary);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 /* How many events wait for the orchestrator (paused, or mid-turn). */
@@ -111,7 +154,7 @@
   white-space: nowrap;
 }
 
-/* The Events switch and the pending count: the card under them is the
+/* The mode control and the pending count: the card under them is the
    next delivery, as it would go now. */
 .orchestrator-delivery-wrap {
   position: relative;
@@ -297,42 +340,6 @@
 .orchestrator-github-problem {
   color: var(--danger);
   overflow-wrap: anywhere;
-}
-
-/* A small switch, the Mac's: on is the accent, paused is the waiting ink. */
-.orchestrator-pause-track {
-  position: relative;
-  width: 22px;
-  height: 12px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  transition: background-color var(--motion-fast) var(--ease-standard);
-}
-
-/* The knob slides on its transform, never its place (docs/motion.md). */
-.orchestrator-pause-knob {
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--accent-ink);
-  transform: translateX(10px);
-  transition: transform var(--motion-fast) var(--ease-standard);
-}
-
-.orchestrator-pause[aria-checked="false"] .orchestrator-pause-track {
-  background: var(--line-strong);
-}
-
-.orchestrator-pause[aria-checked="false"] .orchestrator-pause-knob {
-  transform: none;
-  background: var(--surface);
-}
-
-.orchestrator-pause[aria-checked="false"] {
-  color: var(--waiting);
 }
 
 /* ------------------------------------------------------------- the stack */

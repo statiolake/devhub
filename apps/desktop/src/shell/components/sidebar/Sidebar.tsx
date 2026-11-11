@@ -1186,7 +1186,8 @@ function OrchestratorRow({
     ...(board.inProgress.length > 0
       ? [`${String(board.inProgress.length)} in progress`]
       : []),
-    ...(board.paused ? ["events paused"] : []),
+    // The mode, always: off at every launch, so its absence would hide it.
+    `mode: ${board.mode ?? "off"}${board.autoSaving === undefined ? "" : " (by itself: usage over the saving threshold)"}`,
     ...(total > 0 ? [`${String(total)} under it`] : []),
   ];
   return (

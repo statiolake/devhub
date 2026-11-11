@@ -435,9 +435,14 @@ export type TellCommand =
 	| { readonly verb: "orchestrator-status" }
 	| { readonly verb: "orchestrator-stop" }
 	| { readonly verb: "orchestrator-restart" }
-	/** Hold the orchestrator's events; resume delivers them, in order. */
+	/** Off (pause) or full (resume): `orchestrator mode` with a name. */
 	| { readonly verb: "orchestrator-pause" }
 	| { readonly verb: "orchestrator-resume" }
+	/** The mode (full, saving, off), or choose one. */
+	| {
+			readonly verb: "orchestrator-mode";
+			readonly mode?: "full" | "saving" | "off";
+	  }
 	/** The recent events: delivered, pending, filtered, coalesced, dropped. */
 	| {
 			readonly verb: "orchestrator-events";
@@ -877,9 +882,17 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    its events are paused, and each GitHub
                                    board's items and assigned to me
   orchestrator stop | restart      Stop Agent / Restart Session on it
-  orchestrator pause | resume      hold its events / deliver the held ones:
-                                   the person's words each alone, then the
-                                   rest as one message
+  orchestrator mode [full|saving|off]
+                                   the mode, or choose one: full delivers
+                                   every delivery_interval; saving 3x as
+                                   rarely, and nothing while 2+ tasks are in
+                                   progress; off holds everything (every
+                                   launch starts off). Full switches to saving
+                                   by itself at saving_threshold (80%) of a
+                                   plan window, and back when it resets
+  orchestrator pause | resume      mode off / mode full: turning on delivers
+                                   the held ones at once, the person's words
+                                   each alone, then the rest as one message
   orchestrator events [--last <n>] the recent events, one line each, and what
                                    came of them: delivered, pending, filtered,
                                    coalesced, dropped-stale, dropped
@@ -1703,6 +1716,16 @@ function parseOrchestrator(
 		case "resume":
 			positionals(readFlags(rest, NO_FLAGS), []);
 			return { verb: `orchestrator-${sub}` };
+		case "mode": {
+			const [mode, ...more] = rest;
+			positionals(readFlags(more, NO_FLAGS), []);
+			if (mode === undefined) return { verb: "orchestrator-mode" };
+			if (mode !== "full" && mode !== "saving" && mode !== "off")
+				throw new Refusal(
+					`orchestrator mode takes full, saving or off, not ${JSON.stringify(mode)}.`,
+				);
+			return { verb: "orchestrator-mode", mode };
+		}
 		case "events": {
 			const flags = readFlags(rest, {
 				values: ["--last"],
@@ -1765,7 +1788,7 @@ function parseOrchestrator(
 		}
 		default:
 			throw new Refusal(
-				"orchestrator takes: start, status, stop, restart, pause, resume, events, emit, timer.",
+				"orchestrator takes: start, status, stop, restart, mode, pause, resume, events, emit, timer.",
 			);
 	}
 }

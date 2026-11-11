@@ -45,6 +45,7 @@ export function testConfig(
       events: [...DEFAULT_ORCHESTRATOR_EVENTS],
       usageThresholds: [80, 95],
       deliveryInterval: "5m",
+      savingThreshold: 80,
       githubProjects: [],
       githubInterval: "90s",
       timers: [],

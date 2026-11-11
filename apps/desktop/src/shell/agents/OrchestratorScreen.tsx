@@ -47,7 +47,7 @@ import { focusIsOurs, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { listenForLightboxes } from "../conversation/lightboxLayer";
 import { FilesPage } from "./OrchestratorFiles";
-import { EventsSwitch } from "./OrchestratorDelivery";
+import { ModeControl } from "./OrchestratorDelivery";
 import { GitHubPill } from "./OrchestratorGitHub";
 import { dueText, EscalationNote, inProgressBefore } from "./EscalationNote";
 import { dueWords } from "../../model/escalations";
@@ -185,9 +185,6 @@ export function OrchestratorBoard({
       element.removeEventListener("mouseup", onUp);
     };
   }, []);
-  const orchestrator = snapshot.workspaces
-    .flatMap((workspace) => workspace.agents)
-    .find((agent) => agent.id === board.orchestratorAgentId);
   return (
     <section
       ref={section}
@@ -243,13 +240,12 @@ export function OrchestratorBoard({
           ) : null}
         </div>
         <div className="orchestrator-board-tools">
-          <EventsSwitch
+          {/* Always choosable: the mode is DevHub's, not the agent's, and
+              Start turns an off one on. */}
+          <ModeControl
             board={board}
-            disabled={orchestrator === undefined}
-            onToggle={() => {
-              void devhub()
-                .setOrchestratorPaused(!board.paused)
-                .catch(reportFailure);
+            onChoose={(mode) => {
+              void devhub().setOrchestratorMode(mode).catch(reportFailure);
             }}
           />
           <GitHubPill

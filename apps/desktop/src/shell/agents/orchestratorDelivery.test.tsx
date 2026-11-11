@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * The Events switch's hover card: what the next delivery would send now,
+ * The mode control (full · saving · off), and its hover card: what the next delivery would send now,
  * as main composed it — the person's words, each its own message, the
  * batch, and when it goes — or that there is nothing to send.
  */
@@ -23,10 +23,10 @@ import { clockTime, GITHUB_CARD_LINGER_MS } from "./OrchestratorGitHub";
 import { OrchestratorBoard } from "./OrchestratorScreen";
 import { forgetOrchestratorMemory } from "./orchestratorMemory";
 
-const setOrchestratorPaused = vi.fn(() => Promise.resolve());
+const setOrchestratorMode = vi.fn(() => Promise.resolve());
 window.devhub = {
   openExternalUrl: vi.fn(() => Promise.resolve()),
-  setOrchestratorPaused,
+  setOrchestratorMode,
   conversation: { resolvePaths: () => Promise.resolve([]) },
 } as unknown as typeof window.devhub;
 
@@ -67,7 +67,7 @@ function mount(board: Partial<OrchestratorBoardWire>) {
 }
 
 function events(): HTMLElement {
-  return screen.getByRole("switch", { name: "Events" });
+  return screen.getByRole("radiogroup", { name: "Orchestrator mode" });
 }
 
 function card(): HTMLElement {
@@ -75,7 +75,7 @@ function card(): HTMLElement {
   return screen.getByRole("dialog", { name: "Next delivery" });
 }
 
-describe("the Events switch's card", () => {
+describe("the mode control's card", () => {
   it("shows the batch as it goes, monospace, and when", () => {
     const at = Date.UTC(2026, 10, 5, 3, 5, 0);
     mount({
@@ -114,7 +114,9 @@ describe("the Events switch's card", () => {
       },
     });
     const box = card();
-    expect(box).toHaveTextContent("paused: sent when Events is turned on");
+    expect(box).toHaveTextContent(
+      "off: sent when the mode is turned to full or saving",
+    );
     expect(box).toHaveTextContent("message 1 of 2");
     expect(box).toHaveTextContent("message 2 of 2");
     expect(box.querySelectorAll("pre")).toHaveLength(2);
@@ -141,7 +143,23 @@ describe("the Events switch's card", () => {
     expect(box).toHaveTextContent("1 line, 3 more counted");
   });
 
-  it("closes a moment after the pointer leaves, and toggles the pause", () => {
+  it("says saving holds it while 2 or more tasks are in progress", () => {
+    mount({
+      mode: "saving",
+      nextDelivery: {
+        human: [],
+        batch: "x",
+        lines: 1,
+        more: 0,
+        when: { kind: "saving_busy", tasks: 3 },
+      },
+    });
+    expect(card()).toHaveTextContent(
+      "saving: held while 3 tasks are in progress (2 or more)",
+    );
+  });
+
+  it("closes a moment after the pointer leaves, and chooses a mode", () => {
     vi.useFakeTimers();
     mount({ nextDelivery: { human: [], lines: 0, more: 0 } });
     card();
@@ -150,7 +168,64 @@ describe("the Events switch's card", () => {
       vi.advanceTimersByTime(GITHUB_CARD_LINGER_MS);
     });
     expect(screen.queryByRole("dialog", { name: "Next delivery" })).toBeNull();
-    fireEvent.click(events());
-    expect(setOrchestratorPaused).toHaveBeenCalledWith(true);
+    fireEvent.click(screen.getByRole("radio", { name: "Saving" }));
+    expect(setOrchestratorMode).toHaveBeenCalledWith("saving");
+  });
+});
+
+describe("the mode control", () => {
+  it("shows the three modes, the current one checked; off when the board says nothing", () => {
+    mount({});
+    const radios = screen.getAllByRole("radio");
+    expect(radios.map((one) => one.textContent)).toEqual([
+      "Full",
+      "Saving",
+      "Off",
+    ]);
+    expect(screen.getByRole("radio", { name: "Off" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    cleanup();
+    mount({ mode: "full" });
+    expect(screen.getByRole("radio", { name: "Full" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("is one tab stop the arrows move, choosing as they go: nothing mouse-only", () => {
+    mount({ mode: "full" });
+    const full = screen.getByRole("radio", { name: "Full" });
+    expect(full).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("radio", { name: "Off" })).toHaveAttribute(
+      "tabindex",
+      "-1",
+    );
+    fireEvent.keyDown(full, { key: "ArrowRight" });
+    expect(setOrchestratorMode).toHaveBeenLastCalledWith("saving");
+    fireEvent.keyDown(full, { key: "ArrowLeft" });
+    expect(setOrchestratorMode).toHaveBeenLastCalledWith("off");
+    fireEvent.keyDown(full, { key: "End" });
+    expect(setOrchestratorMode).toHaveBeenLastCalledWith("off");
+  });
+
+  it("says, quietly, when saving came by itself, and why in the card", () => {
+    const resetsAt = Date.UTC(2026, 10, 5, 8, 0, 0);
+    mount({
+      mode: "saving",
+      autoSaving: {
+        cli: "claude",
+        window: "5-hour",
+        usedPercent: 82.4,
+        threshold: 80,
+        resetsAt,
+      },
+      nextDelivery: { human: [], lines: 0, more: 0 },
+    });
+    expect(screen.getByText("auto")).toBeInTheDocument();
+    expect(card()).toHaveTextContent(
+      `Saving by itself: Claude 5-hour at 82% (80% or more). Back to full when it resets at ${clockTime(resetsAt)}.`,
+    );
   });
 });

@@ -77,6 +77,7 @@
  * | (palette only)              | `open_task_manager`       |
  * | (palette only)              | `install_cli`             |
  * | (palette only)              | `restart_terminals`       |
+ * | (palette only)              | `orchestrator_full` / `orchestrator_saving` / `orchestrator_off` |
  * | `Cmd+Q ?`                   | `show_chord_help`         |
  * | `Cmd+Q :`                   | `open_command_palette`    |
  * | `Cmd+Q H` / `L`              | `navigate_back` / `navigate_forward` |
@@ -337,8 +338,9 @@
  * is for the moment something went wrong, `open_recently_closed`, the
  * picker over what `Cmd+Q Shift+T` reopens one at a time,
  * `preview_color_theme`, `open_task_manager`, which is for the moment
- * the Mac is slow, `install_cli`, which is run once per install, and
- * `restart_terminals`, which is for terminals that have stopped. (Back and Forward were
+ * the Mac is slow, `install_cli`, which is run once per install,
+ * `restart_terminals`, which is for terminals that have stopped, and the
+ * Orchestrator's three modes, which the board header also sets. (Back and Forward were
  * once palette only too; they are `Cmd+Q H` / `L` now, see below.)
  * `:` is matched as the
  * character, so it is Shift+; on a US layout and the unshifted key beside L on
@@ -436,6 +438,9 @@ export type CommandId =
   | "open_task_manager"
   | "install_cli"
   | "restart_terminals"
+  | "orchestrator_full"
+  | "orchestrator_saving"
+  | "orchestrator_off"
   | "show_chord_help"
   | "open_command_palette"
   | "navigate_back"
@@ -451,6 +456,7 @@ export type CommandCategory =
   | "Workspace"
   | "Agent"
   | "Terminal"
+  | "Orchestrator"
   | "DevHub";
 
 /**
@@ -868,6 +874,30 @@ export const COMMANDS: readonly CommandDefinition[] = [
     defaultKeys: [],
   },
   {
+    // The Orchestrator's mode (`main/orchestrator/mode.ts`), the board
+    // header's three-way control by name. Palette only: see
+    // `PALETTE_ONLY_COMMANDS`.
+    id: "orchestrator_full",
+    label: "Full",
+    needs: "nothing",
+    category: "Orchestrator",
+    defaultKeys: [],
+  },
+  {
+    id: "orchestrator_saving",
+    label: "Saving (fewer nudges)",
+    needs: "nothing",
+    category: "Orchestrator",
+    defaultKeys: [],
+  },
+  {
+    id: "orchestrator_off",
+    label: "Off",
+    needs: "nothing",
+    category: "Orchestrator",
+    defaultKeys: [],
+  },
+  {
     id: "show_chord_help",
     label: "Keyboard shortcuts",
     needs: "nothing",
@@ -921,6 +951,9 @@ export const PALETTE_ONLY_COMMANDS: ReadonlySet<CommandId> = new Set([
   "open_task_manager",
   "install_cli",
   "restart_terminals",
+  "orchestrator_full",
+  "orchestrator_saving",
+  "orchestrator_off",
 ]);
 
 const BY_ID = new Map<string, CommandDefinition>(

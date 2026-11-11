@@ -52,6 +52,13 @@ export interface OrchestratorConfig {
    * unresolved one is said again.
    */
   readonly delivery_interval: string;
+  /**
+   * The percent of a plan window (Claude's 5-hour or weekly, Codex's) at or
+   * over which a full Orchestrator switches to saving by itself, and below
+   * which (every window under again, after a reset) a saving it entered that
+   * way goes back to full (`main/orchestrator/mode.ts`). Default 80.
+   */
+  readonly saving_threshold: number;
   /** `[orchestrator.github]`: the GitHub event source. */
   readonly github: OrchestratorGitHubConfig;
   /** `[[orchestrator.timers]]`: fixed timers, each a `timer.elapsed`. */
@@ -158,6 +165,9 @@ export function retiredEventPattern(pattern: string): boolean {
 export const DEFAULT_USAGE_THRESHOLDS: readonly number[] = [80, 95];
 
 export const DEFAULT_GITHUB_INTERVAL = "90s";
+/** `[orchestrator] saving_threshold` when it is not set. */
+export const DEFAULT_SAVING_THRESHOLD = 80;
+
 /** `[orchestrator] delivery_interval` when it is not set. */
 export const DEFAULT_DELIVERY_INTERVAL = "5m";
 /** The most often a batch may go. */
@@ -182,6 +192,7 @@ export const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   events: DEFAULT_ORCHESTRATOR_EVENTS,
   usage_thresholds: DEFAULT_USAGE_THRESHOLDS,
   delivery_interval: DEFAULT_DELIVERY_INTERVAL,
+  saving_threshold: DEFAULT_SAVING_THRESHOLD,
   github: { projects: [], interval: DEFAULT_GITHUB_INTERVAL },
   timers: [],
 };
@@ -195,6 +206,7 @@ export const ORCHESTRATOR_KEYS = [
   "events",
   "usage_thresholds",
   "delivery_interval",
+  "saving_threshold",
   "github",
   "timers",
 ] as const;
@@ -224,6 +236,8 @@ export function orchestratorProblem(
     return "usage_thresholds";
   if (intervalProblem(config.delivery_interval, MIN_DELIVERY_INTERVAL_MS))
     return "delivery_interval";
+  if (savingThresholdProblem(config.saving_threshold))
+    return "saving_threshold";
   if (config.github.projects.some((one) => projectRefProblem(one)))
     return "github.projects";
   if (intervalProblem(config.github.interval, MIN_GITHUB_INTERVAL_MS))
@@ -449,6 +463,14 @@ export function usageThresholdsProblem(thresholds: readonly number[]): boolean {
 export const ORCHESTRATOR_USAGE_THRESHOLDS_RULE =
   "orchestrator.usage_thresholds lists whole percents from 1 to 100, each once (80, 95): usage.threshold fires as a usage window crosses each.";
 
+/** `saving_threshold`: a whole percent from 1 to 100. */
+export function savingThresholdProblem(threshold: number): boolean {
+  return !Number.isInteger(threshold) || threshold < 1 || threshold > 100;
+}
+
+export const ORCHESTRATOR_SAVING_THRESHOLD_RULE =
+  "orchestrator.saving_threshold is a whole percent from 1 to 100 (80): at or over it, in any plan window, a full Orchestrator switches to saving.";
+
 /** `root` is an absolute path, `~`, or one starting with `~/`. */
 export function orchestratorRootProblem(root: string): boolean {
   return (
@@ -521,6 +543,8 @@ export function orchestratorDocument(
     document["usage_thresholds"] = [...config.usage_thresholds];
   if (config.delivery_interval !== DEFAULT_DELIVERY_INTERVAL)
     document["delivery_interval"] = config.delivery_interval;
+  if (config.saving_threshold !== DEFAULT_SAVING_THRESHOLD)
+    document["saving_threshold"] = config.saving_threshold;
   const github: Record<string, TomlValue> = {};
   if (config.github.projects.length > 0)
     github["projects"] = [...config.github.projects];

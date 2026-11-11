@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * The board header, calmer: the events switch says only "Events", and
+ * The board header, calmer: the mode control says Full · Saving · Off, and
  * GitHub polling is a `GitHub` pill with a dot, whose card (on hover or
  * focus) holds the boards, the state and why, the polls and the rate limit.
  */
@@ -26,7 +26,7 @@ import { forgetOrchestratorMemory } from "./orchestratorMemory";
 const openExternalUrl = vi.fn(() => Promise.resolve());
 window.devhub = {
   openExternalUrl,
-  setOrchestratorPaused: vi.fn(() => Promise.resolve()),
+  setOrchestratorMode: vi.fn(() => Promise.resolve()),
   conversation: { resolvePaths: () => Promise.resolve([]) },
 } as unknown as typeof window.devhub;
 
@@ -78,17 +78,17 @@ function card(): HTMLElement {
 const LAST = Date.UTC(2026, 10, 5, 3, 0, 0);
 const NEXT = LAST + 90_000;
 
-describe("the events switch", () => {
-  it("says only Events; the switch says on or off", () => {
-    mount({ paused: false, held: 2 });
-    const toggle = screen.getByRole("switch");
-    expect(toggle).toHaveTextContent(/^Events$/u);
-    expect(toggle).toHaveAttribute("aria-checked", "true");
+describe("the mode control", () => {
+  it("names the modes in words, and the pending count beside it", () => {
+    mount({ mode: "full", paused: false, held: 2 });
+    expect(
+      screen.getByRole("radiogroup", { name: "Orchestrator mode" }),
+    ).toHaveTextContent(/^FullSavingOff$/u);
+    expect(screen.getByRole("radio", { name: "Full" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     expect(screen.getByText("2 pending")).toBeInTheDocument();
-    cleanup();
-    mount({ paused: true });
-    expect(screen.getByRole("switch")).toHaveTextContent(/^Events$/u);
-    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false");
   });
 });
 

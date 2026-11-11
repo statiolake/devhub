@@ -701,9 +701,23 @@ export interface TellOrchestratorPorts {
 		readonly presentation: "gui" | "tui";
 		readonly prompt: string | undefined;
 	}): Promise<string>;
+	/** Mode off. */
 	pause(): void;
-	/** How many held lines went out: at once, the sources catching up alongside. */
+	/** Mode full. How many held lines went out: at once, the sources catching up alongside. */
 	resume(): number;
+	/** The mode, and the window that made it saving when that was automatic. */
+	mode(): {
+		readonly mode: "full" | "saving" | "off";
+		readonly auto?: {
+			readonly cli: string;
+			readonly window: string;
+			readonly usedPercent: number;
+			readonly threshold: number;
+			readonly resetsAt?: number;
+		};
+	};
+	/** The person chooses a mode. How many held lines went out. */
+	setMode(mode: "full" | "saving" | "off"): number;
 	/** The last `last` events, oldest first, each with what came of it. */
 	events(last: number): readonly TellEventEntry[];
 	/** A `custom.*` event, as any source dispatches one. */
@@ -1277,14 +1291,29 @@ export class TellService {
 				this.ports.orchestrator.pause();
 				return {
 					message:
-						"The orchestrator's events are paused: each is held (one line per subject), GitHub polling is suspended, and 'orchestrator resume' delivers them at once, as one message.",
-					data: { paused: true },
+						"The orchestrator is off: its events are held (one line per subject), GitHub polling is suspended, and 'orchestrator mode full' (or saving, or resume) delivers them at once, as one message.",
+					data: { paused: true, mode: "off" },
 				};
+			case "orchestrator-mode": {
+				if (command.mode === undefined) {
+					const now = this.ports.orchestrator.mode();
+					return {
+						message: modeLine(now.mode, now.auto),
+						data: { mode: now.mode, auto: now.auto ?? null },
+					};
+				}
+				const delivered = this.ports.orchestrator.setMode(command.mode);
+				const now = this.ports.orchestrator.mode();
+				return {
+					message: `${modeLine(now.mode, now.auto)}${delivered === 0 ? "" : `\n${String(delivered)} held line(s) went out as one message.`}`,
+					data: { mode: now.mode, auto: now.auto ?? null, delivered },
+				};
+			}
 			case "orchestrator-resume": {
 				const delivered = this.ports.orchestrator.resume();
 				return {
 					message: `The orchestrator's events are delivered again${delivered === 0 ? "" : `; ${String(delivered)} held line(s) went out as one message`}.`,
-					data: { paused: false, delivered },
+					data: { paused: false, mode: "full", delivered },
 				};
 			}
 			case "orchestrator-events":
@@ -1374,7 +1403,7 @@ export class TellService {
 		const board = this.ports.orchestrator.board();
 		const now = this.clock.now();
 		const lines = [
-			`orchestrator: ${board.orchestratorAgentId ?? "none"}${board.paused ? `  (events paused, ${String(board.held)} held)` : ""}`,
+			`orchestrator: ${board.orchestratorAgentId ?? "none"}  (mode ${board.mode ?? "off"}${board.held > 0 ? `, ${String(board.held)} held` : ""})`,
 			`needs answer (${String(board.needsAnswer.length)}, priority then effort then age):`,
 			...board.needsAnswer.map(
 				(one) =>
@@ -1397,6 +1426,7 @@ export class TellService {
 			data: {
 				orchestratorAgentId: board.orchestratorAgentId ?? null,
 				paused: board.paused,
+				mode: board.mode ?? "off",
 				held: board.held,
 				needsAnswer: board.needsAnswer,
 				inProgress: board.inProgress,
@@ -1739,7 +1769,7 @@ export class TellService {
 					? "No orchestrator is running."
 					: `orchestrator: ${agent.name} (${agent.id}), ${agent.status}${agent.presentation === "gui" ? "" : ", terminal"}`,
 				`needs answer ${String(counts.needsAnswer)}, in progress ${String(counts.inProgress)}, waiting ${String(counts.waiting)}`,
-				`events: ${board.paused ? "paused" : "delivered"}${board.held > 0 ? ` (${String(board.held)} pending)` : ""}`,
+				`${modeLine(board.mode ?? "off", board.autoSaving)}${board.held > 0 ? ` (${String(board.held)} pending)` : ""}`,
 				githubPollingLine(board),
 			].join("\n"),
 			data: {
@@ -1748,6 +1778,9 @@ export class TellService {
 				presentation: agent?.presentation ?? null,
 				counts,
 				paused: board.paused,
+				mode: board.mode ?? "off",
+				autoSaving: board.autoSaving ?? null,
+				inProgressTasks: board.inProgressTasks ?? 0,
 				held: board.held,
 				github: board.github,
 				root: this.ports.orchestrator.configuredRoot() ?? null,
@@ -4809,6 +4842,23 @@ export function answeredBy(
 }
 
 /** `orchestrator status`'s GitHub line: polling, suspended by the pause, or idle and why. */
+/** The mode in words: what it does, and why when saving was automatic. */
+function modeLine(
+	mode: "full" | "saving" | "off",
+	auto: OrchestratorBoardWire["autoSaving"],
+): string {
+	switch (mode) {
+		case "full":
+			return "mode: full (a delivery at most every delivery_interval)";
+		case "off":
+			return "mode: off (everything held, GitHub not polled; every launch starts off)";
+		case "saving":
+			return auto === undefined
+				? "mode: saving (chosen): deliveries 3x as rare, none while 2+ tasks are in progress"
+				: `mode: saving (automatic: ${auto.cli} ${auto.window} at ${String(Math.round(auto.usedPercent))}%, saving_threshold ${String(auto.threshold)}%): deliveries 3x as rare, none while 2+ tasks are in progress; back to full when it resets`;
+	}
+}
+
 function githubPollingLine(board: OrchestratorBoardWire): string {
 	const { state, rateLimit, boards, assigned, problem, problemAt, reading } =
 		board.github;

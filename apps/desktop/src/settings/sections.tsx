@@ -75,6 +75,9 @@ import {
   ORCHESTRATOR_ROOT_RULE,
   ORCHESTRATOR_TIMER_RULE,
   ORCHESTRATOR_USAGE_THRESHOLDS_RULE,
+  ORCHESTRATOR_SAVING_THRESHOLD_RULE,
+  DEFAULT_SAVING_THRESHOLD,
+  savingThresholdProblem,
   eventPatternProblem,
   intervalProblem,
   isTimerName,
@@ -662,6 +665,38 @@ export function GeneralSection({
                   ...config.orchestrator,
                   deliveryInterval:
                     next === "" ? DEFAULT_DELIVERY_INTERVAL : next,
+                },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Saving threshold"
+          help="At or over this percent of a plan window (Claude's 5-hour or weekly), an Orchestrator in full switches to saving by itself: nudges come a third as often, and none while 2 or more tasks are in progress. It goes back to full when the window resets — unless you chose saving yourself. Off is never left by itself."
+        >
+          <TextField
+            label="Orchestrator saving threshold"
+            value={
+              config.orchestrator.savingThreshold === DEFAULT_SAVING_THRESHOLD
+                ? ""
+                : String(config.orchestrator.savingThreshold)
+            }
+            placeholder={String(DEFAULT_SAVING_THRESHOLD)}
+            mono
+            validate={(next) =>
+              next !== "" && savingThresholdProblem(Number(next.trim()))
+                ? ORCHESTRATOR_SAVING_THRESHOLD_RULE
+                : undefined
+            }
+            onCommit={(next) => {
+              update({
+                ...config,
+                orchestrator: {
+                  ...config.orchestrator,
+                  savingThreshold:
+                    next.trim() === ""
+                      ? DEFAULT_SAVING_THRESHOLD
+                      : Number(next.trim()),
                 },
               });
             }}

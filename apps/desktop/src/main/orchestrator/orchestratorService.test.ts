@@ -82,6 +82,8 @@ function world(
 			),
 		}),
 		now: () => clock.now,
+		// On, as the tests below were written; a launch starts off.
+		mode: "full",
 	});
 	service.setGrace(60_000);
 	service.assign(ORCH);

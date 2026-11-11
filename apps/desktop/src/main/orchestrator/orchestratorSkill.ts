@@ -441,6 +441,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     devhub --tell workspace close W --worktree keep --agents stop --terminals close
     devhub --tell --json board
     devhub --tell --json orchestrator status
+    devhub --tell orchestrator mode            # full / saving / off (起動直後は off)
     devhub --tell orchestrator pause
     devhub --tell orchestrator resume
     devhub --tell orchestrator events --last 20

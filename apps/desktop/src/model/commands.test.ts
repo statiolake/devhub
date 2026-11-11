@@ -146,6 +146,9 @@ describe("the registry itself", () => {
       "open_task_manager",
       "install_cli",
       "restart_terminals",
+      "orchestrator_full",
+      "orchestrator_saving",
+      "orchestrator_off",
     ]);
     expect(keysForCommand(bindings, "focus_sidebar")).toEqual([]);
   });

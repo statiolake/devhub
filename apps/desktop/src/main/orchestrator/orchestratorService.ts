@@ -90,6 +90,16 @@ import {
 import type { KeptStore } from "./keptFile.js";
 import { OrchestratorTimers } from "./timers.js";
 import {
+	LAUNCH_MODE,
+	OrchestratorModeControl,
+	usageOver,
+	type ModeChange,
+	type OrchestratorMode,
+	type UsageOver,
+} from "./mode.js";
+import type { LaneBoard } from "../../ipc/orchestratorLanes.js";
+import type { UsageLimitsWire } from "../../ipc/contract.js";
+import {
 	usageThresholdRelevant,
 	type UsageWindowNow,
 } from "./usageThresholds.js";
@@ -164,6 +174,21 @@ export interface OrchestratorServicePorts {
 		cli: string,
 		window: string,
 	) => UsageWindowNow | undefined;
+	/**
+	 * The mode it starts in (`mode.ts`). Absent: `LAUNCH_MODE`, off — what
+	 * every launch of DevHub starts in.
+	 */
+	readonly mode?: OrchestratorMode;
+	/**
+	 * How many tasks are in progress, read off the board's lanes as the
+	 * Sidebar reads them (`inProgressCount`). Absent: none.
+	 */
+	readonly inProgress?: (board: LaneBoard) => number;
+	/** The mode moved: by the person, or by the usage readout. */
+	readonly modeChanged?: (
+		change: ModeChange,
+		auto: UsageOver | undefined,
+	) => void;
 	/** Where `agent keep`'s keepings are kept across restarts; absent: memory. */
 	readonly kept?: KeptStore;
 	readonly now?: () => number;
@@ -319,9 +344,18 @@ export class OrchestratorService {
 	readonly #invariant: InvariantWatch;
 	/** The agents the invariant was last read with. */
 	#invariantAgents: readonly InvariantAgent[] = [];
+	/** Full, saving or off, and why saving when it was automatic. */
+	readonly #mode: OrchestratorModeControl;
+	/** The usage readout as last seen, for the automatic switch. */
+	#usage: UsageLimitsWire = { clis: [] };
+	/** A look at the readout when the window that made saving resets. */
+	#resetTimer: { cancel(): void } | undefined;
 
 	constructor(private readonly ports: OrchestratorServicePorts) {
+		this.#mode = new OrchestratorModeControl(ports.mode ?? LAUNCH_MODE);
 		this.events = new EventDispatcher({
+			mode: this.#mode.mode,
+			inProgress: () => this.ports.inProgress?.(this.#laneBoard()) ?? 0,
 			orchestrator: () => this.orchestratorAgentId,
 			settings: () => this.ports.settings(),
 			deliver: (agentId, text) => {
@@ -434,6 +468,81 @@ export class OrchestratorService {
 	/** For tests: a shorter grace. */
 	setGrace(ms: number): void {
 		this.#graceMs = ms;
+	}
+
+	// --- the mode: full, saving, off --------------------------------------------
+
+	get mode(): OrchestratorMode {
+		return this.#mode.mode;
+	}
+
+	/** Why saving is in force, when the usage readout switched it on. */
+	get autoSaving(): UsageOver | undefined {
+		return this.#mode.auto;
+	}
+
+	/**
+	 * The person chose `mode` (the board, the palette, `orchestrator mode`).
+	 * How many held lines went out, turning it on.
+	 */
+	setMode(mode: OrchestratorMode): number {
+		const changes = this.#mode.choose(mode, this.#over());
+		return this.#apply(changes);
+	}
+
+	/** The usage readout moved: the automatic switch follows it. */
+	observeUsage(limits: UsageLimitsWire): void {
+		this.#usage = limits;
+		this.#observeMode();
+	}
+
+	#over(): UsageOver | undefined {
+		return usageOver(
+			this.#usage,
+			this.ports.settings().saving_threshold,
+			this.#now(),
+		);
+	}
+
+	#observeMode(): void {
+		const change = this.#mode.observe(this.#over());
+		this.#apply(change === undefined ? [] : [change]);
+	}
+
+	#apply(changes: readonly ModeChange[]): number {
+		let delivered = 0;
+		for (const change of changes) {
+			delivered += this.events.setMode(change.to);
+			this.ports.log?.(
+				`[devhub] orchestrator mode ${change.from} → ${change.to} (${change.by === "person" ? "chosen" : change.to === "saving" ? "usage over saving_threshold" : "usage back under"})`,
+			);
+		}
+		this.#armReset();
+		if (changes.length > 0) {
+			const last = changes.at(-1)!;
+			this.ports.modeChanged?.(last, this.#mode.auto);
+			this.publish();
+		}
+		return delivered;
+	}
+
+	/**
+	 * Saving entered automatically comes back to full when its window resets;
+	 * the readers will say so, and in case they are slow, a look at the reset.
+	 */
+	#armReset(): void {
+		this.#resetTimer?.cancel();
+		this.#resetTimer = undefined;
+		const at = this.#mode.auto?.resetsAt;
+		const setTimer = this.ports.setTimer;
+		if (at === undefined || setTimer === undefined) return;
+		this.#resetTimer = setTimer(
+			Math.max(1_000, at - this.#now() + 1_000),
+			() => {
+				this.#resetTimer = undefined;
+				this.#observeMode();
+			},
+		);
 	}
 
 	// --- the orchestrator ----------------------------------------------------
@@ -802,6 +911,8 @@ export class OrchestratorService {
 
 	/** The settings moved: what is read and delivered follows them now. */
 	settingsChanged(): void {
+		// `saving_threshold` may have moved.
+		this.#observeMode();
 		this.observe();
 	}
 
@@ -1047,6 +1158,18 @@ export class OrchestratorService {
 		return this.ports.store.all().map((one) => this.toWire(one));
 	}
 
+	/** The board's lanes alone: what `inProgress` is read off. */
+	#laneBoard(): LaneBoard {
+		const lanes = this.#lanes();
+		const escalation = (one: Escalation) => this.toWire(one);
+		return {
+			needsAnswer: lanes.needsAnswer.map(escalation),
+			inProgress: lanes.inProgress.map(escalation),
+			waiting: lanes.waiting.map(escalation),
+			agentStates: this.#agentStates(),
+		};
+	}
+
 	wire(): OrchestratorBoardWire {
 		const lanes = this.#lanes();
 		const escalation = (one: Escalation) => this.toWire(one);
@@ -1069,6 +1192,9 @@ export class OrchestratorService {
 				...(problem === undefined ? {} : { problem }),
 			},
 			paused: this.events.paused,
+			mode: this.#mode.mode,
+			...(this.#mode.auto === undefined ? {} : { autoSaving: this.#mode.auto }),
+			inProgressTasks: this.ports.inProgress?.(this.#laneBoard()) ?? 0,
 			held: this.events.held().length,
 			nextDelivery: this.#nextDelivery(),
 			github: this.ports.github?.() ?? { state: "idle" },
@@ -1082,7 +1208,7 @@ export class OrchestratorService {
 		};
 	}
 
-	/** The Events switch's hover card: what the next delivery would send. */
+	/** The mode control's hover card: what the next delivery would send. */
 	#nextDelivery(): OrchestratorNextDeliveryWire {
 		const preview = this.events.preview();
 		return {
@@ -1140,6 +1266,7 @@ export class OrchestratorService {
 
 	dispose(): void {
 		this.#timer?.cancel();
+		this.#resetTimer?.cancel();
 		this.events.dispose();
 		this.timers.stop();
 	}

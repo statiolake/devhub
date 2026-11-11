@@ -266,6 +266,8 @@ class FakePorts implements TellPorts {
 		publish: () => undefined,
 		github: () => this.github,
 		now: () => this.clock.now,
+		// Tests start on; a launch starts off (`mode.ts`).
+		mode: "full",
 	});
 	focusedOrchestrator = false;
 	/** What each raise and ask attached, as the ports were handed it. */
@@ -320,9 +322,16 @@ class FakePorts implements TellPorts {
 			return Promise.resolve("bbbb2222-0000");
 		},
 		pause: () => {
-			this.service.events.pause();
+			this.service.setMode("off");
 		},
-		resume: () => this.service.events.resume(),
+		resume: () => this.service.setMode("full"),
+		mode: () => ({
+			mode: this.service.mode,
+			...(this.service.autoSaving === undefined
+				? {}
+				: { auto: this.service.autoSaving }),
+		}),
+		setMode: (mode) => this.service.setMode(mode),
 		events: (last) => this.service.eventLog(last),
 		emit: (type, text) => this.service.emit(type, text),
 		timers: () => this.service.timers.list(),
@@ -4749,11 +4758,13 @@ describe("the Orchestrator row from the command line", () => {
 				"hold",
 				"keep",
 				"link",
+				"mode",
 				"pause",
 				"raise",
 				"rank",
 				"resume",
 				"resumeWait",
+				"setMode",
 				"setTimer",
 				"standing",
 				"status",

@@ -195,6 +195,8 @@ export interface SettingsConfigWire {
 		readonly usageThresholds: readonly number[];
 		/** The most often a batch goes, and so how often needs_action is said again (`5m`). */
 		readonly deliveryInterval: string;
+		/** At or over this percent of a plan window, full switches to saving (`80`). */
+		readonly savingThreshold: number;
 		/** `[orchestrator.github]`. */
 		readonly githubProjects: readonly string[];
 		readonly githubInterval: string;

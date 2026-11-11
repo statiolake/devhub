@@ -2358,6 +2358,12 @@ export function interpretConfig(document: unknown): Config {
         "orchestrator",
         DEFAULT_ORCHESTRATOR.delivery_interval,
       ),
+      saving_threshold: optionalNumber(
+        orchestratorTable,
+        "saving_threshold",
+        "orchestrator",
+        DEFAULT_ORCHESTRATOR.saving_threshold,
+      ),
       github: {
         projects: optionalStringArray(
           orchestratorGitHub,

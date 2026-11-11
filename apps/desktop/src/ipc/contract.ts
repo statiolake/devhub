@@ -648,8 +648,12 @@ export interface OrchestratorNextDeliveryWire {
 		| { readonly kind: "at"; readonly at: number }
 		| { readonly kind: "after_turn" }
 		| { readonly kind: "paused" }
+		| { readonly kind: "saving_busy"; readonly tasks: number }
 		| { readonly kind: "nobody" };
 }
+
+/** The Orchestrator's mode, as the board and the commands say it. */
+export type OrchestratorModeWire = "full" | "saving" | "off";
 
 /**
  * The Orchestrator screen's board: the three lanes, the orchestrator, and
@@ -669,15 +673,34 @@ export interface OrchestratorBoardWire {
 		readonly presentation?: "gui" | "tui";
 		readonly problem?: string;
 	};
-	/** Events are held, not delivered, until resumed. */
+	/** Events are held, not delivered, until resumed: `mode` is off. */
 	readonly paused: boolean;
+	/**
+	 * Full, saving or off (`main/orchestrator/mode.ts`). Off at every
+	 * launch; absent reads as off.
+	 */
+	readonly mode?: OrchestratorModeWire;
+	/**
+	 * Saving entered by the usage readout: the window at or over
+	 * `saving_threshold`, and when it resets. Absent when the person chose
+	 * the mode, or it is not saving.
+	 */
+	readonly autoSaving?: {
+		readonly cli: string;
+		readonly window: string;
+		readonly usedPercent: number;
+		readonly threshold: number;
+		readonly resetsAt?: number;
+	};
+	/** The tasks in progress (the Sidebar's 対応中): saving's gate reads it. */
+	readonly inProgressTasks?: number;
 	/**
 	 * Events pending: held by the pause, or waiting for the orchestrator to
 	 * finish its turn (they then go out together, as one message).
 	 */
 	readonly held: number;
 	/**
-	 * What the next delivery would send now, for the Events switch's hover
+	 * What the next delivery would send now, for the mode control's hover
 	 * card. Always set by main; absent reads as nothing to send.
 	 */
 	readonly nextDelivery?: OrchestratorNextDeliveryWire;
@@ -761,7 +784,8 @@ export interface OrchestratorBoardWire {
 export const EMPTY_BOARD: OrchestratorBoardWire = {
 	revision: 0,
 	start: {},
-	paused: false,
+	paused: true,
+	mode: "off",
 	held: 0,
 	github: { state: "idle" },
 	needsAction: [],
@@ -862,8 +886,8 @@ export interface OrchestratorActionsBridge {
 	answerEscalation(id: number, markdown: string): Promise<void>;
 	/** Start the orchestrator from `[orchestrator]`, as the board's button does. */
 	startOrchestrator(): Promise<void>;
-	/** Hold the orchestrator's events (true), or deliver them again (false). */
-	setOrchestratorPaused(paused: boolean): Promise<void>;
+	/** Full, saving or off (`main/orchestrator/mode.ts`): the person's choice. */
+	setOrchestratorMode(mode: OrchestratorModeWire): Promise<void>;
 	/**
 	 * What the left pane is showing, for the window's title: main names the
 	 * window (`main/shell/shellTitle.ts`), so the page says only which
@@ -2414,7 +2438,7 @@ export const CHANNELS = {
 	getOrchestratorBoard: "devhub:get-orchestrator-board",
 	answerEscalation: "devhub:answer-escalation",
 	startOrchestrator: "devhub:start-orchestrator",
-	setOrchestratorPaused: "devhub:set-orchestrator-paused",
+	setOrchestratorMode: "devhub:set-orchestrator-mode",
 	reportOrchestratorView: "devhub:report-orchestrator-view",
 	listOrchestratorFolder: "devhub:list-orchestrator-folder",
 	readOrchestratorFile: "devhub:read-orchestrator-file",

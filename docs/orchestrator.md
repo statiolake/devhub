@@ -178,13 +178,13 @@ What that means:
 invariant's needs action, which the board lists above its lanes — after
 要回答. An item is in the first that holds of it:
 
-| lane   | when                                                                                                                       | heading                     |
-| ------ | -------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| 要回答 | an open escalation about it is 要回答                                                                                      | accent dot                  |
-| 要対応 | one of its agents breaks the invariant (`agentStates.needsAction`)                                                         | the needs-action mark       |
-| 対応中 | an escalation about it is 対応中, or one of its agents is at work (working, background, on a prompt, still being read)    | the working dot             |
-| 待機中 | an escalation about it is 待機中, or one of its agents is stopped and fine (on a 待機中 escalation, or `agent keep`)      | the idle dot                |
-| 完了   | nothing about it is open: no agent left, or its agents idle with nothing waiting on them (their escalation closed)        | tertiary dot                |
+| lane   | when                                                                                                                   | heading               |
+| ------ | ---------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| 要回答 | an open escalation about it is 要回答                                                                                  | accent dot            |
+| 要対応 | one of its agents breaks the invariant (`agentStates.needsAction`)                                                     | the needs-action mark |
+| 対応中 | an escalation about it is 対応中, or one of its agents is at work (working, background, on a prompt, still being read) | the working dot       |
+| 待機中 | an escalation about it is 待機中, or one of its agents is stopped and fine (on a 待機中 escalation, or `agent keep`)   | the idle dot          |
+| 完了   | nothing about it is open: no agent left, or its agents idle with nothing waiting on them (their escalation closed)     | tertiary dot          |
 
 An escalation is about an item when its `workspaceId` is the item's
 Workspace or one of its agents is the item's. 完了 is the board's word for the
@@ -420,14 +420,14 @@ it links to a web page: in `--link`, or as a Markdown link in a body or an
 answer. The syntax is `model/devhubLink.ts`'s, each segment percent-encoded
 as a URI component (`/` in a path excepted, `:` in a path as `%3A`):
 
-| link                                               | goes to                                                                |
-| -------------------------------------------------- | ---------------------------------------------------------------------- |
-| `devhub:agent/<id or 4+ prefix>`                   | the agent (`select_context`)                                           |
-| `devhub:workspace/<id or name>`                    | the workspace (`select_context`)                                       |
-| `devhub:file/<path without its leading />[:L[:C]]` | the file, in the editor of the open workspace whose folder holds it    |
-| `devhub:escalation/<id>`                           | the Orchestrator row, with the escalation open                         |
-| `devhub:orchestrator`                              | the Orchestrator row                                                   |
-| `devhub:session/<session id>`                      | the agent running that session (resuming one stays `/resume`)          |
+| link                                               | goes to                                                             |
+| -------------------------------------------------- | ------------------------------------------------------------------- |
+| `devhub:agent/<id or 4+ prefix>`                   | the agent (`select_context`)                                        |
+| `devhub:workspace/<id or name>`                    | the workspace (`select_context`)                                    |
+| `devhub:file/<path without its leading />[:L[:C]]` | the file, in the editor of the open workspace whose folder holds it |
+| `devhub:escalation/<id>`                           | the Orchestrator row, with the escalation open                      |
+| `devhub:orchestrator`                              | the Orchestrator row                                                |
+| `devhub:session/<session id>`                      | the agent running that session (resuming one stays `/resume`)       |
 
 For example `devhub:agent/3f2a9c1e`, `devhub:workspace/login-fix`,
 `devhub:file/Users/me/app/src/a%20b.ts:12:3`, `devhub:escalation/12`, and in
@@ -514,8 +514,8 @@ the chips on a card (選択肢 3, 優先, 停滞) and each lane's empty line
 (対応中のものはありません。) — because the lane names are the CLI's own
 vocabulary (`待機中`, `--tell board`), and a lane called 対応中 that says
 "Nothing in progress." under itself is two voices in one place. The header's
-Events switch and GitHub pill keep their names: they name a setting
-(`[orchestrator] events`) and a service, not something the board says.
+mode control (Full · Saving · Off) and GitHub pill keep English names: they
+name a setting and a service, not something the board says.
 
 An escalation's chips — its agents, its Workspace, its links — are all one
 look, a hairline pill on no ground: each is a link to somewhere, and that is
@@ -777,7 +777,7 @@ unmanaged like every agent the window starts.
   makes nothing up: `workspace open --worktree` takes any branch, as the
   picker's branch rows always did. It is checked out if it exists (here or
   on a remote) and otherwise started from `origin`'s default branch, as an
-  Issue's is. *Why*: the caller knows what the work is, and a name made from
+  Issue's is. _Why_: the caller knows what the work is, and a name made from
   it is what `git branch`, the Sidebar row and a later pull request show; a
   generated `investigate-<date>-…` would be a second naming rule for the
   window, the CLI and its Go port to share, and git refuses a duplicate
@@ -785,7 +785,7 @@ unmanaged like every agent the window starts.
 - **The folder is `<repo>_<branch>`** (`branchWorktreeDirectory`, `/` and
   other awkward characters as `-`), beside the Issues' `<repo>_<N>`. A
   branch whose name carries an Issue number (`feature/123-x`, `#123`) is
-  that Issue's work and goes in `<repo>_123`, as before. *Why*: the folder
+  that Issue's work and goes in `<repo>_123`, as before. _Why_: the folder
   rule already existed for the picker's branch rows; reusing it keeps one
   rule, and a name with no number can never land in an Issue's folder.
 - **`issue=pending`** is the one value of the link key that is not a URL
@@ -795,21 +795,21 @@ unmanaged like every agent the window starts.
   it is not a stray to be closed. When it stops with nothing settling it, it
   is `idle_no_escalation`, as any managed agent, and the orchestrator's next
   step is the Issue: have the agent file it and link it, or raise an
-  escalation with the draft for the person. *Why a value of `issue=` and not
-  a new flag or key*: linking the Issue later is then the one call the
+  escalation with the draft for the person. _Why a value of `issue=` and not
+  a new flag or key_: linking the Issue later is then the one call the
   linkage rule already has (`agent meta A set issue <URL>` replaces it), so
   "pending" and "linked" can never both be set or both be stale, and every
   place that keeps metadata (restarts, resumes, `session meta`) keeps it
   with no new code. DevHub reads it as no item — it is never fetched from
-  GitHub as a URL. *Why not unmanaged by default*: an agent the orchestrator
+  GitHub as a URL. _Why not unmanaged by default_: an agent the orchestrator
   starts is the orchestrator's to watch; unmanaged it would leave no trace
   when it stopped. An unmanaged agent (the window's) is left out anyway.
 - **Linked later**, it is an ordinary item's agent: the Issue just filed
   and not on a registered Project yet is `outside_population
-  (not_in_project)` until it is put on one and assigned — which is the
+(not_in_project)` until it is put on one and assigned — which is the
   person's workflow, said the usual way. Escalations about the agent become
   about the item with it (they are "about" an item through its agents).
-- **The branch is not renamed when the Issue is linked.** *Why*: the agent
+- **The branch is not renamed when the Issue is linked.** _Why_: the agent
   is working in it — its shell, its CLI session's folder, maybe a pushed
   branch with a pull request — and the folder cannot follow a rename
   without moving the agent; the Orchestrator links by `issue=`, never by
@@ -972,22 +972,23 @@ A message whose text could not be read says so and where to read it
   minutes by default; one that settled in between is on none. A delivery
   with nothing to carry is not sent. `orchestrator events` logs each line
   as it goes (`delivered`).
-- **Paused** (`orchestrator pause`, the board's Events switch off): everything
+- **Paused** (the mode **off**: `orchestrator mode off` or `pause`, the board's Off): everything
   is held, the person's words too, and GitHub is not polled; pausing sends
-  nothing. **Resuming delivers at once** (`orchestrator resume`, the switch
-  on): the person's held words, each alone, then what is pending and the
+  nothing. **Turning on delivers at once** (full or saving: `orchestrator
+mode full`, `resume`, the board's Full or Saving): the person's held words, each alone, then what is pending and the
   `needs_action` lines that stand now as one message — also when nothing
   was pending but some subject needs action — whatever the interval, the
   orchestrator's turn or the pickup wait; the interval then counts from
   that delivery. GitHub polls again at once (the rate limit permitting),
   alongside rather than before: the standing lines are read off the last
   reading, and what the catch-up poll finds goes with the next delivery.
-- **The preview** (hover or focus the Events switch, or the pending count):
+- **The preview** (hover or focus the mode control, or the pending count):
   a card with exactly what the next delivery would send now — the person's
   held words, each as its own message, then the batch as `event_prompt`
   renders it (pending lines, stale ones left out, then the standing
   `needs_action` lines, kept ones left out) — and when it goes: now, at the
-  interval's end, when the orchestrator's turn ends, or not while paused;
+  interval's end, when the orchestrator's turn ends, not while saving holds
+  it for the work in progress, or not while off;
   "Nothing to send" when nothing would. Main composes it with the delivery's
   own `composeDelivery` (`EventDispatcher.preview`, on the board as
   `nextDelivery`), reading only: nothing is marked delivered, logged or
@@ -995,6 +996,87 @@ A message whose text could not be read says so and where to read it
 - **Kept in a log**: `orchestrator events` lists the last ones and what came
   of each (`delivered`, `pending`, `filtered`, `coalesced` into which,
   `dropped-stale`, `overflow`, `dropped` with no orchestrator).
+
+### Modes: full, saving, off
+
+The board header's **Full · Saving · Off** control (a radio group: one tab
+stop, the arrows choose), the command palette's **Orchestrator: Full**,
+**Orchestrator: Saving (fewer nudges)** and **Orchestrator: Off**
+(`orchestrator_full`, `orchestrator_saving`, `orchestrator_off`; palette only,
+rebindable like every command) and `devhub --tell orchestrator mode
+[full|saving|off]` all set the same mode (`main/orchestrator/mode.ts`).
+`orchestrator pause` and `resume` are kept: they are `mode off` and `mode
+full`. The Sidebar row's tooltip names the mode; the header shows `auto`
+beside it when saving came by itself, and its card says why.
+
+| mode       | what is delivered                                                                                                                                                                                       |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **full**   | everything, as described above: a batch at most every `delivery_interval`, each carrying every `needs_action` subject again (what "on" was)                                                             |
+| **saving** | the same, more rarely: at most every **3 ×** `delivery_interval` (`SAVING_INTERVAL_FACTOR`), and **no batch at all while 2 or more tasks are in progress**. The person's words and `init` go as in full |
+| **off**    | nothing: everything is held, the person's words too, and GitHub is not polled (what "off" was)                                                                                                          |
+
+- **A nudge** is a batch: the pending lines and the standing `needs_action`
+  lines, the message that has the orchestrator prod its agents (or itself)
+  on. The person's words are not nudges and go at once in saving too; a
+  batch carrying `init` (a start) is not held by the work in progress.
+- **Why 3 ×.** Every delivery is one orchestrator turn — reading the batch,
+  handing each line to a subagent — and the nag puts an unresolved subject on
+  every one, so the interval is what it spends while things stand still.
+  Three times the interval cuts that by two thirds and still says an
+  unresolved subject again within a quarter of an hour at the default 5m
+  (3 minutes at 1m): nothing waits long enough to be forgotten. Four times
+  would leave a stuck subject unsaid for 20 minutes, a sizeable piece of a
+  5-hour window.
+- **A task in progress** is an item under the Orchestrator row in its
+  **対応中** lane — the number the Sidebar's 対応中 heading shows (an
+  escalation about it 対応中, or one of its agents at work: working,
+  background, on a prompt, still being read). Main counts it with the
+  Sidebar's own rule (`ipc/orchestratorLanes.ts`, `inProgressCount`), so the
+  rule and the heading cannot disagree. With two at work, the orchestrator
+  has its hands full and the agents are moving by themselves: a nudge would
+  only spend tokens telling it what it is already doing. A batch held this
+  way is looked at again on every projection (an agent stopping) and every
+  30 s, and goes as soon as fewer than two are in progress; the preview
+  says `saving: held while N tasks are in progress`. Turning on into saving
+  holds the batch this way too (the person's held words still go).
+- **Nothing else changes.** GitHub is polled at its own interval in full and
+  saving alike (it costs GitHub quota, not tokens), timers fire as set, and
+  no line is dropped: held lines wait, one per subject, and go with the next
+  batch. Nothing beyond the interval and the gate was added to saving.
+- **Off at every launch.** The mode is not written anywhere — not
+  `state.json`, not `escalations.json` — so DevHub always starts off: an
+  orchestrator agent restored with its session costs nothing until the
+  person turns it on. The pause was never persisted either, so nothing kept
+  across launches had to stay. **Start Orchestrator** (the window's, or
+  `orchestrator start`) turns an off one to full — starting one is asking it
+  to work — and leaves full or saving as they are. The control works with no
+  orchestrator running.
+
+**The automatic switch.** While the mode is **full** and any plan window of
+the usage readout — Claude's 5-hour or weekly, Codex's when it is read —
+stands at `[orchestrator] saving_threshold` (default 80) or more in its
+current period, the mode becomes **saving** by itself, and a quiet notice
+says why (`Orchestrator switched to saving: Claude's 5-hour window is at 82%
+(saving_threshold 80%). …`): a condition toast that hides by itself and
+stays in the notice center, taken down when that saving ends.
+
+- **Back to full** when every window is under the threshold again — it
+  reset, or reads below — **only if saving was entered automatically**. A
+  saving the person chose stays saving. A reading whose reset time has
+  passed is the last period's and counts as under; DevHub also looks once
+  at the window's reset, in case the readers are slow to say so.
+- **Never out of off**, up or down: off is the person's.
+- **The person's choice wins.** Choosing full while an automatic saving is
+  in force holds full until every window is under again (the next crossing,
+  after a reset, switches again). Choosing saving by hand makes it the
+  person's: it no longer returns to full on a reset. Turning on as full
+  from off while a window is over is saving at once, with the notice — as
+  it would have been, had it been full when the window crossed.
+- **Why a setting.** The other percents the orchestrator reads off the
+  readout are settings (`usage_thresholds`), so this one is too:
+  `saving_threshold`, a whole percent from 1 to 100, in Settings ▸ General ▸
+  Orchestrator, validated with every other setting; left unset it is 80
+  and not written. `100` switches only on a full window.
 
 ### The sources
 
@@ -1078,6 +1160,7 @@ event_prompt = "/make-progress {EVENT}"   # absent: DevHub's default (below)
 # events = ["*", "!timer.*"]       # which types reach it (default: all)
 usage_thresholds = [80, 95]      # usage.threshold at these percents of a plan window (the default); [] never
 delivery_interval = "5m"         # a batch at most this often (the default; at least 10s), each saying every needs_action subject again; the person's words go at once
+saving_threshold = 80            # full switches to saving at this percent of any plan window (the default; 1–100), and back after it resets
 
 [orchestrator.github]
 projects = ["my-org/7"]          # Projects (v2) boards, OWNER/NUMBER: their open items assigned to me are the population; none: it is empty
@@ -1134,9 +1217,10 @@ devhub --tell escalation hold ID [--note TEXT]      # park it in 対応中 (not 
 devhub --tell escalation wait ID --trigger TEXT [--at DATETIME]   # park it in 待機中 on an outside condition
 devhub --tell escalation resume ID [--note TEXT]    # off its wait, to 対応中
 devhub --tell orchestrator start --root PATH --profile P --gui|--tui [--prompt -|TEXT]
-devhub --tell orchestrator status [--json]          # its agent, state, lane counts, pause, GitHub polling
+devhub --tell orchestrator status [--json]          # its agent, state, lane counts, mode, GitHub polling
 devhub --tell orchestrator stop | restart           # Stop Agent / Restart Session on it
-devhub --tell orchestrator pause | resume          # pause suspends GitHub polling; resume delivers at once, as one message
+devhub --tell orchestrator mode [full|saving|off]   # the mode, or choose one (off at every launch; see "Modes")
+devhub --tell orchestrator pause | resume          # mode off (GitHub polling suspended) / mode full (delivers at once, as one message)
 devhub --tell orchestrator events [--last N] [--json]   # recent events and what came of them
 devhub --tell orchestrator emit --type custom.NAME --text TEXT|-
 devhub --tell orchestrator timer list | set NAME INTERVAL | clear NAME   # for this session
@@ -1208,7 +1292,7 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
 5. **DevHub's conventions**: the item linkage rule (meta `issue=`, an
    Issue's or a pull request's URL, by `issue assign`, never by hand; work
    with no Issue yet: `workspace open --worktree` and `agent new --meta
-   issue=pending`, linked once the Issue is filed), `--managed` (and `--meta parent=<its id>`) on
+issue=pending`, linked once the Issue is filed), `--managed` (and `--meta parent=<its id>`) on
    every agent it starts, never approving a permission prompt, never writing
    the person's answer, never taking the screen (`focus` only when asked),
    and holding back on new agents when a plan window runs high
