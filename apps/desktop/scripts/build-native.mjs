@@ -9,9 +9,11 @@
  *   while a chord is armed (`src/main/native/inputSource.c`, see
  *   `src/main/shell/inputSourceHelper.ts`).
  *
- * - `devhub-exec-clean`, which starts a child with only its stdio open
- *   (`src/main/native/execClean.c`, see `src/main/terminal/cleanSpawn.ts`).
- *   Linux only: macOS's `posix_spawn` already inherits nothing else.
+ * - `devhub-exec-clean`, which starts a child with only its stdio open and,
+ *   with `--die-with`, ends it with its owner (`src/main/native/execClean.c`,
+ *   see `src/main/terminal/cleanSpawn.ts`). Linux and macOS: macOS's
+ *   `posix_spawn` already inherits nothing else, but the pty host's tmux
+ *   control clients are tied to it through the helper there too.
  *
  * The first two are macOS APIs (Carbon, libproc), so there is nothing to build anywhere
  * but macOS. Elsewhere — the Linux containers DevHub is developed and tested
@@ -40,11 +42,11 @@ copyFileSync(
 );
 
 // `devhub-exec-clean`, which starts a program with nothing of its parent's
-// open but stdio (`src/main/native/execClean.c`, see
-// `src/main/terminal/cleanSpawn.ts`). Only Linux needs it — libuv starts
-// children with `posix_spawn` and close-on-exec by default on macOS — and
-// without it children are started directly, as before.
-if (process.platform === "linux") {
+// open but stdio, and ties a child to its owner's life (`--die-with`)
+// (`src/main/native/execClean.c`, see `src/main/terminal/cleanSpawn.ts`).
+// Linux and macOS. Without it children are started directly, as before, and
+// a tmux control client can outlive the pty host that started it.
+if (process.platform === "linux" || process.platform === "darwin") {
   try {
     execFileSync(
       "cc",
@@ -53,6 +55,7 @@ if (process.platform === "linux") {
         "-Wall",
         "-Wextra",
         "-Werror",
+        ...(process.platform === "darwin" ? ["-mmacosx-version-min=12.0"] : []),
         "-o",
         "out/native/devhub-exec-clean",
         "src/main/native/execClean.c",
@@ -61,7 +64,7 @@ if (process.platform === "linux") {
     );
   } catch (error) {
     console.log(
-      `build:native: devhub-exec-clean not built (${error.message}); children inherit what their parent has open`,
+      `build:native: devhub-exec-clean not built (${error.message}); children inherit what their parent has open and do not end with it`,
     );
   }
 }

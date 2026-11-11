@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
 	cleanSpawnArgs,
+	ownedSpawnArgs,
 	resolveProgram,
 	setExecCleanHelper,
 } from "./cleanSpawn.js";
@@ -67,6 +68,56 @@ describe("cleanSpawnArgs", () => {
 			file: "/bin/sh",
 			args: [],
 		});
+	});
+});
+
+describe("ownedSpawnArgs", () => {
+	it("ties the child to its owner through the helper on Linux and macOS", () => {
+		setExecCleanHelper("/opt/helper");
+		for (const platform of ["linux", "darwin"] as const) {
+			expect(
+				ownedSpawnArgs(
+					"sh",
+					["-c", "true"],
+					undefined,
+					{ PATH: "/nowhere:/bin" },
+					4242,
+					platform,
+				),
+			).toEqual({
+				file: "/opt/helper",
+				args: ["--die-with", "4242", "/bin/sh", "sh", "-c", "true"],
+			});
+		}
+	});
+
+	it("is this process's by default", () => {
+		setExecCleanHelper("/opt/helper");
+		expect(
+			ownedSpawnArgs("/bin/sh", [], undefined, process.env, undefined, "linux")
+				.args,
+		).toEqual(["--die-with", String(process.pid), "/bin/sh", "/bin/sh"]);
+	});
+
+	it("starts the child directly elsewhere, without a helper, or for a program it cannot find", () => {
+		setExecCleanHelper("/opt/helper");
+		expect(
+			ownedSpawnArgs("/bin/sh", [], undefined, process.env, 1, "win32"),
+		).toEqual({ file: "/bin/sh", args: [] });
+		expect(
+			ownedSpawnArgs(
+				"no-such-program-anywhere",
+				[],
+				undefined,
+				{ PATH: "/bin" },
+				1,
+				"linux",
+			),
+		).toEqual({ file: "no-such-program-anywhere", args: [] });
+		setExecCleanHelper(undefined);
+		expect(
+			ownedSpawnArgs("/bin/sh", [], undefined, process.env, 1, "darwin"),
+		).toEqual({ file: "/bin/sh", args: [] });
 	});
 });
 

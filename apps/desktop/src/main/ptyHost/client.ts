@@ -9,9 +9,10 @@
  * (`TERMINAL_CHANNELS.port`), one per page per host; what the client and the
  * page say to each other never passes main.
  *
- * **When the host is gone.** Its clients end with it — the control clients'
- * pipes close and they exit; the sessions are the tmux server's and are not
- * touched. A start it had not answered fails as `host_restarted`, every
+ * **When the host is gone.** Its clients end with it — the kernel ends each
+ * control client with the host that started it (`devhub-exec-clean
+ * --die-with`, `ptyHost/entry.ts`), as its pipes closing alone did not
+ * always; the sessions are the tmux server's and are not touched. A start it had not answered fails as `host_restarted`, every
  * client it held is ended in the ledger, and every page that had a port to it
  * is told (`TERMINAL_CHANNELS.restarted`), so its surfaces show that they are
  * reconnecting and attach again; the next start starts a new host. A host

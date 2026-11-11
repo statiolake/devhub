@@ -5,8 +5,9 @@
  * tmux server's, so a host that ends takes only its clients with it.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { ownedSpawnArgs } from "../terminal/cleanSpawn.js";
 import { openPty, type PtyLaunch } from "../terminal/pty.js";
 import type { ControlProcess } from "./control/controlClient.js";
 import { LibGhosttyVt } from "./vt/libghosttyVt.js";
@@ -26,13 +27,33 @@ if (parent === undefined) {
 	throw new Error("the pty host runs only as an Electron utility process");
 }
 const port: ParentPort = parent;
-/** A tmux control client on pipes: no terminal, so nothing echoes or wraps. */
+/** Every control client this host started that has not exited. */
+const clients = new Set<ChildProcess>();
+
+/**
+ * A tmux control client on pipes: no terminal, so nothing echoes or wraps.
+ *
+ * Started through `devhub-exec-clean --die-with` this host's pid
+ * (`ownedSpawnArgs`): the kernel ends it when this host ends, however it
+ * ends. Its stdin closing is not enough — tmux does not always let a control
+ * client go when it does (`native/execClean.c`) — and such a client stayed
+ * attached, at its size, after the host was gone.
+ */
 function spawnPipes(launch: PtyLaunch): ControlProcess {
-	const child = spawn(launch.file, [...launch.args], {
+	const owned = ownedSpawnArgs(
+		launch.file,
+		launch.args,
+		launch.cwd,
+		launch.env,
+	);
+	const child = spawn(owned.file, [...owned.args], {
 		cwd: launch.cwd,
 		env: launch.env,
 		stdio: ["pipe", "pipe", "pipe"],
 	});
+	clients.add(child);
+	child.once("exit", () => clients.delete(child));
+	child.once("error", () => clients.delete(child));
 	child.stderr.on("data", (chunk: Buffer) => {
 		console.error("[devhub] tmux control client:", chunk.toString().trimEnd());
 	});
@@ -69,6 +90,20 @@ const host = new PtyHost({
 
 port.on("message", ({ data, ports }) => {
 	host.receive(data as ToPtyHost, ports);
+});
+
+// Main ends this host on quit and on "Restart Terminals" (`client.ts`):
+// each client is detached, and whatever is left is told to end as the
+// process exits, by any path that runs `exit` (a tmux client ends on SIGTERM
+// whatever output it had queued). The paths that run nothing here (SIGKILL,
+// a crash of the runtime) are the helper's to cover, and this is all
+// there is where no helper started the clients.
+process.once("SIGTERM", () => {
+	host.stopAll();
+	process.exit(0);
+});
+process.once("exit", () => {
+	for (const child of clients) child.kill("SIGTERM");
 });
 
 // A failure nobody caught is the host's end: main sees it exit, the pages

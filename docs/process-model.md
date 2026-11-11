@@ -307,6 +307,21 @@ child inherits and a PTY or a bounded command does not). Other
 shell probe, the workspace picker) are short-lived and still start
 directly.
 
+**A control client ends with its pty host.** The pty host's `tmux -C
+attach-session` clients were to end when their stdin closed with the host.
+tmux does not always let one go: it reads a control client's stdin only once
+its attach is done, and a client the server still had output queued for
+when its reader went is never told to exit (`server_client_check_exit`
+waits for `control_all_done`, which a dead stdout never gives). Such a
+client stayed attached, reparented to init, at its size, after the host or
+the whole app had gone — 4 in about 60 restarts, and every time in a test
+whose owner stops reading before it is SIGKILLed. The clients are now
+started through `devhub-exec-clean --die-with <host pid>` on Linux and macOS
+(`ownedSpawnArgs`): Linux's parent-death signal, a kqueue watchdog on macOS,
+so the kernel ends them with the host however it ends; the host also detaches
+them on SIGTERM and signals what is left on `exit`
+(`test/terminal/controlClientOwner.real.test.ts`).
+
 **Phase 5b.** `main/ptyHost/`: `host.ts` runs each client as main ran it
 (`PtyAttachment`, the coalescer, the ack window, the input ledger, now
 shared), `entry.ts` is the utility process with the submodule's node-pty,

@@ -17,6 +17,7 @@
  *
  * Only on Linux: on macOS libuv starts children with `posix_spawn` and
  * `POSIX_SPAWN_CLOEXEC_DEFAULT`, which inherits nothing but stdio already.
+ * (The helper is built on macOS too, for `ownedSpawnArgs`.)
  * The program is looked up first, and a program that cannot be found is
  * started directly, so that `spawn` reports it the way it always has (an
  * `ENOENT` error event) rather than as an exit status of 127.
@@ -91,4 +92,40 @@ export function cleanSpawnArgs(
 	const program = resolveProgram(file, cwd, env);
 	if (program === undefined) return { file, args };
 	return { file: wrapper, args: [program, file, ...args] };
+}
+
+/**
+ * The `file` and `args` to hand `spawn` for a child that must not outlive
+ * `owner`, the process that spawns it (this one, by default): through the
+ * helper with `--die-with`, which also starts it clean (as `cleanSpawnArgs`).
+ *
+ * This is for children whose own way of noticing their owner's end cannot be
+ * relied on. A tmux control client (`tmux -C attach-session`) on pipes is
+ * meant to exit when its stdin closes, but tmux reads that stdin only once
+ * the attach is done, and a client the server still had output queued for
+ * when its reader went is never let go: it stayed attached, at its size,
+ * after the pty host that owned it had gone (`native/execClean.c`). With the
+ * helper the kernel ends it with its owner — Linux's parent-death signal, a
+ * kqueue watchdog on macOS — SIGKILL of the owner included.
+ *
+ * Linux and macOS; elsewhere, without a helper, or for a program that cannot
+ * be found, the child is started directly, as before.
+ */
+export function ownedSpawnArgs(
+	file: string,
+	args: readonly string[],
+	cwd: string | undefined,
+	env: Readonly<Record<string, string | undefined>>,
+	owner: number = process.pid,
+	platform: NodeJS.Platform = process.platform,
+): { readonly file: string; readonly args: readonly string[] } {
+	if (platform !== "linux" && platform !== "darwin") return { file, args };
+	const wrapper = helperPath();
+	if (wrapper === undefined) return { file, args };
+	const program = resolveProgram(file, cwd, env);
+	if (program === undefined) return { file, args };
+	return {
+		file: wrapper,
+		args: ["--die-with", String(owner), program, file, ...args],
+	};
 }
