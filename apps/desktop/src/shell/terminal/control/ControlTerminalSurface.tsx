@@ -56,6 +56,25 @@ import type {
   StatusLine,
 } from "../../../ipc/terminalControl";
 import { pasteBytes, sgrMouse, TerminalKeys } from "./controlKeys";
+import {
+  MOUSE_KEYS,
+  extendTo,
+  gridRows,
+  routeMouse,
+  selectedText,
+  selectionSpans,
+  type Gesture,
+  type MouseRoute,
+  type Rows,
+  type Selection,
+} from "./selection";
+import {
+  linkSpan,
+  openableLink,
+  plainUrlAt,
+  spanRows,
+  type LinkSpan,
+} from "./links";
 import { WheelLines } from "../../neovim/wheelLines";
 import { surfaceBridge } from "../surfaceBridge";
 import "./copyMode.css";
@@ -70,6 +89,7 @@ import {
   newControlView,
   paneAt,
   paneBoxes,
+  setMarks,
   type ControlView,
 } from "./paneGrids";
 import { CONTROL_Z, controlZStyle } from "./stacking";
@@ -122,6 +142,10 @@ import type { Kind } from "../../neovim/kinds";
  */
 
 const REATTACH_ON_EXIT_MS = 3_000;
+/** A drag held past a pane's edge in copy mode scrolls a line this often (tmux's 50 ms). */
+const EDGE_REPEAT_MS = 50;
+/** On macOS a link opens with Cmd+click and the copy is Cmd+C; elsewhere Ctrl. */
+const IS_MAC = navigator.userAgent.includes("Mac");
 /** How soon a client is attached again once its pty host has ended. */
 const HOST_RESTART_REATTACH_MS = 250;
 /**
@@ -407,6 +431,17 @@ export function ControlTerminalSurface({
     let lastStep = -Infinity;
     /** A boundary being dragged: steps follow the pointer at once. */
     let dragging = false;
+    /** DevHub's selection in a pane (`selection.ts`), and its text and copy mode when made. */
+    let selection: Selection | undefined;
+    let selected = { text: "", copy: false };
+    /** The link under the pointer, underlined. */
+    let hover: { pane: number; span: LinkSpan } | undefined;
+    // Set where the mouse is handled, below.
+    let marksAfterHook: (message: ControlToPage) => void = () => undefined;
+    let copyHook: () => void = () => undefined;
+    let openAtCursorHook: () => void = () => undefined;
+    let clearSelectionHook: () => void = () => undefined;
+    let cursorLinkHook: (pane: number, uri: string) => void = () => undefined;
 
     // What the panes are, for the Neovims DevHub draws in them
     // (`main/editor/terminalNeovims.ts`): said when it changes.
@@ -1521,6 +1556,10 @@ export function ControlTerminalSurface({
         void surfaceBridge().writeClipboard(message.text);
         return;
       }
+      if (message.kind === "cursor-link") {
+        cursorLinkHook(message.pane, message.uri);
+        return;
+      }
       if (message.kind === "ended") {
         if (gate !== undefined) {
           clearTimeout(gate.timer);
@@ -1589,6 +1628,7 @@ export function ControlTerminalSurface({
         setStatus(message.status);
       }
       schedule(applyControl(view, message));
+      marksAfterHook(message);
     };
     /**
      * A Neovim in a pane the held layout resizes is asked for its new grid
@@ -1732,10 +1772,27 @@ export function ControlTerminalSurface({
     // Option as Meta, by the physical key; a Meta dead key's composition
     // kept from the pane (`TerminalKeys`).
     const onKeyDown = (event: KeyboardEvent) => {
+      // Ctrl+Shift+C copies on Linux, as in every terminal there (Cmd+C is
+      // the Edit menu's, `copy` below); Cmd+Shift+O (Ctrl+Shift+O) opens
+      // the link at the cursor, copy mode's in copy mode.
+      const chord = IS_MAC
+        ? event.metaKey && event.shiftKey && !event.ctrlKey && !event.altKey
+        : event.ctrlKey && event.shiftKey && !event.metaKey && !event.altKey;
+      if (
+        chord &&
+        (event.code === "KeyO" || (!IS_MAC && event.code === "KeyC"))
+      ) {
+        event.preventDefault();
+        if (event.code === "KeyC") copyHook();
+        else openAtCursorHook();
+        return;
+      }
       const setting = live.current.appearance?.terminalMacOptionIsMeta ?? false;
       const key = terminalKeys.keydown(event, setting);
       if (key === undefined) return;
       event.preventDefault();
+      // A key for the program puts DevHub's selection away.
+      clearSelectionHook();
       markTyped();
       send({ kind: "keys", keys: [key] });
     };
@@ -1941,6 +1998,352 @@ export function ControlTerminalSurface({
       window.addEventListener("mouseup", onUp);
       return true;
     };
+    // DevHub's own selection, and the links (`selection.ts`, `links.ts`;
+    // docs/terminal-mode.md, "The mouse"): drawn over the pane's cells as
+    // copy mode's selection is (`setMarks`), never a DOM selection.
+    const rowsOf = (pane: number): Rows | undefined => {
+      const grid = view.state.grids.get(gridOf(pane));
+      return grid === undefined
+        ? undefined
+        : gridRows(grid, view.wrapped.get(gridOf(pane)));
+    };
+    const textOf = (s: Selection): string => {
+      const rows = rowsOf(s.pane);
+      return rows === undefined ? "" : selectedText(s, rows);
+    };
+    const drawMarks = (pane: number) => {
+      const rows = rowsOf(pane);
+      const spans =
+        selection?.pane === pane && rows !== undefined
+          ? selectionSpans(selection, rows)
+          : [];
+      const underline =
+        hover?.pane === pane && rows !== undefined
+          ? spanRows(hover.span, rows.width)
+          : [];
+      schedule(setMarks(view, pane, { selection: spans, underline }));
+    };
+    const select = (next: Selection | undefined) => {
+      const before = selection;
+      selection = next;
+      if (before !== undefined && before.pane !== next?.pane)
+        drawMarks(before.pane);
+      if (next !== undefined) {
+        selected = {
+          text: textOf(next),
+          copy: view.copy.has(next.pane),
+        };
+        drawMarks(next.pane);
+      }
+    };
+    const linkAt = (
+      pane: number,
+      at: { x: number; y: number },
+      plain: boolean,
+    ): LinkSpan | undefined => {
+      const rows = rowsOf(pane);
+      if (rows === undefined || at.x < 0 || at.y < 0) return undefined;
+      if (at.x >= rows.width || at.y >= rows.height) return undefined;
+      const ids = view.linkIds.get(gridOf(pane));
+      const uris = view.linkUris.get(gridOf(pane));
+      const osc =
+        ids === undefined
+          ? undefined
+          : linkSpan(
+              rows,
+              (x, y) => ids[y * rows.width + x] ?? 0,
+              (id) => uris?.get(id),
+              at,
+            );
+      return osc ?? (plain ? plainUrlAt(rows, at) : undefined);
+    };
+    const openLink = (uri: string) => {
+      if (!openableLink(uri)) {
+        say(
+          `DevHub opens http, https, mailto and ftp links from a terminal, not ${uri.split(":")[0] ?? uri}: links.`,
+        );
+        return;
+      }
+      surfaceBridge()
+        .openExternalUrl(uri)
+        .catch((error: unknown) => {
+          say(error instanceof Error ? error.message : String(error));
+        });
+    };
+    /** Cmd (Ctrl on Linux) held: a click opens the link under it. */
+    const linkModifier = (event: MouseEvent | KeyboardEvent) =>
+      IS_MAC ? event.metaKey : event.ctrlKey;
+    let hoverAt:
+      | { pane: number; x: number; y: number; plain: boolean }
+      | undefined;
+    const setHover = (
+      at: { pane: number; x: number; y: number; plain: boolean } | undefined,
+    ) => {
+      hoverAt = at;
+      const span = at === undefined ? undefined : linkAt(at.pane, at, at.plain);
+      const next =
+        span === undefined || at === undefined
+          ? undefined
+          : { pane: at.pane, span };
+      if (JSON.stringify(next) === JSON.stringify(hover)) return;
+      const before = hover;
+      hover = next;
+      grids.style.cursor = next === undefined ? "" : "pointer";
+      grids.title = next?.span.uri ?? "";
+      if (before !== undefined) drawMarks(before.pane);
+      if (next !== undefined && next.pane !== before?.pane)
+        drawMarks(next.pane);
+    };
+    /**
+     * After a message: a selection whose pane went, changed size or went in
+     * or out of copy mode, or whose text the program rewrote, is gone (a
+     * prompt redrawn with the same text keeps it); the hovered link is
+     * looked up again.
+     */
+    const marksAfter = (message: ControlToPage) => {
+      if (selection !== undefined && leftDrag?.route !== "devhub") {
+        const box = view.panes.find((p) => p.pane === selection?.pane);
+        const grid = view.state.grids.get(gridOf(selection.pane));
+        const gone =
+          box === undefined ||
+          grid === undefined ||
+          grid.width !== box.width ||
+          view.copy.has(selection.pane) !== selected.copy ||
+          (message.kind === "pane" &&
+            message.pane === selection.pane &&
+            textOf(selection) !== selected.text);
+        if (gone) select(undefined);
+      }
+      if (
+        hoverAt !== undefined &&
+        (message.kind === "pane" || message.kind === "layout") &&
+        (message.kind === "layout" || message.pane === hoverAt.pane)
+      )
+        setHover(hoverAt);
+    };
+    marksAfterHook = marksAfter;
+    /** Cmd+C (Ctrl+Shift+C on Linux): DevHub's selection, or tmux's in copy mode. */
+    const copySelection = () => {
+      if (selection !== undefined) {
+        const text = textOf(selection);
+        if (text !== "") void surfaceBridge().writeClipboard(text);
+        return;
+      }
+      const pane = activePane();
+      if (pane !== undefined && view.copy.has(pane.pane))
+        send({ kind: "copy-selection", pane: pane.pane });
+    };
+    copyHook = copySelection;
+    /** Cmd+Shift+O (Ctrl+Shift+O on Linux): the link at the cursor, copy mode's in copy mode. */
+    openAtCursorHook = () => {
+      const pane = activePane();
+      // Copy mode's rows carry no links (`capture-pane -M`): tmux is asked
+      // for the one under its cursor (`cursor-link`, below).
+      if (pane !== undefined && view.copy.has(pane.pane)) {
+        send({ kind: "cursor-link", pane: pane.pane });
+        return;
+      }
+      const cursor =
+        pane === undefined ? undefined : view.cursors.get(pane.pane);
+      const span =
+        pane === undefined || cursor === undefined
+          ? undefined
+          : linkAt(pane.pane, cursor, true);
+      if (span === undefined) {
+        say("No link at the cursor.");
+        return;
+      }
+      openLink(span.uri);
+    };
+    cursorLinkHook = (pane: number, uri: string) => {
+      if (uri !== "") {
+        openLink(uri);
+        return;
+      }
+      const cursor = view.cursors.get(pane);
+      const span =
+        cursor === undefined ? undefined : linkAt(pane, cursor, true);
+      if (span === undefined) say("No link at the cursor.");
+      else openLink(span.uri);
+    };
+    clearSelectionHook = () => {
+      if (selection !== undefined) select(undefined);
+    };
+
+    /** The pane's cell under the pointer, not clamped: past an edge is outside it. */
+    const paneCell = (event: MouseEvent, box: PaneBox) => {
+      const { col, row } = cellAt(event);
+      return { x: col - box.x, y: row - box.y };
+    };
+    /** A left button held over a pane: who has it, and where it was. */
+    let leftDrag:
+      | {
+          readonly pane: number;
+          route: MouseRoute;
+          readonly forced: boolean;
+          readonly reports: boolean;
+          readonly button: number;
+          last: { x: number; y: number };
+          moved: boolean;
+          edge?: number;
+        }
+      | undefined;
+    const windowCell = (box: PaneBox, at: { x: number; y: number }) => ({
+      x: box.x + Math.max(0, Math.min(box.width - 1, at.x)),
+      y: box.y + Math.max(0, Math.min(box.height - 1, at.y)),
+    });
+    const sendDrag = (
+      box: PaneBox,
+      at: { x: number; y: number },
+      from: { x: number; y: number },
+      extra: { edge?: "up" | "down"; enter?: true } = {},
+    ) => {
+      const cellNow = windowCell(box, at);
+      send({
+        kind: "mouse",
+        key: MOUSE_KEYS.drag,
+        pane: box.pane,
+        ...cellNow,
+        from: windowCell(box, from),
+        ...extra,
+      });
+    };
+    const onLeftMove = (event: MouseEvent) => {
+      const drag = leftDrag;
+      if (drag === undefined) return;
+      const box = view.panes.find((p) => p.pane === drag.pane);
+      if (box === undefined) return;
+      const at = paneCell(event, box);
+      if (at.x === drag.last.x && at.y === drag.last.y) return;
+      const from = drag.last;
+      drag.last = at;
+      if (!drag.moved) {
+        drag.moved = true;
+        // The press was the program's or tmux's: so is its drag, else
+        // the drag is routed as one.
+        if (drag.route === "devhub" || drag.route === "tmux")
+          drag.route = routeMouse("drag", {
+            neovim: false,
+            forced: drag.forced,
+            reports: drag.reports,
+            copyMode: view.copy.has(drag.pane),
+            tmux: view.mouseBindings,
+          });
+        if (drag.route === "devhub" && selection?.pane !== drag.pane)
+          select({ pane: drag.pane, anchor: from, head: from, unit: "cell" });
+      }
+      const edge = at.y < 0 ? "up" : at.y >= box.height ? "down" : undefined;
+      if (drag.edge !== undefined && edge === undefined) {
+        clearInterval(drag.edge);
+        drag.edge = undefined;
+      }
+      switch (drag.route) {
+        case "program": {
+          const modes = view.modes.get(drag.pane);
+          if (modes !== undefined && modes.mouse >= 1002) {
+            const c = windowCell(box, at);
+            send({
+              kind: "bytes",
+              pane: drag.pane,
+              bytes: sgrMouse(
+                32 + drag.button,
+                c.x - box.x,
+                c.y - box.y,
+                false,
+              ),
+            });
+          }
+          return;
+        }
+        case "tmux": {
+          sendDrag(box, at, from, edge === undefined ? {} : { edge });
+          // tmux scrolls a drag held at the edge, a line every 50 ms.
+          if (edge !== undefined && drag.edge === undefined)
+            drag.edge = window.setInterval(() => {
+              sendDrag(box, drag.last, drag.last, { edge });
+            }, EDGE_REPEAT_MS);
+          return;
+        }
+        case "devhub": {
+          const current = selection;
+          if (current === undefined) return;
+          // Past the top of a shell's pane: the history is copy mode's, so
+          // the drag goes on there, as tmux's selection, from its start.
+          if (
+            edge === "up" &&
+            current.unit === "cell" &&
+            !view.copy.has(drag.pane) &&
+            view.modes.get(drag.pane)?.alternateScreen !== true
+          ) {
+            const anchor = current.anchor;
+            select(undefined);
+            drag.route = "tmux";
+            sendDrag(box, at, anchor, { edge: "up", enter: true });
+            drag.edge = window.setInterval(() => {
+              sendDrag(box, drag.last, drag.last, { edge: "up" });
+            }, EDGE_REPEAT_MS);
+            return;
+          }
+          const rows = rowsOf(drag.pane);
+          if (rows === undefined) return;
+          select({
+            ...current,
+            head: {
+              x: Math.max(0, Math.min(rows.width - 1, at.x)),
+              y: Math.max(0, Math.min(rows.height - 1, at.y)),
+            },
+          });
+          return;
+        }
+        case "neovim":
+          return;
+      }
+    };
+    const onLeftUp = (event: MouseEvent) => {
+      const drag = leftDrag;
+      if (drag === undefined || event.button !== drag.button) return;
+      leftDrag = undefined;
+      window.removeEventListener("mousemove", onLeftMove);
+      window.removeEventListener("mouseup", onLeftUp);
+      if (drag.edge !== undefined) clearInterval(drag.edge);
+      const box = view.panes.find((p) => p.pane === drag.pane);
+      if (box === undefined) return;
+      const at = windowCell(box, paneCell(event, box));
+      switch (drag.route) {
+        case "program":
+          send({
+            kind: "bytes",
+            pane: drag.pane,
+            bytes: sgrMouse(drag.button, at.x - box.x, at.y - box.y, true),
+          });
+          return;
+        case "tmux":
+          // The drag's end: tmux's MouseDragEnd1Pane, if it binds one.
+          if (drag.moved)
+            send({
+              kind: "mouse",
+              key: MOUSE_KEYS.end,
+              pane: drag.pane,
+              ...at,
+            });
+          return;
+        case "devhub":
+          if (selection !== undefined) {
+            // A click on its own selects nothing.
+            const s = selection;
+            if (
+              s.unit === "cell" &&
+              s.anchor.x === s.head.x &&
+              s.anchor.y === s.head.y
+            )
+              select(undefined);
+            else select(s);
+          }
+          return;
+        case "neovim":
+          return;
+      }
+    };
     const onMouseDown = (event: MouseEvent) => {
       // A Neovim in a pane takes its own presses (`editor.ts`).
       if (inNeovim(event.target)) return;
@@ -1963,6 +2366,11 @@ export function ControlTerminalSurface({
         });
         return;
       }
+      const shown = view.panes.find((p) => p.pane === hit.pane.pane);
+      if (event.button === 0 && shown !== undefined) {
+        onLeftDown(event, { ...hit, pane: shown });
+        return;
+      }
       if (!hit.pane.active && hit.pane.pane >= 0)
         send({ kind: "select-pane", pane: hit.pane.pane });
       if (hit.reports)
@@ -1972,10 +2380,79 @@ export function ControlTerminalSurface({
           bytes: sgrMouse(event.button, hit.x, hit.y, false),
         });
     };
+    const onLeftDown = (
+      event: MouseEvent,
+      hit: { pane: PaneBox; x: number; y: number; reports: boolean },
+    ) => {
+      const pane = hit.pane.pane;
+      const at = { x: hit.x, y: hit.y };
+      // Cmd+click (Ctrl+click on Linux) on a link opens it, whoever has the mouse.
+      if (linkModifier(event)) {
+        const span = linkAt(pane, at, true);
+        if (span !== undefined) {
+          openLink(span.uri);
+          return;
+        }
+      }
+      if (!hit.pane.active) send({ kind: "select-pane", pane });
+      const gesture: Gesture =
+        event.detail >= 3 ? "triple" : event.detail === 2 ? "double" : "down";
+      const forced = event.shiftKey || event.altKey;
+      let route = routeMouse(gesture, {
+        neovim: false,
+        forced,
+        reports: hit.reports,
+        copyMode: view.copy.has(pane),
+        tmux: view.mouseBindings,
+      });
+      if (route === "program") {
+        send({ kind: "bytes", pane, bytes: sgrMouse(0, hit.x, hit.y, false) });
+      } else if (
+        event.shiftKey &&
+        gesture === "down" &&
+        selection?.pane === pane
+      ) {
+        // Shift-click extends the selection there is.
+        select(extendTo(selection, at));
+        route = "devhub";
+      } else if (route === "tmux") {
+        select(undefined);
+        send({
+          kind: "mouse",
+          key: MOUSE_KEYS[gesture],
+          pane,
+          x: hit.pane.x + hit.x,
+          y: hit.pane.y + hit.y,
+        });
+      } else if (gesture === "down") {
+        select(undefined);
+      } else {
+        select({
+          pane,
+          anchor: at,
+          head: at,
+          unit: gesture === "double" ? "word" : "line",
+        });
+      }
+      leftDrag = {
+        pane,
+        route,
+        forced,
+        reports: hit.reports,
+        button: 0,
+        last: at,
+        // A double or triple click's drag goes on by its words or lines.
+        moved: gesture !== "down",
+      };
+      window.addEventListener("mousemove", onLeftMove);
+      window.addEventListener("mouseup", onLeftUp);
+    };
     // Bytes for a pane; the popup's (pane -1) go with none, which is its.
     const target = (pane: number) => (pane < 0 ? {} : { pane });
     const onMouseUp = (event: MouseEvent) => {
       if (inNeovim(event.target)) return;
+      // A left button held over a pane is followed to its release (`onLeftUp`).
+      if (event.button === 0 && leftDrag !== undefined) return;
       const hit = mouseFor(event);
       if (hit?.reports)
         send({
@@ -1983,6 +2460,45 @@ export function ControlTerminalSurface({
           ...target(hit.pane.pane),
           bytes: sgrMouse(event.button, hit.x, hit.y, true),
         });
+    };
+    // The pointer over the panes: a link under it underlined (a plain URL
+    // only with Cmd held), and a program that asked for every motion (1003)
+    // told of it.
+    let motionCell: string | undefined;
+    const onHover = (event: MouseEvent) => {
+      if (leftDrag !== undefined) return;
+      if (inNeovim(event.target)) {
+        setHover(undefined);
+        return;
+      }
+      const hit = mouseFor(event);
+      if (hit === undefined || hit.pane.pane < 0) {
+        setHover(undefined);
+        return;
+      }
+      setHover({
+        pane: hit.pane.pane,
+        x: hit.x,
+        y: hit.y,
+        plain: linkModifier(event),
+      });
+      const modes = view.modes.get(hit.pane.pane);
+      if (hit.reports && modes?.mouse === 1003 && event.buttons === 0) {
+        const key = `${String(hit.pane.pane)}:${String(hit.x)}:${String(hit.y)}`;
+        if (key === motionCell) return;
+        motionCell = key;
+        send({
+          kind: "bytes",
+          pane: hit.pane.pane,
+          bytes: sgrMouse(35, hit.x, hit.y, false),
+        });
+      }
+    };
+    const onHoverLeave = () => setHover(undefined);
+    // Cmd pressed or let go over a URL shows or hides its underline.
+    const onModifier = (event: KeyboardEvent) => {
+      if (hoverAt !== undefined)
+        setHover({ ...hoverAt, plain: linkModifier(event) });
     };
     // The wheel in lines (`WheelLines`: a tick is at least one, no pixel
     // lost), one movement per pane.
@@ -2046,6 +2562,15 @@ export function ControlTerminalSurface({
     host.addEventListener("paste", markTyped, true);
     grids.addEventListener("mousedown", onMouseDown);
     grids.addEventListener("mouseup", onMouseUp);
+    grids.addEventListener("mousemove", onHover);
+    grids.addEventListener("mouseleave", onHoverLeave);
+    window.addEventListener("keydown", onModifier);
+    window.addEventListener("keyup", onModifier);
+    input.addEventListener("copy", (event) => {
+      // The Edit menu's Copy (Cmd+C), aimed at this textarea.
+      event.preventDefault();
+      copySelection();
+    });
     grids.addEventListener("wheel", onWheel, { passive: false });
     const focusInput = (event: MouseEvent) => {
       if (!inNeovim(event.target)) input.focus();
@@ -2169,6 +2694,11 @@ export function ControlTerminalSurface({
       unpaintedNeovims.resume();
       if (noticeTimer !== undefined) clearTimeout(noticeTimer);
       host.removeEventListener("click", focusInput);
+      window.removeEventListener("keydown", onModifier);
+      window.removeEventListener("keyup", onModifier);
+      window.removeEventListener("mousemove", onLeftMove);
+      window.removeEventListener("mouseup", onLeftUp);
+      if (leftDrag?.edge !== undefined) clearInterval(leftDrag.edge);
       offNeovims?.();
       live.current.neovims?.lendTerminal(undefined);
       clearTimeout(goneTimer);

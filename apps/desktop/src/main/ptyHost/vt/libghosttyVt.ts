@@ -62,8 +62,18 @@ const enum RenderData {
 }
 
 const enum RowData {
+	Raw = 2,
 	Cells = 3,
 }
+
+/** `GhosttyRowData`, of a raw row (`ghostty_row_get`). */
+const enum RawRowData {
+	Wrap = 1,
+	Hyperlink = 5,
+}
+
+/** `GhosttyPointTag`. */
+const PointViewport = 1;
 
 const enum RowCellsData {
 	Raw = 1,
@@ -76,6 +86,7 @@ const enum RowCellsData {
 
 const enum CellData {
 	Wide = 3,
+	HasHyperlink = 7,
 }
 
 const enum BuildInfo {
@@ -117,6 +128,8 @@ const LAYOUTS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
 	GhosttyStyle: { flags: 12 },
 	GhosttyTerminalModeConfig: { mode: 0, value: 2 },
 	GhosttyCodepointBuffer: { ptr: 0, cap: 4, len: 8 },
+	GhosttyPoint: { tag: 0, value: 8 },
+	GhosttyPointCoordinate: { x: 0, y: 4 },
 };
 const STYLE_SIZE = 16;
 /** `GhosttyStyleFlags`: bits 0–7 are the attributes, then the underline style. */
@@ -135,6 +148,10 @@ const S = {
 	y: 48,
 	codepoints: 64,
 	style: 192,
+	/** A `GhosttyPoint` (24 bytes, 8-aligned), a `GhosttyGridRef` (8), a size. */
+	point: 208,
+	ref: 232,
+	written: 240,
 	graphemes: 256,
 	size: 1024,
 } as const;
@@ -257,6 +274,9 @@ const REQUIRED_EXPORTS = [
 	"ghostty_render_state_row_cells_next",
 	"ghostty_render_state_row_cells_get",
 	"ghostty_cell_get",
+	"ghostty_row_get",
+	"ghostty_terminal_grid_ref",
+	"ghostty_grid_ref_hyperlink_uri",
 ] as const;
 
 function readVersion(ex: Exports): string {
@@ -323,6 +343,11 @@ export class VtPane {
 	/** Interned styles: key → id. Id 0 is the default look. */
 	readonly #styleIds = new Map<string, number>();
 	#newStyles: [number, VtStyle][] = [];
+	/** Interned OSC 8 URIs: URI → id, and back. Id 0 is no link. */
+	readonly #linkIds = new Map<string, number>();
+	readonly #linkUris: string[] = [""];
+	/** The link ids the rows read since the last frame use. */
+	#frameLinks = new Set<number>();
 
 	constructor(
 		lib: LibGhosttyVt,
@@ -516,8 +541,20 @@ export class VtPane {
 			}
 			ex.ghostty_render_state_clean(this.#render);
 		}
-		const styles = this.#newStyles;
+		// Every style with `all`: the page's grid may have been drawn from
+		// another engine (copy mode's) whose ids mean other styles.
+		const styles = all
+			? [...this.#styleIds].map(([key, id]): [number, VtStyle] => {
+					const [fg, bg, flags] = key.split(",").map(Number);
+					return [id, styleOf(fg, bg, flags)];
+				})
+			: this.#newStyles;
 		this.#newStyles = [];
+		const links = [...this.#frameLinks].map((id): [number, string] => [
+			id,
+			this.#linkUris[id],
+		]);
+		this.#frameLinks = new Set();
 		return {
 			cols: this.#cols,
 			rows: this.#rows,
@@ -525,7 +562,33 @@ export class VtPane {
 			dirty: rows,
 			cursor: this.#readCursor(),
 			styles,
+			...(links.length === 0 ? {} : { links }),
 		};
+	}
+
+	/**
+	 * Row `y`'s cells as `read` gives them (`""` the right half of a wide
+	 * character), without marking anything read: what a copy-mode mouse
+	 * gesture steps the copy cursor over (`copyCursor.ts`).
+	 */
+	rowCells(y: number): string[] {
+		const lib = this.#lib;
+		const { ex, s } = lib;
+		if (y < 0 || y >= this.#rows) return [];
+		ex.ghostty_render_state_update(this.#render, this.#term);
+		lib.views().dv.setUint32(s + S.out, this.#rowIter, true);
+		ex.ghostty_render_state_get(
+			this.#render,
+			RenderData.RowIterator,
+			s + S.out,
+		);
+		for (let at = 0; at <= y; at++)
+			if (ex.ghostty_render_state_row_iterator_next(this.#rowIter) === 0)
+				return [];
+		const links = this.#frameLinks;
+		const cells = this.#readRow(y).cells;
+		this.#frameLinks = links;
+		return cells;
 	}
 
 	dispose(): void {
@@ -545,6 +608,19 @@ export class VtPane {
 		const cols = this.#cols;
 		const cells = new Array<string>(cols).fill(" ");
 		const styles = new Uint32Array(cols);
+		ex.ghostty_render_state_row_get(this.#rowIter, RowData.Raw, s + S.raw);
+		const row = lib.views().dv.getBigUint64(s + S.raw, true);
+		const flag = (kind: RawRowData) => {
+			lib.views().u8[s + S.flag] = 0;
+			ex.ghostty_row_get(row, kind, s + S.flag);
+			return lib.views().u8[s + S.flag] !== 0;
+		};
+		const wrapped = flag(RawRowData.Wrap);
+		// The row's flag may be a false positive; each cell says for itself.
+		let links: Uint32Array | undefined = flag(RawRowData.Hyperlink)
+			? new Uint32Array(cols)
+			: undefined;
+		let linked = false;
 		lib.views().dv.setUint32(s + S.out, this.#rowCells, true);
 		ex.ghostty_render_state_row_get(this.#rowIter, RowData.Cells, s + S.out);
 		let x = 0;
@@ -563,9 +639,73 @@ export class VtPane {
 			if (wide === Wide.SpacerTail) cells[x] = "";
 			else if (wide !== Wide.SpacerHead) cells[x] = this.#readText();
 			styles[x] = this.#readStyle();
+			if (links !== undefined) {
+				lib.views().dv.setUint32(s + S.u32b, 0, true);
+				ex.ghostty_cell_get(raw, CellData.HasHyperlink, s + S.u32b);
+				if (lib.views().u8[s + S.u32b] !== 0) {
+					const id = this.#linkAt(x, y);
+					links[x] = id;
+					if (id !== 0) {
+						linked = true;
+						this.#frameLinks.add(id);
+					}
+				}
+			}
 			x++;
 		}
-		return { y, cells, styles };
+		if (!linked) links = undefined;
+		return {
+			y,
+			cells,
+			styles,
+			...(links === undefined ? {} : { links }),
+			...(wrapped ? { wrapped } : {}),
+		};
+	}
+
+	/** The OSC 8 link of the viewport's cell, interned; 0 none. */
+	#linkAt(x: number, y: number): number {
+		const lib = this.#lib;
+		const { ex, s } = lib;
+		const { dv, u8 } = lib.views();
+		u8.fill(0, s + S.point, s + S.point + 24);
+		dv.setUint32(s + S.point, PointViewport, true);
+		dv.setUint16(s + S.point + 8, x, true);
+		dv.setUint32(s + S.point + 12, y, true);
+		if (
+			ex.ghostty_terminal_grid_ref(this.#term, s + S.point, s + S.ref) !==
+			SUCCESS
+		)
+			return 0;
+		dv.setUint32(s + S.written, 0, true);
+		const result = ex.ghostty_grid_ref_hyperlink_uri(
+			s + S.ref,
+			s + S.graphemes,
+			S.size - S.graphemes,
+			s + S.written,
+		);
+		let length = lib.views().dv.getUint32(s + S.written, true);
+		if (length === 0) return 0;
+		let bytes: Uint8Array;
+		if (result === SUCCESS) {
+			bytes = lib.views().u8.slice(s + S.graphemes, s + S.graphemes + length);
+		} else {
+			// Longer than the scratch block: a buffer of its own.
+			const size = length;
+			const buffer = ex.ghostty_wasm_alloc(size);
+			ex.ghostty_grid_ref_hyperlink_uri(s + S.ref, buffer, size, s + S.written);
+			length = Math.min(size, lib.views().dv.getUint32(s + S.written, true));
+			bytes = lib.views().u8.slice(buffer, buffer + length);
+			ex.ghostty_wasm_free(buffer, size);
+		}
+		const uri = new TextDecoder().decode(bytes);
+		let id = this.#linkIds.get(uri);
+		if (id === undefined) {
+			id = this.#linkUris.length;
+			this.#linkIds.set(uri, id);
+			this.#linkUris.push(uri);
+		}
+		return id;
 	}
 
 	/** The cell's text, whole: one codepoint or a grapheme cluster. */

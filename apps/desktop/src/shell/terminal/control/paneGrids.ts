@@ -11,6 +11,8 @@
 import { CONTROL_Z } from "./stacking";
 import type {
   ControlToPage,
+  CopySpan,
+  MouseBindings,
   PaneBox,
   PaneModes,
   SessionPane,
@@ -81,6 +83,8 @@ export interface ControlView {
   sessionPanes: readonly SessionPane[];
   client: string;
   prefixes: readonly string[];
+  /** How tmux takes the left button (`routeMouse`); absent until read. */
+  mouseBindings: MouseBindings | undefined;
   readonly cursors: Map<number, VtCursor | undefined>;
   /** The `display-popup` open now, in cells of the window (border included). */
   popup:
@@ -118,6 +122,23 @@ export interface ControlView {
    * from where the old one was (`smoothScroll.ts`).
    */
   readonly copyShift: Map<number, number>;
+  /**
+   * What DevHub draws over a pane's cells of its own: its selection
+   * (`selection.ts`) and the link under the pointer, underlined (`links.ts`).
+   */
+  readonly marks: Map<
+    number,
+    {
+      readonly selection: readonly CopySpan[];
+      readonly underline: readonly CopySpan[];
+    }
+  >;
+  /** Each grid's cells' OSC 8 link ids (`VtRow.links`), row-major; 0 none. */
+  readonly linkIds: Map<number, Uint32Array>;
+  /** Each grid's link ids' URIs, as its frames last named them. */
+  readonly linkUris: Map<number, Map<number, string>>;
+  /** Each grid's rows that go on in the next (`VtRow.wrapped`). */
+  readonly wrapped: Map<number, Set<number>>;
   /** Cells of a grid drawn in another look (a selection), and their own hl. */
   readonly overrides: Map<number, Map<number, number>>;
   /** The selection's colour (Neovim's Visual, the theme's selection). */
@@ -144,6 +165,7 @@ export function newControlView(fallback: {
     sessionPanes: [],
     client: "",
     prefixes: [],
+    mouseBindings: undefined,
     cursors: new Map(),
     popup: undefined,
     prompt: undefined,
@@ -153,6 +175,10 @@ export function newControlView(fallback: {
     copy: new Map(),
     copyShift: new Map(),
     overrides: new Map(),
+    marks: new Map(),
+    linkIds: new Map(),
+    linkUris: new Map(),
+    wrapped: new Map(),
     selection: mixColors(fallback.foreground, fallback.background, 25),
     modes: new Map(),
     hlIds: new Map(),
@@ -230,7 +256,19 @@ function applyFrame(
     view.state.grids.set(id, grid);
     for (let row = 0; row < frame.rows; row++) grid.dirty.add(row);
     changes.grids.add(id);
+    view.linkIds.delete(id);
+    view.wrapped.delete(id);
   }
+  if (frame.links !== undefined) {
+    let uris = view.linkUris.get(id);
+    if (uris === undefined) {
+      uris = new Map();
+      view.linkUris.set(id, uris);
+    }
+    for (const [link, uri] of frame.links) uris.set(link, uri);
+  }
+  let linkIds = view.linkIds.get(id);
+  let wrapped = view.wrapped.get(id);
   const overrides = view.overrides.get(id);
   for (const row of frame.dirty) {
     if (row.y >= grid.height) continue;
@@ -238,6 +276,21 @@ function applyFrame(
     // The row is the engine's again: what was drawn over it is redrawn.
     if (overrides !== undefined)
       for (let x = 0; x < grid.width; x++) overrides.delete(at + x);
+    if (row.links !== undefined || linkIds !== undefined) {
+      if (linkIds === undefined) {
+        linkIds = new Uint32Array(grid.width * grid.height);
+        view.linkIds.set(id, linkIds);
+      }
+      for (let x = 0; x < grid.width; x++)
+        linkIds[at + x] = row.links?.[x] ?? 0;
+    }
+    if (row.wrapped === true) {
+      if (wrapped === undefined) {
+        wrapped = new Set();
+        view.wrapped.set(id, wrapped);
+      }
+      wrapped.add(row.y);
+    } else wrapped?.delete(row.y);
     for (let x = 0; x < grid.width && x < row.cells.length; x++) {
       grid.chars[at + x] = row.cells[x];
       const styleId = row.styles[x];
@@ -279,6 +332,7 @@ export function applyControl(
       view.sessionPanes = message.sessionPanes;
       view.client = message.client;
       view.prefixes = message.prefixes;
+      if (message.mouse !== undefined) view.mouseBindings = message.mouse;
       changes.layout = true;
       return changes;
     }
@@ -290,7 +344,7 @@ export function applyControl(
         view.copyShift.delete(pane);
         changes.scrolled.set(gridOf(pane), shift);
       }
-      if (view.copy.has(pane)) drawCopy(view, pane);
+      if (view.copy.has(pane) || view.marks.has(pane)) drawCopy(view, pane);
       view.cursors.set(pane, frame.cursor);
       view.modes.set(pane, message.modes);
       changes.cursor = true;
@@ -402,12 +456,13 @@ export function applyControl(
           (view.copyShift.get(message.pane) ?? 0) + before.scroll,
         );
       view.copy.delete(message.pane);
-      undraw(view, gridOf(message.pane));
+      drawCopy(view, message.pane);
       changes.grids.add(gridOf(message.pane));
       changes.cursor = true;
       return changes;
     }
     case "notice":
+    case "cursor-link":
     case "clipboard":
     case "ended":
       return changes;
@@ -430,58 +485,102 @@ function undraw(view: ControlView, id: number): void {
  * A highlight drawn over another: its ink and attributes, on `ground`. One
  * per pair, made the first time it is asked for.
  */
-function over(view: ControlView, hl: number, ground: number): number {
-  const key = `over:${String(ground)}:${String(hl)}`;
+function over(
+  view: ControlView,
+  hl: number,
+  ground: number | undefined,
+  underline = false,
+): number {
+  const key = `over:${String(ground)}:${underline ? "u" : ""}:${String(hl)}`;
   let id = view.hlIds.get(key);
   if (id === undefined) {
     id = view.hlIds.size + 1;
     view.hlIds.set(key, id);
   }
   const base = view.state.hl.get(hl) ?? {};
-  view.state.hl.set(id, {
-    ...base,
-    reverse: false,
-    background: ground,
-    ...(base.reverse === true
-      ? { foreground: base.background ?? view.state.defaults.background }
-      : {}),
-  });
+  view.state.hl.set(
+    id,
+    ground === undefined
+      ? { ...base, ...(underline ? { underline: true } : {}) }
+      : {
+          ...base,
+          reverse: false,
+          background: ground,
+          ...(base.reverse === true
+            ? { foreground: base.background ?? view.state.defaults.background }
+            : {}),
+          ...(underline ? { underline: true } : {}),
+        },
+  );
   return id;
 }
 
 /**
+ * DevHub's own selection and the hovered link's underline on a pane
+ * (`marks`): drawn over its cells as copy mode's selection is, in the same
+ * colour, cell for cell. Empty spans take them away.
+ */
+export function setMarks(
+  view: ControlView,
+  pane: number,
+  marks: {
+    readonly selection: readonly CopySpan[];
+    readonly underline: readonly CopySpan[];
+  },
+): RedrawChanges {
+  const changes = emptyChanges();
+  const before = view.marks.get(pane);
+  if (before !== undefined && JSON.stringify(before) === JSON.stringify(marks))
+    return changes;
+  if (marks.selection.length === 0 && marks.underline.length === 0)
+    view.marks.delete(pane);
+  else view.marks.set(pane, marks);
+  drawCopy(view, pane);
+  changes.grids.add(gridOf(pane));
+  return changes;
+}
+
+/**
  * Copy mode's selection and search matches over a pane's rows, in the
- * selection colour (Neovim's Visual) and half of it.
+ * selection colour (Neovim's Visual) and half of it; then DevHub's own
+ * selection in that colour, and the hovered link underlined (`marks`).
  */
 function drawCopy(view: ControlView, pane: number): void {
   const id = gridOf(pane);
   const copy = view.copy.get(pane);
+  const marks = view.marks.get(pane);
   const grid = view.state.grids.get(id);
   undraw(view, id);
-  if (copy === undefined || grid === undefined) return;
+  if ((copy === undefined && marks === undefined) || grid === undefined) return;
   let overrides = view.overrides.get(id);
   if (overrides === undefined) {
     overrides = new Map();
     view.overrides.set(id, overrides);
   }
   const match = mixColors(view.selection, view.state.defaults.background, 50);
-  const paint = (
+  // Each cell's ground, then whether it is underlined, over its own look.
+  const grounds = new Map<number, number>();
+  const underlined = new Set<number>();
+  const each = (
     spans: readonly { y: number; x0: number; x1: number }[],
-    ground: number,
+    fn: (cell: number) => void,
   ) => {
     for (const { y, x0, x1 } of spans) {
       if (y < 0 || y >= grid.height) continue;
-      for (let x = x0; x <= x1 && x < grid.width; x++) {
-        const cell = y * grid.width + x;
-        const own = overrides.get(cell) ?? grid.hls[cell];
-        overrides.set(cell, own);
-        grid.hls[cell] = over(view, own, ground);
-      }
-      grid.dirty.add(y);
+      for (let x = Math.max(0, x0); x <= x1 && x < grid.width; x++)
+        fn(y * grid.width + x);
     }
   };
-  paint(copy.matches, match);
-  paint(copy.selection, view.selection);
+  each(copy?.matches ?? [], (cell) => grounds.set(cell, match));
+  each(copy?.selection ?? [], (cell) => grounds.set(cell, view.selection));
+  each(marks?.selection ?? [], (cell) => grounds.set(cell, view.selection));
+  each(marks?.underline ?? [], (cell) => underlined.add(cell));
+  for (const cell of new Set([...grounds.keys(), ...underlined])) {
+    const own = overrides.get(cell) ?? grid.hls[cell];
+    overrides.set(cell, own);
+    grid.hls[cell] = over(view, own, grounds.get(cell), underlined.has(cell));
+    grid.dirty.add(Math.floor(cell / grid.width));
+  }
 }
 
 /** Where each shown pane's grid goes, in cells of the window. */

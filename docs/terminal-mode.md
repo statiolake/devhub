@@ -494,8 +494,9 @@ its name for the pages that mount one).
   editor), and the IME's candidates open after it; a paste is bracketed when the pane's program asked.
   Keys typed while a client is being attached are held for it.
 - **Mouse.** A click selects its pane; a pane whose program asked for SGR
-  mouse reports gets presses, releases and the wheel. Scrolling back
-  through history is copy mode's (phase 3).
+  mouse reports gets presses, releases, drags (1002/1003) and the wheel.
+  The left button selects text and opens links: "The mouse: selection and
+  links", below. Scrolling back through history is copy mode's (phase 3).
 - **Connection.** A session that ended is made again every time, and said to be disconnected only when one made
   again ends within 3 s with nothing typed (a key or a paste, not the
   stream); Retry and every connect put the keys in the terminal when it is
@@ -650,8 +651,7 @@ Open, in order:
   `tmux_control_mode` key deleted together.
 - **The GPU process's compositing** (36–40 % under Xvfb) and the in-app
   `cat` time are to be measured on the Mac (see "Throughput, profiled").
-- Smaller: a drag or double-click selection in copy mode (tmux takes the
-  position from a mouse event a control client cannot send), the mock's
+- Smaller: the mock's
   0.4 s flash on a prompt-mark copy, choose-tree's tags, sort and `-F`, the `#{mouse_word}` items of
   the pane menu.
 - `pnpm install` writing `node-pty: set this to true or false` into
@@ -693,6 +693,112 @@ node-pty: false` is pnpm 11's format); without that line it writes the
   copy that tmux made (`copy-pipe`, `load-buffer -w`) reaches the system
   clipboard.
 - **Tabs (phase 4).** Done: "The window tabs", above.
+
+### The mouse: selection and links
+
+**Who takes the left button** (`selection.ts`'s `routeMouse`, in order):
+
+1. A Neovim DevHub draws in the pane: its own mouse, untouched.
+2. Shift or Option held: DevHub's own selection, whatever else would take
+   it, as in iTerm and Ghostty (Shift-click with a selection there extends
+   it).
+3. A program that asked for the mouse (vim's `mouse=a`, `less --mouse`,
+   htop): its SGR reports, presses, drags and releases.
+4. With tmux's `mouse` on, a gesture tmux binds in the table it would look
+   in (copy mode's while the pane is in it, else root): tmux's, as for a
+   normal client. The pty host reads `#{mouse}` and which of
+   `MouseDown1Pane`, `MouseDrag1Pane`, `MouseDragEnd1Pane`,
+   `DoubleClick1Pane`, `TripleClick1Pane` each table binds with the other
+   bindings (`list-keys`), and sends that in the layout (`MouseBindings`).
+5. Anything else: DevHub's own selection.
+
+So with the person's tmux.conf (root `MouseDrag1Pane` unbound, root
+`DoubleClick1Pane`/`TripleClick1Pane` bound to `copy-mode -H ; send -X
+select-word`/`select-line`, copy-mode-vi `MouseDragEnd1Pane` unbound): a
+drag over a shell is DevHub's selection; a double- or triple-click enters
+copy mode with tmux's word or line selected (copied with `y`, as the
+config's comments say); in copy mode a drag is tmux's selection, which
+stays after the button is let go. With `mouse off`, or tmux's defaults
+unbound, every gesture is DevHub's.
+
+**tmux's gestures with the mouse's position.** A command a control client
+sends has no mouse event, and tmux's copy mode takes the position from it
+(`window_copy_move_mouse`, `window_copy_start_drag`). So the pty host runs
+the binding's commands one at a time (`#mouseRun`, `mouseCopy.ts`): an
+`if-shell -F` decided at the mouse's pane, `send-keys -M` handed to the
+copy mode's binding, and before a copy-mode command (`send -X select-word`)
+the copy cursor moved under the mouse — `cursor-up`/`-down` to its row,
+then `cursor-left`/`-right` along it, counted on the copy view's cells as
+tmux's grid reader steps over a wide character's halves (`cursorSteps`).
+`begin-selection` and `copy-mode -M` start a drag: the cursor to where the
+press was, `begin-selection`, and every move after it puts the cursor
+under the mouse until the release, which runs `MouseDragEnd1Pane` if bound.
+A drag held past the pane's top or bottom moves the cursor one row beyond
+it every 50 ms (tmux's repeat), which scrolls the view as tmux's own drag
+does. tmux's selection, its copy-mode keys and its paste buffer stay one
+thing. Not done: a drag that goes on by words after a double-click in copy
+mode (tmux's `SEL_WORD` drag) selects by characters.
+
+**DevHub's own selection** (`selection.ts`) is on the cells the page draws
+— the pane's rows, or its copy view's — drawn over them as copy mode's
+selection is (`setMarks`, the theme's selection colour, cell for cell; no
+DOM selection). A drag selects from cell to cell, a double-click a word (a
+run of word characters, of blanks, or one of Ghostty's boundary
+characters ``\t'"│`|:;,()[]{}<>$``), a triple-click a line; a wide
+character is taken whole at either edge, and a word or line goes on across
+a soft wrap (the frames say which rows wrap, `VtRow.wrapped`). Its text is
+each wide character once, wrapped rows joined, other rows ending in a
+newline with trailing blanks dropped. It goes when a key is typed for the
+program, a click elsewhere, the pane going in or out of copy mode or
+changing size, or the program rewriting its text (a row redrawn with the
+same text keeps it). Nothing of it reaches the program or tmux. The page
+has the screen, not the history: a drag past the top of a shell's pane
+(not on the alternate screen) puts the pane in copy mode and goes on as
+tmux's drag from where it began, scrolling back as it is held there.
+
+**Copying.** Cmd+C (the Edit menu's Copy, aimed at the terminal's
+textarea), and Ctrl+Shift+C on Linux, where Ctrl+C is the program's: DevHub's
+selection through `writeClipboard`, or, in copy mode, tmux's
+(`copy-selection-no-clear`, then the buffer).
+
+**Links.** The engine reads each cell's OSC 8 link
+(`ghostty_grid_ref_hyperlink_uri`, only on rows whose `ROW_DATA_HYPERLINK`
+says so) and interns it; a row carries its cells' ids (`VtRow.links`) and a
+frame the URI of every id its rows use (`VtFrame.links`) — every one, not
+only new ones, since a pane's grid comes from its engine or its copy
+view's, whose ids differ. (A whole read, `all`, sends every style again for
+the same reason.) The pointer over a link underlines it, cell for cell,
+shows the hand and puts the URI in the tooltip; Cmd+click (Ctrl+click on
+Linux) opens it through `openExternalUrl`, whoever has the mouse. A plain
+click never opens: a click in a terminal is for the program or the
+selection, and an accidental open of a link someone printed is worse than
+a modifier. Text that is a URL without OSC 8 (`http(s)://`, `mailto:`,
+`ftp://`) is found on its line, whole across a soft wrap, without the
+sentence's trailing punctuation or an unopened `)`, and is underlined
+while Cmd (Ctrl) is held over it, as in Ghostty and iTerm. Only `http`,
+`https`, `mailto` and `ftp` are handed to the system; anything else (a
+`file:` link, a scheme some app registered) could open or run something
+from text a program printed, and is refused with a notice.
+
+**From the keyboard:** Cmd+Shift+O (Ctrl+Shift+O on Linux) opens the link
+at the cursor: the active pane's, or in copy mode the copy cursor's — move
+it there with copy mode's keys. Copy mode's rows are read with
+`capture-pane -M`, which drops the links, so there tmux is asked
+(`#{copy_cursor_hyperlink}`); a plain URL at the cursor is the fallback.
+(A palette command would need the window's command registry to reach the
+terminal page; the chord is the surface's own.) Links under the pointer are
+not underlined in copy mode, for the same reason.
+
+Checked in the app (Xvfb, `deviceScaleFactor` 2, the person's settings.toml
+and DevHub tmux.conf, zsh), with xdotool's real button and modifiers:
+selections over shell output with CJK at both edges, Ctrl+Shift+C into the
+clipboard; a double- and triple-click entering copy mode with tmux's word
+and line; a drag in copy mode, one held past the bottom scrolling, and one
+past a shell's top going into the history; `less` (DevHub's selection),
+`less --mouse` and vim with `mouse=a` (theirs; with Shift DevHub's, the
+program's cursor not moved); the double and triple click unbound
+(DevHub's word and line, Shift-click extending); an OSC 8 link and a plain
+URL hovered and Ctrl+clicked, and Ctrl+Shift+O on the copy cursor.
 
 ### What waits on a control client, until DevHub draws it
 
@@ -880,9 +986,9 @@ the view is in the history. A copy reaches the system clipboard as tmux's
 (`writeClipboard`) — so does a script's `set-buffer`, which tmux itself would
 not send. The wheel over a pane whose program does not take it runs tmux's
 `WheelUpPane`/`WheelDownPane` (into copy mode, then the mode table's
-`scroll-up`), aimed at that pane. Not drawn: a drag or double-click
-selection (tmux reads the mouse's position from the mouse event, which a
-command from a control client has not got), line numbers
+`scroll-up`), aimed at that pane. A drag, double- and
+triple-click are tmux's with the mouse's position ("The mouse: selection and
+links", above). Not drawn: line numbers
 (`copy-mode-line-numbers`), the 0.4 s flash the mock shows on a prompt-mark
 copy.
 

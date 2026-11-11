@@ -141,3 +141,80 @@ describe("the committed module", () => {
 		);
 	});
 });
+
+describe("libghostty-vt binding: links and wraps", () => {
+	it("carries an OSC 8 link per cell, and names it in the frame", () => {
+		const p = pane(30, 3);
+		p.write(
+			enc(
+				"ab\u001b]8;;https://example.com/a\u0007LINK\u001b]8;;\u0007 \u001b]8;id=x;https://example.com/b\u001b\\あb\u001b]8;;\u001b\\",
+			),
+		);
+		const frame = p.read(true);
+		const row = frame.dirty[0];
+		const links = row.links;
+		expect(links).toBeDefined();
+		const a = links?.[2] ?? 0;
+		const b = links?.[7] ?? 0;
+		expect(a).not.toBe(0);
+		expect([...(links ?? [])].slice(0, 11)).toEqual([
+			0,
+			0,
+			a,
+			a,
+			a,
+			a,
+			0,
+			b,
+			b,
+			b,
+			0,
+		]);
+		expect(new Map(frame.links)).toEqual(
+			new Map([
+				[a, "https://example.com/a"],
+				[b, "https://example.com/b"],
+			]),
+		);
+		// A row with no link carries none.
+		expect(frame.dirty[1].links).toBeUndefined();
+		// The next frame names the links its rows use again, whatever was sent.
+		p.write(enc("\r!"));
+		const next = p.read();
+		expect(next.dirty[0].links?.[2]).toBe(a);
+		expect(new Map(next.links).get(a)).toBe("https://example.com/a");
+		p.dispose();
+	});
+
+	it("says which rows wrap onto the next", () => {
+		const p = pane(5, 3);
+		p.write(enc("abcdefg\r\nhi"));
+		const frame = p.read(true);
+		expect(frame.dirty.map((row) => row.wrapped === true)).toEqual([
+			true,
+			false,
+			false,
+		]);
+		p.dispose();
+	});
+
+	it("reads a row's cells without taking them from the next frame", () => {
+		const p = pane(6, 2);
+		p.write(enc("aあb"));
+		p.read();
+		p.write(enc("c"));
+		expect(p.rowCells(0)).toEqual(["a", "あ", "", "b", "c", " "]);
+		expect(p.read().dirty.map((row) => row.y)).toEqual([0]);
+		p.dispose();
+	});
+
+	it("names every style again on a whole read", () => {
+		const p = pane(6, 2);
+		p.write(enc("\u001b[31mred\u001b[0m"));
+		const first = p.read();
+		expect(first.styles.length).toBe(1);
+		expect(p.read().styles).toEqual([]);
+		expect(p.read(true).styles).toEqual(first.styles);
+		p.dispose();
+	});
+});

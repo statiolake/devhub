@@ -33,6 +33,7 @@ import {
 	CHOOSER_HEAD_ROWS,
 	NVIM_NAMED_OSC,
 	type ControlToPage,
+	type MouseBindings,
 	type PageToControl,
 	type PaneBox,
 	type PaneModes,
@@ -121,6 +122,8 @@ import {
 	type TmuxId,
 } from "./tmuxControl.js";
 import { formatKeys } from "../../../model/keyNotation.js";
+import { LEFT_MOUSE_KEYS, cursorSteps, mouseCommand } from "./mouseCopy.js";
+import { parseCommands } from "./tmuxCommand.js";
 
 export type { ControlToPage, PageToControl, PaneBox, PaneModes, WindowInfo };
 
@@ -189,6 +192,17 @@ interface Box {
 }
 
 /** Where a click that opened something was: its target, and its cell. */
+/** A left-button event the page left to tmux, in cells of the window. */
+interface LeftAt {
+	readonly key: string;
+	readonly pane: number;
+	readonly x: number;
+	readonly y: number;
+	readonly from?: { readonly x: number; readonly y: number };
+	readonly edge?: "up" | "down";
+	readonly enter?: boolean;
+}
+
 interface MouseAt {
 	/** `%pane` or `@window`: what `-t =` names. */
 	readonly target: string;
@@ -251,6 +265,8 @@ interface Pane {
 				reading: boolean;
 				again: boolean;
 				state?: CopyState;
+				/** Settles when the read under way (and any asked meanwhile) is done. */
+				idle?: Promise<void>;
 		  }
 		| undefined;
 	/** `@devhub-nvim`: the socket a DevHub `nvim` in it named. */
@@ -406,6 +422,25 @@ export class ControlClient {
 				return;
 			case "mouse":
 				this.#mouse(message);
+				return;
+			case "copy-selection":
+				void this.#copySelection(message.pane);
+				return;
+			case "cursor-link":
+				void this.#command([
+					"display-message",
+					"-p",
+					"-t",
+					`%${String(message.pane)}`,
+					"#{copy_cursor_hyperlink}",
+				]).then((answer) => {
+					if (this.#ended) return;
+					this.#o.post({
+						kind: "cursor-link",
+						pane: message.pane,
+						uri: answer.ok ? answer.lines.join("\n") : "",
+					});
+				});
 				return;
 			case "prompt-complete":
 				if (this.#prompt !== undefined)
@@ -813,12 +848,18 @@ export class ControlClient {
 		const options = await this.#command([
 			"display-message",
 			"-p",
-			["#{prefix}", "#{prefix2}", "#{repeat-time}", "#{mode-keys}"].join(FIELD),
+			[
+				"#{prefix}",
+				"#{prefix2}",
+				"#{repeat-time}",
+				"#{mode-keys}",
+				"#{mouse}",
+			].join(FIELD),
 		]);
 		if (!keys.ok || !options.ok) return;
-		const [prefix, prefix2, repeat, modeKeys] = (options.lines[0] ?? "").split(
-			FIELD,
-		);
+		const [prefix, prefix2, repeat, modeKeys, mouse] = (
+			options.lines[0] ?? ""
+		).split(FIELD);
 		this.#modeKeys = modeKeys ?? "emacs";
 		const prefixes = [prefix, prefix2].filter(
 			(p): p is string => p !== undefined && p !== "" && p !== "None",
@@ -828,11 +869,26 @@ export class ControlClient {
 			prefixes,
 			Number(repeat) || 500,
 		);
-		if (prefixes.join(" ") !== this.#prefixes.join(" ")) {
+		const modeTable = this.#modeKeys === "vi" ? "copy-mode-vi" : "copy-mode";
+		const bindings: MouseBindings = {
+			on: mouse === "1" || mouse === "on",
+			root: LEFT_MOUSE_KEYS.filter(
+				(key) => this.#router.binding("root", key) !== undefined,
+			),
+			copy: LEFT_MOUSE_KEYS.filter(
+				(key) => this.#router.binding(modeTable, key) !== undefined,
+			),
+		};
+		const mouseChanged =
+			JSON.stringify(bindings) !== JSON.stringify(this.#mouseBindings);
+		this.#mouseBindings = bindings;
+		if (prefixes.join(" ") !== this.#prefixes.join(" ") || mouseChanged) {
 			this.#prefixes = prefixes;
 			this.#postLayout();
 		}
 	}
+
+	#mouseBindings: MouseBindings | undefined;
 
 	/**
 	 * A pane left in a mode tmux does not draw for this client (copy mode, a
@@ -1670,6 +1726,9 @@ export class ControlClient {
 		window?: number;
 		x: number;
 		y: number;
+		from?: { readonly x: number; readonly y: number };
+		edge?: "up" | "down";
+		enter?: boolean;
 	}): void {
 		if (
 			this.#menu !== undefined ||
@@ -1703,7 +1762,272 @@ export class ControlClient {
 			if (!this.#wheelRunning) void this.#wheelTurns();
 			return;
 		}
+		if (LEFT_MOUSE_KEYS.includes(at.key) && at.pane !== undefined) {
+			this.#leftMouse({ ...at, pane: at.pane });
+			return;
+		}
 		void this.#mouseBinding(at, 1);
+	}
+
+	/**
+	 * A tmux drag in copy mode under way (`window_copy_start_drag`): the
+	 * left button's moves follow it until the button is let go.
+	 */
+	#drag: { readonly pane: TmuxId } | undefined;
+	/** Left-button events waiting while the last runs: one at a time. */
+	#leftQueue: (LeftAt & { started?: boolean })[] = [];
+	#leftRunning = false;
+
+	/**
+	 * A left-button gesture the page left to tmux (`selection.ts`,
+	 * `routeMouse`): its binding run with the mouse where it is, as tmux
+	 * runs it for a normal client (`mouseCopy.ts`). A drag's moves that come
+	 * while the last is being followed are merged into the newest.
+	 */
+	#leftMouse(at: LeftAt): void {
+		const last = this.#leftQueue.at(-1);
+		const plainMove = (e: LeftAt) =>
+			e.key === "MouseDrag1Pane" && e.edge === undefined && e.enter !== true;
+		if (
+			last !== undefined &&
+			last.started !== true &&
+			plainMove(last) &&
+			plainMove(at) &&
+			last.pane === at.pane
+		)
+			this.#leftQueue[this.#leftQueue.length - 1] = {
+				...at,
+				...(last.from === undefined ? {} : { from: last.from }),
+			};
+		else this.#leftQueue.push(at);
+		if (!this.#leftRunning) void this.#leftTurns();
+	}
+
+	async #leftTurns(): Promise<void> {
+		this.#leftRunning = true;
+		try {
+			for (;;) {
+				const next = this.#leftQueue[0];
+				if (next === undefined || this.#ended) return;
+				next.started = true;
+				await this.#leftTurn(next);
+				this.#leftQueue.shift();
+			}
+		} finally {
+			this.#leftRunning = false;
+		}
+	}
+
+	async #leftTurn(at: LeftAt): Promise<void> {
+		const pane = this.#panes.get(at.pane);
+		const box = this.#shownPanes().find((p) => p.pane === at.pane);
+		if (pane === undefined || box === undefined) return;
+		const inPane = (p: { x: number; y: number }) => ({
+			x: Math.max(0, Math.min(box.width - 1, p.x - box.x)),
+			y: Math.max(0, Math.min(box.height - 1, p.y - box.y)),
+		});
+		const here = inPane(at);
+		// Past the pane's edge: a row beyond it, which the cursor's move
+		// there scrolls into view (tmux's drag scrolls at its edge rows).
+		const cur =
+			at.edge === "up"
+				? { x: here.x, y: -1 }
+				: at.edge === "down"
+					? { x: here.x, y: box.height }
+					: here;
+		const from = at.from === undefined ? here : inPane(at.from);
+		const target = `%${String(pane.id)}`;
+		if (at.enter === true) {
+			// DevHub's selection dragged past the top: the history is copy
+			// mode's, so the drag goes on there as tmux's, from where it began.
+			await this.#command(["copy-mode", "-t", target]);
+			await this.#startDrag(pane, from, cur);
+			return;
+		}
+		if (at.key === "MouseDrag1Pane" && this.#drag?.pane === pane.id) {
+			await this.#placeCopy(pane, cur);
+			return;
+		}
+		// Any other event ends a drag, as tmux's does; its end is the
+		// MouseDragEnd1Pane binding's to finish.
+		if (at.key !== "MouseDrag1Pane") this.#drag = undefined;
+		const modeTable = this.#modeKeys === "vi" ? "copy-mode-vi" : "copy-mode";
+		const table = COPY_MODES.has(pane.mode) ? modeTable : "root";
+		const command = this.#router.binding(table, at.key);
+		if (command === undefined) return;
+		await this.#hold(
+			[],
+			this.#mouseRun(command, {
+				pane,
+				key: at.key,
+				at: cur,
+				from,
+				mouse: { target, key: at.key, x: at.x, y: at.y },
+			}),
+		);
+	}
+
+	/**
+	 * A left-button binding's commands in order, each as tmux runs it with
+	 * the mouse: an `if-shell -F` decided at the mouse's pane, `send-keys
+	 * -M` handed to the pane's copy mode's binding, a copy-mode command run
+	 * with the copy cursor moved under the mouse first, `begin-selection`
+	 * and `copy-mode -M` starting a drag; the rest is tmux's (`#dispatch`).
+	 */
+	async #mouseRun(
+		text: string,
+		ctx: {
+			readonly pane: Pane;
+			readonly key: string;
+			readonly at: { readonly x: number; readonly y: number };
+			readonly from: { readonly x: number; readonly y: number };
+			readonly mouse: MouseAt;
+		},
+	): Promise<void> {
+		const { pane } = ctx;
+		const target = `%${String(pane.id)}`;
+		for (const words of parseCommands(text)) {
+			if (this.#ended) return;
+			const line = commandLine(words);
+			const conditional = ifShellOf(line);
+			if (conditional !== undefined) {
+				const at = conditional.target === "=" ? target : conditional.target;
+				const answer = await this.#command([
+					"display-message",
+					"-p",
+					...(at === undefined ? [] : ["-t", at]),
+					"--",
+					noTime(conditional.condition),
+				]);
+				if (!answer.ok) return;
+				const value = answer.lines.join("\n");
+				const arm =
+					value !== "" && value !== "0"
+						? conditional.then
+						: conditional.otherwise;
+				if (arm !== undefined) await this.#mouseRun(arm, ctx);
+				continue;
+			}
+			const what = mouseCommand(words);
+			switch (what.kind) {
+				case "forward": {
+					// To the pane's mode, whose table's binding runs; a program
+					// that wanted the mouse had it from the page.
+					await this.#readFacts(pane.id);
+					if (!COPY_MODES.has(pane.mode)) break;
+					const table = this.#modeKeys === "vi" ? "copy-mode-vi" : "copy-mode";
+					const bound = this.#router.binding(table, ctx.key);
+					if (bound !== undefined) await this.#mouseRun(bound, ctx);
+					break;
+				}
+				case "enter-drag":
+					await this.#runText(aimAt(commandLine(what.words), target));
+					await this.#startDrag(pane, ctx.from, ctx.at);
+					break;
+				case "copy":
+					if (what.command === "begin-selection") {
+						await this.#startDrag(pane, ctx.from, ctx.at);
+						break;
+					}
+					await this.#placeCopy(pane, ctx.at);
+					await this.#runText(aimAt(line, target));
+					break;
+				case "other":
+					await this.#dispatch(line, ctx.mouse);
+					break;
+			}
+		}
+	}
+
+	/** `window_copy_start_drag`: a selection from `from`, followed to `to`. */
+	async #startDrag(
+		pane: Pane,
+		from: { readonly x: number; readonly y: number },
+		to: { readonly x: number; readonly y: number },
+	): Promise<void> {
+		if (!(await this.#placeCopy(pane, from))) return;
+		await this.#command([
+			"send-keys",
+			"-t",
+			`%${String(pane.id)}`,
+			"-X",
+			"begin-selection",
+		]);
+		this.#drag = { pane: pane.id };
+		await this.#placeCopy(pane, to);
+	}
+
+	/**
+	 * The copy cursor moved to a cell of the pane (`window_copy_move_mouse`),
+	 * a row above or below it scrolling a line: to its row, then along it
+	 * by the row's cells (`cursorSteps`). False when the pane is not in
+	 * copy mode.
+	 */
+	async #placeCopy(
+		pane: Pane,
+		at: { readonly x: number; readonly y: number },
+	): Promise<boolean> {
+		const target = `%${String(pane.id)}`;
+		if (!COPY_MODES.has(pane.mode) || pane.copy === undefined)
+			await this.#readFacts(pane.id);
+		let state = await this.#copyNow(pane);
+		if (state === undefined) return false;
+		const dy = at.y - state.cursor.y;
+		if (dy !== 0) {
+			await this.#command([
+				"send-keys",
+				"-t",
+				target,
+				"-X",
+				"-N",
+				String(Math.abs(dy)),
+				dy < 0 ? "cursor-up" : "cursor-down",
+			]);
+			state = await this.#copyNow(pane);
+			if (state === undefined) return false;
+		}
+		const cells = pane.copy?.vt.rowCells(state.cursor.y) ?? [];
+		const steps = cursorSteps(
+			cells,
+			state.cursor.x,
+			at.x,
+			this.#modeKeys !== "vi",
+		);
+		const lines = [
+			...(steps.left > 0 ? [["-N", String(steps.left), "cursor-left"]] : []),
+			...(steps.right > 0 ? [["-N", String(steps.right), "cursor-right"]] : []),
+		].map((words) => commandLine(["send-keys", "-t", target, "-X", ...words]));
+		if (lines.length > 0) await this.#run(lines);
+		this.#copyMoved();
+		return true;
+	}
+
+	/** A pane's copy mode read now: its state, and its rows in its engine. */
+	async #copyNow(pane: Pane): Promise<CopyState | undefined> {
+		const copy = pane.copy;
+		if (copy === undefined) return undefined;
+		void this.#readCopy(pane);
+		await copy.idle;
+		return pane.copy === copy ? copy.state : undefined;
+	}
+
+	/** Cmd+C in copy mode: tmux's selection, copied and put on the clipboard. */
+	async #copySelection(paneId: TmuxId): Promise<void> {
+		const target = `%${String(paneId)}`;
+		const present = await this.#command([
+			"display-message",
+			"-p",
+			"-t",
+			target,
+			"#{selection_present}",
+		]);
+		if (!present.ok || present.lines[0] !== "1") return;
+		const [, buffer] = await this.#run([
+			commandLine(["send-keys", "-t", target, "-X", "copy-selection-no-clear"]),
+			commandLine(["show-buffer"]),
+		]);
+		if (buffer?.ok === true && !this.#ended)
+			this.#o.post({ kind: "clipboard", text: buffer.lines.join("\n") });
 	}
 
 	/** The wheel's queued turns, one after the other. */
@@ -2262,6 +2586,10 @@ export class ControlClient {
 			return;
 		}
 		copy.reading = true;
+		let settle = () => {};
+		copy.idle = new Promise((resolve) => {
+			settle = resolve;
+		});
 		try {
 			do {
 				copy.again = false;
@@ -2299,6 +2627,7 @@ export class ControlClient {
 			} while (copy.again && pane.copy === copy && !this.#ended);
 		} finally {
 			copy.reading = false;
+			settle();
 		}
 	}
 
@@ -2510,6 +2839,9 @@ export class ControlClient {
 			client: this.#clientName,
 			prefixes: this.#prefixes,
 			...(this.#status === undefined ? {} : { status: this.#status }),
+			...(this.#mouseBindings === undefined
+				? {}
+				: { mouse: this.#mouseBindings }),
 		});
 	}
 

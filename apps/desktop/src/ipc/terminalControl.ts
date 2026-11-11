@@ -30,6 +30,13 @@ export interface VtRow {
 	readonly cells: string[];
 	/** Each cell's style id (`VtFrame.styles`); 0 is the default look. */
 	readonly styles: Uint32Array;
+	/**
+	 * Each cell's OSC 8 hyperlink (`VtFrame.links`), 0 none; absent when no
+	 * cell of the row has one.
+	 */
+	readonly links?: Uint32Array;
+	/** The row's text goes on in the next row (a soft wrap, not a newline). */
+	readonly wrapped?: boolean;
 }
 
 export interface VtCursor {
@@ -54,8 +61,14 @@ export interface VtFrame {
 	readonly full: boolean;
 	readonly dirty: readonly VtRow[];
 	readonly cursor: VtCursor | undefined;
-	/** Styles first used in this frame, by id. */
+	/** Styles first used in this frame, by id (every style, with `all`). */
 	readonly styles: readonly (readonly [number, VtStyle])[];
+	/**
+	 * The URI of every link id the frame's rows use, by id: ids are the
+	 * engine's own, and a pane's rows come from its engine or its copy
+	 * mode's, so a frame names each link it carries.
+	 */
+	readonly links?: readonly (readonly [number, string])[];
 }
 
 export interface WindowInfo {
@@ -190,6 +203,19 @@ export interface MenuItem {
 	readonly disabled?: boolean;
 }
 
+/**
+ * tmux's `mouse` option, and which of the left button's keys
+ * (`MouseDown1Pane`, `MouseDrag1Pane`, `MouseDragEnd1Pane`,
+ * `DoubleClick1Pane`, `TripleClick1Pane`) the root table and the copy
+ * mode's (`mode-keys`) bind: what the page leaves to tmux, and what it
+ * selects itself.
+ */
+export interface MouseBindings {
+	readonly on: boolean;
+	readonly root: readonly string[];
+	readonly copy: readonly string[];
+}
+
 /** The modes of a pane the page encodes input by. */
 export interface PaneModes {
 	/** 0 off, else the tracking mode: 9, 1000, 1002 or 1003. */
@@ -218,6 +244,8 @@ export type ControlToPage =
 			readonly prefixes: readonly string[];
 			/** The status line around the tabs; absent until read. */
 			readonly status?: StatusLine;
+			/** How tmux takes the left button (`selection.ts`'s `routeMouse`); absent until read. */
+			readonly mouse?: MouseBindings;
 	  }
 	| {
 			readonly kind: "pane";
@@ -352,6 +380,16 @@ export type ControlToPage =
 			readonly matches: readonly CopySpan[];
 	  }
 	| { readonly kind: "copy-mode-closed"; readonly pane: number }
+	/**
+	 * The OSC 8 link under a pane's copy cursor, as tmux has it
+	 * (`copy_cursor_hyperlink`; `""` none): copy mode's rows are read with
+	 * `capture-pane -M`, which leaves the links out.
+	 */
+	| {
+			readonly kind: "cursor-link";
+			readonly pane: number;
+			readonly uri: string;
+	  }
 	/** Text for the system clipboard: a copy tmux made (`set-clipboard`). */
 	| { readonly kind: "clipboard"; readonly text: string }
 	/**
@@ -404,7 +442,23 @@ export type PageToControl =
 			/** The cell, in the window. */
 			readonly x: number;
 			readonly y: number;
+			/**
+			 * A left-button drag: where it was before (tmux's last position,
+			 * where a drag starts), and the pane's edge it is past, at which a
+			 * drag in copy mode scrolls a line.
+			 */
+			readonly from?: { readonly x: number; readonly y: number };
+			readonly edge?: "up" | "down";
+			/**
+			 * DevHub's selection dragged past the pane's top: the pane goes into
+			 * copy mode and the drag goes on as tmux's, from `from`.
+			 */
+			readonly enter?: boolean;
 	  }
+	/** Cmd+C in copy mode: tmux's selection to the system clipboard. */
+	| { readonly kind: "copy-selection"; readonly pane: number }
+	/** The link under a pane's copy cursor, asked (`cursor-link`). */
+	| { readonly kind: "cursor-link"; readonly pane: number }
 	| { readonly kind: "select-window"; readonly window: number }
 	/** An item of the prompt's completion menu, clicked. */
 	| { readonly kind: "prompt-complete"; readonly index: number }
@@ -532,9 +586,16 @@ export function validateControlRequest(value: unknown): ControlRequest {
 		case "mouse":
 			if (
 				typeof m.key !== "string" ||
-				!/^(M-)?(MouseDown3Pane|MouseDown3Status|WheelUpPane|WheelDownPane)$/.test(
-					m.key,
+				!(
+					/^(M-)?(MouseDown3Pane|MouseDown3Status|WheelUpPane|WheelDownPane)$/.test(
+						m.key,
+					) ||
+					/^(MouseDown1Pane|MouseDrag1Pane|MouseDragEnd1Pane|DoubleClick1Pane|TripleClick1Pane)$/.test(
+						m.key,
+					)
 				) ||
+				(m.edge !== undefined && m.edge !== "up" && m.edge !== "down") ||
+				(m.enter !== undefined && m.enter !== true) ||
 				(m.pane === undefined) === (m.window === undefined)
 			)
 				throw new TerminalFailure("invalid_request");
@@ -545,7 +606,23 @@ export function validateControlRequest(value: unknown): ControlRequest {
 				y: count(m.y, 10_000),
 				...(m.pane === undefined ? {} : { pane: count(m.pane) }),
 				...(m.window === undefined ? {} : { window: count(m.window) }),
+				...(m.from === undefined
+					? {}
+					: {
+							from: {
+								x: count(record(m.from).x, 10_000),
+								y: count(record(m.from).y, 10_000),
+							},
+						}),
+				...(m.edge === undefined ? {} : { edge: m.edge }),
+				...(m.enter === true ? { enter: true } : {}),
 			};
+			break;
+		case "copy-selection":
+			message = { kind: "copy-selection", pane: count(m.pane) };
+			break;
+		case "cursor-link":
+			message = { kind: "cursor-link", pane: count(m.pane) };
 			break;
 		case "select-window":
 			message = { kind: "select-window", window: count(m.window) };

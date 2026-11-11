@@ -185,6 +185,12 @@ What follows the rule in code:
   `translate` on the same clock. Only transforms move, and at rest the
   ink is on the grid's device pixels, so the cursor's text is the grid's
   to the pixel.
+- A terminal pane's selections and its hovered link (copy mode's, and
+  DevHub's own, `docs/terminal-mode.md`, "The mouse"): not a layer at all.
+  They are highlights of the pane's own cells (`setMarks`, `paneGrids.ts`:
+  the cell's look on the selection colour, or underlined), painted by the
+  grid's painter with its text, so they are cell-aligned, crisp and move
+  with whatever moves the grid; no element sits over the text.
 
 ## Audit
 
