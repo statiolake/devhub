@@ -656,6 +656,20 @@ export interface OrchestratorNextDeliveryWire {
 		| { readonly kind: "nobody" };
 }
 
+/**
+ * A request the person sent the orchestrator from the board's +
+ * (`main/orchestrator/requests.ts`): `held` while off, `sent` once
+ * delivered, `filed` once the orchestrator said where it filed it.
+ */
+export interface OrchestratorRequestWire {
+	readonly id: number;
+	readonly text: string;
+	readonly at: number;
+	readonly state: "held" | "sent" | "filed";
+	readonly filed?: { readonly at: number; readonly note?: string };
+	readonly priority?: "high" | "normal" | "low";
+}
+
 /** The Orchestrator's mode, as the board and the commands say it. */
 export type OrchestratorModeWire = "full" | "saving" | "off";
 
@@ -698,6 +712,8 @@ export interface OrchestratorBoardWire {
 	};
 	/** The tasks in progress (the Sidebar's 対応中): saving's gate reads it. */
 	readonly inProgressTasks?: number;
+	/** The person's requests: open ones oldest first, then the last few filed. */
+	readonly requests?: readonly OrchestratorRequestWire[];
 	/** The last triage's priority of each agent that has one, by agent id. */
 	readonly agentPriorities?: Readonly<
 		Record<string, "high" | "normal" | "low">
@@ -898,6 +914,10 @@ export interface OrchestratorActionsBridge {
 	startOrchestrator(): Promise<void>;
 	/** Full, saving or off (`main/orchestrator/mode.ts`): the person's choice. */
 	setOrchestratorMode(mode: OrchestratorModeWire): Promise<void>;
+	/** The board's +: a request to the orchestrator, in the person's words. */
+	sendOrchestratorRequest(text: string): Promise<void>;
+	/** `Cmd+Q +` / the palette: open the board's request composer. */
+	onOpenOrchestratorRequest(listener: () => void): () => void;
 	/**
 	 * What the left pane is showing, for the window's title: main names the
 	 * window (`main/shell/shellTitle.ts`), so the page says only which
@@ -2449,6 +2469,8 @@ export const CHANNELS = {
 	answerEscalation: "devhub:answer-escalation",
 	startOrchestrator: "devhub:start-orchestrator",
 	setOrchestratorMode: "devhub:set-orchestrator-mode",
+	sendOrchestratorRequest: "devhub:send-orchestrator-request",
+	openOrchestratorRequest: "devhub:open-orchestrator-request",
 	reportOrchestratorView: "devhub:report-orchestrator-view",
 	listOrchestratorFolder: "devhub:list-orchestrator-folder",
 	readOrchestratorFile: "devhub:read-orchestrator-file",

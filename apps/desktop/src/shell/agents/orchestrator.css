@@ -632,6 +632,10 @@
   margin-top: var(--space-3);
 }
 
+.orchestrator-lane[data-tone="request"] {
+  --lane-ink: var(--secondary);
+}
+
 .orchestrator-lane[data-tone="ask"] {
   --lane-ink: var(--accent);
 }
@@ -1275,4 +1279,156 @@
   flex: none;
   fill: currentColor;
   opacity: 0.8;
+}
+
+/* ------------------------------------------------------------- requests */
+
+/* The header's +: the tabs' quiet square, the mark alone. */
+.orchestrator-request-wrap {
+  display: inline-flex;
+}
+
+.orchestrator-request-button {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--secondary);
+}
+
+.orchestrator-request-button svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-width: 1.4;
+}
+
+.orchestrator-request-button:hover,
+.orchestrator-request-button[aria-expanded="true"] {
+  background: var(--wash);
+  color: var(--primary);
+}
+
+.orchestrator-request-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* The composer: the conversation's box on the GitHub card's raised ground,
+   hung from the tools' right edge (as the delivery card is), at a width a
+   sentence or two fits. */
+.orchestrator-request-composer {
+  position: absolute;
+  z-index: 25;
+  top: 100%;
+  right: 0;
+  box-sizing: border-box;
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  padding: var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  margin-top: 4px;
+  background: var(--chrome-raised, var(--chrome));
+  box-shadow: var(--shadow-raised);
+  color: var(--primary);
+  font-size: 12px;
+  animation: orchestrator-fade-in var(--motion-fast) var(--ease-standard) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orchestrator-request-composer {
+    animation: none;
+  }
+}
+
+.orchestrator-request-hint {
+  margin: 0 0 var(--space-2);
+  color: var(--secondary);
+  font-size: 11px;
+}
+
+.orchestrator-request-box {
+  border-radius: 10px;
+  cursor: text;
+}
+
+.orchestrator-request-input {
+  width: 100%;
+  min-height: 4.65em;
+  max-height: 200px;
+  font-size: 13px;
+}
+
+.orchestrator-request-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.orchestrator-request-keys {
+  flex: 1;
+  color: var(--tertiary);
+  font-size: 11px;
+}
+
+.orchestrator-request-cancel,
+.orchestrator-request-send {
+  height: 22px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: 12px;
+}
+
+.orchestrator-request-cancel {
+  background: transparent;
+  color: var(--secondary);
+}
+
+.orchestrator-request-cancel:hover {
+  background: var(--wash);
+  color: var(--primary);
+}
+
+.orchestrator-request-send {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.orchestrator-request-send:disabled {
+  background: var(--wash);
+  color: var(--disabled-ink);
+}
+
+.orchestrator-request-cancel:focus-visible,
+.orchestrator-request-send:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* A request on the board: not a link anywhere, so no hover wash. */
+.orchestrator-request-card:hover {
+  background: transparent;
+}
+
+.orchestrator-request-card[data-state="filed"] .orchestrator-card-title {
+  color: var(--secondary);
+}
+
+.orchestrator-request-note {
+  overflow: hidden;
+  color: var(--tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

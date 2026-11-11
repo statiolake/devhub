@@ -499,6 +499,8 @@ cannot write one.
 
 ### The board
 
+- **依頼** — the person's requests from the header's + (see "Requests"),
+  there only while there are any: 送信待ち, 受付待ち, 登録済み.
 - **要回答** — ranked: priority first (high, normal, low), then effort
   (quick, normal, deep), then oldest question first, with how long it has
   waited. A ticket asked again after an answer carries 追加の質問.
@@ -514,7 +516,7 @@ the chips on a card (選択肢 3, 優先, 停滞) and each lane's empty line
 (対応中のものはありません。) — because the lane names are the CLI's own
 vocabulary (`待機中`, `--tell board`), and a lane called 対応中 that says
 "Nothing in progress." under itself is two voices in one place. The header's
-mode control (Full · Saving · Off) and GitHub pill keep English names: they
++, mode control (Full · Saving · Off) and GitHub pill keep English names: they
 name a setting and a service, not something the board says.
 
 An escalation's chips — its agents, its Workspace, its links — are all one
@@ -893,6 +895,7 @@ work, with its own tools (`gh`), not by the orchestrator.
 | `waiting.changed`         | a 待機中 escalation may be ready: what it is about changed (`subjects_changed`), or its `--at` came (`due`, once per wait)                                                                  | `[waiting.changed] esc=12 — subjects_changed`, `[waiting.changed] esc=15 — due`                                                                                                      |
 | `usage.threshold`         | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                                                      | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                                          |
 | `triage`                  | time to rank the open work again: every 30 minutes in full, every hour in saving (see "Triage")                                                                                             | `[triage] — 優先度の見直し: …`                                                                                                                                                       |
+| `request`                 | the person sent a request from the board's +. Sent at once, as its own message: the person's words                                                                                          | `req=3 人からの依頼 (…):` and, on the next line, what they wrote                                                                                                                     |
 | `timer.elapsed`           | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                                                     | `[timer.elapsed] sweep`                                                                                                                                                              |
 | `custom.*`                | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                                               | `[custom.deploy] — staging に deploy 完了`                                                                                                                                           |
 
@@ -1097,17 +1100,17 @@ and keeps the ranking where DevHub reads it (`main/orchestrator/triage.ts`).
 - **The ranking** is `high`, `normal` or `low` per subject, recorded with
   `devhub --tell orchestrator priority set SUBJECT LEVEL [--note WHY]`, the
   subject named as its event line names it: `esc=12`, `issue=OWNER/REPO#N`,
-  `pr=OWNER/REPO#N`, `agent=ID` (a unique prefix will do). An
+  `pr=OWNER/REPO#N`, `agent=ID` (a unique prefix will do), `req=N`. An
   escalation's priority **is** its rank (`escalation rank --priority`, the
   board's 優先 chip and the 要回答 order), so it has one place; every
   other subject's is kept in `orchestrator-priorities.json` (per profile,
   across restarts, the newest 500). `priority list` (or `--json`) gives them
   all, `priority clear` takes one back. The board shows them calmly: an
-  escalation's 優先 chip and order as before, an
+  escalation's 優先 chip and order as before, a request's 優先 chip, an
   agent's in its Sidebar tooltip (`priority: high`), and each `needsAction`
   subject's in `board --json`.
 - **In saving, only high goes.** A batch carries only the lines about a
-  subject ranked **high** — an escalation, an item or an agent
+  subject ranked **high** — an escalation, an item, an agent or a request
   whose priority is `high`. Every other line — a subject ranked normal or
   low, one not ranked yet, and lines about no subject (timers, the usage
   readout, `custom.*`) — stays pending, one line per subject as always, and
@@ -1117,10 +1120,36 @@ and keeps the ranking where DevHub reads it (`main/orchestrator/triage.ts`).
   full. **High** is the level, not a count: the charter asks the
   orchestrator to keep it for what makes the person or other work wait (a
   person waiting on an answer, a deadline, production, an item blocking
-  others), and to keep it to about three. The person's words,
+  others), and to keep it to about three. The person's words, requests,
   `init` and `triage` are never held by it. Saving's other rules stand: no
   batch at all while two or more tasks are in progress, a triage's
   included.
+
+### Requests: the board's +
+
+The **+** in the board's header (or `Cmd+Q +`, "Orchestrator: New
+Request…" in the palette, which shows the screen first) opens a small
+composer under the header — the conversation's box — for asking the
+orchestrator for something, such as a task to file. ⌘Return (or 送信)
+sends it, Esc closes it and gives the keyboard back to the +.
+
+- **It is the person's words**: a `request` event, delivered at once as its
+  own message (`req=3 人からの依頼 (…):` and, on the next line, the text as
+  typed), like an answer — held only while the mode is off, and never by
+  saving's gates. One sent with no orchestrator running waits for one, and
+  goes once it starts, as do the ones kept from before a
+  restart.
+- **It is on the board at once**, in a **依頼** lane above 要回答 (there only
+  while there are requests): **送信待ち** while off (or with no
+  orchestrator), **受付待ち** once
+  delivered, **登録済み** with where it went once the orchestrator files it
+  as a task (an Issue, an agent's work, an escalation) and says so with
+  `devhub --tell orchestrator request done N --note "<where>"`. The heading
+  counts the open ones; the last three filed stay under them.
+- Kept in `orchestrator-requests.json` across restarts; `orchestrator
+request list` lists them. It is a request rather than a task item of its
+  own: the orchestrator already files work as Issues and agents, and a
+  second kind of task would be a second board to keep in step.
 
 ### The sources
 
@@ -1264,8 +1293,9 @@ devhub --tell orchestrator start --root PATH --profile P --gui|--tui [--prompt -
 devhub --tell orchestrator status [--json]          # its agent, state, lane counts, mode, GitHub polling
 devhub --tell orchestrator stop | restart           # Stop Agent / Restart Session on it
 devhub --tell orchestrator mode [full|saving|off]   # the mode, or choose one (off at every launch; see "Modes")
-devhub --tell orchestrator priority set SUBJECT high|normal|low [--note WHY]   # triage: esc=N, issue=/pr=OWNER/REPO#N, agent=ID
+devhub --tell orchestrator priority set SUBJECT high|normal|low [--note WHY]   # triage: esc=N, issue=/pr=OWNER/REPO#N, agent=ID, req=N
 devhub --tell orchestrator priority [list] | clear SUBJECT   # the ranking, the last and next triage
+devhub --tell orchestrator request list | done N [--note WHERE]   # the person's requests (the board's +)
 devhub --tell orchestrator pause | resume          # mode off (GitHub polling suspended) / mode full (delivers at once, as one message)
 devhub --tell orchestrator events [--last N] [--json]   # recent events and what came of them
 devhub --tell orchestrator emit --type custom.NAME --text TEXT|-

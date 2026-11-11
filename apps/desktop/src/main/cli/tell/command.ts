@@ -447,6 +447,13 @@ export type TellCommand =
 	  }
 	| { readonly verb: "orchestrator-priority-clear"; readonly subject: string }
 	| { readonly verb: "orchestrator-priority-list" }
+	/** The person's requests (the board's +): listed, or marked filed. */
+	| { readonly verb: "orchestrator-request-list" }
+	| {
+			readonly verb: "orchestrator-request-done";
+			readonly id: number;
+			readonly note?: string;
+	  }
 	/** The mode (full, saving, off), or choose one. */
 	| {
 			readonly verb: "orchestrator-mode";
@@ -902,10 +909,13 @@ orchestrator (the Orchestrator row: the board, escalations, events)
   orchestrator priority set <subject> high|normal|low [--note <text>]
                                    triage: rank a subject as its event line
                                    names it (esc=12, issue=OWNER/REPO#N,
-                                   pr=OWNER/REPO#N, agent=ID); in
+                                   pr=OWNER/REPO#N, agent=ID, req=N); in
                                    saving only lines about high ones go
   orchestrator priority [list] | clear <subject>
                                    the priorities, the last and next triage
+  orchestrator request list | done <id> [--note <where>]
+                                   the person's requests (the board's +):
+                                   done says where it was filed as a task
   orchestrator pause | resume      mode off / mode full: turning on delivers
                                    the held ones at once, the person's words
                                    each alone, then the rest as one message
@@ -1770,6 +1780,30 @@ function parseOrchestrator(
 					throw new Refusal("orchestrator priority takes: list, set, clear.");
 			}
 		}
+		case "request": {
+			const [action = "list", ...more] = rest;
+			switch (action) {
+				case "list":
+					positionals(readFlags(more, NO_FLAGS), []);
+					return { verb: "orchestrator-request-list" };
+				case "done": {
+					const flags = readFlags(more, { values: ["--note"], switches: [] });
+					const [id] = positionals(flags, ["<id>"]);
+					if (!/^\d+$/u.test(id!))
+						throw new Refusal(
+							`a request id is a number, not ${JSON.stringify(id)}.`,
+						);
+					const note = one(flags, "--note");
+					return {
+						verb: "orchestrator-request-done",
+						id: Number(id),
+						...(note === undefined ? {} : { note }),
+					};
+				}
+				default:
+					throw new Refusal("orchestrator request takes: list, done.");
+			}
+		}
 		case "mode": {
 			const [mode, ...more] = rest;
 			positionals(readFlags(more, NO_FLAGS), []);
@@ -1842,7 +1876,7 @@ function parseOrchestrator(
 		}
 		default:
 			throw new Refusal(
-				"orchestrator takes: start, status, stop, restart, mode, priority, pause, resume, events, emit, timer.",
+				"orchestrator takes: start, status, stop, restart, mode, priority, request, pause, resume, events, emit, timer.",
 			);
 	}
 }

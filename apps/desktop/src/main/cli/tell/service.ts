@@ -736,7 +736,10 @@ export interface TellOrchestratorPorts {
 		readonly triagedAt?: number;
 		readonly nextTriageAt?: number;
 	};
-
+	/** The person's requests, oldest first. */
+	requests(): readonly TellRequest[];
+	/** Filed as a task, and where. */
+	fileRequest(id: number, note: string | undefined): TellRequest;
 	/** The last `last` events, oldest first, each with what came of it. */
 	events(last: number): readonly TellEventEntry[];
 	/** A `custom.*` event, as any source dispatches one. */
@@ -794,6 +797,16 @@ export interface TellEventEntry {
 	readonly into?: number;
 	/** The event's fields, as `{EVENT_JSON}` carries them. */
 	readonly event: Record<string, unknown>;
+}
+
+/** A request the person sent from the board's +. */
+export interface TellRequest {
+	readonly id: number;
+	readonly text: string;
+	readonly at: number;
+	readonly state: "held" | "sent" | "filed";
+	readonly sentAt?: number;
+	readonly filed?: { readonly at: number; readonly note?: string };
 }
 
 export interface TellTimer {
@@ -1346,6 +1359,31 @@ export class TellService {
 						),
 					].join("\n"),
 					data: list,
+				};
+			}
+			case "orchestrator-request-list": {
+				const list = this.ports.orchestrator.requests();
+				return {
+					message:
+						list.length === 0
+							? "No requests."
+							: list
+									.map(
+										(one) =>
+											`req=${String(one.id)}  ${one.state}${one.filed?.note === undefined ? "" : ` (${one.filed.note})`}  ${one.text.replace(/\s+/gu, " ").slice(0, 100)}`,
+									)
+									.join("\n"),
+					data: { requests: list },
+				};
+			}
+			case "orchestrator-request-done": {
+				const filed = this.ports.orchestrator.fileRequest(
+					command.id,
+					command.note,
+				);
+				return {
+					message: `req=${String(filed.id)} is filed${filed.filed?.note === undefined ? "" : `: ${filed.filed.note}`}.`,
+					data: filed,
 				};
 			}
 			case "orchestrator-mode": {

@@ -228,6 +228,8 @@ export type ChordEffect =
 	/** Put the `devhub` launcher on the PATH (`cli/install.ts`). */
 	| { readonly kind: "install-cli" }
 	| { readonly kind: "restart-terminals" }
+	/** The Orchestrator screen, with its request composer open. */
+	| { readonly kind: "orchestrator-request" }
 	/** The Orchestrator's mode, as the person chooses it. */
 	| {
 			readonly kind: "orchestrator-mode";
@@ -531,6 +533,8 @@ export function resolveChord(
 
 		case "restart_terminals":
 			return { kind: "restart-terminals" };
+		case "orchestrator_request":
+			return { kind: "orchestrator-request" };
 		case "orchestrator_full":
 			return { kind: "orchestrator-mode", mode: "full" };
 		case "orchestrator_saving":

@@ -323,6 +323,7 @@ import {
 	parseSubject,
 	type SubjectRef,
 } from "../orchestrator/triage.js";
+import { MAX_REQUEST_LENGTH, RequestFile } from "../orchestrator/requests.js";
 import { inProgressCount } from "../../ipc/orchestratorLanes.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
@@ -2041,6 +2042,21 @@ export class AppController {
 			},
 			setOrchestratorMode: (mode) => {
 				this.orchestrator?.setMode(mode);
+			},
+			// The screen first (a deliberate move, as the row's click is),
+			// then the composer on it.
+			openOrchestratorRequest: () => {
+				void this.dispatchAwaiting(
+					intentFromWire({
+						type: "select_context",
+						context: { kind: "orchestrator" },
+						reason: "explicit",
+					}),
+				)
+					.then(() => {
+						this.send(CHANNELS.openOrchestratorRequest, undefined);
+					})
+					.catch(report);
 			},
 			navigateHistory: (direction) => this.navigateHistory(direction),
 			openCommandPalette: () => {
@@ -7642,15 +7658,20 @@ export class AppController {
 			undefined,
 			(line) => console.error(line),
 		);
-		// The triage's priorities, across restarts.
+		// The triage's priorities and the person's requests, across restarts.
 		const priorities = new PriorityFile(
 			join(userDataPath, "devhub", "orchestrator-priorities.json"),
+			(line) => console.error(line),
+		);
+		const requests = new RequestFile(
+			join(userDataPath, "devhub", "orchestrator-requests.json"),
 			(line) => console.error(line),
 		);
 		this.orchestrator = new OrchestratorService({
 			store,
 			kept,
 			priorities,
+			requests,
 			agents: () => this.liveAgents(),
 			settings: () => this.config.orchestrator,
 			startProblem: () => this.orchestratorStartProblem(),
@@ -7771,7 +7792,7 @@ export class AppController {
 			},
 		});
 		this.orchestrator.observeUsage(this.usageLimits.wire());
-		for (const refused of [priorities.refused])
+		for (const refused of [priorities.refused, requests.refused])
 			if (refused !== undefined) {
 				console.error(`[devhub] ${refused}`);
 				this.publishError(errorWire(new Error(refused)));
@@ -7791,7 +7812,7 @@ export class AppController {
 		const ref = parseSubject(text);
 		if (ref === undefined)
 			throw new Error(
-				`a subject is esc=ID, issue=OWNER/REPO#N, pr=OWNER/REPO#N or agent=ID, as the event lines name it; not ${JSON.stringify(text)}.`,
+				`a subject is esc=ID, issue=OWNER/REPO#N, pr=OWNER/REPO#N, agent=ID or req=ID, as the event lines name it; not ${JSON.stringify(text)}.`,
 			);
 		if (ref.kind !== "agent") return ref;
 		const ids = this.coordinator.model.workspaces
@@ -8211,6 +8232,8 @@ export class AppController {
 						? {}
 						: { nextTriageAt: orchestrator().nextTriageAt! }),
 				}),
+				requests: () => orchestrator().requests(),
+				fileRequest: (id, note) => orchestrator().fileRequest(id, note),
 				events: (last) => orchestrator().eventLog(last),
 				emit: (type, text) => orchestrator().emit(type, text),
 				timers: () => orchestrator().timers.list(),
@@ -9972,6 +9995,17 @@ export class AppController {
 			if (!isOrchestratorMode(mode))
 				throw namedFailure(new Error("mode is full, saving or off"));
 			this.requireOrchestrator().setMode(mode);
+		});
+		handle(CHANNELS.sendOrchestratorRequest, (_event, text: unknown) => {
+			if (
+				typeof text !== "string" ||
+				text.trim() === "" ||
+				text.length > MAX_REQUEST_LENGTH
+			)
+				throw namedFailure(
+					new Error("a request is some text, at most 20,000 characters"),
+				);
+			this.requireOrchestrator().request(text.trim());
 		});
 		// The Files tab: the orchestrator's folder, read-only and confined to
 		// it (`orchestrator/orchestratorFiles.ts`).

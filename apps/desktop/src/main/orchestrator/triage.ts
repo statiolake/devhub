@@ -1,14 +1,14 @@
 /**
  * Priority triage (`docs/orchestrator.md`, "Triage: priorities"): on a
  * schedule DevHub asks the orchestrator to rank its open work — escalations,
- * the items (Issues, pull requests) and managed agents that need action — and
- * the orchestrator records each with
+ * the items (Issues, pull requests) and managed agents that need action, and
+ * the person's requests — and the orchestrator records each with
  * `devhub --tell orchestrator priority set SUBJECT high|normal|low`.
  *
  * **The store.** An escalation's priority is its own (`escalation rank
  * --priority`, which the board already shows); every other subject's is kept
  * here, by the subject key the dispatcher uses (`subjectOf`: `item
- * acme/app#12`, `agent <id>`), with when it was set and the
+ * acme/app#12`, `agent <id>`, `req 3`), with when it was set and the
  * orchestrator's note. It is kept on disk across restarts (`PRIORITY_FILE`),
  * written whole on each change, at most `MAX_PRIORITIES` (the oldest go).
  *
@@ -194,21 +194,23 @@ export class PriorityFile implements PriorityStorage {
 
 /**
  * A subject as the CLI names it — `esc=12`, `issue=acme/app#3`,
- * `pr=acme/app#9`, `agent=ab12cd34`, as the event lines write
+ * `pr=acme/app#9`, `agent=ab12cd34`, `req=3`, as the event lines write
  * them — parsed; undefined when it is none of those. An agent's id may be
  * a prefix: the caller resolves it.
  */
 export type SubjectRef =
 	| { readonly kind: "esc"; readonly id: number }
 	| { readonly kind: "item"; readonly ref: string }
-	| { readonly kind: "agent"; readonly id: string };
+	| { readonly kind: "agent"; readonly id: string }
+	| { readonly kind: "req"; readonly id: number };
 
 export function parseSubject(text: string): SubjectRef | undefined {
-	const match = /^(esc|issue|pr|agent)=(.+)$/u.exec(text.trim());
+	const match = /^(esc|issue|pr|agent|req)=(.+)$/u.exec(text.trim());
 	if (match === null) return undefined;
 	const [, kind, value] = match;
 	switch (kind) {
 		case "esc":
+		case "req":
 			return /^\d+$/u.test(value!) ? { kind, id: Number(value) } : undefined;
 		case "issue":
 		case "pr":
@@ -225,7 +227,7 @@ export function parseSubject(text: string): SubjectRef | undefined {
 /** The dispatcher's key for a subject (`subjectOf`): what is stored. */
 export function subjectKey(
 	ref: Exclude<SubjectRef, { kind: "esc" }> & {
-		readonly kind: "item" | "agent";
+		readonly kind: "item" | "agent" | "req";
 	},
 ): string {
 	switch (ref.kind) {
@@ -233,5 +235,7 @@ export function subjectKey(
 			return `item ${ref.ref}`;
 		case "agent":
 			return `agent ${ref.id}`;
+		case "req":
+			return `req ${String(ref.id)}`;
 	}
 }

@@ -55,6 +55,12 @@ const api: AgentsBridge = {
 		ipcRenderer.invoke(CHANNELS.startOrchestrator) as Promise<void>,
 	setOrchestratorMode: (mode: OrchestratorModeWire) =>
 		ipcRenderer.invoke(CHANNELS.setOrchestratorMode, mode) as Promise<void>,
+	sendOrchestratorRequest: (text: string) =>
+		ipcRenderer.invoke(CHANNELS.sendOrchestratorRequest, text) as Promise<void>,
+	onOpenOrchestratorRequest: (listener) =>
+		on<void>(CHANNELS.openOrchestratorRequest, () => {
+			listener();
+		}),
 	reportOrchestratorView: (view: OrchestratorViewWire) => {
 		ipcRenderer.send(CHANNELS.reportOrchestratorView, view);
 	},

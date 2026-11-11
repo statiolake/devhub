@@ -51,6 +51,7 @@
  * | `Cmd+Q Z`                   | `toggle_split`            |
  * | `Cmd+Q Shift+J`             | `toggle_scratch`          |
  * | `Cmd+Q Shift+O`             | `toggle_orchestrator`     |
+ * | `Cmd+Q +`                   | `orchestrator_request`    |
  * | `Cmd+Q O`                   | `swap_split_focus`        |
  * | `Cmd+Q V`                   | `toggle_terminal`         |
  * | `Cmd+Q E`                   | `focus_editor`            |
@@ -331,7 +332,7 @@
  * cannot be on a key and missing from the palette. A command may also be
  * *palette only* — no default key — when it already has a gesture somewhere
  * else and a chord for it would take a key some other command wants — or is
- * rare enough not to be worth a key. Seven are today, and
+ * rare enough not to be worth a key. Ten are today, and
  * `PALETTE_ONLY_COMMANDS` names them so that a command cannot lose its key by
  * accident: `focus_sidebar`, whose `S` was taken for a while and is left
  * unbound now (a click on a row is its other gesture), `open_log`, which
@@ -438,6 +439,7 @@ export type CommandId =
   | "open_task_manager"
   | "install_cli"
   | "restart_terminals"
+  | "orchestrator_request"
   | "orchestrator_full"
   | "orchestrator_saving"
   | "orchestrator_off"
@@ -872,6 +874,16 @@ export const COMMANDS: readonly CommandDefinition[] = [
     needs: "nothing",
     category: "DevHub",
     defaultKeys: [],
+  },
+  {
+    // The board's +: a request to the orchestrator, in a small composer on
+    // the Orchestrator screen (`main/orchestrator/requests.ts`). `+`, the
+    // button's own mark; it goes to the screen first.
+    id: "orchestrator_request",
+    label: "New Request…",
+    needs: "nothing",
+    category: "Orchestrator",
+    defaultKeys: ["+"],
   },
   {
     // The Orchestrator's mode (`main/orchestrator/mode.ts`), the board

@@ -180,11 +180,21 @@ export type OrchestratorEvent =
 			readonly resetsAt?: number;
 	  }
 	/**
-	 * Time to rank the open work again (`triage.ts`): every escalation, item
-	 * and managed agent, each `high`, `normal` or `low`, recorded
+	 * Time to rank the open work again (`triage.ts`): every escalation, item,
+	 * managed agent and request, each `high`, `normal` or `low`, recorded
 	 * with `orchestrator priority set`.
 	 */
 	| { readonly type: "triage" }
+	/**
+	 * The person's request, from the Orchestrator screen's +: their words,
+	 * delivered at once as their own message (`isHumanInput`). The
+	 * orchestrator files it as a task and marks it `orchestrator request done`.
+	 */
+	| {
+			readonly type: "request";
+			readonly requestId: number;
+			readonly text: string;
+	  }
 	| { readonly type: `custom.${string}`; readonly text: string };
 
 export type OrchestratorEventType = OrchestratorEvent["type"];
@@ -234,6 +244,7 @@ export const EVENT_TYPES = [
 	"timer.elapsed",
 	"usage.threshold",
 	"triage",
+	"request",
 	"custom.*",
 ] as const;
 
@@ -245,7 +256,7 @@ export function customTypeProblem(type: string): boolean {
 /** An event that carries the person's own words. */
 export type HumanInputEvent = Extract<
 	OrchestratorEvent,
-	{ type: "escalation_answered" | "escalation.human_direct" }
+	{ type: "escalation_answered" | "escalation.human_direct" | "request" }
 >;
 
 /** The person's own words: sent at once, as they typed them. */
@@ -254,7 +265,8 @@ export function isHumanInput(
 ): event is HumanInputEvent {
 	return (
 		event.type === "escalation_answered" ||
-		event.type === "escalation.human_direct"
+		event.type === "escalation.human_direct" ||
+		event.type === "request"
 	);
 }
 
@@ -409,6 +421,11 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 				summary:
 					"優先度の見直し: devhub --tell --json board で開いている仕事 (エスカレーション、要対応のアイテムとエージェント、依頼) を見て、それぞれ devhub --tell orchestrator priority set <対象> high|normal|low",
 			};
+		case "request":
+			return {
+				head: [`req=${String(event.requestId)}`],
+				summary: excerpt(event.text, 200),
+			};
 		case "usage.threshold":
 			return {
 				head: [
@@ -456,6 +473,10 @@ export function humanMessage(
 
 /** The messages one human event goes as: one per piece of their words. */
 export function humanMessages(event: HumanInputEvent): string[] {
+	if (event.type === "request")
+		return [
+			`req=${String(event.requestId)} 人からの依頼 (タスクとして登録し、devhub --tell orchestrator request done ${String(event.requestId)} --note "<登録先>" で受付済みにしてください):\n${event.text}`,
+		];
 	const pieces =
 		event.type === "escalation_answered"
 			? (event.answers ?? [])
@@ -485,6 +506,8 @@ export function subjectOf(event: OrchestratorEvent): string {
 			return `esc ${String(event.escalationId)}`;
 		case "triage":
 			return "triage";
+		case "request":
+			return `req ${String(event.requestId)}`;
 		case "needs_action":
 			return event.subject.kind !== "agent"
 				? `item ${prKey(event.subject.item)}`

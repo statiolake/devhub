@@ -1,6 +1,6 @@
 /**
  * Priority triage (`triage.ts`): the schedule, saving's priority gate in the
- * dispatcher, and the store.
+ * dispatcher, the store, and the person's requests (`requests.ts`).
  */
 
 import { describe, expect, it } from "vitest";
@@ -12,6 +12,7 @@ import {
 	type OrchestratorEvent,
 } from "./events.js";
 import { OrchestratorService } from "./orchestratorService.js";
+import { RequestBook } from "./requests.js";
 import {
 	PriorityBook,
 	SAVING_TRIAGE_INTERVAL_MS,
@@ -89,6 +90,18 @@ describe("saving's priority gate", () => {
 		run.events.flush();
 		expect(run.sent[0]).toContain("acme/app#1");
 		expect(run.sent[0]).toContain("acme/app#2");
+	});
+
+	it("never holds the person's words, nor a request", () => {
+		const run = dispatcher("saving", {});
+		run.events.dispatch({
+			type: "request",
+			requestId: 3,
+			text: "CSV を直して",
+		});
+		expect(run.sent).toEqual([
+			expect.stringMatching(/^req=3 人からの依頼 .*\nCSV を直して$/su),
+		]);
 	});
 
 	it("lets the held lines go when full comes back", () => {
@@ -200,6 +213,126 @@ describe("the triage schedule", () => {
 		expect(run.wire().agentPriorities).toEqual({ orch: "low" });
 		expect(run.clearPriority({ kind: "agent", id: "orch" })).toBe(true);
 		expect(run.priorityOf("agent orch")).toBeUndefined();
+		expect(() => run.setPriority({ kind: "req", id: 9 }, "high")).toThrow(
+			/no request #9/u,
+		);
+	});
+});
+
+describe("the person's requests", () => {
+	function service(mode: "full" | "off") {
+		const sent: string[] = [];
+		const run = new OrchestratorService({
+			store: EscalationStore.inMemory(),
+			agents: () => [
+				{
+					id: "orch",
+					name: "orchestrator",
+					workspaceId: "w",
+					workspaceLabel: "w",
+					status: "idle",
+					stopping: false,
+				},
+			],
+			settings: () => ({ ...DEFAULT_ORCHESTRATOR, event_prompt: "{EVENT}" }),
+			startProblem: () => undefined,
+			deliver: (_agent, text) => sent.push(text),
+			publish: () => undefined,
+			now: () => 5_000,
+			mode,
+		});
+		run.assign("orch");
+		sent.length = 0;
+		return { run, sent };
+	}
+
+	it("is on the board at once, and goes as the person's own message", () => {
+		const { run, sent } = service("full");
+		const made = run.request("請求書 CSV の文字化けを直す");
+		expect(sent).toEqual([
+			`req=${String(made.id)} 人からの依頼 (タスクとして登録し、devhub --tell orchestrator request done ${String(made.id)} --note "<登録先>" で受付済みにしてください):\n請求書 CSV の文字化けを直す`,
+		]);
+		expect(run.wire().requests).toEqual([
+			{
+				id: made.id,
+				text: "請求書 CSV の文字化けを直す",
+				at: 5_000,
+				state: "sent",
+			},
+		]);
+	});
+
+	it("waits as 送信待ち while off, and goes when turned on", () => {
+		const { run, sent } = service("off");
+		run.request("ログを調べる");
+		expect(sent).toHaveLength(0);
+		expect(run.wire().requests?.[0]?.state).toBe("held");
+		run.setMode("full");
+		expect(sent.some((text) => text.includes("ログを調べる"))).toBe(true);
+		expect(run.wire().requests?.[0]?.state).toBe("sent");
+	});
+
+	it("sent with no orchestrator running, waits for one, and goes once it starts", () => {
+		const sent: string[] = [];
+		let assigned = false;
+		const run = new OrchestratorService({
+			store: EscalationStore.inMemory(),
+			agents: () =>
+				assigned
+					? [
+							{
+								id: "orch",
+								name: "orchestrator",
+								workspaceId: "w",
+								workspaceLabel: "w",
+								status: "idle",
+								stopping: false,
+							},
+						]
+					: [],
+			settings: () => ({ ...DEFAULT_ORCHESTRATOR, event_prompt: "{EVENT}" }),
+			startProblem: () => undefined,
+			deliver: (_agent, text) => sent.push(text),
+			publish: () => undefined,
+			now: () => 5_000,
+			mode: "full",
+		});
+		run.request("まだ誰もいない");
+		expect(sent).toHaveLength(0);
+		expect(run.wire().requests?.[0]?.state).toBe("held");
+		assigned = true;
+		run.assign("orch");
+		expect(sent.filter((text) => text.includes("まだ誰もいない"))).toHaveLength(
+			1,
+		);
+		expect(run.wire().requests?.[0]?.state).toBe("sent");
+		// Seen again on the next projection: not sent twice.
+		run.observe();
+		expect(sent.filter((text) => text.includes("まだ誰もいない"))).toHaveLength(
+			1,
+		);
+	});
+
+	it("is filed by the orchestrator, with where", () => {
+		const { run } = service("full");
+		const made = run.request("A");
+		run.fileRequest(made.id, "https://github.com/acme/app/issues/40");
+		expect(run.wire().requests).toEqual([
+			expect.objectContaining({
+				id: made.id,
+				state: "filed",
+				filed: { at: 5_000, note: "https://github.com/acme/app/issues/40" },
+			}),
+		]);
+		expect(() => run.fileRequest(99, undefined)).toThrow(/no request #99/u);
+	});
+
+	it("numbers requests on from the highest kept", () => {
+		const book = new RequestBook({
+			load: () => [{ id: 7, text: "x", at: 1, state: "filed" }],
+			save: () => undefined,
+		});
+		expect(book.add("y", 2).id).toBe(8);
 	});
 });
 
@@ -232,6 +365,7 @@ describe("the store", () => {
 			kind: "agent",
 			id: "ab12cd34",
 		});
+		expect(parseSubject("req=2")).toEqual({ kind: "req", id: 2 });
 		expect(parseSubject("issue=12")).toBeUndefined();
 		expect(parseSubject("nope")).toBeUndefined();
 	});

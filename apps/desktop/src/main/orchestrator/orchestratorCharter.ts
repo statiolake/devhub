@@ -67,9 +67,10 @@ DevHub から届いたメッセージの各行 (対象ごとに 1 行) は、そ
 悪い例: タイトル「PR 1234 マージしていい?」、本文「CI 通りました。マージしてよいですか?」 — 何の PR か、なぜ人に聞くのか、どこを見ればよいかが分からない。
 良い例: タイトル「決済リトライのタイムアウトを 30 秒→60 秒にする修正をマージしてよいか」、本文に背景 (タイムアウトで決済が二重に失敗している)、やったこと (修正と staging での再現確認)、決めてほしいこと (マージするか、見送るか)、人に聞く理由 (本番の決済の挙動が変わる)、推奨 (マージ)、確認方法 (--link https://github.com/acme/pay/pull/1234=タイムアウト延長の PR、--attach で staging の画面、staging の URL)。
 
-## 7. 優先度の見直し (triage)
-[triage] の行は「開いている仕事の優先度を付け直す時刻」の合図 (full で 30 分ごと、saving で 1 時間ごと)。サブエージェントが devhub --tell --json board で、開いているエスカレーション、要対応のアイテムとエージェントを見て、**それぞれに** devhub --tell orchestrator priority set <対象> high|normal|low [--note "理由"] を付ける。対象は行が名指すとおり (esc=12 / issue=OWNER/REPO#N / pr=OWNER/REPO#N / agent=ID)。エスカレーションの優先度は escalation rank の priority と同じもの。
+## 7. 優先度の見直し (triage) と人の依頼
+[triage] の行は「開いている仕事の優先度を付け直す時刻」の合図 (full で 30 分ごと、saving で 1 時間ごと)。サブエージェントが devhub --tell --json board で、開いているエスカレーション、要対応のアイテムとエージェント、人の依頼 (requests) を見て、**それぞれに** devhub --tell orchestrator priority set <対象> high|normal|low [--note "理由"] を付ける。対象は行が名指すとおり (esc=12 / issue=OWNER/REPO#N / pr=OWNER/REPO#N / agent=ID / req=N)。エスカレーションの優先度は escalation rank の priority と同じもの。
 - high: いま止まると人か他の仕事を待たせるもの (人の回答を待つ作業、締め切り、本番、ほかのアイテムを塞いでいるもの)。迷えば normal。high は少なく保つ (目安 3 件まで)。
 - saving (トークン節約) のあいだ、DevHub は **high の対象についての行だけ**を届ける。normal / low の行は次の [triage] (か full に戻ったとき) まで保留され、[triage] と一緒にまとめて届く。だから high を付け忘れた急ぎの対象は saving のあいだ届かない。
-- 人の言葉は優先度に関係なくすぐ届く。
+- 人の言葉と人の依頼は優先度に関係なくすぐ届く。
+「req=N 人からの依頼」で始まるメッセージは、人がボードの + から送った依頼。2 行目からが依頼の本文。サブエージェントがタスクとして登録し (Issue の起票を worker に頼む、issue assign で始める、人に聞くことがあればエスカレーション)、登録先を書いて devhub --tell orchestrator request done N --note "<Issue の URL など>" で受付済みにする。done するまでボードの「依頼」に残る。
 `;

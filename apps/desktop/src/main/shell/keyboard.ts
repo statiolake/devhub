@@ -197,6 +197,8 @@ export interface ChordHost {
 	installCli(): void;
 	/** Start the pty host afresh; every terminal attaches again. */
 	restartTerminals(): void;
+	/** The Orchestrator screen, its request composer open. */
+	openOrchestratorRequest(): void;
 	/** The Orchestrator's mode: the person's choice. */
 	setOrchestratorMode(mode: "full" | "saving" | "off"): void;
 	/** Every command, by name — `Cmd+Q :`. */
@@ -352,6 +354,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "restart-terminals":
 			host.restartTerminals();
+			return;
+		case "orchestrator-request":
+			host.openOrchestratorRequest();
 			return;
 		case "orchestrator-mode":
 			host.setOrchestratorMode(effect.mode);

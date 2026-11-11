@@ -107,6 +107,11 @@ import {
 	type PriorityStorage,
 	type SubjectRef,
 } from "./triage.js";
+import {
+	RequestBook,
+	type PersonRequest,
+	type RequestStorage,
+} from "./requests.js";
 import type { UsageLimitsWire } from "../../ipc/contract.js";
 import {
 	usageThresholdRelevant,
@@ -200,6 +205,8 @@ export interface OrchestratorServicePorts {
 	) => void;
 	/** Where the triage's priorities are kept across restarts; absent: memory. */
 	readonly priorities?: PriorityStorage;
+	/** Where the person's requests are kept across restarts; absent: memory. */
+	readonly requests?: RequestStorage;
 	/** Where `agent keep`'s keepings are kept across restarts; absent: memory. */
 	readonly kept?: KeptStore;
 	readonly now?: () => number;
@@ -363,6 +370,10 @@ export class OrchestratorService {
 	#resetTimer: { cancel(): void } | undefined;
 	/** The orchestrator's ranking of the open work (`triage.ts`). */
 	readonly #priorities: PriorityBook;
+	/** The person's requests (`requests.ts`). */
+	readonly #requests: RequestBook;
+	/** The requests handed to the dispatcher this run (held or delivered). */
+	readonly #queuedRequests = new Set<number>();
 	/** What the next triage is counted from: the last, or the mode going on. */
 	#triageAnchor: number | undefined;
 	/** When the last `triage` went out to the orchestrator. */
@@ -371,6 +382,7 @@ export class OrchestratorService {
 	constructor(private readonly ports: OrchestratorServicePorts) {
 		this.#mode = new OrchestratorModeControl(ports.mode ?? LAUNCH_MODE);
 		this.#priorities = new PriorityBook(ports.priorities);
+		this.#requests = new RequestBook(ports.requests);
 		this.events = new EventDispatcher({
 			high: (subject) => this.#isHigh(subject),
 			mode: this.#mode.mode,
@@ -534,6 +546,10 @@ export class OrchestratorService {
 			this.publish();
 			return `esc ${String(ref.id)}`;
 		}
+		if (ref.kind === "req" && this.#requests.get(ref.id) === undefined)
+			throw new Error(
+				`there is no request #${String(ref.id)}. Run 'devhub --tell orchestrator request list'.`,
+			);
 		const key = subjectKey(ref);
 		this.#priorities.set(key, {
 			priority,
@@ -585,6 +601,52 @@ export class OrchestratorService {
 		if (due === undefined || due > now) return;
 		this.#triageAnchor = now;
 		this.events.dispatch({ type: "triage" });
+	}
+
+	// --- the person's requests ---------------------------------------------------
+
+	/** The person's request, from the board's +: kept, and delivered as their words. */
+	request(text: string): PersonRequest {
+		const made = this.#requests.add(text, this.#now());
+		this.#dispatchRequest(made);
+		this.publish();
+		return made;
+	}
+
+	/**
+	 * A request to the dispatcher: delivered at once, or held while off.
+	 * With no orchestrator running there is nobody to hold it for, so it is
+	 * not queued, and goes when one is started (`#releaseRequests`).
+	 */
+	#dispatchRequest(request: PersonRequest): void {
+		const entry = this.events.dispatch({
+			type: "request",
+			requestId: request.id,
+			text: request.text,
+		});
+		if (entry.fate !== "dropped") this.#queuedRequests.add(request.id);
+	}
+
+	/**
+	 * The requests waiting for an orchestrator (sent with none running, or
+	 * kept from before a restart): to the dispatcher, now there is one.
+	 */
+	#releaseRequests(): void {
+		if (this.orchestratorAgentId === undefined) return;
+		for (const one of this.#requests.open())
+			if (one.state === "held" && !this.#queuedRequests.has(one.id))
+				this.#dispatchRequest(one);
+	}
+
+	/** `orchestrator request done`: filed as a task, and where. */
+	fileRequest(id: number, note: string | undefined): PersonRequest {
+		const filed = this.#requests.file(id, this.#now(), note);
+		this.publish();
+		return filed;
+	}
+
+	requests(): readonly PersonRequest[] {
+		return this.#requests.all();
 	}
 
 	/** The usage readout moved: the automatic switch follows it. */
@@ -656,6 +718,8 @@ export class OrchestratorService {
 		this.#triageAnchor = this.#now();
 		if (initPrompt !== undefined) this.ports.deliver(agentId, initPrompt);
 		else this.events.dispatch({ type: "init" });
+		// Requests sent while none ran: after init, each as the person's words.
+		this.#releaseRequests();
 	}
 
 	release(): void {
@@ -874,6 +938,8 @@ export class OrchestratorService {
 		this.#watchStalled(agents, now);
 		this.#announceDue(now);
 		this.#announceTriage(now);
+		// An orchestrator restored with DevHub picks up the requests kept.
+		this.#releaseRequests();
 		this.#watchInvariant();
 		this.#schedule(now);
 		// The orchestrator's status may have moved: what waits for it may go.
@@ -934,6 +1000,11 @@ export class OrchestratorService {
 		const orchestrator = this.orchestratorAgentId;
 		let moved = false;
 		for (const event of events) {
+			if (event.type === "request") {
+				this.#requests.sent(event.requestId, this.#now());
+				moved = true;
+				continue;
+			}
 			if (event.type === "triage") {
 				this.#triagedAt = this.#now();
 				moved = true;
@@ -1313,6 +1384,23 @@ export class OrchestratorService {
 				const priority = this.priorityOf(view.subject);
 				return priority === undefined ? view : { ...view, priority };
 			}),
+			requests: [
+				...this.#requests.open(),
+				...this.#requests
+					.all()
+					.filter((one) => one.state === "filed")
+					.slice(-3)
+					.reverse(),
+			].map((one) => ({
+				id: one.id,
+				text: one.text,
+				at: one.at,
+				state: one.state,
+				...(one.filed === undefined ? {} : { filed: one.filed }),
+				...(this.priorityOf(`req ${String(one.id)}`) === undefined
+					? {}
+					: { priority: this.priorityOf(`req ${String(one.id)}`)! }),
+			})),
 			agentPriorities: Object.fromEntries(
 				this.ports.agents().flatMap((agent) => {
 					const priority = this.priorityOf(`agent ${agent.id}`);

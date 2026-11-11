@@ -118,6 +118,7 @@ function host(zoomActs = true) {
 		snapshot: () => SNAPSHOT,
 		selectContext: record("selectContext"),
 		setOrchestratorMode: record("setOrchestratorMode"),
+		openOrchestratorRequest: record("openOrchestratorRequest"),
 		interacted: (url) => {
 			interactions.push(url);
 		},

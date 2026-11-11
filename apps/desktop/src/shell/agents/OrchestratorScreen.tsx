@@ -48,6 +48,7 @@ import { RichText } from "./orchestratorRichText";
 import { listenForLightboxes } from "../conversation/lightboxLayer";
 import { FilesPage } from "./OrchestratorFiles";
 import { ModeControl } from "./OrchestratorDelivery";
+import { RequestButton, RequestCard } from "./OrchestratorRequest";
 import { GitHubPill } from "./OrchestratorGitHub";
 import { dueText, EscalationNote, inProgressBefore } from "./EscalationNote";
 import { dueWords } from "../../model/escalations";
@@ -240,6 +241,9 @@ export function OrchestratorBoard({
           ) : null}
         </div>
         <div className="orchestrator-board-tools">
+          <RequestButton
+            onSend={(text) => devhub().sendOrchestratorRequest(text)}
+          />
           {/* Always choosable: the mode is DevHub's, not the agent's, and
               Start turns an off one on. */}
           <ModeControl
@@ -525,6 +529,33 @@ function BoardPage({
         inert={reading}
         aria-hidden={reading ? true : undefined}
       >
+        {/* The person's requests (the header's +): there from the moment one
+            is sent, until the orchestrator has filed it; no heading when
+            there are none. */}
+        {(board.requests ?? []).length === 0 ? null : (
+          <Lane
+            title="依頼"
+            hint="Your requests to the orchestrator: waiting to be sent while it is off, then waiting for it to file each as a task."
+            tone="request"
+            count={
+              (board.requests ?? []).filter((one) => one.state !== "filed")
+                .length
+            }
+            empty="依頼はありません。"
+          >
+            {(board.requests ?? []).map((one) => (
+              <RequestCard
+                key={one.id}
+                request={one}
+                age={
+                  one.state === "filed" && one.filed !== undefined
+                    ? `filed ${span(now - one.filed.at)} ago`
+                    : span(now - one.at)
+                }
+              />
+            ))}
+          </Lane>
+        )}
         <Lane
           title="要回答"
           hint="Needs your answer: the orchestrator cannot go on without it. Oldest first."
@@ -654,7 +685,7 @@ function Lane({
 }: {
   readonly title: string;
   readonly hint: string;
-  readonly tone: "ask" | "progress" | "waiting" | "closed";
+  readonly tone: "request" | "ask" | "progress" | "waiting" | "closed";
   readonly count: number;
   readonly empty: string;
   readonly folded?: boolean;
