@@ -185,6 +185,16 @@ describe("devhub --tell's words, as the app reads them", () => {
 			url: "https://x.test/?a=b",
 			label: "検索結果",
 		});
+		expect(
+			splitLink("https://github.com/a/b/pull/12=冪等な再試行の PR (a=b)"),
+		).toEqual({
+			url: "https://github.com/a/b/pull/12",
+			label: "冪等な再試行の PR (a=b)",
+		});
+		expect(splitLink("https://x.test/?a=b 検索 = 結果")).toEqual({
+			url: "https://x.test/?a=b",
+			label: "検索 = 結果",
+		});
 		expect(splitLink("devhub:agent/aaaa")).toEqual({
 			url: "devhub:agent/aaaa",
 		});

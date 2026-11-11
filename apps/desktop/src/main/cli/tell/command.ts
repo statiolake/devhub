@@ -1409,9 +1409,9 @@ function escalationId(text: string | undefined): number {
 
 /**
  * `--link URL`, `--link URL=LABEL` and `--link 'URL LABEL'`: a URL has no
- * space in it, so a space always starts the label; an `=` does when no `?`
- * comes before it (a query's `=` is the URL's own: label such a URL with a
- * space).
+ * space in it, so the first space ends it; an `=` before that ends it when
+ * no `?` comes before it (a query's `=` is the URL's own: label such a URL
+ * with a space). The label may hold spaces and `=` of its own.
  */
 export function splitLink(value: string): {
 	readonly url: string;
@@ -1421,12 +1421,15 @@ export function splitLink(value: string): {
 	const space = trimmed.search(/\s/u);
 	const query = trimmed.indexOf("?");
 	const equals = trimmed.indexOf("=");
+	// The URL ends at the first space, or at an `=` before that with no `?`
+	// before it, whichever comes first: a label may have spaces of its own.
+	const url = space < 0 ? trimmed : trimmed.slice(0, space);
 	const at =
-		space >= 0
-			? space
-			: equals > 0 && (query < 0 || equals < query)
-				? equals
-				: -1;
+		equals > 0 &&
+		(space < 0 || equals < space) &&
+		(query < 0 || query > url.length || equals < query)
+			? equals
+			: space;
 	if (at < 0) return { url: trimmed };
 	const label = trimmed
 		.slice(at + 1)
