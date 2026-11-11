@@ -433,10 +433,12 @@ Terminals**, which is also the palette's `restart_terminals` ("Restart
 Terminals"). It forgets those ends, ends whatever host there is (its exit
 then is not counted), and tells every page (`TERMINAL_CHANNELS.revived`):
 each surface without a client attaches again, in a new host, to the same
-session. Checked in the app by killing the pty host from outside, once (the
-terminals came back by themselves) and three times in a row (the failure,
-then Restart Terminals: every terminal back on its session, the shell's
-history and a running `top` as they were).
+session. Checked in the app (Xvfb) by killing the pty host from outside (`kill -9`):
+once, and the terminal was back on a new host by itself; three times in a
+row, and the failure was shown with its one action, which Tab reaches; then
+Restart Terminals: the terminal back on its session, the shell's screen and
+a variable set before the first kill as they were. The same action with a
+host running ends it and attaches again, and is not counted as a crash.
 
 ### The surface
 
