@@ -98,8 +98,11 @@ function sendEvent(page: NeovimPage, event: NeovimPageEvent): void {
 export class NeovimEditors {
 	private readonly attached = new Map<string, Attached>();
 	/**
-	 * Attaches main started for a page before it asked (`preattach`), by
-	 * key: the page's own attach joins one rather than attaching again.
+	 * Attaches by key: each one while it runs, and one main started for a
+	 * page before it asked (`preattach`) until the page asks. An attach of
+	 * the same page joins one rather than attaching again, and `preattach`
+	 * starts none while there is one: Neovim refuses a second UI attach on
+	 * a channel, and the page would be left with no editor.
 	 */
 	private readonly early = new Map<
 		string,
@@ -108,6 +111,8 @@ export class NeovimEditors {
 			readonly cols: number;
 			readonly rows: number;
 			readonly reply: Promise<NeovimAttachReply>;
+			/** Main's own (`preattach`): kept, once done, for its page to join. */
+			readonly pre: boolean;
 		}
 	>();
 	private readonly buffers = new Map<string, string>();
@@ -176,19 +181,15 @@ export class NeovimEditors {
 	 */
 	preattach(page: NeovimPage, request: NeovimAttachRequest): void {
 		const key = request.workspaceId;
-		if (page.isDestroyed() || this.early.has(key) || this.attached.has(key))
+		// An attach running (the page's own, say) or done is the one there is.
+		if (
+			!isOverlayKey(key) ||
+			page.isDestroyed() ||
+			this.early.has(key) ||
+			this.attached.has(key)
+		)
 			return;
-		const reply = this.attach(page, request);
-		this.early.set(key, {
-			page,
-			cols: request.cols,
-			rows: request.rows,
-			reply,
-		});
-		void reply.then((answer) => {
-			if (!answer.ok && this.early.get(key)?.reply === reply)
-				this.early.delete(key);
-		});
+		void this.start(page, request, true);
 	}
 
 	/**
@@ -201,14 +202,16 @@ export class NeovimEditors {
 		page: NeovimPage,
 		request: NeovimAttachRequest,
 	): Promise<NeovimAttachReply> {
-		const overlays = this.options.overlays;
 		if (!isOverlayKey(request.workspaceId)) {
 			return { ok: false, message: "That Neovim is not DevHub's to draw." };
 		}
 		const early = this.early.get(request.workspaceId);
 		if (early !== undefined && early.page === page) {
-			this.early.delete(request.workspaceId);
 			const reply = await early.reply;
+			// Main's, joined: the page has it now. (Kept until done, so no
+			// `preattach` starts another meanwhile.)
+			if (early.pre && this.early.get(request.workspaceId) === early)
+				this.early.delete(request.workspaceId);
 			// What the page draws was attached at this size; its editor asks
 			// for its own from there.
 			return reply.ok
@@ -216,6 +219,40 @@ export class NeovimEditors {
 				: reply;
 		}
 		this.early.delete(request.workspaceId);
+		return this.start(page, request, false);
+	}
+
+	/**
+	 * An attach, known by its key while it runs (`early`) — and, main's own
+	 * (`pre`), once done until its page asks.
+	 */
+	private start(
+		page: NeovimPage,
+		request: NeovimAttachRequest,
+		pre: boolean,
+	): Promise<NeovimAttachReply> {
+		const key = request.workspaceId;
+		const reply = this.attachAnew(page, request);
+		const entry = {
+			page,
+			cols: request.cols,
+			rows: request.rows,
+			reply,
+			pre,
+		};
+		this.early.set(key, entry);
+		void reply.then((answer) => {
+			if ((!pre || !answer.ok) && this.early.get(key) === entry)
+				this.early.delete(key);
+		});
+		return reply;
+	}
+
+	private async attachAnew(
+		page: NeovimPage,
+		request: NeovimAttachRequest,
+	): Promise<NeovimAttachReply> {
+		const overlays = this.options.overlays;
 		if (!this.watched.has(page)) {
 			this.watched.add(page);
 			page.once("destroyed", () => {

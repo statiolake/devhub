@@ -17,10 +17,11 @@ import {
 } from "../../ipc/neovim.js";
 import type { ManagedNeovims } from "../editor/managedNeovim.js";
 import { NeovimEditors } from "../editor/neovimEditors.js";
-import type {
-	NotificationListener,
-	NeovimRpc,
-	RequestHandler,
+import {
+	NeovimRpcError,
+	type NotificationListener,
+	type NeovimRpc,
+	type RequestHandler,
 } from "../editor/neovimRpc.js";
 import type { WorkspaceTerminalTarget } from "../terminal/ports.js";
 import {
@@ -34,6 +35,8 @@ import type { FromNeovimHost, ToNeovimHost } from "./protocol.js";
 /** A Neovim's end of one connection: answers the attach, records the rest. */
 class FakeNeovim implements NeovimRpc {
 	closed = false;
+	/** Whether this channel is a UI: Neovim refuses a second attach on it. */
+	ui = false;
 	readonly notified: [string, readonly unknown[]][] = [];
 	readonly #close: (() => void)[] = [];
 	#notification: NotificationListener | undefined;
@@ -50,7 +53,17 @@ class FakeNeovim implements NeovimRpc {
 		if (method === "nvim_get_mode") return Promise.resolve({ blocking: false });
 		if (method === "nvim_eval")
 			return Promise.resolve(params[0] === "40+2" ? 42 : 0);
-		return Promise.resolve(null);
+		if (method === "nvim_ui_attach") {
+			if (this.ui)
+				return Promise.reject(
+					new NeovimRpcError(method, [0, "UI already attached to channel: 3"]),
+				);
+			this.ui = true;
+		}
+		if (method === "nvim_ui_detach") this.ui = false;
+		// A reply a moment later, as a socket's: what else is asked meanwhile
+		// comes between.
+		return new Promise((resolve) => setTimeout(() => resolve(null), 1));
 	}
 	notify(method: string, params: readonly unknown[]): void {
 		this.notified.push([method, params]);
@@ -334,6 +347,23 @@ describe("a Neovim editor's UI in the Neovim host", () => {
 		expect(
 			page.sent.filter(([name]) => name === NEOVIM_CHANNELS.redraw),
 		).toEqual([]);
+	});
+
+	it("is attached once when main's preattach comes while the page's own attach runs", async () => {
+		const w = world();
+		const page = new FakePage(1);
+		// The page asked first (its overlay came from tmux before the control
+		// client named the socket), and main's word came while it attached.
+		const asked = w.editors.attach(page, REQUEST);
+		await settle(0);
+		w.editors.preattach(page, { ...REQUEST, rows: 30 });
+		const reply = await asked;
+		await settle();
+		expect(reply.ok).toBe(true);
+		expect(w.connections).toHaveLength(1);
+		expect(w.last().nvim.ui).toBe(true);
+		expect(w.overlays.ended).not.toHaveBeenCalled();
+		expect(w.logs).toEqual([]);
 	});
 
 	it("is started ahead of the first attach when asked, and that attach uses it", async () => {

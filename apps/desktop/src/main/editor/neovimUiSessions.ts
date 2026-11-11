@@ -104,6 +104,13 @@ type Notifying = NeovimRpc & {
 
 export class NeovimUiSessions<P> {
 	private readonly sessions = new Map<string, Session<P>>();
+	/**
+	 * Connections being made, by Workspace: an attach asked meanwhile (the
+	 * page's own, while main's `preattach` connects) waits for that one, so
+	 * a UI has one connection — another would attach a second UI, which
+	 * nothing lets go of and which holds the Neovim at its size.
+	 */
+	private readonly opening = new Map<string, Promise<Session<P>>>();
 
 	constructor(private readonly options: NeovimUiSessionsOptions<P>) {}
 
@@ -113,20 +120,7 @@ export class NeovimUiSessions<P> {
 		target: NeovimUiTarget,
 	): Promise<{ readonly version: string }> {
 		const workspaceId = target.workspaceId;
-		let session = this.sessions.get(workspaceId);
-		if (
-			session !== undefined &&
-			(session.client.closed ||
-				session.server !== target.server ||
-				session.socketPath !== target.socketPath)
-		) {
-			this.detach(workspaceId);
-			session = undefined;
-		}
-		if (session === undefined) {
-			const client = await this.connectListening(target.socketPath);
-			session = this.open(workspaceId, client, page, target);
-		}
+		const session = await this.sessionFor(page, target);
 		session.page = page;
 		session.cols = target.cols;
 		session.rows = target.rows;
@@ -140,6 +134,42 @@ export class NeovimUiSessions<P> {
 			target.rows,
 			target.background,
 		);
+	}
+
+	/** `target`'s session: the one there is, the one being opened, or a new one. */
+	private async sessionFor(
+		page: P,
+		target: NeovimUiTarget,
+	): Promise<Session<P>> {
+		const workspaceId = target.workspaceId;
+		for (;;) {
+			const session = this.sessions.get(workspaceId);
+			const current =
+				session !== undefined &&
+				!session.client.closed &&
+				session.server === target.server &&
+				session.socketPath === target.socketPath;
+			if (current) return session;
+			const opening = this.opening.get(workspaceId);
+			if (opening !== undefined) {
+				// The session it opens is checked as any other, above.
+				await opening.catch(() => undefined);
+				if (this.opening.get(workspaceId) === opening)
+					this.opening.delete(workspaceId);
+				continue;
+			}
+			if (session !== undefined) this.detach(workspaceId);
+			const opened = this.connectListening(target.socketPath).then((client) =>
+				this.open(workspaceId, client, page, target),
+			);
+			this.opening.set(workspaceId, opened);
+			try {
+				return await opened;
+			} finally {
+				if (this.opening.get(workspaceId) === opened)
+					this.opening.delete(workspaceId);
+			}
+		}
 	}
 
 	/** Connected once the socket is there and listening (`LISTEN_WAIT_MS`). */
@@ -339,6 +369,7 @@ export class NeovimUiSessions<P> {
 
 	/** Let go of a Workspace's UI without saying so: it is closing. */
 	detach(workspaceId: string): void {
+		this.opening.delete(workspaceId);
 		const session = this.sessions.get(workspaceId);
 		if (session === undefined) return;
 		this.sessions.delete(workspaceId);

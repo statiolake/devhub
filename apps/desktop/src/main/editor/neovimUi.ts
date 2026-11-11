@@ -1202,8 +1202,31 @@ class AtomicCallError extends NeovimRpcError {
 	}
 }
 
+/** What Neovim says to an `nvim_ui_attach` on a channel that has a UI. */
+const ALREADY_ATTACHED = "UI already attached";
+
+function alreadyAttached(error: unknown): boolean {
+	return (
+		error instanceof NeovimRpcError && error.message.includes(ALREADY_ATTACHED)
+	);
+}
+
 export class NeovimUi {
+	/**
+	 * Whether this channel is attached as a UI. This is its one owner:
+	 * nothing else on this connection calls `nvim_ui_attach`, and an attach
+	 * asked while one runs joins it (`attaching`) — Neovim refuses a second
+	 * `nvim_ui_attach` on a channel that has a UI.
+	 */
 	private attached = false;
+	/** The attach running now, which an attach asked meanwhile joins. */
+	private attaching:
+		| {
+				readonly done: Promise<NeovimUiAttach>;
+				cols: number;
+				rows: number;
+		  }
+		| undefined;
 	/** Attached a moment only to free stale grids: nothing it says is drawn. */
 	private priming = false;
 	private sink: NeovimUiSink | undefined;
@@ -1222,8 +1245,59 @@ export class NeovimUi {
 		client.onRequest?.((method, params) => this.requested(method, params));
 	}
 
-	/** Attach (again) as the UI, the page at `sink` hearing what it draws. */
+	/**
+	 * Attach (again) as the UI, the page at `sink` hearing what it draws.
+	 *
+	 * Asked while an attach runs (main attached a pane's Neovim as the
+	 * control client named it, and the page asked too), it joins that one
+	 * instead of attaching again — Neovim would refuse the second
+	 * `nvim_ui_attach` on the channel ("UI already attached"), and the page
+	 * stay blank — and the UI is then resized to this size, `sink` hearing
+	 * what it draws from here. Only an attach asked once the last one is
+	 * done attaches anew (a page that started over).
+	 */
 	async attach(
+		sink: NeovimUiSink,
+		cols: number,
+		rows: number,
+		background?: "dark" | "light",
+	): Promise<NeovimUiAttach> {
+		for (;;) {
+			const running = this.attaching;
+			if (running === undefined) break;
+			this.sink = sink;
+			const joined = await running.done.then(
+				(attach) => attach,
+				() => undefined,
+			);
+			// It failed: the next to come attaches anew, the rest join that.
+			if (joined === undefined || !this.attached) continue;
+			if (running.cols !== cols || running.rows !== rows) {
+				running.cols = cols;
+				running.rows = rows;
+				await this.client
+					.request("nvim_ui_try_resize", [
+						Math.max(1, Math.floor(cols)),
+						Math.max(1, Math.floor(rows)),
+					])
+					.catch(() => undefined);
+			}
+			return joined;
+		}
+		const attaching = {
+			done: this.attachNow(sink, cols, rows, background),
+			cols,
+			rows,
+		};
+		this.attaching = attaching;
+		try {
+			return await attaching.done;
+		} finally {
+			if (this.attaching === attaching) this.attaching = undefined;
+		}
+	}
+
+	private async attachNow(
 		sink: NeovimUiSink,
 		cols: number,
 		rows: number,
@@ -1291,6 +1365,15 @@ export class NeovimUi {
 				error.message.includes(NOT_FIRST_UI)
 			)
 				return undefined;
+			// A call after the attach failed (DevHub's Lua once attached):
+			// the channel has its UI all the same, and is not left believed
+			// unattached — the next attach would be refused.
+			const attachAt = calls.findIndex(
+				([method]) => method === "nvim_ui_attach",
+			);
+			if (error instanceof AtomicCallError && error.index > attachAt) {
+				this.attached = true;
+			}
 			throw error;
 		};
 		let calls = setupCalls((lua) => this.setupLua.code(lua, version));
@@ -1328,11 +1411,11 @@ export class NeovimUi {
 		try {
 			// At another size, so every window moves or resizes and is placed
 			// again (`win_pos`) at the real attach: an unmoved one would not be.
-			await this.client.request("nvim_ui_attach", [
+			await this.uiAttach(
 				Math.max(20, Math.floor(cols / 2)),
 				Math.max(6, Math.floor(rows / 2)),
 				{ rgb: true, ext_linegrid: true },
-			]);
+			);
 			await this.client.request("nvim_command", ["redraw!"]);
 			await this.client.request("nvim_ui_detach", []);
 		} finally {
@@ -1343,11 +1426,11 @@ export class NeovimUi {
 			"local M = package.loaded['devhub_gui']; if M and M._before_attach then M._before_attach() end",
 			[],
 		]);
-		await this.client.request("nvim_ui_attach", [
+		await this.uiAttach(
 			Math.max(1, Math.floor(cols)),
 			Math.max(1, Math.floor(rows)),
 			uiAttachOptions(),
-		]);
+		);
 		this.attached = true;
 		await this.afterAttach();
 		// The sizes the priming attach spread, put back once the command line
@@ -1373,6 +1456,25 @@ export class NeovimUi {
 	 * started (`_keep_cmdheight`, or at `VimEnter` when Neovim answered that
 	 * while the config waited on something).
 	 */
+
+	/**
+	 * `nvim_ui_attach` outside the setup's request. A channel Neovim says
+	 * has a UI already (one this UI did not know it had) is detached first
+	 * and attached again: a refused attach would leave the page blank.
+	 */
+	private async uiAttach(
+		cols: number,
+		rows: number,
+		options: Record<string, unknown>,
+	): Promise<void> {
+		try {
+			await this.client.request("nvim_ui_attach", [cols, rows, options]);
+		} catch (error) {
+			if (!alreadyAttached(error)) throw error;
+			await this.client.request("nvim_ui_detach", []);
+			await this.client.request("nvim_ui_attach", [cols, rows, options]);
+		}
+	}
 
 	/**
 	 * Once attached: cmdheight the person's again, the GUI windows told

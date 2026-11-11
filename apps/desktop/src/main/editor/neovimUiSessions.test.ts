@@ -96,6 +96,27 @@ describe("an attach", () => {
 		expect(ended).toEqual([]);
 	});
 
+	it("asked twice while it connects, makes one connection: the second waits for it", async () => {
+		const missing = Object.assign(new Error("connect ENOENT /s"), {
+			code: "ENOENT",
+		});
+		const neovim = new FakeNeovim();
+		const extra = new FakeNeovim();
+		const { sessions, ended } = setup([missing, neovim, extra]);
+		const answers = await Promise.all([
+			sessions.attach("page", target),
+			sessions.attach("page", { ...target, rows: 30 }),
+		]);
+		expect(answers).toHaveLength(2);
+		expect(extra.requests).toEqual([]);
+		expect(
+			neovim.requests.filter(([m]) => m === "nvim_get_api_info"),
+		).toHaveLength(1);
+		expect(neovim.attachedAt()?.slice(0, 2)).toEqual([80, 24]);
+		expect(neovim.requests.at(-1)).toEqual(["nvim_ui_try_resize", [80, 30]]);
+		expect(ended).toEqual([]);
+	});
+
 	it("fails at once when the socket refuses for another reason", async () => {
 		const denied = Object.assign(new Error("connect EACCES /s"), {
 			code: "EACCES",

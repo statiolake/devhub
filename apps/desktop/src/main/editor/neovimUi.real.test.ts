@@ -468,6 +468,84 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 	);
 
 	it(
+		"attaches a channel once when two attaches race on it (main's preattach and the page's own): the second joins the first, at its size",
+		{ timeout: 15_000 },
+		async () => {
+			const scratch = makeSocketDir("nvim-race");
+			directories.push(scratch);
+			const socket = join(scratch, "n.sock");
+			const sink: NeovimUiSink = {
+				redraw: () => undefined,
+				guiWindows: () => undefined,
+				guiOpen: () => undefined,
+				guiClose: () => undefined,
+				guiSend: () => undefined,
+			};
+			const connect = async () => {
+				for (let attempt = 0; attempt < 200; attempt += 1) {
+					if (existsSync(socket)) {
+						try {
+							return await NeovimClient.connect(socket);
+						} catch {
+							// Not listening yet.
+						}
+					}
+					await new Promise((resolve) => setTimeout(resolve, 25));
+				}
+				throw new Error("nvim did not open its socket");
+			};
+			const race = async () => {
+				const client = await connect();
+				const attaches: string[] = [];
+				const request = client.request.bind(client);
+				client.request = (method, params) => {
+					if (
+						method === "nvim_ui_attach" ||
+						(method === "nvim_call_atomic" &&
+							(params[0] as [string][]).some(([m]) => m === "nvim_ui_attach"))
+					)
+						attaches.push(method);
+					return request(method, params);
+				};
+				const ui = new NeovimUi(client, {
+					read: () => Promise.resolve(""),
+					write: () => undefined,
+				});
+				// Both asked at once, as main's and the page's are.
+				const answers = await Promise.allSettled([
+					ui.attach(sink, 60, 30),
+					ui.attach(sink, 70, 32),
+				]);
+				const sizes = (await ui.request("nvim_exec_lua", [
+					"return { #vim.api.nvim_list_uis(), vim.o.columns, vim.o.lines }",
+					[],
+				])) as number[];
+				client.close();
+				return { answers: answers.map((a) => a.status), sizes, attaches };
+			};
+
+			// A pane's `nvim`, waiting for its first UI.
+			const embedded = spawn(
+				NVIM as string,
+				["--embed", "--listen", socket, "--clean", "-i", "NONE", "-n"],
+				{ stdio: ["pipe", "ignore", "ignore"] },
+			);
+			children.push(embedded);
+			const first = await race();
+			expect(first.answers).toEqual(["fulfilled", "fulfilled"]);
+			// The first UI attached in the setup's one request, and no other.
+			expect(first.attaches).toEqual(["nvim_call_atomic"]);
+			expect(first.sizes).toEqual([1, 70, 32]);
+
+			// The same Neovim, its UI gone (DevHub restarted): the priming
+			// attach's way, raced the same.
+			const again = await race();
+			expect(again.answers).toEqual(["fulfilled", "fulfilled"]);
+			expect(again.sizes).toEqual([1, 70, 32]);
+		},
+	);
+
+	it(
 		"drops what it would tell a UI whose channel has gone, and tells the next UI",
 		{ timeout: 15_000 },
 		async () => {
