@@ -1018,8 +1018,8 @@ A message whose text could not be read says so and where to read it
   `{EVENT_JSON}` the same as JSON when the template has it; `init_prompt`
   for a batch carrying `init`. The first batch after a quiet spell goes at
   once (after a 300 ms window).
-- **Wake-ups the orchestrator set go on time** (a `timer set` timer, a
-  wait's `--at`): each as a message of its own when it comes, not with a
+- **Timers and waits' times go on time** (`[[orchestrator.timers]]`, a
+  `timer set` timer, a wait's `--at`): each as a message of its own when it comes, not with a
   batch and not held by the interval (see "Saving: state changes and
   nudges"); only off holds them.
 - **Held only by a foreground turn**: the orchestrator `working`, or a
@@ -1121,9 +1121,11 @@ waiting on the orchestrator. So it tells two kinds of line apart
 (`main/orchestrator/mode.ts`: `SAVING_CLASSES`, `savingClassOf`,
 `savingHolds`), and throttles only the second:
 
-- **On time** — a wake-up the orchestrator set itself: a timer it set
-  (`orchestrator timer set`, "look at Slack at 15:00", "re-read the thread
-  in 30 minutes") and the time it gave a 待機中 escalation
+- **On time** — an explicit timer and a wait's time: the person's
+  `[[orchestrator.timers]]` (what they have the orchestrator do on a clock,
+  such as reading Slack), a timer the orchestrator set (`orchestrator timer
+  set`, "re-read the thread in 30 minutes"), and the time it gave a 待機中
+  escalation
   (`escalation wait --at`). **Sent at its time, alone** — its one line in `event_prompt`
   as a message of its own, like the person's words: never batched, never
   held by the interval, the pickup wait, the priority gate or the tasks in
@@ -1140,8 +1142,7 @@ waiting on the orchestrator. So it tells two kinds of line apart
   saving, with the next batch at saving's interval, whatever the subject's
   priority and however many tasks are in progress.
 - **A nudge** — a reminder or chatter: a subject said again with nothing new
-  about it ("still idle"), an item nobody has started, a settings timer
-  (`[[orchestrator.timers]]`, a periodic re-prompt), the usage readout,
+  about it ("still idle"), an item nobody has started, the usage readout,
   `custom.*`. **Goes only when its subject is ranked high**; the rest
   waits, one line per subject, for the next triage (hourly in saving) or for
   full.
@@ -1166,7 +1167,7 @@ Every kind of line the dispatcher handles, explicitly:
 | `waiting.changed` `subjects_changed`     | state change | what a 待機中 escalation is about moved (CI, a review, a merge, its agents)                                                                                              |
 | `waiting.changed` `due`                  | on time      | the time the orchestrator set for a 待機中 escalation (`escalation wait --at`) came; with `subjects_changed` folded in, still on time                                    |
 | `timer.elapsed` from `timer set`         | on time      | a timer the orchestrator set itself (`source: "session"`): its own wake-up                                                                                               |
-| `timer.elapsed` from the settings        | nudge        | one of `[[orchestrator.timers]]`: a periodic re-prompt                                                                                                                   |
+| `timer.elapsed` from the settings        | on time      | one of the person's `[[orchestrator.timers]]`: what they set the orchestrator to do on a clock (reading Slack, which affects other people)                                |
 | `usage.threshold`                        | nudge        | the plan's use: status                                                                                                                                                   |
 | `custom.*`                               | nudge        | what a script says: not DevHub's to judge                                                                                                                                |
 

@@ -345,7 +345,7 @@ describe("saving: state changes and nudges", () => {
 			"waiting.changed subjects_changed": "state_change",
 			"waiting.changed due": "on_time",
 			"timer.elapsed timer set": "on_time",
-			"timer.elapsed settings": "nudge",
+			"timer.elapsed settings": "on_time",
 			"usage.threshold": "nudge",
 			"custom.*": "nudge",
 		});
@@ -552,11 +552,7 @@ describe("saving's dispatcher: the work in progress is never held", () => {
 			{ event: needsAction(1), print: "t1 no_agent" },
 			{ event: needsAction(2), print: "t1 no_agent" },
 		];
-		run.events.dispatch({
-			type: "timer.elapsed",
-			name: "sweep",
-			interval: "30m",
-		});
+		run.events.dispatch({ type: "custom.chatter", text: "sweep" });
 		run.advance(60 * MIN);
 		expect(run.sent).toHaveLength(0);
 		// A state change still goes alone, the nudges left waiting.
@@ -594,7 +590,7 @@ describe("saving's dispatcher: the work in progress is never held", () => {
 		expect(run.sent[1]).not.toContain("acme/app#1");
 	});
 
-	it("sends the orchestrator's own timer at its time, alone: not batched, not held by the interval or for triage", () => {
+	it("sends a timer at its time, alone, the orchestrator's and the settings' alike: not batched, not held by the interval or for triage", () => {
 		const run = savingRun({ tasks: 3 });
 		run.state.standing = [{ event: needsAction(1), print: "t1 no_agent" }];
 		run.events.dispatch({
@@ -617,15 +613,23 @@ describe("saving's dispatcher: the work in progress is never held", () => {
 			"[waiting.changed] esc=7 — subjects_changed",
 			"[timer.elapsed] slack",
 		]);
-		// A settings timer is a periodic re-prompt: it waits.
+		// The person's settings timer (reading Slack, say): on time too.
+		run.advance(MIN);
 		run.events.dispatch({
 			type: "timer.elapsed",
-			name: "sweep",
+			name: "slack-check",
 			interval: "30m",
+			source: "settings",
 		});
+		expect(run.sent).toEqual([
+			"[waiting.changed] esc=7 — subjects_changed",
+			"[timer.elapsed] slack",
+			"[timer.elapsed] slack-check",
+		]);
+		// A nudge still waits: the item nobody started, not high.
 		run.advance(60 * MIN);
-		expect(run.sent).toHaveLength(2);
-		expect(run.events.held().map((one) => one.type)).toEqual(["timer.elapsed"]);
+		expect(run.sent).toHaveLength(3);
+		expect(run.events.held()).toEqual([]);
 	});
 
 	it("sends a wait's time on time too, and holds it only while off", () => {

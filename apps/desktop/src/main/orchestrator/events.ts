@@ -172,9 +172,9 @@ export type OrchestratorEvent =
 			readonly name: string;
 			readonly interval: string;
 			/**
-			 * `session`: the orchestrator set it (`orchestrator timer set`), its
-			 * own wake-up — sent on time. `settings` (or absent): one of
-			 * `[[orchestrator.timers]]`, a periodic re-prompt.
+			 * `session`: the orchestrator set it (`orchestrator timer set`).
+			 * `settings` (or absent): one of the person's
+			 * `[[orchestrator.timers]]`. Either is sent on time (`onTime`).
 			 */
 			readonly source?: "settings" | "session";
 	  }

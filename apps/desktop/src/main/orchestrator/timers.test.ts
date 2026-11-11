@@ -120,9 +120,43 @@ describe("the orchestrator's timers", () => {
 		]);
 	});
 
-	it("keep at most one pending event each", () => {
+	it("are sent each on time, alone, the settings' and the session's alike, even mid-turn and in saving", () => {
+		const time = clock();
+		const sent: string[] = [];
+		const dispatcher = new EventDispatcher({
+			mode: "saving",
+			orchestrator: () => "orch",
+			settings: () => ({
+				event_prompt: "{EVENT}",
+				init_prompt: undefined,
+				events: ["*"],
+				delivery_interval: "5m",
+			}),
+			deliver: (_agent, text) => sent.push(text),
+			busy: () => true,
+			high: () => false,
+		});
+		const timers = new OrchestratorTimers({
+			defaults: () => [{ name: "slack", interval: "1m" }],
+			dispatch: (event) => dispatcher.dispatch(event),
+			now: time.now,
+			setTimer: time.setTimer,
+		});
+		timers.sync();
+		timers.set("thread", "2m");
+		time.advance(120_000);
+		expect([...sent].sort()).toEqual([
+			"[timer.elapsed] slack",
+			"[timer.elapsed] slack",
+			"[timer.elapsed] thread",
+		]);
+		expect(dispatcher.held()).toEqual([]);
+	});
+
+	it("keep at most one pending event each while off", () => {
 		const time = clock();
 		const dispatcher = new EventDispatcher({
+			mode: "off",
 			orchestrator: () => "orch",
 			settings: () => ({
 				event_prompt: "{EVENT}",

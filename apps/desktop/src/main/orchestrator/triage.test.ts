@@ -74,17 +74,13 @@ describe("saving's priority gate", () => {
 
 	it("holds a pending line about a subject not ranked high, one per subject, until a triage takes everything", () => {
 		const run = dispatcher("saving", {});
-		run.events.dispatch({
-			type: "timer.elapsed",
-			name: "sweep",
-			interval: "30m",
-		});
+		run.events.dispatch({ type: "custom.sweep", text: "掃除" });
 		expect(run.sent).toHaveLength(0);
 		expect(run.events.held()).toHaveLength(1);
 		run.events.dispatch({ type: "triage" });
 		expect(run.sent).toHaveLength(1);
 		expect(run.sent[0]).toContain("[triage]");
-		expect(run.sent[0]).toContain("[timer.elapsed] sweep");
+		expect(run.sent[0]).toContain("[custom.sweep] — 掃除");
 		expect(run.sent[0]).toContain("acme/app#1");
 		expect(run.sent[0]).toContain("acme/app#2");
 		expect(run.events.held()).toHaveLength(0);

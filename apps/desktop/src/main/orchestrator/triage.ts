@@ -21,14 +21,14 @@
  * about the work (an agent stopped, on a prompt, errored, its pull request's
  * review or checks, a wait that may be ready) goes with every batch whatever
  * its priority; a **nudge** (a subject said again unchanged, an item nobody
- * started, a settings timer, the usage readout, `custom.*`) goes only when
+ * started, the usage readout, `custom.*`) goes only when
  * its subject is ranked **high** — and, while two or more tasks are in
  * progress, only when it is about one of them. Every other nudge stays
  * pending (one per subject, as always) until a batch carrying `triage` —
  * which takes everything pending and standing with it — or until the mode
  * is full. The person's words, requests, `init` and `triage` are never held
- * by it, and the orchestrator's own wake-ups (`timer set`, a wait's `--at`)
- * go on time.
+ * by it, and the timers (`[[orchestrator.timers]]`, `timer set`) and a
+ * wait's `--at` go on time.
  */
 
 import {

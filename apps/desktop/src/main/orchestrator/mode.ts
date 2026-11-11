@@ -11,12 +11,12 @@
  *   its item's pull request or checks moved, a wait that may be ready — goes
  *   with every batch, whatever its priority and however many tasks are in
  *   progress; a nudge (a subject said again with nothing new, an item nobody
- *   started, a settings timer, the usage readout, `custom.*`) goes only when
- *   its subject is ranked high, and while `SAVING_BUSY_TASKS` or more tasks
- *   are in progress only when it is about one of them (`savingHolds`). The
- *   person's words, requests, `init` and `triage` are never held, and a
- *   wake-up the orchestrator set itself (`orchestrator timer set`, a wait's
- *   `--at`) goes at its time, alone, as in full (`onTime`).
+ *   started, the usage readout, `custom.*`) goes only when its subject is
+ *   ranked high, and while `SAVING_BUSY_TASKS` or more tasks are in progress
+ *   only when it is about one of them (`savingHolds`). The person's words,
+ *   requests, `init` and `triage` are never held, and an explicit timer —
+ *   `[[orchestrator.timers]]`, `orchestrator timer set` — or a wait's `--at`
+ *   goes at its time, alone, as in full (`onTime`).
  * - **off** holds everything, the person's words too, and GitHub is not
  *   polled: what the Events switch's off was.
  *
@@ -83,11 +83,13 @@ export const SAVING_BUSY_TASKS = 2;
  * How saving treats a line (`docs/orchestrator.md`, "Saving: state changes
  * and nudges"):
  *
- * - `on_time` — a wake-up the orchestrator set itself (`orchestrator timer
- *   set`, `escalation wait --at`): sent at its time, alone, like the
- *   person's words — in full and saving alike, never batched, never held by
- *   the interval or for triage (`onTime`). What it wakes the orchestrator
- *   for (Slack, a thread, someone else's work) has consequences outside;
+ * - `on_time` — an explicit timer (the person's `[[orchestrator.timers]]`,
+ *   the orchestrator's `orchestrator timer set`) or a wait's time
+ *   (`escalation wait --at`): sent at its time, alone, like the person's
+ *   words — in full and saving alike, never batched, never held by the
+ *   interval or for triage (`onTime`). What it wakes the orchestrator for
+ *   (reading Slack, a thread, someone else's work) has consequences
+ *   outside;
  * - `never_held` — the person's words, their requests, a start (`init`) and
  *   a `triage`: they go as in full. A batch carrying `init` or `triage`
  *   takes everything pending and standing with it;
@@ -144,8 +146,9 @@ export type SavingKind =
  * - `timer.elapsed timer set`: a timer the orchestrator set itself
  *   (`orchestrator timer set`, `source: "session"`): its own wake-up ("look
  *   at Slack at 15:00", "re-read the thread in 30 minutes"), on time.
- * - `timer.elapsed settings`: one of `[[orchestrator.timers]]`, a periodic
- *   re-prompt. `usage.threshold`: the plan's use,
+ * - `timer.elapsed settings`: one of the person's `[[orchestrator.timers]]`
+ *   (what they set the orchestrator to do on a clock: read Slack, look at a
+ *   thread), on time. `usage.threshold`: the plan's use,
  *   status. `custom.*`: what a script says, not DevHub's to judge.
  */
 export const SAVING_CLASSES: Readonly<Record<SavingKind, SavingClass>> = {
@@ -161,7 +164,7 @@ export const SAVING_CLASSES: Readonly<Record<SavingKind, SavingClass>> = {
 	"waiting.changed subjects_changed": "state_change",
 	"waiting.changed due": "on_time",
 	"timer.elapsed timer set": "on_time",
-	"timer.elapsed settings": "nudge",
+	"timer.elapsed settings": "on_time",
 	"usage.threshold": "nudge",
 	"custom.*": "nudge",
 };

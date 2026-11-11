@@ -356,13 +356,13 @@ describe("the standing lines (needs_action)", () => {
 			busy: true,
 			standing: () => [needsActionIssue("idle_no_escalation")],
 		});
-		dispatcher.dispatch({ type: "timer.elapsed", name: "t", interval: "5m" });
+		dispatcher.dispatch({ type: "custom.t", text: "t" });
 		advance(300);
 		expect(sent).toEqual([]);
 		state.busy = false;
 		dispatcher.flush();
 		expect(sent).toEqual([
-			"handle: [timer.elapsed] t\n[needs_action] issue=acme/app#123 — idle_no_escalation",
+			"handle: [custom.t] — t\n[needs_action] issue=acme/app#123 — idle_no_escalation",
 		]);
 	});
 
@@ -426,7 +426,7 @@ describe("the preview", () => {
 		dispatcher.dispatch({ type: "init" });
 		advance(300);
 		sent.length = 0;
-		dispatcher.dispatch({ type: "timer.elapsed", name: "t", interval: "5m" });
+		dispatcher.dispatch({ type: "custom.t", text: "t" });
 		dispatcher.dispatch({
 			type: "waiting.changed",
 			escalationId: 4,
@@ -442,7 +442,7 @@ describe("the preview", () => {
 		expect(dispatcher.preview()).toEqual(preview);
 		expect(preview.human).toEqual([]);
 		expect(preview.batch).toBe(
-			"handle: [timer.elapsed] t\n[needs_action] issue=acme/app#123 — idle_no_escalation",
+			"handle: [custom.t] — t\n[needs_action] issue=acme/app#123 — idle_no_escalation",
 		);
 		// The interval since the init delivery holds it till then.
 		expect(preview.when).toEqual({ kind: "at", at: 1_000_300 + 300_000 });
