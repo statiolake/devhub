@@ -8,6 +8,8 @@
  */
 
 import "@testing-library/jest-dom/vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   act,
   cleanup,
@@ -435,13 +437,13 @@ describe("the Orchestrator row's group", () => {
     ]);
   });
 
-  it("is not drawn on the rail, where the Orchestrator's mark carries the badge", () => {
-    const value = snapshot();
-    mount({
-      ...value,
-      sidebar: { ...value.sidebar, collapsed: true },
-    } as AppSnapshot);
-    expect(within(orchestratorItem()).queryByRole("group")).toBeNull();
+  it("is drawn on the rail as well, the Orchestrator's mark carrying the badge", () => {
+    mount();
+    const expanded = lanes();
+    cleanup();
+    mount(railed(snapshot()));
+    // The same headings, folded the same way, holding the same items.
+    expect(lanes()).toEqual(expanded);
     expect(
       orchestratorItem().querySelector(".orchestrator-badge.is-rail"),
     ).toHaveTextContent("1");
@@ -633,5 +635,198 @@ describe("a lane change once the board is read", () => {
       vi.advanceTimersByTime(1);
     });
     expect(lanes()[0]!.items).toEqual(["agent:r1", "agent:i1"]);
+  });
+});
+
+const railed = (value: AppSnapshot): AppSnapshot =>
+  ({ ...value, sidebar: { ...value.sidebar, collapsed: true } }) as AppSnapshot;
+
+/**
+ * The rail and the Sidebar it grows into stand every row at the same y: the
+ * pointer that went for a row in the rail finds it under it once the rail has
+ * grown (or the other way, when compact mode is turned on). jsdom lays
+ * nothing out, so the layout is taken in its two halves, which together are
+ * the whole of what sets a row's y:
+ *
+ * - the rows: the same rows, in the same order, in the same boxes, with the
+ *   same classes, for every fold of the group and its lanes and any number
+ *   of items — so whatever the stylesheets give a row in one mode they give
+ *   it in the other;
+ * - the stylesheets: what they say only of the rail (`data-collapsed`) or
+ *   only of the tree growing in or out of it (`data-tree`) sets nothing
+ *   vertical on a box a row's y depends on — no height, margin, padding,
+ *   line or display of a row, a group or the tree; inside a row's first
+ *   line, nothing taller than its floor. Both densities and both title-bar
+ *   arrangements are tokens these rules read, so they are covered by both.
+ *
+ * See `docs/orchestrator.md`, "In the rail".
+ */
+describe("the rail and the expanded Sidebar", () => {
+  const FOLDS_KEY = "devhub.sidebar.orchestratorFolds";
+  const LANE_IDS = ["ask", "action", "progress", "waiting", "closed"] as const;
+
+  /** Every row's box, from the tree down: what a row's y is made of. */
+  const rowBoxes = () =>
+    [
+      ...screen
+        .getByRole("tree", { name: "Open workspaces" })
+        .querySelectorAll<HTMLElement>(
+          ".sidebar-row, .sidebar-section-heading, .sidebar-empty",
+        ),
+    ].map((row) => {
+      const path: string[] = [];
+      for (
+        let node: HTMLElement | null = row;
+        node !== null && node.getAttribute("role") !== "tree";
+        node = node.parentElement
+      ) {
+        path.unshift(
+          `${node.tagName.toLowerCase()}.${[...node.classList].sort().join(".")}`,
+        );
+      }
+      const id = row.querySelector<HTMLElement>("[data-tree-item-id]")?.dataset[
+        "treeItemId"
+      ];
+      return `${id ?? "-"} ${path.join(" > ")}`;
+    });
+
+  const both = (value: AppSnapshot, boardValue: OrchestratorBoardWire) => {
+    mount(value, boardValue);
+    const expanded = rowBoxes();
+    cleanup();
+    mount(railed(value), boardValue);
+    const rail = rowBoxes();
+    cleanup();
+    return { expanded, rail };
+  };
+
+  it("draws the same rows in the same boxes, every lane folded or not, the group folded or not", () => {
+    for (let mask = 0; mask < 2 ** LANE_IDS.length; mask++) {
+      for (const group of [false, true]) {
+        const folds = {
+          group,
+          lanes: Object.fromEntries(
+            LANE_IDS.map((lane, index) => [lane, (mask & (1 << index)) !== 0]),
+          ),
+        };
+        window.sessionStorage.setItem(FOLDS_KEY, JSON.stringify(folds));
+        const { expanded, rail } = both(snapshot(), board());
+        expect(rail, JSON.stringify(folds)).toEqual(expanded);
+        // The group is there in both: each open lane's items under it.
+        const lanesDrawn = expanded.filter((row) => row.startsWith("lane:"));
+        expect(lanesDrawn).toHaveLength(group ? 0 : LANE_IDS.length);
+      }
+    }
+  });
+
+  it("draws the same rows with nothing under the Orchestrator, and with one item", () => {
+    const none = both(snapshot({ empty: true }), board());
+    expect(none.rail).toEqual(none.expanded);
+    expect(none.expanded.some((row) => row.startsWith("lane:"))).toBe(false);
+    const value = snapshot();
+    const one = {
+      ...value,
+      workspaces: value.workspaces.filter(
+        (each) =>
+          ![
+            "rounding",
+            "investigate",
+            "invoice",
+            "review",
+            "finished",
+          ].includes(each.id),
+      ),
+    } as AppSnapshot;
+    const single = both(one, board());
+    expect(single.rail).toEqual(single.expanded);
+    expect(single.expanded.filter((row) => row.startsWith("lane:"))).toEqual([
+      expect.stringMatching(/^lane:action /),
+    ]);
+  });
+
+  const stylesheet = (path: string) =>
+    readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8").replace(
+      /\/\*[\s\S]*?\*\//g,
+      "",
+    );
+
+  /** Each rule's selectors and declarations, `@media` and the like opened. */
+  const rules = (css: string) => {
+    const found: { selector: string; body: string }[] = [];
+    const pattern = /([^{}@]+)\{([^{}]*)\}/g;
+    for (const match of css.matchAll(pattern)) {
+      for (const selector of match[1]!.split(","))
+        found.push({ selector: selector.trim(), body: match[2]! });
+    }
+    return found;
+  };
+
+  it("says nothing vertical of a row's boxes only in the rail, or as the tree grows", () => {
+    const css = [
+      "../../styles/tokens.css",
+      "../../styles/shell.css",
+      "../../styles/reorder.css",
+      "../../sidebar/sidebarPage.css",
+    ]
+      .map(stylesheet)
+      .join("\n");
+    const modal = rules(css).filter(
+      (rule) =>
+        /\[data-(collapsed|tree)=/.test(rule.selector) &&
+        // The pane itself (its width), and the usage rows at its foot,
+        // under the scroll region, below every row.
+        /\]\s+\S/.test(rule.selector) &&
+        !/\.sidebar-usage/.test(rule.selector),
+    );
+    expect(modal.length).toBeGreaterThan(10);
+    // What a row's y is made of: the tree, its items and groups, the rows
+    // and their first line, the section heading.
+    const box =
+      /(\.sidebar-row|\.sidebar-tree-item|\.row-head|\.agent-tree|\.orchestrator-lanes|\.orchestrator-lane-items|\.workspace-tree|\.sidebar-section-heading|\.sidebar-scroll-region|\[role=treeitem\]|\.(workspace|agent|lane|orchestrator)-row)(:[a-z-]+)?$/;
+    const vertical =
+      /(^|;)\s*(height|min-height|max-height|margin(-top|-bottom|-block)?|padding(-top|-bottom|-block)?|top|bottom|line-height|font(-size)?|display|position|flex-direction|flex-wrap|inset|border(-top|-bottom|-block)?(-width)?|box-sizing|align-self|transform|translate|animation(-name)?)\s*:/g;
+    const faults: string[] = [];
+    for (const rule of modal) {
+      const subject = rule.selector.split(/\s+/).at(-1)!;
+      const declarations = [...rule.body.matchAll(vertical)].map(
+        (match) => match[2]!,
+      );
+      if (box.test(subject)) {
+        // A row's own boxes: only the inline axis may differ.
+        const moved = declarations.filter(
+          (name) =>
+            // The tree growing in is a translation along x (`shell.css`,
+            // "The tree growing in"), checked below.
+            !(rule.selector.includes("data-tree=") && name === "animation"),
+        );
+        if (moved.length > 0) faults.push(`${rule.selector}: ${moved.join()}`);
+        continue;
+      }
+      // Inside a row's first line: words and marks taken off, and marks
+      // drawn at a size, none taller than the shortest floor (26px compact,
+      // less 2 × 3px of padding).
+      for (const match of rule.body.matchAll(
+        /(^|;)\s*(height|min-height|line-height|font-size)\s*:\s*([^;]+)/g,
+      )) {
+        const px = /^(\d+(?:\.\d+)?)px$/.exec(match[3]!.trim());
+        if (px === null || Number(px[1]) > 16)
+          faults.push(`${rule.selector}: ${match[2]!}: ${match[3]!.trim()}`);
+      }
+      for (const match of rule.body.matchAll(
+        /(^|;)\s*(display|position)\s*:\s*([^;]+)/g,
+      )) {
+        if (!/^(none|absolute)$/.test(match[3]!.trim()))
+          faults.push(`${rule.selector}: ${match[2]!}: ${match[3]!.trim()}`);
+      }
+    }
+    expect(faults).toEqual([]);
+    // The tree growing in moves along x only.
+    const growth = /@keyframes sidebar-tree-indent-in\s*\{([\s\S]*?)\n\}/.exec(
+      css,
+    );
+    expect(growth?.[1]).toMatch(/translateX\(/);
+    expect(growth?.[1]).not.toMatch(
+      /translateY|translate\(|scale\(|top|margin/,
+    );
   });
 });

@@ -198,8 +198,27 @@ Folded, the Orchestrator row shows how many items it holds, quiet, before
 the badge; the badge (要回答) never folds. The disclosure is the row's own
 mark: under the pointer or the keyboard the orchestrator glyph turns into a
 chevron, which folds the group. With nothing under it the row is exactly the
-row it was: no disclosure, no count, not expandable. The collapsed rail draws
-the row alone, its mark carrying the badge.
+row it was: no disclosure, no count, not expandable.
+
+**In the rail.** Compact mode's rail draws the group row for row, so every
+row stands at the same y in the rail as in the Sidebar it grows into under
+the pointer (and as in the docked column): a hand that went for a row in the
+rail finds it under it once the rail has grown. The Orchestrator row is its
+mark, carrying the badge. A heading is quiet, because it is not somewhere to
+go: its lane's colour as a small dot on a hairline across the column ("the
+rows below are this lane"), a ring when the lane is folded, 要対応's
+needs-action mark small on the line. An item is its mark, as a top-level row
+is in the rail: an agent's status mark (spinner, check, unread dot), a
+Workspace's icon; the orchestrator's own marks (⏳, △) are its heading's to
+say there, as a top-level agent's are its tooltip's. Every one has the same
+tooltip, the same click and the same keys as in the Sidebar (a heading folds
+its lane; →/← fold and walk; a click on a heading leaves the floating
+Sidebar open). Folds are the same state in both, so a folded lane or a
+folded group is the one row in both, and a lane change glides in the rail as
+it does expanded. `orchestratorLanes.test.tsx` ("the rail and the expanded
+Sidebar") holds the rows and the stylesheets to it: the same rows in the same
+boxes for every fold, and no rail-only rule that says anything vertical of a
+row's boxes.
 
 **What an item is.** A helper is its agent's row. A Workspace with one agent
 — almost every worktree the orchestrator makes — is drawn as that agent's

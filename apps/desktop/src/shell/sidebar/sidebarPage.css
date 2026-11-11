@@ -217,11 +217,14 @@
   color: var(--accent-ink);
 }
 
-/* On the rail the badge rides the glyph's corner, as a Dock badge does. */
+/* On the rail the badge rides the glyph's corner, as a Dock badge does:
+   inside the entry's square, whose row clips what it holds (`.sidebar-row`
+   is `overflow: hidden`), so a badge set past the square's edge was cut in
+   half. */
 .orchestrator-badge.is-rail {
   position: absolute;
   top: 1px;
-  left: calc(var(--sidebar-rail-entry, 28px) - 6px);
+  right: 0;
   min-width: 14px;
   height: 13px;
   padding: 0 3px;
@@ -415,6 +418,60 @@
 .orchestrator-lane-items .agent-tree .agent-row::before,
 .orchestrator-lane-items .agent-tree .agent-row::after {
   translate: calc(2 * var(--sidebar-agent-indent)) 0;
+}
+
+/*
+ * The group in the rail: the same rows at the same heights, so nothing moves
+ * vertically as the rail grows into the Sidebar or folds back (the rail is
+ * the Sidebar with its words taken off — `shell.css`, "the collapsed rail").
+ *
+ * An item is its mark, in the rail's one column: an Agent's status mark, a
+ * Workspace's icon, as a top-level row's are. A heading is quieter than an
+ * item, because it is not somewhere to go: its lane's colour as a small dot
+ * on a hairline across the column — "the rows below are this lane" — and a
+ * ring when the lane is folded, the dot's outline, as a folded lane holds its
+ * rows out of sight. 要対応 keeps its needs-action mark, small, on the line.
+ * The chevron and the count are words in all but name: the tooltip says both.
+ */
+.sidebar[data-collapsed="true"] .lane-row .lane-chevron,
+.sidebar[data-collapsed="true"] .lane-row .lane-count {
+  display: none;
+}
+
+.sidebar[data-collapsed="true"] .lane-row .lane-mark {
+  background: linear-gradient(
+      to right,
+      var(--line) calc(50% - 5px),
+      transparent calc(50% - 5px) calc(50% + 5px),
+      var(--line) calc(50% + 5px)
+    )
+    center / 100% 1px no-repeat;
+}
+
+.sidebar[data-collapsed="true"] .lane-row .lane-mark:empty::before {
+  width: 5px;
+  height: 5px;
+}
+
+.sidebar[data-collapsed="true"]
+  [aria-expanded="false"]
+  > .lane-row
+  .lane-mark:empty::before {
+  box-sizing: border-box;
+  border: 1px solid var(--lane-ink);
+  background: transparent;
+}
+
+.sidebar[data-collapsed="true"] .lane-row .lane-mark .sidebar-glyph {
+  width: 9px;
+  height: 9px;
+}
+
+/* Every item's mark back in the rail's one column: the indents are the
+   expanded tree's, and the rail has one column (as `.agent-row .row-glyph`
+   in `shell.css`). */
+.sidebar[data-collapsed="true"] .orchestrator-lane-items .row-glyph {
+  margin-left: 0;
 }
 
 /* What a Workspace drawn as its one Agent is about: `#128`, `PR #517`. */

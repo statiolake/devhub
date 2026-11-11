@@ -1197,8 +1197,11 @@ function OrchestratorRow({
     .find((one) => one.id === snapshot.orchestratorAgentId);
   const waiting = board.needsAnswer.length;
   const total = groups.reduce((sum, group) => sum + group.items.length, 0);
-  // The rail draws the row alone, as it always has: its mark and the badge.
-  const hasGroup = total > 0 && !collapsed;
+  // The rail draws the group as well, row for row: the same lanes, folded
+  // the same way, each heading a quiet mark and each item its mark, so that
+  // every row stands at the same height in the rail as in the Sidebar it
+  // grows into. A row the pointer was going for stays under it as it grows.
+  const hasGroup = total > 0;
   const open = hasGroup && !folds.group;
   const facts = [
     "Orchestrator",
@@ -2037,7 +2040,11 @@ export function Sidebar({ snapshot }: SidebarProps) {
       // card goes, the way a browser's tab bar folds away after a tab is
       // picked.
       onClickCapture={(event) => {
-        if ((event.target as Element).closest("[data-tree-item-id]") !== null) {
+        // A lane's heading folds its lane and goes nowhere: the card stays.
+        const item = (event.target as Element).closest<HTMLElement>(
+          "[data-tree-item-id]",
+        );
+        if (item !== null && !item.dataset["treeItemId"]?.startsWith("lane:")) {
           overlay.dismiss();
         }
       }}
