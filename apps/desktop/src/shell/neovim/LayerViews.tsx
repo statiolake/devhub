@@ -556,6 +556,11 @@ function naturalHeight(body: HTMLElement, height: number): number {
   return height - pane.clientHeight + Math.min(pane.scrollHeight, max);
 }
 
+/** A width of the popup's, less its line on both sides (`--popup-line`). */
+function inner(width: number): string {
+  return `calc(${String(width)}px - 2 * var(--popup-line))`;
+}
+
 /** A popup's line, for j/k: its prose's line height. */
 const POPUP_LINE = 19;
 
@@ -733,7 +738,12 @@ function Popup({
         <div
           ref={body}
           className="nvim-popup-body"
-          style={{ maxWidth, ...(minWidth !== undefined ? { minWidth } : {}) }}
+          // The popup's widths are its outer ones: its body's are less its
+          // line, or a popup at its max_width clips the body's right edge.
+          style={{
+            maxWidth: inner(maxWidth),
+            ...(minWidth !== undefined ? { minWidth: inner(minWidth) } : {}),
+          }}
         >
           <ColouringWait.Provider value={waitColouring}>
             <ComponentTree

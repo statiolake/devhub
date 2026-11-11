@@ -660,8 +660,14 @@ function Column({
       hidden.current = true;
       return;
     }
-    const place = `translateY(${String(row.offsetTop)}px)`;
-    b.style.height = `${String(row.offsetHeight)}px`;
+    // The row's own top and height, unrounded (rows are fractions of a
+    // pixel tall: offsetTop would drift the band off them by up to half),
+    // in the list's units (an arriving popup is scaled).
+    const list = el.getBoundingClientRect();
+    const at = row.getBoundingClientRect();
+    const k = el.offsetWidth > 0 ? list.width / el.offsetWidth : 1;
+    const place = `translateY(${String((at.top - list.top) / k)}px)`;
+    b.style.height = `${String(at.height / k)}px`;
     if (hidden.current) {
       // appears in place: no glide from where it last was
       b.classList.remove("nvc-band-live");
@@ -688,6 +694,11 @@ function Column({
       className={`${className}${banded ? " nvc-banded" : ""}${node.pane !== undefined ? " nvc-pane" : ""}`}
       style={{
         ...style,
+        // Where it is a popup's (`.nvim-popup .nvc-banded`), it reaches out
+        // to the popup's band inset by `--nvc-bleed` on each side and pads
+        // its content back in by as much: the band and the pane's edge come
+        // out, its rows stay where they were.
+        padding: `${String(node.pad?.[0] ?? 0)}px calc(${String(node.pad?.[1] ?? 0)}px + var(--nvc-bleed, 0px))`,
         // A popup short of room takes it from its pane first
         // (`--nvim-pane-cut`, `LayerViews.tsx`), down to three lines.
         ...(node.maxHeight !== undefined

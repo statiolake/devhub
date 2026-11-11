@@ -925,14 +925,24 @@
  * at the clipped edge); a floating surface (`tokens.css`): its 1px line,
  * corner, shadow and padding are the floats', a cell inline and the
  * block padding above and below.
+ *
+ * A list in it (`stack{ band }`) is a menu's: its band is inset from the
+ * line by the floats' band inset (`--float-band-inset`) on all four sides
+ * — the first row's, the last row's and both sides alike — and rounded by
+ * the rest of the corner, so the corners nest, as in the completion menu.
+ * The list and a pane (`stack{ pane }`) reach out to that inset and pad
+ * their content back in (`--nvc-bleed`): the band's and the pane's edges
+ * line up, and the words stay a cell in, under the word typed.
  */
 .nvim-popup {
+  --popup-line: 1px;
+
   position: absolute;
   z-index: var(--nvim-band-popup);
   box-sizing: border-box;
   width: max-content;
   overflow: hidden;
-  border: 1px solid var(--float-line);
+  border: var(--popup-line) solid var(--float-line);
   border-radius: var(--float-radius);
   box-shadow: var(--float-shadow);
   font: var(--nvim-ui-size, 12px) / 1.45 var(--nvim-ui-font);
@@ -954,6 +964,22 @@
   width: max-content;
   padding: var(--float-pad-block) var(--float-cell, 1ch);
   overflow-wrap: anywhere;
+}
+
+/* A menu's popup: the band inset above and below as at the sides. */
+.nvim-popup-body:has(.nvc-banded) {
+  padding-block: var(--float-band-inset);
+}
+
+.nvim-popup .nvc-banded,
+.nvim-popup .nvc-pane {
+  --nvc-bleed: calc(var(--float-cell, 1ch) - var(--float-band-inset));
+
+  margin-inline: calc(-1 * var(--nvc-bleed));
+}
+
+.nvim-popup .nvc-band {
+  border-radius: calc(var(--float-radius) - var(--float-band-inset));
 }
 
 .nvim-popup-fade {
