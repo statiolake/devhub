@@ -132,6 +132,12 @@ export type ChordEffect =
 			readonly context: NavigationContext;
 			/** Only an Agent has two; absent means the plain, full one. */
 			readonly presentation?: SurfacePresentationWire;
+			/**
+			 * `"explicit"`: a jump to a place named by the key — `Cmd+Q 0`–`9` —
+			 * which is a place in Back and Forward at once, as a link is.
+			 * Absent is stepping (`Cmd+Q N`/`P`): passing over places.
+			 */
+			readonly reason?: "explicit";
 	  }
 	/** Side by side already: move the keyboard rather than the selection. */
 	| { readonly kind: "swap-split-focus" }
@@ -417,7 +423,9 @@ export function resolveChord(
 		const entries = sidebarEntries(snapshot);
 		// `ordinal` is the digit as typed: 0 is Scratch, 1 the first workspace.
 		const entry = entries[definition.ordinal ?? 0];
-		return entry ? { kind: "select-context", context: entry } : undefined;
+		return entry
+			? { kind: "select-context", context: entry, reason: "explicit" }
+			: undefined;
 	}
 
 	switch (commandId) {

@@ -41,6 +41,7 @@ import {
 } from "./domain.js";
 import type { AppErrorWire } from "../ipc/appShell.js";
 import type { AppSnapshot, PaneFocusTarget } from "./appModel.js";
+import type { OrchestratorView } from "./orchestratorView.js";
 import type { SmartButtonsSpot } from "./smartButtons.js";
 import type { TerminalZoomDirection } from "./terminalZoom.js";
 import type { WorkspaceTerminalObservation } from "./terminalActivity.js";
@@ -60,12 +61,12 @@ export type IntentFocus = "none";
 /**
  * Why the selection is moving, for Back and Forward's history.
  *
- * Absent is passing through: `Cmd+Q N`/`P`, a digit, the tab picker, the
- * Sidebar's keyboard, a selection repaired after a close. The place enters
- * the history only once somebody does something in it
- * (`AppModel.noteInteraction`). `"explicit"` is going there on purpose — a
- * click on a Sidebar row, `Cmd+Q F`'s picker, `devhub --tell focus` — and it
- * is recorded at once, by the same rule an interaction is (the place the
+ * Absent is passing through: `Cmd+Q N`/`P`, the Sidebar's keyboard, a
+ * selection repaired after a close. The place enters the history only once
+ * somebody does something in it (`AppModel.noteInteraction`). `"explicit"`
+ * is going there on purpose — a click on a Sidebar row, a `devhub:` link,
+ * `Cmd+Q F`'s picker, the Go to picker, `Cmd+Q 0`–`9`, the palette,
+ * opening an escalation, `devhub --tell focus` — and it is recorded at once, by the same rule an interaction is (the place the
  * cursor already names is not a second entry). See
  * `docs/window-and-pages.md` (Back and Forward).
  */
@@ -260,6 +261,25 @@ export type UserIntent =
       readonly type: "navigate_history";
       readonly direction: "back" | "forward";
     }
+  /**
+   * The Orchestrator pane shows `view`, the Orchestrator row selected with
+   * it. `"explicit"` is a navigation — a card opened, a `devhub:escalation`
+   * link, a file opened — and pushes an entry; absent writes the entry on
+   * screen in place (a tab, an escalation that left the board). `drawn`: the
+   * pane drew it already, so it is not told to (`AppModel.showOrchestratorView`).
+   */
+  | {
+      readonly type: "show_orchestrator_view";
+      readonly view: OrchestratorView;
+      readonly reason?: NavigationReason;
+      readonly drawn?: boolean;
+    }
+  /**
+   * An escalation's own "back to the board" (its ‹, Esc, an answer sent), or
+   * a file's back to the tree: Back when Back leads to that page under,
+   * otherwise a navigation to it (`AppModel.leaveOrchestratorView`).
+   */
+  | { readonly type: "leave_orchestrator_view"; readonly drawn?: boolean }
   /**
    * Scratch or the Orchestrator, and back again.
    *

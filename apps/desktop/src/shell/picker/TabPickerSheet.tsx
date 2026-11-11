@@ -82,11 +82,14 @@ export function TabPickerSheet({ onDismiss }: TabPickerSheetProps) {
             type: "select_context",
             context: { kind: "agent", agentId: value },
             split,
+            // Chosen by name: a place in Back and Forward at once.
+            reason: "explicit",
           });
         } else if (kind === "workspace") {
           void dispatch({
             type: "select_context",
             context: { kind: "workspace", workspaceId: value },
+            reason: "explicit",
           });
         } else {
           throw new Error(`Go to chose a row it never listed: ${id}`);

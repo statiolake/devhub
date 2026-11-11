@@ -50,6 +50,7 @@ import {
   isTerminalShare,
 } from "./agentTerminal.js";
 import { copySpot, isSmartButtonsSpot } from "./smartButtons.js";
+import { orchestratorPlace } from "./orchestratorView.js";
 import { groupKeyFor, orderWorkspaces } from "./workspaceOrder.js";
 import {
   MAX_TERMINAL_FONT_SIZE,
@@ -543,6 +544,10 @@ export function snapshotWire(
       canGoBack: snapshot.history.canGoBack,
       canGoForward: snapshot.history.canGoForward,
     },
+    ...(snapshot.historyEntry === undefined
+      ? {}
+      : { historyEntry: snapshot.historyEntry }),
+    orchestratorView: snapshot.orchestratorView,
   };
   if (
     wire.sidebar.width < SIDEBAR_MIN_WIDTH ||
@@ -1144,6 +1149,25 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         invalid();
       }
       return { type: "navigate_history", direction: wire.direction };
+    case "show_orchestrator_view": {
+      const view = orchestratorPlace(wire.view);
+      if (view === undefined) invalid();
+      if (wire.drawn !== undefined && typeof wire.drawn !== "boolean")
+        invalid();
+      return {
+        type: "show_orchestrator_view",
+        view,
+        ...(wire.reason === "explicit" ? { reason: wire.reason } : {}),
+        ...(wire.drawn === true ? { drawn: true } : {}),
+      };
+    }
+    case "leave_orchestrator_view":
+      if (wire.drawn !== undefined && typeof wire.drawn !== "boolean")
+        invalid();
+      return {
+        type: "leave_orchestrator_view",
+        ...(wire.drawn === true ? { drawn: true } : {}),
+      };
     case "reorder_workspaces":
       if (!Array.isArray(wire.order)) invalid();
       return {

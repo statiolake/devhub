@@ -145,6 +145,11 @@ function selects(context: NavigationContext) {
 	return { kind: "select-context", context };
 }
 
+/** `Cmd+Q 0`–`9`: a jump to the place the digit names, a place in history. */
+function jumps(context: NavigationContext) {
+	return { kind: "select-context", context, reason: "explicit" };
+}
+
 /** `Cmd+Q N/P`: a selection like any other — it wakes nothing. */
 function passes(context: NavigationContext) {
 	return selects(context);
@@ -154,9 +159,9 @@ describe("the workspace cycle", () => {
 	const snapshot = snapshotOf({ workspaces: [one, two] });
 
 	it("counts Scratch as entry 0 and the workspaces from 1", () => {
-		expect(run("select_entry_0", snapshot)).toEqual(selects(SCRATCH));
+		expect(run("select_entry_0", snapshot)).toEqual(jumps(SCRATCH));
 		expect(run("select_entry_2", snapshot)).toEqual(
-			selects({ kind: "workspace", workspaceId: "two" }),
+			jumps({ kind: "workspace", workspaceId: "two" }),
 		);
 	});
 
@@ -1122,11 +1127,11 @@ describe("the order every cycle walks", () => {
 	it("names the rows a digit selects in the same order", () => {
 		const snapshot = projected();
 		expect(run("select_entry_1", snapshot)).toEqual(
-			selects({ kind: "workspace", workspaceId: ALPHA }),
+			jumps({ kind: "workspace", workspaceId: ALPHA }),
 		);
 		// The workspace with no Agents is still an entry, and still visited.
 		expect(run("select_entry_2", snapshot)).toEqual(
-			selects({ kind: "workspace", workspaceId: MIDDLE }),
+			jumps({ kind: "workspace", workspaceId: MIDDLE }),
 		);
 	});
 });
@@ -1375,7 +1380,7 @@ describe("the Orchestrator row's Workspace", () => {
 
 	it("gives it no digit: 1 is still the first ordinary row", () => {
 		expect(run("select_entry_1", withOrchestrator(SCRATCH))).toEqual(
-			selects({ kind: "workspace", workspaceId: "one" }),
+			jumps({ kind: "workspace", workspaceId: "one" }),
 		);
 	});
 

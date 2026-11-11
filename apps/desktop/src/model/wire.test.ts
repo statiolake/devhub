@@ -835,3 +835,45 @@ describe("an Agent's terminal, across the wire", () => {
     expect(() => resize("yes")).toThrow(InvalidIntent);
   });
 });
+
+describe("the Orchestrator pane's intents", () => {
+  it("reads a view, its reason and whether the pane drew it", () => {
+    expect(
+      intentFromWire({
+        type: "show_orchestrator_view",
+        view: { kind: "escalation", id: 3 },
+        reason: "explicit",
+        drawn: true,
+      }),
+    ).toEqual({
+      type: "show_orchestrator_view",
+      view: { kind: "escalation", id: 3 },
+      reason: "explicit",
+      drawn: true,
+    });
+    expect(
+      intentFromWire({
+        type: "show_orchestrator_view",
+        view: { kind: "files" },
+      }),
+    ).toEqual({ type: "show_orchestrator_view", view: { kind: "files" } });
+    expect(intentFromWire({ type: "leave_orchestrator_view" })).toEqual({
+      type: "leave_orchestrator_view",
+    });
+  });
+
+  it("refuses a view that names nothing", () => {
+    for (const view of [
+      { kind: "escalation", id: 0 },
+      { kind: "escalation", id: 1.5 },
+      { kind: "file", path: "" },
+      { kind: "tab" },
+    ])
+      expect(() =>
+        intentFromWire({
+          type: "show_orchestrator_view",
+          view,
+        } as unknown as AppIntentWire),
+      ).toThrow(InvalidIntent);
+  });
+});

@@ -27,7 +27,8 @@ import { devhub } from "./client";
 import { focusIsOurs, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { memory, reportOrchestratorView } from "./orchestratorMemory";
-import type { SideButtons } from "./OrchestratorScreen";
+import type { AppSnapshot } from "../../ipc/appShell";
+import { modelView, useStackHistory } from "./orchestratorHistory";
 
 /** A text file as Markdown: one fenced block, fenced longer than any run. */
 export function codeBlock(text: string, language: string | undefined): string {
@@ -39,16 +40,26 @@ export function codeBlock(text: string, language: string | undefined): string {
   return `${fence}${language ?? ""}\n${text.replace(/\n$/u, "")}\n${fence}`;
 }
 
+/** The tree under a file, as a view. */
+const FILES_UNDER = { kind: "files" } as const;
+
+/** The file the pane mounts on: the model's view's, else its memory's. */
+function initialFile(snapshot: AppSnapshot | undefined): string | undefined {
+  const state = modelView(snapshot);
+  if (state === undefined) return memory.file;
+  return state.view.kind === "file" ? state.view.path : undefined;
+}
+
 export function FilesPage({
   pane,
-  sideButtons,
+  snapshot,
   orchestratorAgentId,
 }: {
   readonly pane: RefObject<HTMLElement | null>;
-  readonly sideButtons: RefObject<SideButtons>;
+  readonly snapshot?: AppSnapshot;
   readonly orchestratorAgentId: string | undefined;
 }) {
-  const { reportFailure } = useAgents();
+  const { reportFailure, dispatch } = useAgents();
   const [folders, setFolders] = useState<
     ReadonlyMap<string, OrchestratorFolderWire>
   >(() => new Map());
@@ -68,9 +79,26 @@ export function FilesPage({
         ...(tree.current?.querySelectorAll<HTMLElement>("[data-file-path]") ??
           []),
       ].find((row) => row.dataset["filePath"] === path),
-    memory.file,
+    initialFile(snapshot),
   );
-  const { nav, shown, forward, restored, open, close } = stack;
+  const { nav, shown, restored, arrived } = stack;
+  // Opened, closed and followed as places in Back and Forward
+  // (`orchestratorHistory.ts`); a file needs reading once it is shown.
+  const readRef = useRef<(path: string) => void>(() => undefined);
+  const { open, close, drop } = useStackHistory<string>({
+    stack: {
+      ...stack,
+      open: (path, how) => {
+        stack.open(path, how);
+        readRef.current(path);
+      },
+    },
+    snapshot,
+    dispatch,
+    viewOf: (path) => ({ kind: "file", path }),
+    under: FILES_UNDER,
+    find: (view) => (view.kind === "file" ? view.path : undefined),
+  });
   const openPath = nav === "push" ? shown : undefined;
   useEffect(() => {
     memory.file = openPath;
@@ -106,21 +134,24 @@ export function FilesPage({
     },
     [reportFailure],
   );
+  readRef.current = (path) => {
+    void read(path);
+  };
   const openFile = useCallback(
     (path: string) => {
       open(path);
-      void read(path);
     },
-    [open, read],
+    [open],
   );
 
   useEffect(() => {
     void load("");
     for (const folder of memory.expanded) void load(folder);
     // A file gone since: back on the tree, without a word.
-    if (memory.file !== undefined)
-      void read(memory.file, true).then((there) => {
-        if (!there) close();
+    const first = initialFile(snapshot);
+    if (first !== undefined)
+      void read(first, true).then((there) => {
+        if (!there) drop();
       });
     // Once, on mount: the tree and the file it was left on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -146,20 +177,6 @@ export function FilesPage({
     [load, read],
   );
 
-  useEffect(() => {
-    sideButtons.current = (direction) => {
-      if (direction === "back" && nav === "push") {
-        close();
-        return true;
-      }
-      if (direction === "forward" && nav !== "push" && forward !== undefined) {
-        openFile(forward);
-        return true;
-      }
-      return false;
-    };
-  }, [sideButtons, nav, forward, close, openFile]);
-
   const toggle = useCallback(
     (path: string) => {
       setExpanded((before) => {
@@ -181,6 +198,7 @@ export function FilesPage({
     <div
       className="orchestrator-stage"
       data-nav={nav}
+      data-arrived={arrived}
       data-restored={restored ? "true" : undefined}
       role="tabpanel"
       id="orchestrator-panel-files"

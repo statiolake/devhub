@@ -73,6 +73,12 @@ import {
   type NavigationDirection,
 } from "./navigationHistory.js";
 import {
+  BOARD_VIEW,
+  parentView,
+  sameOrchestratorView,
+  type OrchestratorView,
+} from "./orchestratorView.js";
+import {
   TERMINAL_DEFAULT_SHARE,
   clampTerminalShare,
   type AgentTerminal,
@@ -330,6 +336,39 @@ export interface AppSnapshot {
     readonly canGoBack: boolean;
     readonly canGoForward: boolean;
   };
+  /**
+   * The history entry on screen, when the place on screen is one: what the
+   * pages file per-entry state under (`NavigationHistory.currentId`).
+   */
+  readonly historyEntry?: number;
+  /**
+   * The Orchestrator pane as the model has it. `seq` moves only when the
+   * model moved it (Back, Forward, a link), never for the pane's own word.
+   */
+  readonly orchestratorView: {
+    readonly view: OrchestratorView;
+    readonly seq: number;
+    readonly arrived: "back" | "forward" | "open";
+  };
+}
+
+/**
+ * One entry in Back and Forward: the selection, and — on the Orchestrator
+ * row — what its pane shows (`model/orchestratorView.ts`).
+ */
+export interface NavigationPlace {
+  readonly selection: NavigationSelection;
+  readonly view?: OrchestratorView;
+}
+
+export function samePlace(
+  left: NavigationPlace,
+  right: NavigationPlace,
+): boolean {
+  if (!sameSelection(left.selection, right.selection)) return false;
+  if (left.view === undefined || right.view === undefined)
+    return left.view === right.view;
+  return sameOrchestratorView(left.view, right.view);
 }
 
 /** What a rolled-back close has to put back, exactly where it was. */
@@ -536,10 +575,21 @@ export class AppModel {
    * purpose — a new Agent (`addAgent`), and a selection made with
    * `reason: "explicit"` (a click on a Sidebar row, `Cmd+Q F`, the command
    * line's `focus`; `NavigationReason`). Passing over a place with
-   * `Cmd+Q N/P`, a digit or the Sidebar's keyboard records nothing. Going
+   * `Cmd+Q N/P` or the Sidebar's keyboard records nothing. Going
    * Back moves the cursor before it selects. See `model/navigationHistory.ts`.
    */
-  private readonly history: NavigationHistory<NavigationSelection>;
+  private readonly history: NavigationHistory<NavigationPlace>;
+  /**
+   * What the Orchestrator pane shows, as its page last said or as Back last
+   * put it. Kept while the row is not selected: coming back to the row comes
+   * back to it, as the pane's own memory does.
+   */
+  private orchestratorViewValue: OrchestratorView = BOARD_VIEW;
+  private orchestratorViewSeq = 0;
+  private orchestratorViewArrived: "back" | "forward" | "open" = "open";
+  /** Whether a view still names something (an escalation still on the board). */
+  private orchestratorViewExists: (view: OrchestratorView) => boolean = () =>
+    true;
 
   constructor(scratch: Workspace) {
     this.workspaceList.push(scratch);
@@ -548,8 +598,8 @@ export class AppModel {
       context: { kind: "workspace", workspaceId: scratch.id },
       presentation: "full",
     };
-    this.history = new NavigationHistory(this.selectionValue, {
-      same: sameSelection,
+    this.history = new NavigationHistory(this.place(), {
+      same: samePlace,
     });
   }
 
@@ -662,16 +712,122 @@ export class AppModel {
         canGoBack: this.canNavigate("back"),
         canGoForward: this.canNavigate("forward"),
       },
+      ...(samePlace(this.history.current, this.place())
+        ? { historyEntry: this.history.currentId }
+        : {}),
+      orchestratorView: {
+        view: this.orchestratorViewValue,
+        seq: this.orchestratorViewSeq,
+        arrived: this.orchestratorViewArrived,
+      },
     };
+  }
+
+  /** The place on screen, as an entry would record it. */
+  private place(
+    selection: NavigationSelection = this.selectionValue,
+  ): NavigationPlace {
+    return selection.context.kind === "orchestrator"
+      ? { selection, view: this.orchestratorViewValue }
+      : { selection };
+  }
+
+  private placeExists = (entry: NavigationPlace): boolean =>
+    this.contextExists(entry.selection.context) &&
+    (entry.view === undefined || this.orchestratorViewExists(entry.view));
+
+  /**
+   * Main's answer to whether a view still names something: an escalation
+   * deleted from the board is skipped by Back and Forward as a closed Agent
+   * is. Without one, every view exists.
+   */
+  setOrchestratorViewExists(exists: (view: OrchestratorView) => boolean): void {
+    this.orchestratorViewExists = exists;
+  }
+
+  get orchestratorView(): OrchestratorView {
+    return this.orchestratorViewValue;
+  }
+
+  /**
+   * The Orchestrator pane shows `view`, and the Orchestrator row is selected
+   * with it.
+   *
+   * `"explicit"` is going there — a card opened, a `devhub:escalation` link,
+   * a file opened — and records the place at once, as a click on a Sidebar
+   * row does, so Back from it is wherever the person was. Absent is the pane
+   * changing under the same place (a tab chosen, an escalation that left the
+   * board): the entry on screen is written over, as `replaceState` does, and
+   * nothing is selected that was not.
+   *
+   * `drawn` is the pane saying it already shows it: `seq` stays, so the pane
+   * is never told to draw what it drew. Everyone else (a link from the
+   * conversation, Back) moves `seq`, and the pane follows it.
+   */
+  showOrchestratorView(
+    view: OrchestratorView,
+    reason?: NavigationReason,
+    drawn = false,
+  ): void {
+    const moved = !sameOrchestratorView(this.orchestratorViewValue, view);
+    this.orchestratorViewValue = view;
+    if (moved && !drawn) {
+      this.orchestratorViewSeq += 1;
+      this.orchestratorViewArrived = "open";
+    }
+    const onIt = this.selectionValue.context.kind === "orchestrator";
+    if (!onIt) {
+      // Only a navigation takes the window there; a late word from a pane
+      // that has since been left changes what the row comes back to.
+      if (reason === "explicit") {
+        this.selectContext({ kind: "orchestrator" }, "full", reason);
+        return;
+      }
+      if (moved) this.bumpRevision();
+      return;
+    }
+    let recorded = false;
+    if (reason === "explicit") {
+      recorded = this.recordSelection();
+    } else if (
+      this.history.current.selection.context.kind === "orchestrator" &&
+      sameSelection(this.history.current.selection, this.selectionValue)
+    ) {
+      recorded = this.history.visit(this.place(), true);
+    }
+    if (moved || recorded) this.bumpRevision();
+  }
+
+  /**
+   * An escalation's own way back to the board — its ‹, Esc, an answer sent
+   * — or a file's back to the tree.
+   *
+   * It means "up to the page under". When Back leads to exactly that page
+   * (the escalation was opened from this board) it *is* Back, so Forward
+   * opens it again and the history holds no board twice. Otherwise — the
+   * escalation came from a link in an Agent's conversation, or was where the
+   * pane was left — it is a navigation to the board, recorded, so Back from
+   * the board returns to the escalation and Back again to the Agent.
+   */
+  leaveOrchestratorView(drawn = false): void {
+    if (this.selectionValue.context.kind !== "orchestrator") return;
+    const parent = parentView(this.orchestratorViewValue);
+    if (sameOrchestratorView(parent, this.orchestratorViewValue)) return;
+    const up: NavigationPlace = {
+      selection: { context: { kind: "orchestrator" }, presentation: "full" },
+      view: parent,
+    };
+    const back = this.history.peek("back", this.placeExists, this.place());
+    if (back !== undefined && samePlace(back, up)) {
+      this.navigateHistory("back", drawn);
+      return;
+    }
+    this.showOrchestratorView(parent, "explicit", drawn);
   }
 
   /** Whether Back (or Forward) would select anything. */
   canNavigate(direction: NavigationDirection): boolean {
-    return this.history.can(
-      direction,
-      (entry) => this.contextExists(entry.context),
-      this.selectionValue,
-    );
+    return this.history.can(direction, this.placeExists, this.place());
   }
 
   /**
@@ -684,13 +840,10 @@ export class AppModel {
    * shown on its own, which is what `selectContext` does with any `beside`
    * that has no other half.
    */
-  navigateHistory(direction: NavigationDirection): boolean {
-    const target = this.history.go(
-      direction,
-      (entry) => this.contextExists(entry.context),
-      this.selectionValue,
-    );
-    if (target === undefined) return false;
+  navigateHistory(direction: NavigationDirection, drawn = false): boolean {
+    const found = this.history.go(direction, this.placeExists, this.place());
+    if (found === undefined) return false;
+    const target = found.selection;
     // A `beside` with no pair any more is shown `full`, as `selectContext`
     // would store it. The entry is corrected *before* the selection moves, so
     // the move arrives at the entry the cursor points to and is not taken
@@ -698,7 +851,25 @@ export class AppModel {
     const presentation = this.canPresentBeside(target.context)
       ? target.presentation
       : "full";
-    this.history.visit({ context: target.context, presentation }, true);
+    this.history.visit(
+      {
+        selection: { context: target.context, presentation },
+        view: found.view,
+      },
+      true,
+    );
+    // The pane is put back as the entry had it, before the selection moves,
+    // so the place the selection arrives at is the entry's.
+    if (
+      found.view !== undefined &&
+      !sameOrchestratorView(found.view, this.orchestratorViewValue)
+    ) {
+      this.orchestratorViewValue = found.view;
+      if (!drawn) {
+        this.orchestratorViewSeq += 1;
+        this.orchestratorViewArrived = direction;
+      }
+    }
     this.selectContext(target.context, presentation);
     // The arrows' enabled state moved even when the selection did not.
     this.bumpRevision();
@@ -713,7 +884,7 @@ export class AppModel {
    * restored selection replaced it.
    */
   resetHistory(): void {
-    this.history.reset(this.selectionValue);
+    this.history.reset(this.place());
   }
 
   /**
@@ -728,7 +899,7 @@ export class AppModel {
 
   /** Whether `noteInteraction` would record anything: main asks it first. */
   interactionIsNew(): boolean {
-    return !sameSelection(this.history.current, this.selectionValue);
+    return !samePlace(this.history.current, this.place());
   }
 
   setEditorHostState(state: EditorHostState): boolean {
@@ -1552,18 +1723,18 @@ export class AppModel {
    * remembered at all, and what it is after a restart.
    *
    * The Orchestrator is there whether or not an orchestrator is assigned
-   * (without one, its screen offers Start), and going to it is going
+   * (without one, its screen offers Start). Going to either place is going
    * somewhere on purpose, the way its Sidebar row is: both directions enter
-   * Back and Forward's history at once. The jump to Scratch passes through,
-   * as it always has.
+   * Back and Forward's history at once.
    */
   togglePlace(place: TogglePlace): void {
     const target: NavigationContext =
       place === "scratch"
         ? { kind: "workspace", workspaceId: this.scratchId }
         : { kind: "orchestrator" };
-    const reason: NavigationReason | undefined =
-      place === "orchestrator" ? "explicit" : undefined;
+    // Both places are named by their key: going there, and back, is a
+    // place in Back and Forward at once, as a digit is.
+    const reason: NavigationReason = "explicit";
     if (!sameContext(this.selectionValue.context, target)) {
       this.placeReturns.set(place, this.selectionValue);
       this.selectContext(target, "full", reason);
@@ -2321,7 +2492,7 @@ export class AppModel {
    * split, not to the other half of it.
    */
   private recordSelection(): boolean {
-    const before = this.history.current;
+    const before = this.history.current.selection;
     const now = this.selectionValue;
     const workspace = this.splitWorkspace(before.context);
     const sameSplit =
@@ -2329,7 +2500,7 @@ export class AppModel {
       now.presentation === "beside" &&
       workspace !== undefined &&
       workspace === this.splitWorkspace(now.context);
-    return this.history.visit(now, sameSplit);
+    return this.history.visit(this.place(now), sameSplit);
   }
 
   /** The Workspace whose split this context is a half of, if it still is. */

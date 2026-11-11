@@ -992,6 +992,13 @@ export class AppController {
 		this.coordinator = new AppCoordinator(model, (snapshot) =>
 			drawnWorkspaceOrder(snapshot, this.repositoryOf),
 		);
+		// An escalation deleted from the board is a place that has gone: Back
+		// and Forward step over it, as they do a closed Agent.
+		model.setOrchestratorViewExists(
+			(view) =>
+				view.kind !== "escalation" ||
+				this.orchestrator?.escalation(view.id) !== undefined,
+		);
 		// The window's size is the one input to the rectangles that is not
 		// the model's, and a resize is no projection: said only from one,
 		// they stayed where they were until the model next moved, and the
@@ -1841,12 +1848,13 @@ export class AppController {
 		};
 		const chordHost: ChordHost = {
 			snapshot: () => this.chordSnapshot(),
-			selectContext: (context, presentation) => {
+			selectContext: (context, presentation, reason) => {
 				this.arrive(
 					intentFromWire({
 						type: "select_context",
 						context,
 						...(presentation === "beside" ? { split: true } : {}),
+						...(reason === undefined ? {} : { reason }),
 					}),
 				);
 			},
@@ -2537,7 +2545,7 @@ export class AppController {
 			this.recentCommands,
 			row.commandId,
 		);
-		runCommand(host, row.commandId);
+		runCommand(host, row.commandId, "explicit");
 	}
 
 	/**
@@ -7724,6 +7732,8 @@ export class AppController {
 				this.send(CHANNELS.orchestratorBoardChanged, board);
 				// The escalation being read may have been retitled.
 				this.refreshWindowTitle();
+				// An escalation gone from it may be all Back had left to go to.
+				this.sendSnapshot(this.snapshot());
 			},
 			// A paused orchestrator costs no GitHub quota: polling is suspended.
 			// A resume polls at once, and delivers without waiting for it.

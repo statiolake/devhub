@@ -23,6 +23,7 @@ import { EMPTY_BOARD, type OrchestratorBoardWire } from "../../ipc/contract";
 import { installHistoryButtons } from "../historyButtons";
 import { AgentsValueProvider, type AgentsValue } from "./AgentsContext";
 import { forgetOrchestratorMemory } from "./orchestratorMemory";
+import { forgetEntryStates } from "./orchestratorHistory";
 import {
   escalationBase,
   NAV_MS,
@@ -70,6 +71,7 @@ window.devhub = {
 
 afterEach(() => {
   cleanup();
+  forgetEntryStates();
   forgetOrchestratorMemory();
   window.sessionStorage.clear();
   vi.clearAllMocks();
@@ -727,7 +729,75 @@ describe("opening an escalation and going back", () => {
   });
 });
 
-describe("the mouse's side buttons over the board", () => {
+/**
+ * The board under a model that keeps Back and Forward: the snapshot's
+ * `orchestratorView` and `historyEntry` are set by the test as the model
+ * would set them, and every intent the pane sends is recorded.
+ */
+function mountWithModel(board: OrchestratorBoardWire = BOARD) {
+  const dispatch = vi.fn().mockResolvedValue(undefined);
+  let state: NonNullable<AppSnapshot["orchestratorView"]> = {
+    view: { kind: "board" },
+    seq: 0,
+    arrived: "open",
+  };
+  let entry = 1;
+  const view = () => (
+    <AgentsValueProvider
+      value={
+        { board, dispatch, reportFailure: vi.fn() } as unknown as AgentsValue
+      }
+    >
+      <OrchestratorBoard
+        snapshot={
+          {
+            workspaces: [],
+            orchestratorView: state,
+            historyEntry: entry,
+          } as unknown as AppSnapshot
+        }
+      />
+    </AgentsValueProvider>
+  );
+  const { rerender } = render(view());
+  return {
+    dispatch,
+    /** What the pane said, in order. */
+    said: () =>
+      dispatch.mock.calls
+        .map(([intent]) => intent as { type: string })
+        .filter(
+          (intent) =>
+            intent.type === "show_orchestrator_view" ||
+            intent.type === "leave_orchestrator_view",
+        ),
+    /** The model moved the pane (Back, Forward, a link) onto `at`. */
+    move: (
+      next: NonNullable<AppSnapshot["orchestratorView"]>["view"],
+      arrived: "back" | "forward" | "open",
+      at: number = entry,
+    ) => {
+      state = { view: next, seq: state.seq + 1, arrived };
+      entry = at;
+      act(() => {
+        rerender(view());
+      });
+    },
+    /** The pane's own word arrived back as the model's state, seq unmoved. */
+    settle: (
+      next: NonNullable<AppSnapshot["orchestratorView"]>["view"],
+      at: number,
+    ) => {
+      state = { ...state, view: next };
+      entry = at;
+      act(() => {
+        rerender(view());
+      });
+    },
+  };
+}
+
+describe("the board in Back and Forward", () => {
   function press(target: Element, button: number): MouseEvent {
     fireEvent.mouseDown(target, { button });
     const up = new MouseEvent("mouseup", {
@@ -741,40 +811,157 @@ describe("the mouse's side buttons over the board", () => {
     return up;
   }
 
-  it("goes back and forward between the board and an escalation, and leaves the app's history alone", () => {
+  it("opens a card as a navigation of its own, drawn at once", () => {
+    motion(true);
+    const model = mountWithModel();
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Your answer to #1" }),
+    ).toBeVisible();
+    expect(model.said()).toEqual([
+      {
+        type: "show_orchestrator_view",
+        view: { kind: "escalation", id: 1 },
+        reason: "explicit",
+        drawn: true,
+      },
+    ]);
+  });
+
+  it('closes with its own ‹ as "up to the board", which the model decides', () => {
+    motion(true);
+    const model = mountWithModel();
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Back to the board" }));
+    expect(document.querySelector(".orchestrator-reading")).toBeNull();
+    expect(model.said().at(-1)).toEqual({
+      type: "leave_orchestrator_view",
+      drawn: true,
+    });
+  });
+
+  it("leaves the side buttons to the window's history, and follows it", () => {
     motion(true);
     const app = vi.fn();
     const uninstall = installHistoryButtons(document, app);
     try {
-      mount();
-      // Back on the board itself is the app's.
-      press(screen.getByRole("region", { name: "要回答" }), 3);
-      expect(app).toHaveBeenCalledWith("back");
-      app.mockClear();
-      // Forward with nothing gone back from is the app's too.
-      press(boardSection(), 4);
-      expect(app).toHaveBeenCalledWith("forward");
-      app.mockClear();
-
+      const model = mountWithModel();
       fireEvent.click(
         screen.getByRole("button", { name: /本番マイグレーション/u }),
       );
-      const back = press(
-        document.querySelector(".orchestrator-thread") as Element,
-        3,
-      );
+      model.settle({ kind: "escalation", id: 1 }, 2);
+      const back = press(thread(), 3);
       expect(back.defaultPrevented).toBe(true);
-      expect(document.querySelector(".orchestrator-reading")).toBeNull();
-      expect(app).not.toHaveBeenCalled();
-
-      press(screen.getByRole("region", { name: "対応中" }), 4);
+      expect(app).toHaveBeenCalledWith("back");
+      // The pane does not go back by itself: the model says where Back led.
       expect(
         screen.getByRole("textbox", { name: "Your answer to #1" }),
       ).toBeVisible();
-      expect(app).not.toHaveBeenCalled();
+      model.move({ kind: "board" }, "back", 1);
+      expect(document.querySelector(".orchestrator-reading")).toBeNull();
+      model.move({ kind: "escalation", id: 1 }, "forward", 2);
+      expect(
+        screen.getByRole("textbox", { name: "Your answer to #1" }),
+      ).toBeVisible();
+      // Following the model says nothing back to it.
+      expect(model.said()).toHaveLength(1);
     } finally {
       uninstall();
     }
+  });
+
+  it("opens what a link names, and slides what Back brings in from the leading edge", () => {
+    motion(false);
+    const model = mountWithModel();
+    model.move({ kind: "escalation", id: 2 }, "open", 2);
+    const stage = document.querySelector(".orchestrator-stage");
+    expect(stage).toHaveAttribute("data-nav", "push");
+    expect(stage).not.toHaveAttribute("data-arrived");
+    model.move({ kind: "escalation", id: 1 }, "open", 3);
+    expect(
+      screen.getByRole("textbox", { name: "Your answer to #1" }),
+    ).toBeVisible();
+    model.move({ kind: "escalation", id: 2 }, "back", 2);
+    expect(stage).toHaveAttribute("data-arrived", "back");
+    model.move({ kind: "board" }, "back", 1);
+    expect(stage).toHaveAttribute("data-nav", "pop");
+    expect(stage).not.toHaveAttribute("data-arrived");
+    model.move({ kind: "escalation", id: 2 }, "forward", 2);
+    expect(stage).toHaveAttribute("data-nav", "push");
+    expect(model.said()).toEqual([]);
+  });
+
+  it("writes an escalation that left the board over its entry, rather than adding one", () => {
+    motion(true);
+    const dispatch = vi.fn().mockResolvedValue(undefined);
+    const value = (board: OrchestratorBoardWire) => (
+      <AgentsValueProvider
+        value={
+          { board, dispatch, reportFailure: vi.fn() } as unknown as AgentsValue
+        }
+      >
+        <OrchestratorBoard
+          snapshot={
+            {
+              workspaces: [],
+              orchestratorView: {
+                view: { kind: "board" },
+                seq: 0,
+                arrived: "open",
+              },
+              historyEntry: 1,
+            } as unknown as AppSnapshot
+          }
+        />
+      </AgentsValueProvider>
+    );
+    const { rerender } = render(value(BOARD));
+    fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
+    dispatch.mockClear();
+    rerender(value({ ...BOARD, inProgress: [] }));
+    expect(document.querySelector(".orchestrator-reading")).toBeNull();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "show_orchestrator_view",
+      view: { kind: "board" },
+      drawn: true,
+    });
+  });
+
+  it("puts the folded lanes back as each entry left them", () => {
+    motion(true);
+    const model = mountWithModel();
+    const waiting = () => screen.getByRole("button", { name: /待機中/u });
+    expect(waiting()).toHaveAttribute("aria-expanded", "false");
+    // Entry 1: 待機中 unfolded there.
+    fireEvent.click(waiting());
+    expect(waiting()).toHaveAttribute("aria-expanded", "true");
+    // A new entry (a link, say) starts from the board as it is, then folds.
+    model.move({ kind: "board" }, "open", 2);
+    expect(waiting()).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(waiting());
+    expect(waiting()).toHaveAttribute("aria-expanded", "false");
+    // Back to entry 1: unfolded, as it was left; Forward: folded again.
+    model.move({ kind: "board" }, "back", 1);
+    expect(waiting()).toHaveAttribute("aria-expanded", "true");
+    model.move({ kind: "board" }, "forward", 2);
+    expect(waiting()).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("puts the board's scroll back as each entry left it", () => {
+    motion(true);
+    const model = mountWithModel();
+    const lanes = document.querySelector<HTMLElement>(".orchestrator-lanes")!;
+    lanes.scrollTop = 120;
+    fireEvent.scroll(lanes);
+    model.move({ kind: "board" }, "open", 2);
+    lanes.scrollTop = 0;
+    fireEvent.scroll(lanes);
+    model.move({ kind: "board" }, "back", 1);
+    expect(lanes.scrollTop).toBe(120);
   });
 });
 
@@ -1130,7 +1317,7 @@ describe("what the pane tells main, for the window's title", () => {
 
   it("says the board, then the escalation opened, then the board on Back, and it again on Forward", () => {
     motion(true);
-    mount();
+    const model = mountWithModel();
     expect(last()).toEqual({ kind: "board" });
     fireEvent.click(
       screen.getByRole("button", { name: /本番マイグレーション/u }),
@@ -1138,14 +1325,8 @@ describe("what the pane tells main, for the window's title", () => {
     expect(last()).toEqual({ kind: "escalation", id: 1 });
     fireEvent.click(screen.getByRole("button", { name: "Back to the board" }));
     expect(last()).toEqual({ kind: "board" });
-    const forward = new MouseEvent("mouseup", {
-      button: 4,
-      bubbles: true,
-      cancelable: true,
-    });
-    act(() => {
-      screen.getByRole("region", { name: "対応中" }).dispatchEvent(forward);
-    });
+    // Forward, as the model has it: the escalation again.
+    model.move({ kind: "escalation", id: 1 }, "forward", 2);
     expect(last()).toEqual({ kind: "escalation", id: 1 });
     // An id only: no subject, no answer, no thread.
     for (const [view] of reportOrchestratorView.mock.calls)

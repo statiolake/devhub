@@ -181,7 +181,6 @@ describe("following a link on the Agents page", () => {
       dispatch: vi.fn(() => Promise.resolve(undefined)),
       openLinkedFile: vi.fn(() => Promise.resolve()),
       sessionAgent: vi.fn(() => Promise.resolve(AGENT)),
-      openEscalation: vi.fn(),
     };
   }
   const workspace = PLACES.workspaces[0]!;
@@ -211,18 +210,19 @@ describe("following a link on the Agents page", () => {
     ]);
   });
 
-  it("opens an escalation on the board, after selecting the row", async () => {
+  it("opens an escalation on the board as one move, one place in Back and Forward", async () => {
     const to = ports();
     await navigateLink(
       { kind: "escalation", escalation: PLACES.escalations[0]! },
       to,
     );
-    expect(to.dispatch).toHaveBeenCalledWith({
-      type: "select_context",
-      context: { kind: "orchestrator" },
-      reason: "explicit",
-    });
-    expect(to.openEscalation).toHaveBeenCalledWith(12);
+    expect(to.dispatch.mock.calls.map(([intent]) => intent)).toEqual([
+      {
+        type: "show_orchestrator_view",
+        view: { kind: "escalation", id: 12 },
+        reason: "explicit",
+      },
+    ]);
   });
 
   it("opens a file through main's routing, in the workspace that holds it", async () => {

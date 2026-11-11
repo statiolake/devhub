@@ -10,9 +10,10 @@
  * starts on the board. Only the tab is also kept in `sessionStorage`, so it
  * survives a reload of the page as it did before.
  *
- * Back and Forward stay the selection's (`docs/window-and-pages.md`): the
- * escalation is not a place of its own in the app's history, it is what the
- * Orchestrator place was showing, restored with it.
+ * An escalation or a file open here is a place of its own in Back and
+ * Forward (`orchestratorHistory.ts`, `docs/window-and-pages.md`): the model
+ * keeps which one each entry showed, and this memory is what the pane draws
+ * from when no snapshot says otherwise.
  */
 
 import type { OrchestratorViewWire } from "../../ipc/contract";

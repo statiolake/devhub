@@ -1089,6 +1089,189 @@ describe("arranging the rows", () => {
   });
 });
 
+describe("Back and Forward over the Orchestrator pane", () => {
+  const A = { kind: "workspace", workspaceId: WS_A } as const;
+  const ORCH = { kind: "orchestrator" } as const;
+  const BOARD = { kind: "board" } as const;
+  const esc = (id: number) => ({ kind: "escalation", id }) as const;
+
+  function on(model: AppModel) {
+    return {
+      context: model.selection.context,
+      view:
+        model.selection.context.kind === "orchestrator"
+          ? model.orchestratorView
+          : undefined,
+    };
+  }
+
+  function orchestratorModel() {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.selectContext(A, "full", "explicit");
+    return model;
+  }
+
+  it("records an escalation opened from the board as an entry of its own", () => {
+    const model = orchestratorModel();
+    model.selectContext(ORCH, "full", "explicit");
+    model.showOrchestratorView(esc(1), "explicit", true);
+    expect(model.navigateHistory("back")).toBe(true);
+    expect(on(model)).toEqual({ context: ORCH, view: BOARD });
+    expect(model.navigateHistory("back")).toBe(true);
+    expect(on(model)).toEqual({ context: A, view: undefined });
+    expect(model.navigateHistory("forward")).toBe(true);
+    expect(model.navigateHistory("forward")).toBe(true);
+    expect(on(model)).toEqual({ context: ORCH, view: esc(1) });
+  });
+
+  it("makes a link to an escalation one move: selected and open, one entry", () => {
+    const model = orchestratorModel();
+    const before = model.snapshot().orchestratorView.seq;
+    model.showOrchestratorView(esc(4), "explicit");
+    expect(on(model)).toEqual({ context: ORCH, view: esc(4) });
+    // Not drawn by the pane: it is told, by `seq`.
+    expect(model.snapshot().orchestratorView).toEqual({
+      view: esc(4),
+      seq: before + 1,
+      arrived: "open",
+    });
+    model.navigateHistory("back");
+    expect(on(model)).toEqual({ context: A, view: undefined });
+    expect(model.snapshot().orchestratorView.seq).toBe(before + 1);
+  });
+
+  it("moves seq with the direction on Back and Forward, not for the pane's own word", () => {
+    const model = orchestratorModel();
+    model.selectContext(ORCH, "full", "explicit");
+    const seq = model.snapshot().orchestratorView.seq;
+    model.showOrchestratorView(esc(1), "explicit", true);
+    expect(model.snapshot().orchestratorView.seq).toBe(seq);
+    model.navigateHistory("back");
+    expect(model.snapshot().orchestratorView).toEqual({
+      view: BOARD,
+      seq: seq + 1,
+      arrived: "back",
+    });
+    model.navigateHistory("forward");
+    expect(model.snapshot().orchestratorView).toEqual({
+      view: esc(1),
+      seq: seq + 2,
+      arrived: "forward",
+    });
+  });
+
+  it("cuts Forward off when another escalation is opened after Back", () => {
+    const model = orchestratorModel();
+    model.selectContext(ORCH, "full", "explicit");
+    model.showOrchestratorView(esc(1), "explicit", true);
+    model.navigateHistory("back");
+    model.showOrchestratorView(esc(2), "explicit", true);
+    expect(model.snapshot().history.canGoForward).toBe(false);
+    model.navigateHistory("back");
+    expect(on(model)).toEqual({ context: ORCH, view: BOARD });
+  });
+
+  it("does not record the escalation on screen twice", () => {
+    const model = orchestratorModel();
+    model.selectContext(ORCH, "full", "explicit");
+    model.showOrchestratorView(esc(1), "explicit", true);
+    model.showOrchestratorView(esc(1), "explicit", true);
+    model.noteInteraction();
+    model.selectContext(ORCH, "full", "explicit");
+    model.navigateHistory("back");
+    expect(on(model)).toEqual({ context: ORCH, view: BOARD });
+  });
+
+  it("closes as Back when Back leads to the board it was opened from", () => {
+    const model = orchestratorModel();
+    model.selectContext(ORCH, "full", "explicit");
+    model.showOrchestratorView(esc(1), "explicit", true);
+    model.leaveOrchestratorView(true);
+    expect(on(model)).toEqual({ context: ORCH, view: BOARD });
+    // It was Back: Forward opens it again, and Back goes on to A.
+    expect(model.snapshot().history.canGoForward).toBe(true);
+    model.navigateHistory("back");
+    expect(on(model)).toEqual({ context: A, view: undefined });
+  });
+
+  it("closes as a navigation to the board when the escalation came from elsewhere", () => {
+    const model = orchestratorModel();
+    // A link in A's conversation.
+    model.showOrchestratorView(esc(1), "explicit");
+    model.leaveOrchestratorView(true);
+    expect(on(model)).toEqual({ context: ORCH, view: BOARD });
+    expect(model.snapshot().history.canGoForward).toBe(false);
+    model.navigateHistory("back");
+    expect(on(model)).toEqual({ context: ORCH, view: esc(1) });
+    model.navigateHistory("back");
+    expect(on(model)).toEqual({ context: A, view: undefined });
+  });
+
+  it("writes a tab or an escalation that left the board over the entry on screen", () => {
+    const model = orchestratorModel();
+    model.selectContext(ORCH, "full", "explicit");
+    model.showOrchestratorView(esc(1), "explicit", true);
+    // The escalation was deleted while it was read.
+    model.showOrchestratorView(BOARD, undefined, true);
+    model.showOrchestratorView({ kind: "files" }, undefined, true);
+    expect(model.snapshot().history.canGoForward).toBe(false);
+    // The escalation's entry is the Files tab now; the board it was opened
+    // from is still behind it.
+    model.navigateHistory("back");
+    expect(on(model)).toEqual({ context: ORCH, view: BOARD });
+    model.navigateHistory("back");
+    expect(on(model)).toEqual({ context: A, view: undefined });
+    model.navigateHistory("forward");
+    model.navigateHistory("forward");
+    expect(on(model)).toEqual({ context: ORCH, view: { kind: "files" } });
+  });
+
+  it("skips an escalation that is no longer on the board, as it does a closed Agent", () => {
+    const model = orchestratorModel();
+    const gone = new Set<number>();
+    model.setOrchestratorViewExists(
+      (view) => view.kind !== "escalation" || !gone.has(view.id),
+    );
+    model.selectContext(ORCH, "full", "explicit");
+    model.showOrchestratorView(esc(1), "explicit", true);
+    model.selectContext(A, "full", "explicit");
+    gone.add(1);
+    model.navigateHistory("back");
+    expect(on(model)).toEqual({ context: ORCH, view: BOARD });
+    gone.clear();
+    gone.add(7);
+    expect(model.snapshot().history.canGoForward).toBe(true);
+  });
+
+  it("files per-entry state under an id that stays for the entry and is new for a new one", () => {
+    const model = orchestratorModel();
+    const first = model.snapshot().historyEntry;
+    model.selectContext(ORCH, "full", "explicit");
+    const board = model.snapshot().historyEntry;
+    expect(board).not.toBe(first);
+    model.showOrchestratorView(esc(1), "explicit", true);
+    model.navigateHistory("back");
+    expect(model.snapshot().historyEntry).toBe(board);
+    // A place only passed through has no entry.
+    model.selectContext({
+      kind: "workspace",
+      workspaceId: model.scratchWorkspaceId,
+    });
+    expect(model.snapshot().historyEntry).toBeUndefined();
+  });
+
+  it("keeps the view while the row is not selected, and comes back to it", () => {
+    const model = orchestratorModel();
+    model.selectContext(ORCH, "full", "explicit");
+    model.showOrchestratorView(esc(3), "explicit", true);
+    model.selectContext(A, "full", "explicit");
+    model.selectContext(ORCH, "full", "explicit");
+    expect(on(model)).toEqual({ context: ORCH, view: esc(3) });
+    model.navigateHistory("back");
+    expect(on(model)).toEqual({ context: A, view: undefined });
+  });
+});
+
 describe("Back and Forward", () => {
   const A = { kind: "workspace", workspaceId: WS_A } as const;
   const B = { kind: "workspace", workspaceId: WS_B } as const;

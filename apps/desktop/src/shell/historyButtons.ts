@@ -57,3 +57,50 @@ export function installHistoryButtons(
     target.removeEventListener("mouseup", onUp);
   };
 }
+
+/** Whether this page runs on a Mac, where `Alt+Left` is a text motion. */
+function onMac(): boolean {
+  return /Mac/u.test(globalThis.navigator?.platform ?? "");
+}
+
+/**
+ * `Alt+Left` / `Alt+Right` off the Mac, answered by a page that has
+ * terminals in it (the Agents page): Back and Forward, except while the
+ * keyboard is in a terminal, where they are the shell's word motion and go
+ * on to it. Main answers them itself on the pages with no terminal
+ * (`main/shell/historyKeys.ts`, `altArrowDirection`). Returns a function
+ * that removes the listener again.
+ */
+export function installHistoryKeys(
+  target: Document,
+  navigate: (direction: HistoryDirection) => void,
+  mac: boolean = onMac(),
+): () => void {
+  if (mac) return () => undefined;
+  const onKey = (event: KeyboardEvent) => {
+    if (
+      !event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      event.isComposing ||
+      event.defaultPrevented
+    )
+      return;
+    const direction =
+      event.code === "ArrowLeft"
+        ? "back"
+        : event.code === "ArrowRight"
+          ? "forward"
+          : undefined;
+    if (direction === undefined) return;
+    const active = target.activeElement;
+    if (active?.closest(".terminal-surface-shell") != null) return;
+    event.preventDefault();
+    navigate(direction);
+  };
+  target.addEventListener("keydown", onKey);
+  return () => {
+    target.removeEventListener("keydown", onKey);
+  };
+}

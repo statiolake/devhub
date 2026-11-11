@@ -856,70 +856,156 @@ Sidebar's row shows, right after the Workspace's name:
 ## Back and Forward
 
 The window keeps a browser's history of the places it has shown, and the title
-bar draws Back and Forward beside the Sidebar button.
+bar draws Back and Forward beside the Sidebar button. What the person asked
+for: links and escalations should be in it, and going back from an escalation
+should feel as it does in a browser.
 
-**An entry is the selection** (`AppModel.selection`): a Workspace, an Agent,
-or the two side by side, with the presentation it was shown in. That is the
-shell's whole notion of "where you are", so there is no second record of
-pages to drift from it.
+**An entry is a place**: the selection (`AppModel.selection`) — a Workspace,
+an Agent, or the two side by side, with the presentation it was shown in —
+and, on the Orchestrator row, what the row's pane shows: the board, the Files
+tab's tree, an escalation read over the board, or a file read over the tree
+(`model/orchestratorView.ts`). Opening an escalation is going somewhere, as
+following a link is, so it is an entry of its own, and Back from it is the
+board it was opened from.
 
-**A place enters it once somebody does something there**, not when the
-selection passes over it — so Back skips what `Cmd+Q N`/`P` only flicked past:
+**History is per window**, as a browser's is per tab. DevHub has one main
+window; Settings and the Task Manager are windows of their own with no places
+in them, and are not in it. It is per session: the state file says where the
+window opens, and Back starts there.
 
-| What happened while the place was shown                                                                                                                                                                                                                                                                                                                                               | Recorded?             |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| a key typed into it (not a chord's strokes, not a modifier alone, not `Cmd+[`/`Cmd+]`)                                                                                                                                                                                                                                                                                                | yes, at the first one |
-| a press of the left, middle or right button, or a scroll, in it (a drag starts with a press)                                                                                                                                                                                                                                                                                          | yes, at the first one |
-| arriving on purpose: a new Agent (`AppModel.addAgent`), an explicitly opened Workspace (`Cmd+Q F`'s picker …), a click on a Sidebar row (a Workspace, an Agent, Scratch, the Orchestrator), `Cmd+Q Shift+O` (to the Orchestrator and back), a click on a `devhub:` link's chip (`model/devhubLink.ts`), `devhub --tell focus`, Enter or a click on a not-running editor's placeholder | yes, at once          |
-| `Cmd+Q N`/`P`, `Cmd+Q 0`–`9`, the tab picker, the Sidebar walked from the keyboard (its Return included), `Cmd+Q Shift+J`, a selection repaired after a close, a command line that does not take focus                                                                                                                                                                                | no                    |
-| Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                                                                                                                                                                                                                                  | no                    |
+**A place enters it when the person goes there on purpose, or does something
+there** — not when the selection only passes over it:
 
-"In it" means its views: the Agents' page (a
-GUI conversation or a TUI's terminal) and a terminal pane (`pane.html`, the Neovim
-editor's too) — `isDestinationSurface` in
-`historyKeys.ts`. The Sidebar is choosing where to go, not being somewhere, and
-the window's own page holds the title bar's arrows, so neither counts; nor do
-the modals, the notices, the tooltip, Settings or a Web Inspector. Main sees
-it all without the pages' help: keys in the chord layer's
-`before-input-event` (`ChordHost.interacted`, after the chords and the history
-keys have had theirs), presses and scrolls in each contents' `input-event`
-(`isPointerInteraction`; a move is one field read and nothing more). The entry
-is the selection at that moment, deduplicated against the cursor's entry
-(`AppModel.interactionIsNew` is asked first, so a thousand keystrokes dispatch
-one `note_interaction`). From a place with no entry, Back goes to the cursor's
-own entry — the last place recorded — and Forward is what it was: passing on
-cuts nothing off; doing something there does.
+| What happened                                                                                                                                                                                                                                                                                                                                                                                    | Recorded?             |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| going there on purpose: a click on a `devhub:` link's chip (in a conversation, an escalation's thread, the board), a click on a Sidebar row, `Cmd+Q F`'s picker, the Go to picker (`Cmd+Q G`), `Cmd+Q 0`–`9`, a command chosen in the palette, `Cmd+Q Shift+J` and `Cmd+Q Shift+O` (both ways), a new Agent, `devhub --tell focus`, Enter or a click on a not-running editor's placeholder | yes, at once          |
+| on the Orchestrator pane: an escalation opened (a card clicked, Enter on the board, a `devhub:escalation` link), a file opened in the Files tab                                                                                                                                                                                                                                                    | yes, at once          |
+| a key typed into the place (not a chord's strokes, not a modifier alone, not Back or Forward's own keys), a press or a scroll in it                                                                                                                                                                                                                                                             | yes, at the first one |
+| `Cmd+Q N`/`P` (stepping past places), the Sidebar walked from the keyboard (its Return included), a selection repaired after a close or an exit, a command line that does not take focus, an Agent finishing                                                                                                                                                                                  | no                    |
+| a tab chosen on the Orchestrator pane, an escalation that left the board while it was read                                                                                                                                                                                                                                                                                                        | written over the entry on screen, as `replaceState` does |
+| Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                                                                                                                                                                                                                                              | no                    |
 
-Arriving on purpose is said by the move itself, never inferred from the
-input: a selection or a folder open that carries `reason: "explicit"`
-(`NavigationReason` in `model/intents.ts`) is recorded by the model the moment
-it is made, by the same rule an interaction is — the place the cursor already
-names adds nothing, so clicking the row you are on is not a second entry. The
-Sidebar tells a click from Return by the click's `detail` (`useSelectRow`), the
-picker's open says it in `openFolder` (not for a folder opened _for_ an Agent:
-the Agent is the place), and `focus` from the command line says it in its port.
-There are no tabs or pane headers to click: a press in either half of a split
-is already an interaction there.
+"In it" means its views: the Agents' page (a GUI conversation, a TUI's
+terminal, the board) and a terminal pane (`pane.html`, the Neovim editor's
+too) — `isDestinationSurface` in `historyKeys.ts`. The Sidebar is choosing
+where to go, not being somewhere, and the window's own page holds the arrows,
+so neither counts; nor do the modals, the notices, the tooltip, Settings or a
+Web Inspector. Main sees it all without the pages' help: keys in the chord
+layer's `before-input-event` (`ChordHost.interacted`), presses and scrolls in
+each contents' `input-event` (`isPointerInteraction`). `AppModel.interactionIsNew`
+is asked first, so a thousand keystrokes dispatch one `note_interaction`. From
+a place with no entry, Back goes to the cursor's own entry — the last place
+recorded — and Forward is what it was: passing on cuts nothing off.
 
-The rest of the rules are `model/navigationHistory.ts`'s, and they are a
-browser's: going back and then doing something somewhere new cuts Forward
-off; Back and Forward do not record themselves; the same place twice in a row
-is one entry; the two
-halves of one split are one place (swapping the keyboard between them updates
-the entry); a closed Agent or Workspace is _skipped_, not removed; and only the
-newest 100 entries are kept. Each arrow is disabled when there is nowhere it
-would go, answered by the same rule the move obeys. History is per session:
-the state file says where the window opens, and Back starts there.
+`Cmd+Q N`/`P` stay out on purpose: stepping through five Agents to reach the
+sixth is walking past five places, and five entries would make Back a walk
+through them again. A digit names its place, as a link does, so it is in.
 
-`Cmd+[`/`Cmd+]` are the Mac's own Back and Forward (Finder, Safari, Xcode),
-answered on DevHub's own pages (`main/shell/historyKeys.ts`); mouse buttons
-4/5 (`shell/historyButtons.ts`), a trackpad swipe and the title bar's arrows
-walk the same history. Keys and gestures raised in main are declined while a
-question is up, as the zoom is; the window-level gestures, which say nothing
-about where the pointer was, are decided by where the keyboard is
-(`ShellWindow.focusTarget`). With the title bar hidden
-(`appearance.title_bar = "hidden"`) there are no arrows, and the keys and the
-mouse still work.
+Going there on purpose is said by the move itself, never inferred: a
+selection or a folder open that carries `reason: "explicit"`
+(`NavigationReason` in `model/intents.ts`). The Sidebar tells a click from
+Return by the click's `detail` (`useSelectRow`); the palette runs its command
+with the reason (`runCommand(…, "explicit")`), so the same command from its
+chord is still stepping.
+
+### The rules, a browser's
+
+`model/navigationHistory.ts`:
+
+- **A new navigation after Back cuts Forward off.**
+- **Back and Forward do not record themselves.**
+- **The same place twice in a row is one entry**: the row you are on clicked
+  again, the escalation open opened again. The two halves of one split are one
+  place (swapping the keyboard between them updates the entry).
+- **A place that has gone is skipped**, not removed and not refused: a closed
+  Agent or Workspace, an escalation deleted from the board (main tells the
+  model which still exist: `AppModel.setOrchestratorViewExists`). That is a
+  closed tab's answer rather than a 404's — the person's position never jumps
+  under them, and each arrow is enabled only when there is somewhere it would
+  go, answered by the same rule the move obeys. An escalation that was
+  _closed_ is still on the board (完了) and is still a place.
+- **Only the newest 100 entries are kept.**
+
+### Back restores the place as it was
+
+What an entry names is its identity; how the place looked is kept **per
+entry**, as a browser keeps scroll and form state per entry
+(`NavigationHistory.currentId`, the snapshot's `historyEntry`):
+
+- **the page and the view**: the Orchestrator pane is put back on the entry's
+  board, tree, escalation or file, on its tab;
+- **the selection on it**: which escalation was open, or none;
+- **the board's scroll and its folded lanes** (`useEntryState` in
+  `shell/agents/orchestratorHistory.ts`): written under the entry while it is
+  on screen, put back when Back or Forward returns to it; a new entry starts
+  from the board as it is;
+- **an escalation's thread and a file's scroll** are kept per escalation and
+  per file (`orchestratorMemory.ts`), which is the same thing for them;
+- **a conversation's transcript and a terminal** keep their own: every
+  Agent's pane stays mounted while another is shown, so it is where it was
+  left. A terminal's scrollback is tmux's.
+
+### The Orchestrator pane and the model
+
+The model holds the history; the pane draws first. A card clicked opens in
+the frame of the click and _then_ tells the model
+(`show_orchestrator_view`, `reason: "explicit"`, `drawn: true`), so no input
+waits for a round trip. The other way, the pane follows the snapshot's
+`orchestratorView.seq`, which moves only when the model moved the pane — Back,
+Forward, a `devhub:escalation` link — so what the pane said never comes back to
+it as an order. A `devhub:escalation` link is one intent: the Orchestrator row
+selected with the escalation open, one entry, so Back from it is where the
+link was clicked.
+
+**An escalation's own ‹ (and Esc, and an answer sent) means "up to the
+board".** When Back leads to exactly that board — it was opened from it — it
+_is_ Back: Forward opens it again and no board is in the history twice. When
+the escalation came from elsewhere — a link in an Agent's conversation, or the
+pane was left on it — it is a navigation to the board, recorded, so Back from
+the board returns to the escalation and Back again to the Agent. That is the
+navigation-stack meaning the ‹ already draws (an iOS back button, Gmail's
+"back to inbox"), and it never leaves the person somewhere the control did not
+name (`AppModel.leaveOrchestratorView`). A file's ‹ is the same, to the tree.
+
+### What is not a place
+
+- **The lightbox** (a picture, a page or a deck opened large) is over the
+  place, not a place: Esc closes it, and Back or Forward leave the place it is
+  over, taking it with them.
+- **tmux windows and panes** are the terminal's own arrangement inside one
+  place, with their own last-window keys; they are not in DevHub's history.
+- **Settings and the Task Manager** are windows, not pages of this one.
+
+### Keys, buttons, gestures and motion
+
+- `Cmd+[`/`Cmd+]` on macOS — the Mac's own Back and Forward (Finder, Safari,
+  Xcode) — answered on DevHub's own pages (`main/shell/historyKeys.ts`);
+  `Super+[`/`Super+]` elsewhere, the same binding.
+- `Alt+Left`/`Alt+Right` off macOS, the platform's own: answered by main on
+  the pages with no terminal (the window's page, the Sidebar, the
+  Conversations), and by the Agents page itself outside its terminals
+  (`installHistoryKeys`), because in a terminal they are the shell's word
+  motion. Not on macOS, where `Alt+Left` is a text motion.
+- `Cmd+Q H`/`Cmd+Q L`, the chords, from anywhere.
+- The mouse's buttons 4 and 5 (`shell/historyButtons.ts`; `app-command` on
+  Linux and Windows), the trackpad's three-finger swipe on macOS (`swipe`, when
+  the system is set to it), and the title bar's arrows. Over the board they are
+  the window's Back and Forward too, which walk the pane's views — there is no
+  second, board-local history any more.
+- Keys and gestures raised in main are declined while a question is up; the
+  window-level gestures are decided by where the keyboard is
+  (`ShellWindow.focusTarget`). With the title bar hidden there are no arrows,
+  and everything else still works.
+
+**Motion**: on the Orchestrator pane the move is the stack's own slide
+(`orchestrator.css`, [`motion.md`](motion.md)), run by direction: opening and
+Forward onto an escalation push it in from the trailing edge; Back and the ‹
+pop it off to the trailing edge; Back _onto_ an escalation (the board was
+reached from it) pushes it in from the leading edge, and Forward onto the
+board pops it off to the leading edge (`data-arrived`). Transform and opacity
+only, the same 220 ms, nothing under Reduce Motion. A move between Agents and
+Workspaces is main swapping views, which are not animated
+([`motion.md`](motion.md), "Views main moves").
 
 ## Attention is the Dock
 

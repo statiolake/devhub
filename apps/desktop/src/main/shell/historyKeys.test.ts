@@ -110,3 +110,59 @@ describe("where input makes a place for Back and Forward", () => {
 		expect(isDestinationSurface("about:blank")).toBe(false);
 	});
 });
+
+describe("Alt+Left and Alt+Right off the Mac", () => {
+	const alt = (
+		code: string,
+		overrides: Partial<KeyStroke> = {},
+	): KeyStroke => ({
+		key: code,
+		code,
+		command: false,
+		shift: false,
+		option: true,
+		control: false,
+		isAutoRepeat: false,
+		...overrides,
+	});
+
+	it("are Back and Forward on the pages with no terminal in them", () => {
+		for (const page of ["index.html", "sidebar.html", "conversations.html"]) {
+			const url = `${SHELL_ORIGIN}/${page}`;
+			expect(historyDirectionFor(url, alt("ArrowLeft"), "linux")).toBe("back");
+			expect(historyDirectionFor(url, alt("ArrowRight"), "linux")).toBe(
+				"forward",
+			);
+		}
+	});
+
+	it("are left to a terminal, and to the Agents page, which answers them itself", () => {
+		for (const page of ["pane.html", "agents.html"]) {
+			const url = `${SHELL_ORIGIN}/${page}`;
+			expect(
+				historyDirectionFor(url, alt("ArrowLeft"), "linux"),
+			).toBeUndefined();
+		}
+	});
+
+	it("are a text motion on the Mac, and only Alt alone is Back", () => {
+		const url = `${SHELL_ORIGIN}/index.html`;
+		expect(
+			historyDirectionFor(url, alt("ArrowLeft"), "darwin"),
+		).toBeUndefined();
+		expect(
+			historyDirectionFor(url, alt("ArrowLeft", { shift: true }), "linux"),
+		).toBeUndefined();
+		expect(
+			historyDirectionFor(url, alt("ArrowLeft", { control: true }), "linux"),
+		).toBeUndefined();
+		expect(
+			historyDirectionFor(WORKBENCH, alt("ArrowLeft"), "linux"),
+		).toBeUndefined();
+	});
+
+	it("keep Cmd+[ (Super+[) off the Mac too", () => {
+		const url = `${SHELL_ORIGIN}/sidebar.html`;
+		expect(historyDirectionFor(url, stroke("["), "linux")).toBe("back");
+	});
+});

@@ -695,6 +695,16 @@ export class AppCoordinator {
       case "navigate_history":
         this.model.navigateHistory(intent.direction);
         return this.transitionOutcome(beforeRevision, id);
+      case "show_orchestrator_view":
+        this.model.showOrchestratorView(
+          intent.view,
+          intent.reason,
+          intent.drawn === true,
+        );
+        return this.transitionOutcome(beforeRevision, id);
+      case "leave_orchestrator_view":
+        this.model.leaveOrchestratorView(intent.drawn === true);
+        return this.transitionOutcome(beforeRevision, id);
       case "toggle_place":
         this.model.togglePlace(intent.place);
         return this.transitionOutcome(beforeRevision, id);

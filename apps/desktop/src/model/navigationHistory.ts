@@ -3,9 +3,10 @@
  *
  * DevHub's shell shows one thing at a time in its content area: a Workspace's
  * workbench, an Agent on its own, or the two side by side. That *selection*
- * (`AppModel.selection`) is the shell's whole notion of "where you are", so it
- * is also the whole of what an entry here is — there is no second record of
- * pages next to it to drift out of step with it. This module is generic over
+ * (`AppModel.selection`) is the shell's notion of "where you are", and an
+ * entry is it — with, on the Orchestrator row, what the row's pane shows (the
+ * board, or an escalation open over it: `model/orchestratorView.ts`), because
+ * opening an escalation is following a link. This module is generic over
  * the entry so that it stays a list and a cursor and nothing else: what makes
  * two entries the same, and whether one still names something, are questions
  * the model answers and hands in.
@@ -22,7 +23,7 @@
  *   a scroll inside it — or arrives there on purpose (a new Agent, an opened
  *   Workspace, a click on a Sidebar row, the command line's `focus`: a
  *   selection with `reason: "explicit"`), never because the selection passed
- *   over it (`Cmd+Q N/P`, a digit, the Sidebar's keyboard). So the place on screen may be one history
+ *   over it (`Cmd+Q N/P`, the Sidebar's keyboard). So the place on screen may be one history
  *   has no entry for (`here`, below): Back from it goes to the latest place
  *   recorded, which is the cursor's own entry, and Forward is what it was.
  * - **Going back or forward is not a visit.** The cursor moves, and the
@@ -56,6 +57,15 @@ export interface NavigationHistoryOptions<T> {
 
 export class NavigationHistory<T> {
   private entries: T[];
+  /**
+   * Each entry's identity, parallel to `entries`: what a page files the
+   * state it restores under (a board's scroll, its folded lanes), the way a
+   * browser keeps scroll and form state per entry rather than per URL. A
+   * replace keeps it — the same entry, written over — and a visit makes a
+   * new one, so a place visited twice is two entries, each as it was left.
+   */
+  private ids: number[];
+  private nextId = 1;
   private index: number;
   private readonly same: (left: T, right: T) => boolean;
   private readonly limit: number;
@@ -64,12 +74,18 @@ export class NavigationHistory<T> {
     this.same = options.same;
     this.limit = Math.max(1, options.limit ?? NAVIGATION_HISTORY_LIMIT);
     this.entries = [initial];
+    this.ids = [this.nextId++];
     this.index = 0;
   }
 
   /** Where the cursor is: the place on screen, as far as history knows. */
   get current(): T {
     return this.entries[this.index];
+  }
+
+  /** The cursor's entry's identity (see `ids`). */
+  get currentId(): number {
+    return this.ids[this.index];
   }
 
   /** For tests and for reading: every entry, oldest first. */
@@ -98,9 +114,13 @@ export class NavigationHistory<T> {
       return true;
     }
     this.entries.splice(this.index + 1);
+    this.ids.splice(this.index + 1);
     this.entries.push(entry);
+    this.ids.push(this.nextId++);
     if (this.entries.length > this.limit) {
-      this.entries.splice(0, this.entries.length - this.limit);
+      const over = this.entries.length - this.limit;
+      this.entries.splice(0, over);
+      this.ids.splice(0, over);
     }
     this.index = this.entries.length - 1;
     return true;
@@ -114,6 +134,7 @@ export class NavigationHistory<T> {
    */
   reset(entry: T): void {
     this.entries = [entry];
+    this.ids = [this.nextId++];
     this.index = 0;
   }
 
@@ -151,6 +172,20 @@ export class NavigationHistory<T> {
     here: T = this.current,
   ): boolean {
     return this.target(direction, exists, here) !== undefined;
+  }
+
+  /**
+   * Where `go(direction)` would land, without moving: for a control whose
+   * meaning depends on it — an escalation's own "back to the board" is Back
+   * when Back leads to that board (`AppModel.leaveOrchestratorView`).
+   */
+  peek(
+    direction: NavigationDirection,
+    exists: (entry: T) => boolean,
+    here: T = this.current,
+  ): T | undefined {
+    const at = this.target(direction, exists, here);
+    return at === undefined ? undefined : this.entries[at];
   }
 
   /**

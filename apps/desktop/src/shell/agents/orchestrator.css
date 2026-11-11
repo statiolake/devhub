@@ -401,6 +401,88 @@
     -10px 0 24px var(--shadow-soft);
 }
 
+/*
+ * Back and Forward run the same stack by direction, as a browser's pages do:
+ * what Back brings comes in from the leading edge. Back onto an escalation
+ * (the board was reached from it by its own ‹) pushes it in from the left
+ * while the board drifts right; Forward onto the board pops the escalation
+ * off to the left. Same layers, same duration, transform and opacity only.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .orchestrator-stage[data-arrived="back"][data-nav="push"]
+    > [data-layer="under"] {
+    animation-name: orchestrator-board-out-back;
+  }
+
+  .orchestrator-stage[data-arrived="back"][data-nav="push"]
+    > [data-layer="over"] {
+    animation-name: orchestrator-reading-in-back;
+  }
+
+  .orchestrator-stage[data-arrived="forward"][data-nav="pop"]
+    > [data-layer="under"] {
+    animation-name: orchestrator-board-in-forward;
+  }
+
+  .orchestrator-stage[data-arrived="forward"][data-nav="pop"]
+    > [data-layer="over"] {
+    animation-name: orchestrator-reading-out-forward;
+  }
+}
+
+.orchestrator-stage[data-arrived="back"][data-nav] > [data-layer="over"],
+.orchestrator-stage[data-arrived="forward"][data-nav] > [data-layer="over"] {
+  box-shadow:
+    1px 0 0 var(--line-soft),
+    10px 0 24px var(--shadow-soft);
+}
+
+@keyframes orchestrator-board-out-back {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(24%);
+    visibility: hidden;
+  }
+}
+
+@keyframes orchestrator-board-in-forward {
+  from {
+    opacity: 0;
+    transform: translateX(24%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes orchestrator-reading-in-back {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes orchestrator-reading-out-forward {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-100%);
+  }
+}
+
 @keyframes orchestrator-board-out {
   from {
     opacity: 1;

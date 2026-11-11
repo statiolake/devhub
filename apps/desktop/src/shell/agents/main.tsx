@@ -23,7 +23,7 @@ import { installMonoFont, installPalette } from "../appearance";
 import { installRootFailureHandler } from "../failure";
 import { PageBoundary } from "../PageBoundary";
 import { installSelectionGuard } from "../selection";
-import { installHistoryButtons } from "../historyButtons";
+import { installHistoryButtons, installHistoryKeys } from "../historyButtons";
 import { devhub } from "./client";
 import { WINDOW_TITLES } from "../../ipc/windowTitles";
 import { AgentsApp } from "./AgentsApp";
@@ -46,6 +46,10 @@ installSelectionGuard(document);
 // The mouse's side buttons walk the app's history over this page; over a
 // workbench they are VS Code's own. See `historyButtons.ts`.
 installHistoryButtons(document, (direction) => {
+  void devhub().dispatch({ type: "navigate_history", direction });
+});
+// And `Alt+Left`/`Alt+Right` off the Mac, outside the terminals.
+installHistoryKeys(document, (direction) => {
   void devhub().dispatch({ type: "navigate_history", direction });
 });
 installPalette(document);

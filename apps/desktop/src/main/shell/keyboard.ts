@@ -49,7 +49,7 @@ import { isModifierKey, strokeKey } from "../../model/chordKeys.js";
 import { ChordInputSource, type InputSourcePort } from "./chordInputSource.js";
 import { editingCommandFor, type EditingRole } from "./editingCommands.js";
 import { terminalZoomFor } from "./terminalZoom.js";
-import { historyDirectionFor } from "./historyKeys.js";
+import { altArrowDirection, historyDirectionFor } from "./historyKeys.js";
 import type { NavigationDirection } from "../../model/navigationHistory.js";
 import type { CommandId } from "../../model/commands.js";
 import type { TogglePlace } from "../../model/intents.js";
@@ -90,6 +90,7 @@ export interface ChordHost {
 	selectContext(
 		context: NavigationContext,
 		presentation?: SurfacePresentationWire,
+		reason?: "explicit",
 	): void;
 	/**
 	 * Somebody did something in this web contents — a key the chords and the
@@ -251,11 +252,21 @@ function strokeOf(input: Electron.Input): KeyStroke {
 	};
 }
 
-function perform(host: ChordHost, effect: ChordEffect): void {
+function perform(
+	host: ChordHost,
+	effect: ChordEffect,
+	reason?: "explicit",
+): void {
 	switch (effect.kind) {
-		case "select-context":
-			host.selectContext(effect.context, effect.presentation);
+		case "select-context": {
+			const why = effect.reason ?? reason;
+			if (why === undefined) {
+				host.selectContext(effect.context, effect.presentation);
+			} else {
+				host.selectContext(effect.context, effect.presentation, why);
+			}
 			return;
+		}
 		case "swap-split-focus":
 			host.swapSplitFocus();
 			return;
@@ -377,14 +388,24 @@ function perform(host: ChordHost, effect: ChordEffect): void {
  * the command palette, so the two cannot disagree about what it does. Answers
  * whether it did anything: a command with nothing to act on is a no-op.
  */
-export function runCommand(host: ChordHost, commandId: CommandId): boolean {
+/**
+ * Run a command now. `reason: "explicit"` is the palette's: a command chosen
+ * by name is going somewhere on purpose, so a selection it makes is a place
+ * in Back and Forward at once, where the same command from its chord may be
+ * stepping past places (`Cmd+Q N`).
+ */
+export function runCommand(
+	host: ChordHost,
+	commandId: CommandId,
+	reason?: "explicit",
+): boolean {
 	// Before the first projection there is no model to resolve against, and a
 	// command that arrives then has nothing to act on.
 	const snapshot = host.snapshot();
 	if (!snapshot) return false;
 	const effect = resolveChord(commandId, snapshot);
 	if (!effect) return false;
-	perform(host, effect);
+	perform(host, effect, reason);
 	return true;
 }
 
@@ -429,7 +450,13 @@ export function handleInput(
 		}
 		// Anything else typed here is somebody being here. After the history
 		// keys, so walking Back from a place does not first record it.
-		if (!isModifierKey(stroke.code)) host.interacted(url);
+		// Nor does Back typed where the page answers it itself (the Agents
+		// page's `Alt+Left` off the Mac, `historyButtons.ts`).
+		if (
+			!isModifierKey(stroke.code) &&
+			(process.platform === "darwin" || altArrowDirection(stroke) === undefined)
+		)
+			host.interacted(url);
 		const zoom = terminalZoomFor(url, stroke);
 		if (zoom !== undefined && host.terminalZoom(zoom)) {
 			take();

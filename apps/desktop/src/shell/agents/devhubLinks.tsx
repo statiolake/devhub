@@ -8,8 +8,10 @@
  *
  * - an agent, a workspace, the Orchestrator row: `select_context` with
  *   `reason: "explicit"`, a place in Back and Forward at once;
- * - an escalation: the Orchestrator row the same way, then the board opens
- *   it (`escalationRequests.ts`);
+ * - an escalation: one move to the Orchestrator row with the escalation
+ *   open over its board (`show_orchestrator_view`, `reason: "explicit"`),
+ *   so it is one entry in Back and Forward and Back from it is where the
+ *   link was clicked; the board follows the model (`orchestratorHistory.ts`);
  * - a file: main opens it in the workspace that holds it, through the
  *   open-file routing, as an explicit move (`openLinkedFile`);
  * - a session: the agent running it, selected; resuming one is still the
@@ -27,7 +29,6 @@ import {
 } from "../conversation/DevhubLink";
 import { useAgents } from "./AgentsContext";
 import { devhub } from "./client";
-import { requestEscalation } from "./escalationRequests";
 
 /** The places a link can name, from the snapshot and the board. */
 export function linkPlaces(
@@ -62,7 +63,6 @@ export interface LinkNavigationPorts {
     range: FileRange | undefined,
   ) => Promise<void>;
   readonly sessionAgent: (session: string) => Promise<string | null>;
-  readonly openEscalation: (id: number) => void;
 }
 
 /** Go where a resolved link leads, as an explicit move. */
@@ -84,8 +84,11 @@ export async function navigateLink(
       await select({ kind: "orchestrator" });
       return;
     case "escalation":
-      await select({ kind: "orchestrator" });
-      ports.openEscalation(target.escalation.id);
+      await ports.dispatch({
+        type: "show_orchestrator_view",
+        view: { kind: "escalation", id: target.escalation.id },
+        reason: "explicit",
+      });
       return;
     case "file":
       await ports.openLinkedFile(
@@ -122,7 +125,6 @@ export function AgentsDevhubLinks({
       openLinkedFile: (workspaceId, path, range) =>
         devhub().openLinkedFile(workspaceId, path, range),
       sessionAgent: (session) => devhub().devhubSessionAgent(session),
-      openEscalation: requestEscalation,
     };
     return {
       places: linkPlaces(snapshot, board),

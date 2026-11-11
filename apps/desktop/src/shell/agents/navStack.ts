@@ -52,12 +52,20 @@ export interface NavStack<T> {
    * where the pane was left, so it is shown as it was — no slide in.
    */
   readonly restored: boolean;
-  readonly open: (item: T) => void;
+  /**
+   * The way the last move went when Back or Forward made it against the
+   * stack's grain — an item pushed by Back, the page under shown by
+   * Forward — so the motion runs by direction, as a browser's does: what
+   * Back brings comes in from the leading edge (`orchestrator.css`).
+   * Undefined for the ordinary push and pop.
+   */
+  readonly arrived: "back" | "forward" | undefined;
+  readonly open: (item: T, arrived?: "back") => void;
   /**
    * Back to the page under. Focus goes back to what opened the page over,
    * or to `returnTo` when another item is the one to land on.
    */
-  readonly close: (returnTo?: T) => void;
+  readonly close: (returnTo?: T, arrived?: "forward") => void;
 }
 
 /**
@@ -76,12 +84,16 @@ export function useNavStack<T>(
   const [nav, setNav] = useState<Nav>(initial === undefined ? "idle" : "push");
   const [restored, setRestored] = useState(initial !== undefined);
   const [forward, setForward] = useState<T | undefined>(undefined);
+  const [arrived, setArrived] = useState<"back" | "forward" | undefined>(
+    undefined,
+  );
   const popTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const returnTo = useRef<T | undefined>(undefined);
   const find = useRef(findReturn);
   find.current = findReturn;
-  const open = useCallback((item: T) => {
+  const open = useCallback((item: T, how?: "back") => {
     clearTimeout(popTimer.current);
+    setArrived(how);
     returnTo.current = undefined;
     setRestored(false);
     setForward(undefined);
@@ -89,8 +101,9 @@ export function useNavStack<T>(
     setNav("push");
   }, []);
   const close = useCallback(
-    (landOn?: T) => {
+    (landOn?: T, how?: "forward") => {
       if (shown === undefined) return;
+      setArrived(how);
       returnTo.current = focusIsOurs(pane.current)
         ? (landOn ?? shown)
         : undefined;
@@ -118,5 +131,5 @@ export function useNavStack<T>(
     returnTo.current = undefined;
     find.current(item)?.focus({ preventScroll: true });
   }, [nav]);
-  return { shown, nav, forward, restored, open, close };
+  return { shown, nav, forward, restored, arrived, open, close };
 }

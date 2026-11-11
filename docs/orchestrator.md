@@ -448,7 +448,8 @@ a hairline pill, unlike an underlined link out. A click is an explicit move
 (`reason: "explicit"`, a place in Back and Forward at once) through the
 intents the window has — `select_context`, the open-file routing
 (`openLinkedFile`, which opens only a file inside the workspace named), the
-board's own reading view — and never reaches the system browser (main's
+board's reading view, as one move that selects the row with the escalation
+open (`show_orchestrator_view`), so the link is one entry — and never reaches the system browser (main's
 `openExternalUrl` refuses a `devhub:` URL). A link whose target is gone is
 its text with a quiet 見つかりません, never a broken navigation. External
 http(s) links open in the browser as before.
@@ -559,10 +560,12 @@ as it was and the unsent answer still in the composer (per escalation), and
 on the Files tab the same folders open (`shell/agents/orchestratorMemory.ts`).
 It is shown in place, without sliding in again. An escalation that has left
 the board, or was closed since (one already closed when it was read from
-完了 stays), lands on the board instead; so does a file that is gone. The
-escalation is not a place in Back and Forward of its own: history stays the
-selection's (`docs/window-and-pages.md`), and the Orchestrator place
-restores what it was showing. This is kept for the session only; a restart
+完了 stays), lands on the board instead; so does a file that is gone. An
+escalation open, or a file, is a place in Back and Forward of its own:
+opening one is an entry, Back from it is the board (or the tree) as it was
+left — its scroll and folded lanes included — and its ‹ is "up to the board",
+which is Back when it was opened from that board
+(`docs/window-and-pages.md`, Back and Forward). This is kept for the session only; a restart
 starts on the board.
 
 ### ファイル: the orchestrator's folder

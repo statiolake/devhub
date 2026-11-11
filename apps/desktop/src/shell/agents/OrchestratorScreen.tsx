@@ -41,7 +41,6 @@ import type { VoiceApi } from "../../ipc/voice";
 import { StatusMark } from "../components/sidebar/StatusMark";
 import { useAgents } from "./AgentsContext";
 import { devhub } from "./client";
-import { historyDirectionOfButton } from "../historyButtons";
 import { useGlide } from "../glide";
 import { focusIsOurs, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
@@ -53,13 +52,20 @@ import { GitHubPill } from "./OrchestratorGitHub";
 import { dueText, EscalationNote, inProgressBefore } from "./EscalationNote";
 import { dueWords } from "../../model/escalations";
 import { decisionOf } from "../../model/escalationBrief";
-import { useEscalationRequests } from "./escalationRequests";
+import {
+  initialTab,
+  modelView,
+  paneViewOn,
+  tabOfView,
+  useEntryState,
+  useFollowModelView,
+  useStackHistory,
+} from "./orchestratorHistory";
 import { DevhubLink } from "../conversation/DevhubLink";
 import { base64Of } from "../conversation/FileEmbed";
 import { isDevhubLink } from "../../model/devhubLink";
 import {
   memory,
-  rememberedTab,
   rememberTab,
   reportOrchestratorView,
   type BoardTab,
@@ -108,26 +114,40 @@ export { NAV_MS } from "./navStack";
 /** The left pane's two tabs; the board is the default. */
 export type { BoardTab } from "./orchestratorMemory";
 
-/** What a tab answers of the mouse's side buttons; false leaves it be. */
-export type SideButtons = (direction: "back" | "forward") => boolean;
-
 export function OrchestratorBoard({
   snapshot,
 }: {
   readonly snapshot: AppSnapshot;
 }) {
-  const { board, reportFailure } = useAgents();
-  const [tab, setTab] = useState<BoardTab>(rememberedTab);
+  const { board, reportFailure, dispatch } = useAgents();
+  const [tab, setTab] = useState<BoardTab>(() => initialTab(snapshot));
   // Something in the folder changed while the Files tab was not looked at.
   const [filesChanged, setFilesChanged] = useState(false);
   const section = useRef<HTMLElement>(null);
-  const sideButtons = useRef<SideButtons>(() => false);
-  const choose = useCallback((next: BoardTab) => {
+  const show = useCallback((next: BoardTab) => {
     setTab(next);
     if (next === "files") setFilesChanged(false);
     rememberTab(next);
     reportOrchestratorView();
   }, []);
+  // A tab chosen is the same place, showing another page: the entry on
+  // screen is written over (`orchestratorHistory.ts`).
+  const choose = useCallback(
+    (next: BoardTab) => {
+      show(next);
+      void dispatch({
+        type: "show_orchestrator_view",
+        view: paneViewOn(next),
+        drawn: true,
+      }).catch(() => undefined);
+    },
+    [show, dispatch],
+  );
+  // Back, Forward or a link onto the other tab's page: that tab, which
+  // mounts on the model's view.
+  useFollowModelView(snapshot, ({ view }) => {
+    if (tabOfView(view) !== tab) show(tabOfView(view));
+  });
   // Back on the screen: the title says what it came back to.
   useEffect(() => {
     reportOrchestratorView(true);
@@ -145,10 +165,6 @@ export function OrchestratorBoard({
       }),
     [],
   );
-  // A `devhub:escalation` link, followed: it is read on the board.
-  useEscalationRequests(() => {
-    choose("board");
-  }, false);
   useEffect(() => {
     if (tab === "files") return;
     const files = devhub().onOrchestratorFilesChanged;
@@ -157,35 +173,8 @@ export function OrchestratorBoard({
       setFilesChanged(true);
     });
   }, [tab]);
-  // The mouse's side buttons over the left pane: Back goes back as Esc
-  // does, Forward opens again what Back left. Only what a tab answers is
-  // kept from the page's own handler (`historyButtons.ts`, the app's
-  // history); anything else — Back on the board itself — is left to it.
-  // Over the orchestrator's pane on the right they are the app's.
-  useEffect(() => {
-    const element = section.current;
-    if (!element) return;
-    // The default is cancelled on every phase, as the page's handler does,
-    // so Chromium never takes the buttons as the document's Back/Forward.
-    const claim = (event: MouseEvent) => {
-      if (historyDirectionOfButton(event.button) === undefined) return;
-      event.preventDefault();
-    };
-    const onUp = (event: MouseEvent) => {
-      const direction = historyDirectionOfButton(event.button);
-      if (direction === undefined) return;
-      event.preventDefault();
-      if (sideButtons.current(direction)) event.stopPropagation();
-    };
-    element.addEventListener("mousedown", claim);
-    element.addEventListener("auxclick", claim);
-    element.addEventListener("mouseup", onUp);
-    return () => {
-      element.removeEventListener("mousedown", claim);
-      element.removeEventListener("auxclick", claim);
-      element.removeEventListener("mouseup", onUp);
-    };
-  }, []);
+  // The mouse's side buttons over the pane are the window's Back and
+  // Forward (`historyButtons.ts`), which walk the pane's views too.
   return (
     <section
       ref={section}
@@ -261,13 +250,13 @@ export function OrchestratorBoard({
       {tab === "board" ? (
         <BoardPage
           pane={section}
-          sideButtons={sideButtons}
+          snapshot={snapshot}
           workspaces={snapshot.workspaces}
         />
       ) : (
         <FilesPage
           pane={section}
-          sideButtons={sideButtons}
+          snapshot={snapshot}
           orchestratorAgentId={board.orchestratorAgentId}
         />
       )}
@@ -309,10 +298,31 @@ export function escalationBase(
   return named?.root ?? ofAgent?.root ?? orchestratorRoot;
 }
 
-/** The escalation the pane was left on, if it is still there to show. */
+/** The board under an escalation, as a view. */
+const BOARD_UNDER = { kind: "board" } as const;
+
+/**
+ * The escalation the pane was left on, if it is still there to show: the
+ * model's view when the snapshot has one (Back may have put the pane back on
+ * another), else the pane's own memory.
+ */
 function restoredEscalation(
   all: readonly EscalationWire[],
+  snapshot: AppSnapshot,
 ): EscalationWire | undefined {
+  const state = modelView(snapshot);
+  if (state !== undefined) {
+    if (state.view.kind !== "escalation") return undefined;
+    const id = state.view.id;
+    const found = all.find((one) => one.id === id);
+    if (
+      found?.state === "closed" &&
+      memory.escalation?.id === id &&
+      !memory.escalation.closed
+    )
+      return undefined;
+    return found;
+  }
   const left = memory.escalation;
   if (left === undefined) return undefined;
   const now = all.find((one) => one.id === left.id);
@@ -362,11 +372,11 @@ export function escalationWorkspaces(
 
 function BoardPage({
   pane,
-  sideButtons,
+  snapshot,
   workspaces,
 }: {
   readonly pane: RefObject<HTMLElement | null>;
-  readonly sideButtons: RefObject<SideButtons>;
+  readonly snapshot: AppSnapshot;
   readonly workspaces: AppSnapshot["workspaces"];
 }) {
   const { board, dispatch } = useAgents();
@@ -391,7 +401,7 @@ function BoardPage({
   );
   // Where the pane was left: that escalation, again — unless it has gone
   // from the board, or was closed since, and then the board.
-  const [initial] = useState(() => restoredEscalation(all));
+  const [initial] = useState(() => restoredEscalation(all, snapshot));
   const stack = useNavStack<EscalationWire>(
     pane,
     (escalation) =>
@@ -400,37 +410,49 @@ function BoardPage({
       ),
     initial,
   );
-  const { nav, shown, forward, restored, open: openCard, close } = stack;
-  // A `devhub:escalation` link, followed (`escalationRequests.ts`).
-  useEscalationRequests((id) => {
-    const asked = all.find((one) => one.id === id);
-    if (asked !== undefined) openCard(asked);
-  }, true);
+  const { nav, shown, restored, arrived } = stack;
+  // Opened, closed and followed as places in Back and Forward.
+  const {
+    open: openCard,
+    close,
+    drop,
+  } = useStackHistory<EscalationWire>({
+    stack,
+    snapshot,
+    dispatch,
+    viewOf: (escalation) => ({ kind: "escalation", id: escalation.id }),
+    under: BOARD_UNDER,
+    find: (view) =>
+      view.kind === "escalation"
+        ? all.find((one) => one.id === view.id)
+        : undefined,
+  });
+  // The model put the pane on an escalation that is not there to show (it
+  // was closed since, or deleted): the board, written over that entry.
+  useEffect(() => {
+    const said = modelView(snapshot)?.view;
+    if (said?.kind === "escalation" && initial === undefined)
+      void dispatch({
+        type: "show_orchestrator_view",
+        view: BOARD_UNDER,
+        drawn: true,
+      }).catch(() => undefined);
+    // Once, on mount, against the view it mounted on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // The board's scroll and folded lanes, as each entry left them.
+  useEntryState(snapshot.historyEntry, lanes, folded, setFolded);
   // The escalation on the page over, as it was when it was opened; the
   // board's own copy of it is read live. It stays through a pop, so the
   // view slides out with what it showed.
   const live =
     shown === undefined ? undefined : all.find((one) => one.id === shown.id);
   const open = live ?? shown;
+  // An escalation that leaves the board while it is read closes, as before;
+  // the entry it was is written over with the board.
   useEffect(() => {
-    sideButtons.current = (direction) => {
-      if (direction === "back" && nav === "push") {
-        close();
-        return true;
-      }
-      if (direction === "forward" && nav !== "push" && forward !== undefined) {
-        const again = all.find((one) => one.id === forward.id);
-        if (again === undefined) return false;
-        openCard(again);
-        return true;
-      }
-      return false;
-    };
-  }, [sideButtons, nav, forward, all, close, openCard]);
-  // An escalation that leaves the board while it is read closes, as before.
-  useEffect(() => {
-    if (nav === "push" && shown !== undefined && live === undefined) close();
-  }, [nav, shown, live, close]);
+    if (nav === "push" && shown !== undefined && live === undefined) drop();
+  }, [nav, shown, live, drop]);
   // What is open is what the pane comes back to.
   const openId = nav === "push" ? open?.id : undefined;
   const openClosed = open?.state === "closed";
@@ -517,6 +539,7 @@ function BoardPage({
     <div
       className="orchestrator-stage"
       data-nav={nav}
+      data-arrived={arrived}
       data-restored={restored ? "true" : undefined}
       role="tabpanel"
       id="orchestrator-panel-board"

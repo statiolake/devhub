@@ -188,17 +188,66 @@ describe("the Files tab", () => {
     expect(openOrchestratorFile).toHaveBeenCalledWith("decisions.md");
   });
 
-  it("goes back and forward with the mouse's side buttons", async () => {
-    mount();
-    await openFilesTab();
+  it("opens a file as a place in Back and Forward, and follows the model back and forward", async () => {
+    const dispatch = vi.fn().mockResolvedValue(undefined);
+    let state: NonNullable<AppSnapshot["orchestratorView"]> = {
+      view: { kind: "files" },
+      seq: 0,
+      arrived: "open",
+    };
+    const view = () => (
+      <AgentsValueProvider
+        value={
+          {
+            board: { ...EMPTY_BOARD, orchestratorAgentId: "orch" },
+            dispatch,
+            reportFailure: vi.fn(),
+          } as unknown as AgentsValue
+        }
+      >
+        <OrchestratorBoard
+          snapshot={
+            {
+              workspaces: [],
+              orchestratorView: state,
+            } as unknown as AppSnapshot
+          }
+        />
+      </AgentsValueProvider>
+    );
+    const { rerender } = render(view());
+    await settle();
+    // The model's view puts the screen on the Files tab.
+    expect(screen.getByRole("tab", { name: /ファイル/u })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     fireEvent.click(screen.getByRole("button", { name: "decisions.md" }));
     await settle();
-    const body = document.querySelector(".orchestrator-file-body")!;
-    fireEvent.mouseUp(body, { button: 3 });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "show_orchestrator_view",
+      view: { kind: "file", path: "decisions.md" },
+      reason: "explicit",
+      drawn: true,
+    });
+    const move = async (
+      next: NonNullable<AppSnapshot["orchestratorView"]>["view"],
+      arrived: "back" | "forward",
+    ) => {
+      state = { view: next, seq: state.seq + 1, arrived };
+      rerender(view());
+      await settle();
+    };
+    await move({ kind: "files" }, "back");
     expect(document.querySelector(".orchestrator-file-view")).toBeNull();
-    fireEvent.mouseUp(screen.getByRole("tree"), { button: 4 });
-    await settle();
+    await move({ kind: "file", path: "decisions.md" }, "forward");
     expect(document.querySelector(".orchestrator-file-view")).not.toBeNull();
+    // Back onto an escalation's board: the board tab.
+    await move({ kind: "board" }, "back");
+    expect(screen.getByRole("tab", { name: "ボード" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("marks the tab when the folder changed while the board was shown", async () => {

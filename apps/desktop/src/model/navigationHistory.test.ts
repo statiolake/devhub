@@ -126,4 +126,37 @@ describe("navigation history", () => {
     expect(h.go("back", always, "a")).toBe("b");
     expect(h.go("back", always, "b")).toBe("a");
   });
+
+  it("gives each entry an id a replace keeps and a visit makes anew", () => {
+    const h = history("a");
+    const a = h.currentId;
+    h.visit("b");
+    const b = h.currentId;
+    expect(b).not.toBe(a);
+    h.visit("b2", true);
+    expect(h.currentId).toBe(b);
+    h.go("back", always);
+    expect(h.currentId).toBe(a);
+    h.visit("a");
+    expect(h.currentId).toBe(a);
+    h.visit("c");
+    expect([a, b]).not.toContain(h.currentId);
+  });
+
+  it("keeps the ids with their entries when the oldest fall off", () => {
+    const h = new NavigationHistory<string>("0", { same, limit: 2 });
+    h.visit("1");
+    const one = h.currentId;
+    h.visit("2");
+    h.go("back", always);
+    expect(h.current).toBe("1");
+    expect(h.currentId).toBe(one);
+  });
+
+  it("peeks where Back would land without moving, skipping what has gone", () => {
+    const h = history("a", "b", "c");
+    expect(h.peek("back", (entry) => entry !== "b")).toBe("a");
+    expect(h.current).toBe("c");
+    expect(h.peek("forward", always)).toBeUndefined();
+  });
 });

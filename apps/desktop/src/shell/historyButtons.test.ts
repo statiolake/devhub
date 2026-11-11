@@ -6,7 +6,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { installHistoryButtons } from "./historyButtons";
+import { installHistoryButtons, installHistoryKeys } from "./historyButtons";
 
 function press(button: number, type = "mouseup"): MouseEvent {
   const event = new MouseEvent(type, {
@@ -52,6 +52,49 @@ describe("the mouse's side buttons", () => {
     const navigate = vi.fn();
     installHistoryButtons(document, navigate)();
     press(3);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("Alt+Left and Alt+Right on a page with terminals, off the Mac", () => {
+  let remove: () => void = () => undefined;
+  afterEach(() => {
+    remove();
+    document.body.innerHTML = "";
+  });
+
+  function key(code: string, target: Element, init: KeyboardEventInit = {}) {
+    const event = new KeyboardEvent("keydown", {
+      code,
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    target.dispatchEvent(event);
+    return event;
+  }
+
+  it("go Back and Forward outside a terminal", () => {
+    const navigate = vi.fn();
+    remove = installHistoryKeys(document, navigate, false);
+    expect(key("ArrowLeft", document.body).defaultPrevented).toBe(true);
+    key("ArrowRight", document.body);
+    expect(navigate.mock.calls).toEqual([["back"], ["forward"]]);
+  });
+
+  it("leave a terminal its word motion, and do nothing on the Mac", () => {
+    const navigate = vi.fn();
+    document.body.innerHTML =
+      '<div class="terminal-surface-shell"><textarea></textarea></div>';
+    const field = document.querySelector("textarea")!;
+    field.focus();
+    remove = installHistoryKeys(document, navigate, false);
+    expect(key("ArrowLeft", field).defaultPrevented).toBe(false);
+    remove();
+    remove = installHistoryKeys(document, navigate, true);
+    key("ArrowLeft", document.body);
+    key("ArrowLeft", document.body, { shiftKey: true });
     expect(navigate).not.toHaveBeenCalled();
   });
 });

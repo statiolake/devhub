@@ -14,7 +14,12 @@
  * the same reason: only the layer in front of every surface (`keyboard.ts`)
  * knows which surface the key landed on.
  *
- * # The keys: `Cmd+[` and `Cmd+]`
+ * # The keys: `Cmd+[` and `Cmd+]`, and `Alt+Left`/`Alt+Right` off the Mac
+ *
+ * Off macOS the platform's own Back and Forward are `Alt+Left` and
+ * `Alt+Right` (every Linux browser and file manager), answered as well — see
+ * `altArrowDirection` for where. `Cmd` there is the Super key, and
+ * `Super+[`/`Super+]` keep working for whoever learned them on a Mac.
  *
  * The Mac's own Back and Forward — Finder, Safari, Xcode, Mail, the App Store
  * all spell them this way — and free on every page DevHub draws: chords are
@@ -101,8 +106,16 @@ export function isAppHistorySurface(surfaceUrl: string): boolean {
 export function historyDirectionFor(
 	surfaceUrl: string,
 	stroke: KeyStroke,
+	platform: NodeJS.Platform = process.platform,
 ): NavigationDirection | undefined {
 	if (!isAppHistorySurface(surfaceUrl)) return undefined;
+	if (platform !== "darwin") {
+		const alt = altArrowDirection(stroke);
+		if (alt !== undefined)
+			return ALT_ARROW_PAGES.some((page) => surfaceUrl.startsWith(page))
+				? alt
+				: undefined;
+	}
 	if (!stroke.command || stroke.option || stroke.control || stroke.shift) {
 		return undefined;
 	}
@@ -110,6 +123,34 @@ export function historyDirectionFor(
 	if (stroke.key === "]") return "forward";
 	return undefined;
 }
+
+/**
+ * `Alt+Left` / `Alt+Right`, exactly: Back and Forward as every browser and
+ * file manager on Linux (and Windows) spells them.
+ */
+export function altArrowDirection(
+	stroke: KeyStroke,
+): NavigationDirection | undefined {
+	if (!stroke.option || stroke.command || stroke.control || stroke.shift)
+		return undefined;
+	if (stroke.code === "ArrowLeft") return "back";
+	if (stroke.code === "ArrowRight") return "forward";
+	return undefined;
+}
+
+/**
+ * Where main answers `Alt+Left`/`Alt+Right` off macOS: the pages with no
+ * terminal in them. In a terminal they are the shell's word motion
+ * (`ESC [1;3D`), which a TUI or readline is owed, so the terminal pane is
+ * left out, and the Agents page — terminals beside the board — answers them
+ * itself, only where the keyboard is not in a terminal
+ * (`shell/historyButtons.ts`, `installHistoryKeys`).
+ */
+const ALT_ARROW_PAGES = [
+	"index.html",
+	"sidebar.html",
+	"conversations.html",
+].map((page) => `${SHELL_ORIGIN}/${page}`);
 
 /**
  * What an Electron `app-command` means, or nothing.
