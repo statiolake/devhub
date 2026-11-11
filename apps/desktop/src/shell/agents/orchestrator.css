@@ -71,6 +71,7 @@
 }
 
 .orchestrator-board-tools {
+  position: relative;
   display: flex;
   flex: none;
   align-items: center;
@@ -117,8 +118,8 @@
 }
 
 .orchestrator-mode-option:focus-visible {
-  box-shadow: var(--focus-ring);
-  outline: none;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 .orchestrator-mode-dot {
@@ -155,9 +156,11 @@
 }
 
 /* The mode control and the pending count: the card under them is the
-   next delivery, as it would go now. */
+   next delivery, as it would go now. It hangs from the tools' right edge,
+   not the control's: the control sits left of the GitHub pill, and a card
+   as wide as the delivery's text hung from it ran past the pane's left
+   edge. */
 .orchestrator-delivery-wrap {
-  position: relative;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
