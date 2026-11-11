@@ -38,6 +38,12 @@ interface Common {
   readonly grow?: boolean | undefined;
   /** A tooltip. */
   readonly tip?: string | undefined;
+  /**
+   * In a popup: the node lined up with the anchor's column — the popup
+   * moves sideways so that this node (the first so marked) starts where
+   * the anchor's cell does, e.g. a list's words under the word typed.
+   */
+  readonly anchor?: boolean | undefined;
 }
 
 export interface Run {
@@ -71,6 +77,21 @@ export interface StackNode extends Common {
   readonly indent?: number | undefined;
   /** Rounded corners: a chip (a ground of its own round a label). */
   readonly round?: boolean | undefined;
+  /**
+   * A column's selected child (1-based; none or 0: none): one band behind
+   * the children, on the selected one, moved to the next by transform, in
+   * the `band` group's ground — a list whose selection Lua moves. A
+   * popup's `select(n)` moves it without sending the tree again.
+   */
+  readonly selected?: number | undefined;
+  readonly band?: string | undefined;
+  /**
+   * A pane: a column that scrolls inside once taller than `max_height`
+   * pixels, named so that its popup's `scroll(by, pane)` scrolls it. Its
+   * scroll goes back to the top when its content changes.
+   */
+  readonly pane?: string | undefined;
+  readonly maxHeight?: number | undefined;
 }
 
 export interface TextNode extends Common {
@@ -114,6 +135,8 @@ export interface BadgeNode extends Common {
   readonly mono?: boolean | undefined;
   /** Round ends, for a count. */
   readonly pill?: boolean | undefined;
+  /** 'sm' | 'xs': a smaller badge, for a dense row (a list's kind). */
+  readonly size?: Size | undefined;
 }
 
 export interface KbdNode extends Common {
@@ -307,6 +330,7 @@ function common(r: Rec): Common {
     action: num(r, "action", 1, Number.MAX_SAFE_INTEGER),
     grow: bool(r, "grow"),
     tip: str(r, "tip"),
+    anchor: bool(r, "anchor"),
   };
 }
 
@@ -423,6 +447,14 @@ export function parseNode(
         bg: str(r, "bg"),
         indent: num(r, "indent", 0, 400),
         round: bool(r, "round"),
+        ...(r["type"] === "stack"
+          ? {
+              selected: num(r, "selected", 0, MAX_CHILDREN),
+              band: str(r, "band"),
+              pane: str(r, "pane"),
+              maxHeight: num(r, "max_height", 16, 4000),
+            }
+          : {}),
       };
     }
     case "text": {
@@ -474,6 +506,7 @@ export function parseNode(
         hl: str(r, "hl"),
         mono: bool(r, "mono"),
         pill: bool(r, "pill"),
+        size: oneOf(r, "size", SIZES),
       };
     }
     case "button": {
@@ -628,6 +661,60 @@ export function parseHlTable(value: unknown): HlTable {
     });
   }
   return out;
+}
+
+/**
+ * The tree with its list's selection moved to `selected` (0: none): the
+ * first column with a `band`, depth first. The same tree when it has none
+ * or the selection is already there, so nothing draws again.
+ */
+export function withSelected(
+  node: ComponentNode,
+  selected: number,
+): ComponentNode {
+  const done = { found: false };
+  const walk = (n: ComponentNode): ComponentNode => {
+    if (done.found || (n.type !== "stack" && n.type !== "hstack")) return n;
+    if (n.type === "stack" && n.band !== undefined) {
+      done.found = true;
+      return (n.selected ?? 0) === selected ? n : { ...n, selected };
+    }
+    let changed = false;
+    const children = n.children.map((child) => {
+      const next = walk(child);
+      if (next !== child) changed = true;
+      return next;
+    });
+    return changed ? { ...n, children } : n;
+  };
+  return walk(node);
+}
+
+/**
+ * The tree with the pane `name` (`stack{ pane }`, the first) holding
+ * `children` instead; the same tree when it has no such pane.
+ */
+export function withPane(
+  node: ComponentNode,
+  name: string,
+  children: readonly ComponentNode[],
+): ComponentNode {
+  const done = { found: false };
+  const walk = (n: ComponentNode): ComponentNode => {
+    if (done.found || (n.type !== "stack" && n.type !== "hstack")) return n;
+    if (n.type === "stack" && n.pane === name) {
+      done.found = true;
+      return { ...n, children };
+    }
+    let changed = false;
+    const next = n.children.map((child) => {
+      const one = walk(child);
+      if (one !== child) changed = true;
+      return one;
+    });
+    return changed ? { ...n, children: next } : n;
+  };
+  return walk(node);
 }
 
 /** Every action a tree carries, for a click's lookup. */

@@ -10,7 +10,81 @@ import {
   revealScroll,
   rowsFor,
   wheelFocus,
+  withSelected,
 } from "./components";
+
+describe("a list, a pane, a small badge, an anchored node", () => {
+  it("parses a column's selection and band, a pane, a badge's size, anchor", () => {
+    const node = parseNode({
+      type: "stack",
+      children: [
+        {
+          type: "stack",
+          band: "PmenuSel",
+          selected: 2,
+          children: [
+            {
+              type: "hstack",
+              selected: 1,
+              children: [
+                { type: "badge", text: "f", size: "sm" },
+                { type: "text", text: "useState", anchor: true },
+              ],
+            },
+          ],
+        },
+        { type: "stack", pane: "doc", max_height: 9999, children: [] },
+      ],
+    });
+    expect(node).toMatchObject({
+      children: [
+        {
+          band: "PmenuSel",
+          selected: 2,
+          children: [
+            {
+              type: "hstack",
+              children: [
+                { type: "badge", size: "sm" },
+                { type: "text", anchor: true },
+              ],
+            },
+          ],
+        },
+        { pane: "doc", maxHeight: 4000 },
+      ],
+    });
+    // A row is not a list: no selection on an hstack.
+    const row =
+      node?.type === "stack" && node.children[0]?.type === "stack"
+        ? node.children[0].children[0]
+        : undefined;
+    expect(row && "selected" in row).toBe(false);
+  });
+
+  it("moves the first banded column's selection, and keeps a tree it leaves", () => {
+    const list = {
+      type: "stack" as const,
+      band: "PmenuSel",
+      selected: 1,
+      children: [],
+    };
+    const tree = {
+      type: "stack" as const,
+      children: [{ type: "text" as const, runs: [] }, list],
+    };
+    const moved = withSelected(tree, 2);
+    expect(moved).not.toBe(tree);
+    expect(moved.type === "stack" && moved.children[1]).toEqual({
+      ...list,
+      selected: 2,
+    });
+    expect(moved.type === "stack" && moved.children[0]).toBe(tree.children[0]);
+    expect(withSelected(tree, 1)).toBe(tree);
+    const plain = { type: "stack" as const, children: [] };
+    expect(withSelected(plain, 3)).toBe(plain);
+  });
+});
 
 describe("declarative components from Lua", () => {
   it("takes a tree of known nodes and drops what is not one", () => {

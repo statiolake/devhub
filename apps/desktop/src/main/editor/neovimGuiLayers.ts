@@ -82,7 +82,7 @@ local function data_url(src)
   return image_cache[key]
 end
 
-local HL_KEYS = { hl = true, accent = true, bg = true }
+local HL_KEYS = { hl = true, accent = true, bg = true, band = true }
 
 --- A component tree as data for the page: functions (on_click) become
 --- action numbers kept in actions, highlight names are collected in hls,
@@ -489,13 +489,36 @@ local function send_popup(p)
   M._actions["popup:" .. p.id] = actions
   if node then
     event("popup", { id = p.id, node = node, hl = hl_table(hls), placement = p.placement,
-      max_width = p.max_width, max_height = p.max_height })
+      max_width = p.max_width, max_height = p.max_height, min_width = p.min_width })
   end
 end
 
-local function popup_scroll(p, by, n)
+local function popup_scroll(p, by, n, pane)
   popup_seq = popup_seq + 1
-  event("popup_scroll", { id = p.id, by = by, n = n or 1, seq = popup_seq })
+  event("popup_scroll", { id = p.id, by = by, n = n or 1, seq = popup_seq,
+    pane = type(pane) == "string" and pane or nil })
+end
+
+-- The tree's pane of that name (stack{ pane = name }).
+local function pane_of(node, name, depth)
+  if type(node) ~= "table" or depth > 24 then return nil end
+  if node.type == "stack" and node.pane == name then return node end
+  if node.type ~= "stack" and node.type ~= "hstack" then return nil end
+  for _, child in ipairs(node.children or node) do
+    local found = pane_of(child, name, depth + 1)
+    if found then return found end
+  end
+end
+
+-- The tree's list: its first column with a band (stack{ selected, band }).
+local function banded(node, depth)
+  if type(node) ~= "table" or depth > 24 then return nil end
+  if node.type == "stack" and node.band ~= nil then return node end
+  if node.type ~= "stack" and node.type ~= "hstack" then return nil end
+  for _, child in ipairs(node.children or node) do
+    local found = banded(child, depth + 1)
+    if found then return found end
+  end
 end
 
 -- The keys of a focused popup: buffer-local maps on the anchor's buffer,
@@ -557,16 +580,19 @@ local function popup_focus(p, on)
 end
 
 --- gui.popup{ anchor = 'cursor' | { buf, lnum, col }, placement = 'below' |
---- 'above' | 'auto', component, max_width?, max_height? (cells), close_on =
---- { events }, keys = { [lhs] = fn(handle) }, text?, on_close? }: a popup
+--- 'above' | 'auto', component, max_width?, max_height?, min_width? (cells),
+--- close_on = { events }, keys = { [lhs] = fn(handle) }, text?, on_close? }: a popup
 --- DevHub draws at a buffer position (a hover), with no Neovim window: it
 --- follows the position as the window scrolls, flips above when there is no
 --- room below, and scrolls inside when taller than it may be. Moving the
 --- cursor (close_on) closes it; :focus() gives it the keys — j/k, <C-d>/<C-u>,
 --- gg/G scroll, q/<Esc> close, y yanks (text, or the content's text) — until
---- the cursor moves. Answers a handle: :update(component), :focus(),
---- :scroll(n | 'half' | '-half' | 'page' | '-page' | 'top' | 'bottom'),
---- :close(), :is_open().
+--- the cursor moves. A node with anchor = true is lined up with the anchor's
+--- column. Answers a handle: :update(component), :select(n) (the list's —
+--- stack{ selected, band } — selection moved, without the tree),
+--- :pane(name, children) (a stack{ pane = name }'s content, alone), :focus(),
+--- :scroll(n | 'half' | '-half' | 'page' | '-page' | 'top' | 'bottom', pane?)
+--- (a stack{ pane = name } inside, or the popup), :close(), :is_open().
 function M.popup(opts)
   opts = opts or {}
   local win = vim.api.nvim_get_current_win()
@@ -592,6 +618,7 @@ function M.popup(opts)
     placement = (opts.placement == "above" or opts.placement == "auto") and opts.placement or "below",
     max_width = type(opts.max_width) == "number" and opts.max_width or nil,
     max_height = type(opts.max_height) == "number" and opts.max_height or nil,
+    min_width = type(opts.min_width) == "number" and opts.min_width or nil,
     keys = opts.keys, on_close = opts.on_close }
   -- Left gravity: text put in at the anchor (typing at the cursor, a
   -- completion's preview) goes after it, and the popup stays where it was.
@@ -607,15 +634,45 @@ function M.popup(opts)
     send_popup(p)
     schedule_place()
   end
+  -- Only the list's selection moved: its index, not the tree again.
+  function handle.select(self, n)
+    if type(self) ~= "table" or self.id == nil then n = self end
+    if M._popups[p.id] ~= p then return end
+    n = type(n) == "number" and math.max(0, math.floor(n)) or 0
+    local list = banded(p.component, 0)
+    if not list then return end
+    list.selected = n > 0 and n or nil
+    event("popup_select", { id = p.id, n = n })
+  end
+  -- Only a pane's content changed: it alone, not the rest of the tree.
+  function handle.pane(self, name, children)
+    if type(self) ~= "table" or self.id == nil then name, children = self, name end
+    if M._popups[p.id] ~= p or type(name) ~= "string" then return end
+    local node = pane_of(p.component, name, 0)
+    if not node then return end
+    if type(children) ~= "table" or children.type ~= nil then children = { children } end
+    for i = #node, 1, -1 do node[i] = nil end
+    node.children = children
+    local actions, hls = M._actions["popup:" .. p.id] or {}, {}
+    local list = {}
+    for _, child in ipairs(children) do
+      local s = serialize(child, actions, hls, 1)
+      if s ~= nil then table.insert(list, s) end
+    end
+    -- only the groups it names: the page keeps the tree's
+    local hl = {}
+    for group in pairs(hls) do hl[group] = hl_attrs(group) end
+    event("popup_pane", { id = p.id, pane = name, children = list, hl = hl })
+  end
   function handle.focus() popup_focus(p, true) end
   function handle.unfocus() popup_focus(p, false) end
-  function handle.scroll(self, by)
-    if type(self) ~= "table" or self.id == nil then by = self end
+  function handle.scroll(self, by, pane)
+    if type(self) ~= "table" or self.id == nil then by, pane = self, by end
     if M._popups[p.id] ~= p then return end
-    if type(by) == "number" then popup_scroll(p, "line", by)
-    elseif by == "half" or by == "-half" then popup_scroll(p, "half", by == "half" and 1 or -1)
-    elseif by == "page" or by == "-page" then popup_scroll(p, "page", by == "page" and 1 or -1)
-    elseif by == "top" or by == "bottom" then popup_scroll(p, by) end
+    if type(by) == "number" then popup_scroll(p, "line", by, pane)
+    elseif by == "half" or by == "-half" then popup_scroll(p, "half", by == "half" and 1 or -1, pane)
+    elseif by == "page" or by == "-page" then popup_scroll(p, "page", by == "page" and 1 or -1, pane)
+    elseif by == "top" or by == "bottom" then popup_scroll(p, by, nil, pane) end
   end
   function handle.close() M.popup_close(p.id) end
   function handle.is_open() return M._popups[p.id] == p end

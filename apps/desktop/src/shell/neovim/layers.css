@@ -435,3 +435,57 @@
 .nvc-slot {
   font-variant-numeric: tabular-nums;
 }
+
+/* A list (stack.selected/band): one band behind the selected row, moved by
+   transform only, so a selection Lua moves glides; it appears in place. */
+.nvc-banded {
+  position: relative;
+}
+.nvc-banded > :not(.nvc-band) {
+  position: relative;
+}
+.nvc-band {
+  position: absolute;
+  inset: 0 0 auto;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentcolor 14%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+.nvc-band-live {
+  transition:
+    transform 90ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 90ms linear;
+}
+
+/* A pane (stack.pane): scrolls inside past its max_height, set off from
+   what is above it by a hairline at its edge (its content scrolls under
+   it); with nothing in it, nothing at all. */
+.nvc-pane {
+  overflow: hidden auto;
+  flex: none;
+  border-top: 1px solid color-mix(in srgb, currentcolor 14%, transparent);
+}
+.nvc-pane:empty {
+  display: none;
+}
+
+/* A small badge (badge.size): a list's kind, as tall as its text. */
+.nvc-badge-sm {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  box-sizing: border-box;
+}
+.nvc-badge-xs {
+  min-width: 13px;
+  padding: 0 3px;
+  border-radius: 3px;
+  font-size: 9px;
+  line-height: 13px;
+  text-align: center;
+  box-sizing: border-box;
+}

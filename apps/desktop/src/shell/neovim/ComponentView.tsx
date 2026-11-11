@@ -9,7 +9,9 @@
 import {
   createContext,
   useContext,
+  useLayoutEffect,
   useMemo,
+  useRef,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -25,6 +27,7 @@ import {
   type HlTable,
   type Run,
   type Size,
+  type StackNode,
 } from "./components";
 import { formatKeys } from "../../model/keyNotation";
 import { formatPosition, modeLabel } from "./statusline";
@@ -208,7 +211,11 @@ function MarkdownView({
 function Node({ node }: { readonly node: ComponentNode }): ReactNode {
   const theme = useTheme();
   const { hl } = theme;
-  const extra = clickable(node.action, theme.onAction);
+  const extra = {
+    ...clickable(node.action, theme.onAction),
+    // the node a popup lines up with its anchor's column (`popupAnchorX`)
+    ...(node.anchor === true ? { "data-anchor": "" } : {}),
+  };
   const grow: CSSProperties =
     node.grow === true ? { flex: "1 1 0", minWidth: 0 } : {};
   const title = node.tip !== undefined ? { title: node.tip } : {};
@@ -243,6 +250,19 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
       ]
         .filter(Boolean)
         .join(" ");
+      if (
+        node.type === "stack" &&
+        (node.band !== undefined || node.pane !== undefined)
+      )
+        return (
+          <Column
+            node={node}
+            className={className}
+            style={style}
+            band={bgOf(hl, node.band)}
+            attrs={{ ...title, ...extra }}
+          />
+        );
       return (
         <div className={className} style={style} {...title} {...extra}>
           {node.children.map((child, index) => (
@@ -285,7 +305,7 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
       const ground = bgOf(hl, node.hl);
       return (
         <span
-          className={`nvc-badge${node.pill === true ? " nvc-pill" : ""}${node.mono === true ? " nvc-mono" : ""}`}
+          className={`nvc-badge${node.pill === true ? " nvc-pill" : ""}${node.mono === true ? " nvc-mono" : ""}${node.size === "sm" || node.size === "xs" ? ` nvc-badge-${node.size}` : ""}`}
           style={{
             ...grow,
             color,
@@ -602,6 +622,101 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
         />
       );
   }
+}
+
+/**
+ * A column that is a list (`band`: one band behind the selected child,
+ * moved to the next selection by transform only — placed at once when it
+ * appears, gliding from one row to the next after) or a pane (`pane`: it
+ * scrolls inside past `maxHeight`, back to the top when its content
+ * changes; its popup's `scroll(by, pane)` finds it by `data-pane`).
+ */
+function Column({
+  node,
+  className,
+  style,
+  band,
+  attrs,
+}: {
+  readonly node: StackNode;
+  readonly className: string;
+  readonly style: CSSProperties;
+  readonly band: string | undefined;
+  readonly attrs: Record<string, unknown>;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  const bandRef = useRef<HTMLDivElement>(null);
+  const hidden = useRef(true);
+  const banded = node.band !== undefined;
+  const selected = node.selected ?? 0;
+  useLayoutEffect(() => {
+    const el = box.current;
+    const b = bandRef.current;
+    if (!el || !b) return;
+    // the band is the first child; the selected one is after it
+    const row = selected > 0 ? el.children[selected] : undefined;
+    if (!(row instanceof HTMLElement)) {
+      b.style.opacity = "0";
+      hidden.current = true;
+      return;
+    }
+    const place = `translateY(${String(row.offsetTop)}px)`;
+    b.style.height = `${String(row.offsetHeight)}px`;
+    if (hidden.current) {
+      // appears in place: no glide from where it last was
+      b.classList.remove("nvc-band-live");
+      b.style.transform = place;
+      void b.offsetWidth;
+      b.classList.add("nvc-band-live");
+      b.style.opacity = "1";
+      hidden.current = false;
+    } else {
+      b.style.transform = place;
+    }
+  });
+  // A pane's content changed (another item's documentation): from its top.
+  const content = useMemo(
+    () => (node.pane !== undefined ? JSON.stringify(node.children) : ""),
+    [node.pane, node.children],
+  );
+  useLayoutEffect(() => {
+    if (box.current && node.pane !== undefined) box.current.scrollTop = 0;
+  }, [content, node.pane]);
+  return (
+    <div
+      ref={box}
+      className={`${className}${banded ? " nvc-banded" : ""}${node.pane !== undefined ? " nvc-pane" : ""}`}
+      style={{
+        ...style,
+        // A popup short of room takes it from its pane first
+        // (`--nvim-pane-cut`, `LayerViews.tsx`), down to three lines.
+        ...(node.maxHeight !== undefined
+          ? {
+              maxHeight: `max(min(${String(node.maxHeight)}px, 3lh), calc(${String(node.maxHeight)}px - var(--nvim-pane-cut, 0px)))`,
+            }
+          : {}),
+      }}
+      {...(node.pane !== undefined
+        ? {
+            "data-pane": node.pane,
+            "data-pane-max": node.maxHeight ?? "",
+          }
+        : {})}
+      {...attrs}
+    >
+      {banded ? (
+        <div
+          ref={bandRef}
+          className="nvc-band"
+          style={band !== undefined ? { background: band } : {}}
+          aria-hidden
+        />
+      ) : null}
+      {node.children.map((child, index) => (
+        <Node key={index} node={child} />
+      ))}
+    </div>
+  );
 }
 
 function RunView({ run }: { readonly run: Run }) {

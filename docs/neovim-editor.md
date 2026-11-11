@@ -1060,6 +1060,11 @@ local card = gui.inline{ buf = 0, lnum = 87, id = 'thread:1', range = { 84, 87 }
   component = ui.card{ accent = 'warn', ui.md('**Waiting** for the agent') } }
 local pop = gui.popup{ anchor = 'cursor', component = ui.md(markdown), max_width = 80,
   keys = { ['<CR>'] = function(p) end } }                    -- :focus(), :scroll('half'), :close()
+local menu = gui.popup{ anchor = { buf, lnum, col }, min_width = 36, close_on = {},   -- a list and a pane
+  component = ui.stack{ ui.stack{ selected = 1, band = 'PmenuSel',
+      ui.hstack{ ui.badge('f', { size = 'sm' }), ui.text('useState', { anchor = true, mono = true }) } },
+    ui.stack{ pane = 'doc', max_height = 240, ui.md(doc) } } }
+menu:select(2); menu:pane('doc', ui.md(other)); menu:scroll(4, 'doc') -- the index; a pane alone
 local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },            -- a framed view: a picker
   items = function(lnum, line) return ui.text(line) end,                             -- or { node, heading }
   on_click = function(lnum, clicks) end, on_scroll = function(rows) end, on_rows = function(rows) end,
@@ -1130,6 +1135,30 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   `<C-d>`/`<C-u>`, `<C-f>`/`<C-b>`, `gg`/`G` (scrolls Lua asks of the page:
   `popup_scroll`), `q`/`<Esc>` (close), `y` (yank its `text`) and the
   popup's own `keys`, and puts back what they replaced when it closes.
+
+  A popup may hold a **list** and a **pane**, for a menu at the cursor
+  whose selection Lua moves (devhub.nvim knows no menu; a plugin builds
+  one). `ui.stack{ selected = n, band = 'Group' }` is a list: one band
+  behind the selected child, in the group's ground, moved to the next
+  selection by `transform` only (`ComponentView.tsx`'s `Column`: placed at
+  once when it appears, gliding 90 ms after). `handle:select(n)` moves it
+  by its index alone (`popup_select`, a few bytes; the page swaps the index
+  into the tree it has, `withSelected`), so a selection that moves sends no
+  tree; `update` stays for a tree that changed. `ui.stack{ pane = 'name',
+  max_height = px }` is a pane: it scrolls inside past its height, starts
+  again at its top when its content changes, has a hairline at its top
+  edge (its content scrolls under it) and is not there at all while empty;
+  `handle:pane('name', children)` replaces its content alone
+  (`popup_pane`, with the groups it names: `withPane`), and
+  `handle:scroll(by, 'name')` scrolls it instead of the popup (a menu's
+  documentation, under a list that stays). A popup with no room for all of
+  itself takes the room from its pane first (`--nvim-pane-cut`, down to
+  three lines), so the list stays whole. `min_width` (cells) keeps the popup from narrowing when
+  a part goes. A node with `anchor = true` (the first) is lined up with the
+  anchor's column: the popup moves left by the node's offset from its edge
+  (`anchorOffset`), so a menu's words start under the word being typed.
+  `ui.badge(text, { size = 'sm' })` is a badge as tall as a dense row's
+  text.
 
   **LSP floats are popups.** devhub.nvim hooks
   `vim.lsp.util.open_floating_preview`: in DevHub's GUI, hover, signature

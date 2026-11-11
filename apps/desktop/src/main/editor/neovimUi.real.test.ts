@@ -1079,6 +1079,78 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		h.ui.client.close();
 	});
 
+	it("moves a popup's list selection by index, and scrolls a pane inside it", async () => {
+		const h = await attached(60, 20);
+		const waitFor = async (check: () => boolean, what: string) => {
+			const deadline = Date.now() + 3_000;
+			while (!check()) {
+				if (Date.now() > deadline)
+					throw new Error(`timed out waiting for ${what}`);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+		};
+		const all = (kind: string) => h.gui.events.filter((e) => e.kind === kind);
+		const last = (kind: string) =>
+			all(kind).at(-1)?.payload as Record<string, unknown> | undefined;
+		const lua = (code: string) => h.ui.request("nvim_exec_lua", [code, []]);
+		await lua(`_G.list = { type = 'stack', band = 'PmenuSel', selected = 1,
+				{ type = 'text', text = 'a', anchor = true }, { type = 'text', text = 'b' } }
+			_G.pop = require('devhub_gui').popup{ min_width = 36, close_on = {},
+				component = { type = 'stack', _G.list, { type = 'stack', pane = 'doc', max_height = 120,
+					{ type = 'markdown', text = 'doc' } } } }`);
+		await waitFor(() => last("popup") !== undefined, "the popup");
+		expect(last("popup")).toMatchObject({
+			min_width: 36,
+			node: {
+				children: [
+					{ band: "PmenuSel", selected: 1, children: [{ anchor: true }, {}] },
+					{ pane: "doc", max_height: 120 },
+				],
+			},
+		});
+		expect(
+			(last("popup")?.["hl"] as Record<string, unknown>)["PmenuSel"],
+		).toBeDefined();
+		const sent = all("popup").length;
+		// The selection alone: its index, not the tree.
+		await lua("_G.pop:select(2)");
+		await waitFor(() => last("popup_select") !== undefined, "the selection");
+		expect(last("popup_select")).toMatchObject({ n: 2 });
+		expect(all("popup").length).toBe(sent);
+		// Kept in the tree, so a tree sent again (a replay) says the same.
+		expect(await lua("return _G.list.selected")).toBe(2);
+		await lua("_G.pop:select(0)");
+		await waitFor(() => last("popup_select")?.["n"] === 0, "no selection");
+		expect(await lua("return _G.list.selected")).toBe(null);
+		// A pane's content alone: not the tree.
+		await lua(
+			"_G.pop:pane('doc', { type = 'markdown', text = 'other', hl = 'Title' })",
+		);
+		await waitFor(() => last("popup_pane") !== undefined, "the pane");
+		expect(last("popup_pane")).toMatchObject({
+			pane: "doc",
+			children: [{ type: "markdown", text: "other" }],
+		});
+		expect(
+			(last("popup_pane")?.["hl"] as Record<string, unknown>)["Title"],
+		).toBeDefined();
+		expect(all("popup").length).toBe(sent);
+		await lua("_G.pop:scroll(4, 'doc')");
+		await waitFor(() => last("popup_scroll") !== undefined, "the scroll");
+		expect(last("popup_scroll")).toMatchObject({
+			by: "line",
+			n: 4,
+			pane: "doc",
+		});
+		await lua("_G.pop:scroll('-page')");
+		await waitFor(
+			() => last("popup_scroll")?.["by"] === "page",
+			"the popup's scroll",
+		);
+		expect(last("popup_scroll")?.["pane"]).toBeUndefined();
+		h.ui.client.close();
+	});
+
 	it("keeps a popup where it was when text goes in at its anchor", async () => {
 		const h = await attached(60, 20);
 		const waitFor = async (check: () => boolean, what: string) => {

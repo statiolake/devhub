@@ -525,6 +525,37 @@ export function Popups({
   );
 }
 
+/**
+ * Where a popup's anchored node (`anchor = true`, the first) starts, from
+ * the popup's outer left edge: the popup moves left by as much, so the node
+ * starts at the anchor's column. Offsets, not boxes: an arriving popup's
+ * scale does not count.
+ */
+function anchorOffset(popup: HTMLElement, body: HTMLElement): number {
+  const node = body.querySelector<HTMLElement>("[data-anchor]");
+  if (!node) return 0;
+  let x = 0;
+  let el: HTMLElement | null = node;
+  while (el && el !== popup) {
+    x += el.offsetLeft;
+    const parent: Element | null = el.offsetParent;
+    el = parent instanceof HTMLElement ? parent : null;
+  }
+  return el === popup ? x + popup.clientLeft : 0;
+}
+
+/**
+ * The popup body's height as its pane (`stack{ pane }`) would leave it at
+ * its own max_height: what the popup wants, whatever the pane gave up for
+ * want of room (`--nvim-pane-cut`), so the cut never feeds back into it.
+ */
+function naturalHeight(body: HTMLElement, height: number): number {
+  const pane = body.querySelector<HTMLElement>("[data-pane]");
+  const max = Number(pane?.dataset["paneMax"]);
+  if (!pane || !(max > 0)) return height;
+  return height - pane.clientHeight + Math.min(pane.scrollHeight, max);
+}
+
 /** A popup's line, for j/k: its prose's line height. */
 const POPUP_LINE = 19;
 
@@ -557,6 +588,9 @@ function Popup({
     { readonly width: number; readonly height: number } | undefined
   >();
   const [more, setMore] = useState({ above: false, below: false });
+  // How far right of the popup's edge its anchored node starts (`anchor`).
+  const [anchorDx, setAnchorDx] = useState(0);
+  const root = useRef<HTMLDivElement>(null);
   // Code blocks whose grammar is still loading: until they are coloured (or
   // the hold runs out) a popup not yet shown stays hidden, so that it opens
   // coloured and is never drawn plain first.
@@ -589,12 +623,19 @@ function Popup({
     if (!el) return undefined;
     const measure = () => {
       const rect = el.getBoundingClientRect();
+      // The popup's own border is outside its content: a popup as tall as
+      // its content holds it all, with no scrollbar for those two pixels.
+      const r = root.current;
+      const width = rect.width + (r ? r.offsetWidth - r.clientWidth : 0);
+      const height =
+        naturalHeight(el, rect.height) +
+        (r ? r.offsetHeight - r.clientHeight : 0);
       setSize((s) =>
-        s?.width === rect.width && s.height === rect.height
-          ? s
-          : { width: rect.width, height: rect.height },
+        s?.width === width && s.height === height ? s : { width, height },
       );
       edges();
+      const dx = root.current ? anchorOffset(root.current, el) : 0;
+      setAnchorDx((d) => (d === dx ? d : dx));
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -608,19 +649,31 @@ function Popup({
     const el = scroller.current;
     if (!el || !scroll || scroll.seq === seq.current) return;
     seq.current = scroll.seq;
-    el.scrollTop = popupScrollTop(el.scrollTop, scroll, {
-      height: el.clientHeight,
-      content: el.scrollHeight,
+    // a pane inside (`stack{ pane }`) when it names one, else the popup
+    const pane =
+      scroll.pane !== undefined
+        ? body.current?.querySelector<HTMLElement>(
+            `[data-pane="${CSS.escape(scroll.pane)}"]`,
+          )
+        : undefined;
+    const target = pane ?? el;
+    target.scrollTop = popupScrollTop(target.scrollTop, scroll, {
+      height: target.clientHeight,
+      content: target.scrollHeight,
       line: POPUP_LINE,
     });
     edges();
   }, [scroll]);
   const maxWidth = popupMaxWidth(content.maxWidth, cell.width, area.width);
+  const minWidth =
+    content.minWidth !== undefined
+      ? Math.min(content.minWidth * cell.width, maxWidth)
+      : undefined;
   const anchorY = (box.row + place.row) * cell.height;
   const layout = size
     ? placePopup({
         anchor: {
-          x: (box.col + place.col) * cell.width,
+          x: (box.col + place.col) * cell.width - anchorDx,
           y: anchorY,
         },
         cellHeight: cell.height,
@@ -647,6 +700,7 @@ function Popup({
   const fg = float?.fg ?? theme.fg;
   return (
     <div
+      ref={root}
       className={`nvim-popup${place.focused ? " nvim-popup-focused" : ""}`}
       data-ride-win={place.win}
       data-ride-base={place.base}
@@ -661,6 +715,10 @@ function Popup({
         background: rgbCss(bg),
         ["--nvim-ring" as string]: ringColor(content.hl, fg),
         ["--nvim-ground" as string]: rgbCss(bg),
+        // The room the popup lacks, taken from its pane (not the list).
+        ["--nvim-pane-cut" as string]: `${String(
+          layout && size ? Math.max(0, size.height - layout.height) : 0,
+        )}px`,
         ["--nvim-grid-font" as string]: host.mono,
         ["--nvim-muted" as string]:
           fgOf(content.hl, "Comment") ?? rgbCss(fg, 0.55),
@@ -672,7 +730,11 @@ function Popup({
       }}
     >
       <div ref={scroller} className="nvim-popup-scroll" onScroll={edges}>
-        <div ref={body} className="nvim-popup-body" style={{ maxWidth }}>
+        <div
+          ref={body}
+          className="nvim-popup-body"
+          style={{ maxWidth, ...(minWidth !== undefined ? { minWidth } : {}) }}
+        >
           <ColouringWait.Provider value={waitColouring}>
             <ComponentTree
               node={content.node}

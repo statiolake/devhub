@@ -18,6 +18,8 @@ import {
   luaList,
   parseHlTable,
   parseNode,
+  withPane,
+  withSelected,
   type ComponentNode,
   type HlTable,
 } from "./components";
@@ -91,6 +93,8 @@ export interface PopupContent {
   readonly placement: PopupPlacement;
   /** In cells, when the popup's owner bounds it. */
   readonly maxWidth: number | undefined;
+  /** In cells: it is never narrower (a part that comes and goes). */
+  readonly minWidth?: number | undefined;
   readonly maxHeight: number | undefined;
 }
 
@@ -111,6 +115,8 @@ export interface PopupScroll {
   readonly seq: number;
   readonly by: "line" | "half" | "page" | "top" | "bottom";
   readonly n: number;
+  /** A pane of the popup's (`stack{ pane }`) to scroll; none: the popup. */
+  readonly pane?: string | undefined;
 }
 
 /** A framed view's parts round its items (`gui.view{ frame }`). */
@@ -187,6 +193,8 @@ export const LAYER_EVENTS: ReadonlySet<string> = new Set([
   "popup",
   "popup_clear",
   "popup_scroll",
+  "popup_select",
+  "popup_pane",
   "layers",
 ]);
 
@@ -377,7 +385,41 @@ export function applyLayerEvent(
             placement === "above" || placement === "auto" ? placement : "below",
           maxWidth: cells("max_width"),
           maxHeight: cells("max_height"),
+          minWidth: cells("min_width"),
         }),
+      };
+    }
+    case "popup_pane": {
+      const content = id !== undefined ? state.popups.get(id) : undefined;
+      const name = p["pane"];
+      if (id === undefined || !content || typeof name !== "string")
+        return state;
+      const children = luaList(p["children"])
+        .slice(0, 400)
+        .flatMap((child) => {
+          const one = parseNode(child, 1);
+          return one ? [one] : [];
+        });
+      const node = withPane(content.node, name, children);
+      if (node === content.node) return state;
+      // the groups the new content names, beside the ones the tree had
+      const hl = new Map(content.hl);
+      for (const [group, attrs] of parseHlTable(p["hl"])) hl.set(group, attrs);
+      return {
+        ...state,
+        popups: new Map(state.popups).set(id, { ...content, node, hl }),
+      };
+    }
+    case "popup_select": {
+      const content = id !== undefined ? state.popups.get(id) : undefined;
+      const n = int(p, "n");
+      if (id === undefined || !content || n === undefined || n < 0)
+        return state;
+      const node = withSelected(content.node, n);
+      if (node === content.node) return state;
+      return {
+        ...state,
+        popups: new Map(state.popups).set(id, { ...content, node }),
       };
     }
     case "popup_clear":
@@ -407,6 +449,7 @@ export function applyLayerEvent(
           seq,
           by,
           n: int(p, "n") ?? 1,
+          ...(typeof p["pane"] === "string" ? { pane: p["pane"] } : {}),
         }),
       };
     }

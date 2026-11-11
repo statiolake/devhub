@@ -111,6 +111,79 @@ describe("buffer-backed GUI layers on the page", () => {
     expect(state.popupScrolls.size).toBe(0);
   });
 
+  it("moves a popup's list selection without its tree, and scrolls a pane", () => {
+    const row = (text: string) => ({ type: "text", text });
+    let state = applyLayerEvent(NO_LAYERS, "popup", {
+      id: 6,
+      node: {
+        type: "stack",
+        children: [
+          {
+            type: "stack",
+            band: "PmenuSel",
+            selected: 1,
+            children: [row("a"), row("b"), row("c")],
+          },
+          { type: "stack", pane: "doc", max_height: 200, children: [] },
+        ],
+      },
+      hl: {},
+      min_width: 36,
+    });
+    expect(state.popups.get(6)?.minWidth).toBe(36);
+    state = applyLayerEvent(state, "popup_select", { id: 6, n: 3 });
+    const list = (s: typeof state) => {
+      const node = s.popups.get(6)?.node;
+      return node?.type === "stack" ? node.children[0] : undefined;
+    };
+    expect(list(state)).toMatchObject({ band: "PmenuSel", selected: 3 });
+    // The same selection, an unknown popup, a negative index: nothing new.
+    expect(applyLayerEvent(state, "popup_select", { id: 6, n: 3 })).toBe(state);
+    expect(applyLayerEvent(state, "popup_select", { id: 9, n: 1 })).toBe(state);
+    expect(applyLayerEvent(state, "popup_select", { id: 6, n: -1 })).toBe(
+      state,
+    );
+    expect(
+      list(applyLayerEvent(state, "popup_select", { id: 6, n: 0 })),
+    ).toMatchObject({ selected: 0 });
+    // A pane's content alone, with the groups it names.
+    state = applyLayerEvent(state, "popup_pane", {
+      id: 6,
+      pane: "doc",
+      children: [{ type: "markdown", text: "**doc**" }],
+      hl: { Title: { fg: 255 } },
+    });
+    const content = state.popups.get(6);
+    const pane =
+      content?.node.type === "stack" ? content.node.children[1] : undefined;
+    expect(pane).toMatchObject({
+      pane: "doc",
+      children: [{ type: "markdown", text: "**doc**" }],
+    });
+    expect(content?.hl.get("Title")).toMatchObject({ fg: 255 });
+    expect(list(state)).toMatchObject({ selected: 3 });
+    expect(
+      applyLayerEvent(state, "popup_pane", {
+        id: 6,
+        pane: "nope",
+        children: [],
+      }),
+    ).toBe(state);
+    state = applyLayerEvent(state, "popup_scroll", {
+      id: 6,
+      by: "line",
+      n: 4,
+      seq: 7,
+      pane: "doc",
+    });
+    expect(state.popupScrolls.get(6)).toEqual({
+      seq: 7,
+      by: "line",
+      n: 4,
+      pane: "doc",
+    });
+  });
+
   it("keeps a framed view's parts, and where its windows stand", () => {
     let state = applyLayerEvent(NO_LAYERS, "view", {
       id: 6,
