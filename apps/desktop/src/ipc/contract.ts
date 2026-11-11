@@ -2034,6 +2034,14 @@ export interface PaneBridge
 		listener: (key: TerminalNeovimKeyWire) => void,
 	): () => void;
 	/**
+	 * Keys main handed this page for its terminal (tmux's prefix typed in a
+	 * Neovim, and the key after it) that its terminal surface could not
+	 * type: none was there, or it was not attached. As tmux names them; main
+	 * sends them through DevHub's control client on the session, or says
+	 * they were lost and gives the keys back to the Neovim.
+	 */
+	reportUntypedTerminalKeys(terminalId: string, keys: readonly string[]): void;
+	/**
 	 * A press in the page: into an overlay's Neovim (its key), or into the
 	 * terminal beside it (`null`). The keys go where the person put them.
 	 */
@@ -2552,6 +2560,7 @@ export const CHANNELS = {
 	terminalNeovims: "devhub:terminal-neovims",
 	askTerminalNeovims: "devhub:ask-terminal-neovims",
 	terminalNeovimKey: "devhub:terminal-neovim-key",
+	reportUntypedTerminalKeys: "devhub:report-untyped-terminal-keys",
 	reportNeovimPointer: "devhub:report-neovim-pointer",
 	writeClipboard: "devhub:write-clipboard",
 	writeClipboardImage: "devhub:write-clipboard-image",

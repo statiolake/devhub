@@ -200,6 +200,20 @@ export function controlReading(
 	};
 }
 
+/**
+ * A tmux key name as the control-mode terminal names a keystroke
+ * (`controlKeys.ts`): modifiers, then one character or a named key.
+ */
+export function isClientKeyName(key: string): boolean {
+	return /^(?:[CMS]-)*(?:[A-Za-z][A-Za-z0-9]{1,15}|[!-~])$/u.test(key);
+}
+
+/**
+ * At most this many keys a page reports untyped at once: the prefix, and
+ * the keys typed while it waited.
+ */
+export const MAX_UNTYPED_KEYS = 8;
+
 /** A key as Electron's `before-input-event` has it. */
 export interface KeyInput {
 	readonly type: string;
@@ -289,6 +303,16 @@ export interface TerminalNeovimPorts {
 		announce: boolean,
 	): Promise<ReadonlyMap<string, string> | undefined>;
 	selectPane(terminal: OverlayTerminal, paneId: string): Promise<void>;
+	/**
+	 * Keys through DevHub's control client's key tables (`send-keys -K -c`),
+	 * as its page's surface would send them: tmux's prefix, handed to the
+	 * page, that the page could not type into its terminal surface.
+	 */
+	typeKeys?(
+		terminal: OverlayTerminal,
+		client: string,
+		keys: readonly string[],
+	): Promise<void>;
 	/** A socket on this Mac that reaches `socket` on the terminal's machine. */
 	reach(terminal: OverlayTerminal, socket: string): Promise<string>;
 	/** Told once a UI is attached: the theme, say. */
@@ -699,6 +723,39 @@ export class TerminalNeovims {
 		watch.lend = { kind: "prefix", armed: true };
 		this.changed();
 		return "hand";
+	}
+
+	/**
+	 * Keys the terminal's page was handed (tmux's prefix, and the key after
+	 * it) and could not type into its terminal surface: none there yet, or
+	 * not attached (`PaneNeovims.typeKey`). Sent through DevHub's control
+	 * client on the session instead, as the surface would have. With no
+	 * client to send them through, or a send that fails, it is said, and
+	 * the keys are not left handed to a terminal that never had them: they
+	 * go back to the overlay.
+	 */
+	async untyped(terminalId: string, keys: readonly string[]): Promise<void> {
+		const watch = this.watches.get(terminalId);
+		if (watch === undefined || keys.length === 0) return;
+		const client = watch.reading?.client?.name;
+		const typeKeys = this.options.ports.typeKeys;
+		let failure: string | undefined;
+		if (client === undefined || client === "") failure = "no DevHub client";
+		else if (typeKeys === undefined) failure = "nothing to send them with";
+		else {
+			try {
+				await typeKeys(watch.terminal, client, keys);
+			} catch (error: unknown) {
+				failure = error instanceof Error ? error.message : String(error);
+			}
+		}
+		if (failure === undefined) return;
+		this.options.ports.log?.(
+			`[devhub] tmux's prefix (${keys.join(" ")}) from a Neovim in terminal ${terminalId} did not reach tmux: ${failure}`,
+		);
+		if (watch.lend?.kind !== "prefix") return;
+		watch.lend = undefined;
+		this.changed();
 	}
 
 	/**

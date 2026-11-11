@@ -108,7 +108,10 @@ import {
 	neovimShimKeys,
 	neovimShimZshenv,
 } from "../editor/terminalNeovimShim.js";
-import { SOCKET_FORMAT as NEOVIM_SOCKET_FORMAT } from "../editor/terminalNeovims.js";
+import {
+	isClientKeyName,
+	SOCKET_FORMAT as NEOVIM_SOCKET_FORMAT,
+} from "../editor/terminalNeovims.js";
 
 const PROTOCOL_OPTION = "@devhub-protocol";
 const PROTOCOL_VALUE = "1";
@@ -1593,6 +1596,12 @@ export interface TmuxOutput extends CommandOutput {
 	readonly noServer: boolean;
 	refusal(): PortFailure;
 }
+
+/**
+ * A tmux client's name as `#{client_name}` gives it: a control client's
+ * `client-<pid>`, or a tty's path.
+ */
+const CLIENT_NAME = /^[A-Za-z0-9_./-]{1,128}$/u;
 
 /** A tmux pane id, which is the only target DevHub addresses a pane by. */
 const PANE_ID = /^%[0-9]+$/u;
@@ -4158,6 +4167,47 @@ export class TmuxTerminalRuntime {
 	): Promise<void> {
 		if (!PANE_ID.test(paneId)) throw portFailure("failed");
 		const args = ["select-pane", "-t", paneId];
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const output = await this.runTmux(
+				this.socket(),
+				args,
+				this.contextHome,
+				cancel,
+				OperationDeadline.in(this.timeoutMs),
+			);
+			if (!output.success) throw output.refusal();
+		} finally {
+			release();
+		}
+	}
+
+	/**
+	 * Keys through a client's key tables, as that client would send them
+	 * (`send-keys -K -c`): tmux's prefix typed in a Neovim drawn over a pane,
+	 * which its terminal's page could not type itself
+	 * (`TerminalNeovims.untyped`). The client is DevHub's control client on
+	 * the session, as its page names it; the keys are tmux key names.
+	 */
+	async typeClientKeys(
+		client: string,
+		keys: readonly string[],
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		if (!CLIENT_NAME.test(client) || !keys.every(isClientKeyName)) {
+			throw portFailure("failed");
+		}
+		// A lone `;` ends a tmux command: escaped, it is the key.
+		const args = [
+			"send-keys",
+			"-K",
+			"-c",
+			client,
+			"--",
+			...keys.map((key) =>
+				key.endsWith(";") ? `${key.slice(0, -1)}\\;` : key,
+			),
+		];
 		const release = await this.gate.acquireOperation(cancel);
 		try {
 			const output = await this.runTmux(

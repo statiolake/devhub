@@ -542,6 +542,8 @@ import {
 import { ManagedNeovims, socketDirectoryFor } from "../editor/managedNeovim.js";
 import { NeovimEditors, type NeovimPage } from "../editor/neovimEditors.js";
 import {
+	isClientKeyName,
+	MAX_UNTYPED_KEYS,
 	parseControlPanes,
 	terminalIdOfPaneUrl,
 	type TerminalNeovims,
@@ -9632,6 +9634,20 @@ export class AppController {
 			typeof terminalId === "string"
 				? shellWindow().neovimsOf(terminalId)
 				: { overlays: [] },
+		);
+		// Its terminal could not type the prefix it was handed: tmux's, by
+		// another way (`TerminalNeovims.untyped`).
+		receive(
+			CHANNELS.reportUntypedTerminalKeys,
+			(_event, terminalId: unknown, keys: unknown) => {
+				if (typeof terminalId !== "string" || !Array.isArray(keys)) return;
+				if (keys.length === 0 || keys.length > MAX_UNTYPED_KEYS) return;
+				if (
+					!keys.every((key) => typeof key === "string" && isClientKeyName(key))
+				)
+					return;
+				void this.terminalNeovims?.untyped(terminalId, keys as string[]);
+			},
 		);
 		// A press in it: into one of its Neovims, or the terminal beside.
 		receive(

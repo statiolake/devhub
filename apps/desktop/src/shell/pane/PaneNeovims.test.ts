@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalNeovimKeyWire } from "../../ipc/contract";
 import type { NeovimHandle } from "../neovim/NeovimApp";
-import { PaneNeovims, inNeovim } from "./PaneNeovims";
+import { PaneNeovims, inNeovim, strokeName } from "./PaneNeovims";
 
 const stroke = (to: string): TerminalNeovimKeyWire => ({
   to,
@@ -106,7 +106,7 @@ describe("the Neovims of a terminal's page", () => {
 
   it("types a key main took where it was meant, and moves the focus out of a Neovim", () => {
     const neovims = new PaneNeovims();
-    const terminal = { focus: vi.fn(), typeKey: vi.fn() };
+    const terminal = { focus: vi.fn(), typeKey: vi.fn(() => true) };
     neovims.lendTerminal(terminal);
     neovims.update({
       overlays: [{ key: "tnv:1", pane: 2, shown: true }],
@@ -127,5 +127,127 @@ describe("the Neovims of a terminal's page", () => {
     terminal.focus.mockClear();
     neovims.update({ overlays: [{ key: "tnv:1", pane: 2, shown: true }] });
     expect(terminal.focus).toHaveBeenCalled();
+  });
+});
+
+describe("tmux's prefix handed to a page whose terminal cannot type it", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** A page with a Neovim that has the focus, and main's prefix for it. */
+  function page() {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const untyped = vi.fn<(keys: readonly string[]) => void>();
+    const neovims = new PaneNeovims({ untyped, waitMs: 300 });
+    neovims.update({
+      overlays: [{ key: "tnv:1", pane: 2, shown: true }],
+      keys: "tnv:1",
+    });
+    const nvim = handle(true);
+    neovims.setHandle("tnv:1", nvim);
+    // What the Neovim's own input would read.
+    const input = document.createElement("textarea");
+    document.body.append(input);
+    const neovimRead: string[] = [];
+    input.addEventListener("keydown", (event) => neovimRead.push(event.key));
+    const press = (key: string, code: string) => {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        code,
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(event);
+      return event;
+    };
+    return { neovims, untyped, neovimRead, press };
+  }
+
+  it("names keys as tmux does", () => {
+    expect(strokeName(stroke(""))).toBe("C-q");
+    expect(
+      strokeName({ ...stroke(""), key: "z", code: "KeyZ", control: false }),
+    ).toBe("z");
+  });
+
+  it("goes to tmux through main, the key after it too, when no surface lends its keys in time", () => {
+    const { neovims, untyped, neovimRead, press } = page();
+    neovims.typeKey(stroke(""));
+    expect(neovims.keys()).toBeUndefined();
+    vi.advanceTimersByTime(299);
+    expect(untyped).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(untyped).toHaveBeenCalledWith(["C-q"]);
+    // The key after it is tmux's, not the Neovim's that still has the focus.
+    const z = press("z", "KeyZ");
+    expect(z.defaultPrevented).toBe(true);
+    expect(neovimRead).toEqual([]);
+    expect(untyped).toHaveBeenLastCalledWith(["z"]);
+    // Then the Neovim's again.
+    press("j", "KeyJ");
+    expect(neovimRead).toEqual(["j"]);
+    expect(untyped).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for the surface, and types it what came meanwhile, in order", () => {
+    const { neovims, untyped, neovimRead, press } = page();
+    neovims.typeKey(stroke(""));
+    expect(press("z", "KeyZ").defaultPrevented).toBe(true);
+    // A modifier alone is nothing to tmux, and is not kept.
+    expect(press("Shift", "ShiftLeft").defaultPrevented).toBe(false);
+    const typed: string[] = [];
+    const terminal = {
+      focus: vi.fn(),
+      typeKey: vi.fn((key: { key: string }) => {
+        typed.push(key.key);
+        return true;
+      }),
+    };
+    vi.advanceTimersByTime(100);
+    neovims.lendTerminal(terminal);
+    expect(typed).toEqual(["q", "z"]);
+    expect(terminal.focus).toHaveBeenCalled();
+    vi.advanceTimersByTime(1000);
+    expect(untyped).not.toHaveBeenCalled();
+    expect(neovimRead).toEqual(["Shift"]);
+    press("j", "KeyJ");
+    expect(neovimRead).toEqual(["Shift", "j"]);
+  });
+
+  it("does not wait for a surface that is there and not attached", () => {
+    const { neovims, untyped, press } = page();
+    const terminal = { focus: vi.fn(), typeKey: vi.fn(() => false) };
+    neovims.lendTerminal(terminal);
+    neovims.typeKey(stroke(""));
+    expect(untyped).toHaveBeenCalledWith(["C-q"]);
+    press("z", "KeyZ");
+    expect(terminal.typeKey).toHaveBeenCalledTimes(2);
+    expect(untyped).toHaveBeenLastCalledWith(["z"]);
+  });
+
+  it("goes at once when main gives the keys back before the wait is over", () => {
+    const { neovims, untyped, press } = page();
+    neovims.typeKey(stroke(""));
+    press("z", "KeyZ");
+    // The binding's time is up in main (`settle`): the Neovim's again.
+    neovims.update({
+      overlays: [{ key: "tnv:1", pane: 2, shown: true }],
+      keys: "tnv:1",
+    });
+    expect(untyped).toHaveBeenCalledWith(["C-q", "z"]);
+    vi.advanceTimersByTime(1000);
+    expect(untyped).toHaveBeenCalledTimes(1);
+  });
+
+  it("says a prefix with nowhere to go was lost", () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const neovims = new PaneNeovims({ waitMs: 10 });
+    neovims.typeKey(stroke(""));
+    vi.advanceTimersByTime(10);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("was lost"));
   });
 });

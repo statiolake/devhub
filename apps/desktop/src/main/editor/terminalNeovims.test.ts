@@ -149,6 +149,11 @@ describe("TerminalNeovims", () => {
 			reach: vi.fn((_terminal: unknown, socket: string) =>
 				Promise.resolve(`${socket}.here`),
 			),
+			typeKeys: vi.fn(
+				(_terminal: unknown, _client: string, _keys: readonly string[]) =>
+					Promise.resolve(),
+			),
+			log: vi.fn(),
 		};
 		const changed = vi.fn();
 		const gone = vi.fn();
@@ -364,6 +369,60 @@ describe("TerminalNeovims", () => {
 		await vi.waitFor(() => {
 			expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
 		});
+		neovims.dispose();
+	});
+
+	it("sends a prefix its page could not type through the control client", async () => {
+		const { neovims, ports, views } = setup();
+		neovims.controlPanes("t", panes());
+		await vi.waitFor(() => {
+			expect(views()).toHaveLength(1);
+		});
+		neovims.attached("tnv:1");
+		expect(neovims.overlayKey("tnv:1", key({ key: "b", control: true }))).toBe(
+			"hand",
+		);
+		// The page had no surface to type it into: tmux's all the same.
+		await neovims.untyped("t", ["C-b", "z"]);
+		expect(ports.typeKeys).toHaveBeenCalledWith(
+			{ terminalId: "t", machine: "local" },
+			"client-7",
+			["C-b", "z"],
+		);
+		expect(ports.log).not.toHaveBeenCalled();
+		// The key after it still gives the keys back, on the same timer.
+		expect(neovims.keyboardOverlay("t")).toBeUndefined();
+		neovims.terminalKey("t", key({ key: "z" }));
+		await vi.waitFor(() => {
+			expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
+		});
+		neovims.dispose();
+	});
+
+	it("says a prefix that reached no tmux client was lost, and gives the keys back", async () => {
+		const { neovims, ports, views } = setup();
+		neovims.controlPanes("t", panes());
+		await vi.waitFor(() => {
+			expect(views()).toHaveLength(1);
+		});
+		neovims.attached("tnv:1");
+		ports.typeKeys.mockRejectedValueOnce(new Error("can't find client"));
+		neovims.overlayKey("tnv:1", key({ key: "b", control: true }));
+		expect(neovims.keyboardOverlay("t")).toBeUndefined();
+		await neovims.untyped("t", ["C-b"]);
+		expect(ports.log).toHaveBeenCalledWith(
+			expect.stringContaining("did not reach tmux: can't find client"),
+		);
+		// Not left handed to a terminal that never had it.
+		expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
+		// No client at all: nothing is sent, and it is said.
+		ports.typeKeys.mockClear();
+		neovims.controlPanes("t", panes({ client: "" }));
+		await neovims.untyped("t", ["C-b"]);
+		expect(ports.typeKeys).not.toHaveBeenCalled();
+		expect(ports.log).toHaveBeenLastCalledWith(
+			expect.stringContaining("no DevHub client"),
+		);
 		neovims.dispose();
 	});
 

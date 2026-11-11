@@ -1470,7 +1470,14 @@ Neovim has the keys (`ChordHost.neovimHasKeys`). The tmux prefix typed in it is 
 terminal surface as the keystroke it was, since that page's control client
 keeps its own place in tmux's key tables (`keyGuard.ts`), and the terminal
 takes the next key; once that binding ran (a zoom, a pane switch, a window
-switch), the keys come back if the overlaid pane is still the active one. A
+switch), the keys come back if the overlaid pane is still the active one.
+The prefix is never dropped: a page whose surface cannot type it (none has
+lent its keys yet, or it is not attached) holds it and the key after it for
+at most 300 ms (`PREFIX_WAIT_MS`), types them into a surface that lends its
+keys meanwhile, and otherwise reports them (`reportUntypedTerminalKeys`);
+main sends them with `send-keys -K -c` through DevHub's control client on
+the session, or, with no client or a failed send, logs it and gives the keys
+back to the Neovim (`TerminalNeovims.untyped`). A
 binding that opens a prompt or a chooser (`:`, `w`, `s`, `,`…) is drawn by
 DevHub over the panes, which keeps the keys in the terminal while it is open
 (`covered`). A click beside the overlay gives the keys to the

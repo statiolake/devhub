@@ -20,6 +20,15 @@
  * main took on its way in (`onTerminalNeovimKey`) is typed where it was
  * meant: a key that gives a Neovim the keys, or tmux's prefix typed in one.
  *
+ * tmux's prefix is never dropped. Main has kept it from the Neovim already,
+ * so the page that cannot type it into its terminal surface — none has lent
+ * its keys yet (the first keys after a restart, a pane switch, a Neovim
+ * attaching again), or the one there is not attached — holds it, and the
+ * key after it, which would otherwise be the Neovim's, for at most
+ * `PREFIX_WAIT_MS`. A surface lending its keys in that time is typed them;
+ * otherwise they are main's to send to tmux through DevHub's control client
+ * (`untyped`, `TerminalNeovims.untyped`), which says so if it cannot.
+ *
  * # A Neovim whose pane closes
  *
  * Main says a Neovim is gone once its pane has gone (or its UI ended),
@@ -46,6 +55,7 @@ import type {
 } from "../../ipc/contract";
 import type { AppAppearance } from "../../ipc/appShell";
 import { NeovimSurface, type NeovimHandle } from "../neovim/NeovimApp";
+import { tmuxKey } from "../terminal/control/controlKeys";
 import "../neovim/neovim.css";
 import "../neovim/layers.css";
 import "../neovim/framed.css";
@@ -74,8 +84,65 @@ export interface PaneNeovim {
 export interface PaneTerminalKeys {
   /** The terminal's input takes the page's focus. */
   focus(): void;
-  /** A keystroke typed into the terminal (tmux's prefix, from a Neovim). */
-  typeKey(key: TerminalNeovimKeyWire): void;
+  /**
+   * A keystroke typed into the terminal (tmux's prefix, from a Neovim):
+   * `false` when the surface cannot send it (not attached, nor attaching).
+   */
+  typeKey(key: TerminalNeovimKeyWire): boolean;
+}
+
+/**
+ * How long tmux's prefix, handed to a page whose terminal surface cannot
+ * type it, waits for one that can before it goes to tmux another way.
+ */
+export const PREFIX_WAIT_MS = 300;
+
+export interface PaneNeovimsOptions {
+  /**
+   * Keys handed to the terminal that its surface could not type, as tmux
+   * names them: main sends them through DevHub's control client.
+   */
+  readonly untyped?: (keys: readonly string[]) => void;
+  readonly waitMs?: number;
+  /** Where the key after the prefix is caught (the page's window). */
+  readonly keys?: Pick<EventTarget, "addEventListener" | "removeEventListener">;
+}
+
+/** tmux's prefix, handed to the terminal before its surface could type it. */
+interface Waiting {
+  /** The keys not typed yet: the prefix, and the key after it once caught. */
+  strokes: TerminalNeovimKeyWire[];
+  /** The key after the prefix came: the binding's keys are all here. */
+  complete: boolean;
+  /** Gone to main already (no surface came): the key after it goes so too. */
+  diverted: boolean;
+  timer: ReturnType<typeof setTimeout> | undefined;
+}
+
+/** Keys that are only modifiers: no key of tmux's by themselves. */
+const MODIFIER_KEYS = new Set([
+  "Shift",
+  "Control",
+  "Alt",
+  "AltGraph",
+  "Meta",
+  "CapsLock",
+  "Fn",
+]);
+
+/** A handed keystroke as tmux names it (`C-q`, `z`), for main to send. */
+export function strokeName(stroke: TerminalNeovimKeyWire): string | undefined {
+  return tmuxKey(
+    {
+      key: stroke.key,
+      code: stroke.code,
+      ctrlKey: stroke.control,
+      altKey: stroke.alt,
+      shiftKey: stroke.shift,
+      metaKey: stroke.meta,
+    },
+    stroke.alt,
+  );
 }
 
 /** The attribute that marks a Neovim's element, for the surface's clicks. */
@@ -109,6 +176,9 @@ export class PaneNeovims {
   private keysOf: string | undefined;
   private terminal: PaneTerminalKeys | undefined;
   private keeper: ((entry: PaneNeovim) => boolean) | undefined;
+  private waiting: Waiting | undefined;
+
+  constructor(private readonly options: PaneNeovimsOptions = {}) {}
 
   /** Every Neovim, in main's order. */
   list(): readonly PaneNeovim[] {
@@ -138,6 +208,21 @@ export class PaneNeovims {
   /** The surface lending its keys, or taking them back (`undefined`). */
   lendTerminal(terminal: PaneTerminalKeys | undefined): void {
     this.terminal = terminal;
+    const waiting = this.waiting;
+    if (terminal === undefined || waiting === undefined || waiting.diverted)
+      return;
+    // The prefix waited for this surface: typed now, with what came after.
+    clearTimeout(waiting.timer);
+    terminal.focus();
+    while (waiting.strokes.length > 0) {
+      const stroke = waiting.strokes[0];
+      if (stroke === undefined || !terminal.typeKey(stroke)) {
+        this.divert();
+        return;
+      }
+      waiting.strokes.shift();
+    }
+    this.endWaiting();
   }
 
   /**
@@ -208,7 +293,15 @@ export class PaneNeovims {
   /** Whose the page's keys are now; the focus follows. */
   setKeys(keys: string | undefined): void {
     this.keysOf = keys;
-    if (keys !== undefined) return;
+    if (keys !== undefined) {
+      // Main gave the keys back (the prefix's binding ran, or it could not
+      // be sent): a prefix still waiting goes now, and nothing more is held.
+      if (this.waiting !== undefined) {
+        if (!this.waiting.diverted) this.divert();
+        this.endWaiting();
+      }
+      return;
+    }
     // The terminal's: out of a Neovim that has the focus.
     for (const entry of this.entries.values())
       if (entry.handle?.focused() === true) {
@@ -229,11 +322,122 @@ export class PaneNeovims {
   typeKey(key: TerminalNeovimKeyWire): void {
     if (key.to === "") {
       this.setKeys(undefined);
-      this.terminal?.focus();
-      this.terminal?.typeKey(key);
+      const waiting = this.waiting;
+      if (waiting !== undefined) {
+        // The prefix again, before the first was typed: after it, in order.
+        waiting.complete = false;
+        if (waiting.diverted) this.send([key]);
+        else waiting.strokes.push(key);
+        return;
+      }
+      const terminal = this.terminal;
+      terminal?.focus();
+      if (terminal?.typeKey(key) === true) return;
+      this.wait(key, terminal !== undefined);
       return;
     }
     this.entries.get(key.to)?.handle?.typeKey(key);
+  }
+
+  /**
+   * tmux's prefix the surface could not type: held, with the key after it
+   * (caught before the Neovim, which still has the page's focus, reads it),
+   * until a surface lends its keys or `waitMs` is over. A surface that is
+   * there and not attached is not waited for.
+   */
+  private wait(key: TerminalNeovimKeyWire, now: boolean): void {
+    const waiting: Waiting = {
+      strokes: [key],
+      complete: false,
+      diverted: false,
+      timer: undefined,
+    };
+    this.waiting = waiting;
+    this.keyTarget()?.addEventListener("keydown", this.caught, true);
+    if (now) {
+      this.divert();
+      return;
+    }
+    waiting.timer = setTimeout(() => {
+      if (this.waiting === waiting) this.divert();
+    }, this.options.waitMs ?? PREFIX_WAIT_MS);
+  }
+
+  /** The key after a waiting prefix, kept from whatever has the focus. */
+  private readonly caught = (event: Event) => {
+    const waiting = this.waiting;
+    if (waiting === undefined || !(event instanceof KeyboardEvent)) return;
+    if (MODIFIER_KEYS.has(event.key) || event.isComposing) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const stroke: TerminalNeovimKeyWire = {
+      to: "",
+      key: event.key,
+      code: event.code,
+      control: event.ctrlKey,
+      alt: event.altKey,
+      shift: event.shiftKey,
+      meta: event.metaKey,
+      leftOption: false,
+    };
+    waiting.complete = true;
+    // What comes after it is the Neovim's again, or the surface's.
+    this.keyTarget()?.removeEventListener("keydown", this.caught, true);
+    if (!waiting.diverted) {
+      waiting.strokes.push(stroke);
+      return;
+    }
+    const terminal = this.terminal;
+    if (terminal?.typeKey(stroke) !== true) this.send([stroke]);
+    this.endWaiting();
+  };
+
+  /** No surface typed them: main's, to send through the control client. */
+  private divert(): void {
+    const waiting = this.waiting;
+    if (waiting === undefined) return;
+    clearTimeout(waiting.timer);
+    waiting.timer = undefined;
+    waiting.diverted = true;
+    const strokes = waiting.strokes;
+    waiting.strokes = [];
+    this.send(strokes);
+    if (waiting.complete) this.endWaiting();
+  }
+
+  private send(strokes: readonly TerminalNeovimKeyWire[]): void {
+    const keys = strokes.flatMap((stroke) => {
+      const name = strokeName(stroke);
+      return name === undefined ? [] : [name];
+    });
+    if (keys.length === 0) return;
+    const untyped = this.options.untyped;
+    if (untyped === undefined) {
+      console.warn(
+        `[devhub] tmux's prefix (${keys.join(" ")}) from a Neovim was lost: this terminal's surface could not type it, and nothing else could`,
+      );
+      return;
+    }
+    console.warn(
+      `[devhub] this terminal's surface could not type tmux's prefix (${keys.join(" ")}): sent through DevHub's tmux client instead`,
+    );
+    untyped(keys);
+  }
+
+  private endWaiting(): void {
+    const waiting = this.waiting;
+    if (waiting === undefined) return;
+    clearTimeout(waiting.timer);
+    this.waiting = undefined;
+    this.keyTarget()?.removeEventListener("keydown", this.caught, true);
+  }
+
+  private keyTarget():
+    | Pick<EventTarget, "addEventListener" | "removeEventListener">
+    | undefined {
+    return (
+      this.options.keys ?? (typeof window === "undefined" ? undefined : window)
+    );
   }
 
   changed(): void {

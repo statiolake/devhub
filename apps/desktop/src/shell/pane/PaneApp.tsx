@@ -69,7 +69,16 @@ export function PaneApp({ terminalId }: { readonly terminalId: string }) {
     [bridge, terminalId],
   );
   // The Neovims drawn over this terminal's panes, drawn in this page.
-  const neovims = useMemo(() => new PaneNeovims(), []);
+  // tmux's prefix its surface could not type goes to tmux through main.
+  const neovims = useMemo(
+    () =>
+      new PaneNeovims({
+        untyped: (keys) => {
+          bridge.reportUntypedTerminalKeys(terminalId, keys);
+        },
+      }),
+    [bridge, terminalId],
+  );
   if (state.status !== "ready") return null;
   const workspaceId = workspaceOfTerminalPage(terminalId);
   const workspace =

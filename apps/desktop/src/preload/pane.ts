@@ -60,6 +60,9 @@ const api: PaneBridge = {
 	onTerminalNeovimKey(listener) {
 		return on<TerminalNeovimKeyWire>(CHANNELS.terminalNeovimKey, listener);
 	},
+	reportUntypedTerminalKeys(terminalId, keys) {
+		ipcRenderer.send(CHANNELS.reportUntypedTerminalKeys, terminalId, keys);
+	},
 	reportNeovimPointer(terminalId, key) {
 		ipcRenderer.send(CHANNELS.reportNeovimPointer, terminalId, key);
 	},

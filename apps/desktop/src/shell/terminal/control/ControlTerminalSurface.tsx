@@ -2591,6 +2591,8 @@ export function ControlTerminalSurface({
         input.focus();
       },
       typeKey: (stroke) => {
+        // Neither attached nor attaching: nothing here would send it.
+        if (receipt === undefined && held === undefined) return false;
         const setting =
           live.current.appearance?.terminalMacOptionIsMeta ?? false;
         const key = terminalKeys.keydown(
@@ -2604,9 +2606,10 @@ export function ControlTerminalSurface({
           }),
           setting,
         );
-        if (key === undefined) return;
+        if (key === undefined) return false;
         markTyped();
         send({ kind: "keys", keys: [key] });
+        return true;
       },
     });
     host.addEventListener("contextmenu", noContextMenu);

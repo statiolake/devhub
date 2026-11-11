@@ -102,6 +102,11 @@ export function wireTerminalNeovims(
 			selectPane: async (terminal, paneId) => {
 				await (await options.tmuxOf(terminal.machine)).selectNeovimPane(paneId);
 			},
+			typeKeys: async (terminal, client, keys) => {
+				await (
+					await options.tmuxOf(terminal.machine)
+				).typeClientKeys(client, keys);
+			},
 			reach: async (terminal, socket) => {
 				if (terminal.machine === "local") return socket;
 				await mkdir(options.forwardDirectory, {
