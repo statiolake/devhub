@@ -1521,13 +1521,25 @@
 
 /* ------------------------------------------------------------- memos */
 
-/* A memo opened under its 作業 card, and an escalation's memos under its
-   thread: read-only Markdown, quieter than the thread itself. */
+/* A 作業 card's note, and an escalation's under its thread: read-only,
+   quieter than the thread itself. */
+.orchestrator-work-card:hover {
+  background: transparent;
+}
+
 .orchestrator-work-memo {
-  margin: 2px var(--space-2) var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  margin-top: 4px;
+  padding: 4px var(--space-2);
   border-radius: 6px;
   background: var(--wash);
+  color: var(--secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.orchestrator-work-memo p,
+.orchestrator-memos .orchestrator-memo p {
+  margin: 0;
 }
 
 .orchestrator-memos {
@@ -1536,11 +1548,10 @@
   border-top: 0.5px solid var(--line-strong);
 }
 
-.orchestrator-memos-one + .orchestrator-memos-one {
-  margin-top: var(--space-3);
-}
-
 .orchestrator-memos-heading {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
   margin: 0 0 var(--space-2);
   color: var(--secondary);
   font-size: 11px;
@@ -1550,10 +1561,6 @@
 .orchestrator-memos-subject {
   color: var(--tertiary);
   font-weight: 400;
-}
-
-.orchestrator-memo-entry + .orchestrator-memo-entry {
-  margin-top: var(--space-3);
 }
 
 .orchestrator-chip[data-resumable="true"] {

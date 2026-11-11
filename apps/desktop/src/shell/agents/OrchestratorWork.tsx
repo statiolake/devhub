@@ -3,16 +3,15 @@
  * (`docs/orchestrator.md`, "Memos" and "Resuming the agent that did the
  * work"): read-only, for the person.
  *
- * - **作業** — a lane after 待機中: each subject with a memo, or whose agent
+ * - **作業** — a lane after 待機中: each subject with a note, or whose agent
  *   is stopped and can be brought back (`agent resume <subject>`). Its card
  *   says the subject, its agent (open, or stopped and when, resumable or
- *   not) and the memo's latest line; clicking it opens the memo in place,
- *   drawn by the conversation's Markdown renderer.
- * - **An escalation's memos** — under its thread: the memo of the
- *   escalation itself, of the items it links, and of its agents' work.
+ *   not) and the note — what the orchestrator means to do next — whole.
+ * - **An escalation's note** — under its thread: the note of the
+ *   escalation itself, else of the first item it links, else of its agents'
+ *   work.
  */
 
-import { useState } from "react";
 import type {
   EscalationWire,
   OrchestratorBoardWire,
@@ -32,11 +31,11 @@ export function itemKeyOfUrl(url: string): string | undefined {
     : `item ${match[1]!}/${match[2]!}#${match[3]!}`.toLowerCase();
 }
 
-/** The memos an escalation is about: its own, its items', its agents' work's. */
-export function escalationMemos(
+/** The note an escalation shows: its own, its items', its agents' work's. */
+export function escalationMemo(
   escalation: EscalationWire,
   board: OrchestratorBoardWire,
-): readonly OrchestratorMemoWire[] {
+): OrchestratorMemoWire | undefined {
   const memos = board.memos ?? [];
   const keys: string[] = [`esc ${String(escalation.id)}`];
   for (const link of escalation.links) {
@@ -49,88 +48,59 @@ export function escalationMemos(
     );
     keys.push(work?.subject ?? `agent ${agent.agentId}`);
   }
-  const seen = new Set<string>();
-  return keys.flatMap((key) => {
-    if (seen.has(key)) return [];
-    seen.add(key);
+  for (const key of keys) {
     const memo = memos.find((one) => one.subject === key);
-    return memo === undefined ? [] : [memo];
-  });
+    if (memo !== undefined) return memo;
+  }
+  return undefined;
 }
 
-/** One memo, whole: each entry under its time and author. */
+/** A note: light Markdown, read-only. */
 export function MemoView({
+  memo,
+  agentId,
+  cwd,
+}: {
+  readonly memo: OrchestratorMemoWire;
+  readonly agentId: string | undefined;
+  readonly cwd: string | undefined;
+}) {
+  return (
+    <div className="orchestrator-memo" data-memo-subject={memo.subject}>
+      <RichText source={memo.text} agentId={agentId} cwd={cwd} />
+    </div>
+  );
+}
+
+/** Under an escalation's thread: the note that goes with it. */
+export function EscalationMemo({
   memo,
   agentId,
   cwd,
   now,
   span,
 }: {
-  readonly memo: OrchestratorMemoWire;
+  readonly memo: OrchestratorMemoWire | undefined;
   readonly agentId: string | undefined;
   readonly cwd: string | undefined;
   readonly now: number;
   readonly span: (ms: number) => string;
 }) {
-  return (
-    <div className="orchestrator-memo" data-memo-subject={memo.subject}>
-      {memo.entries.map((entry, index) => (
-        <article
-          key={`${String(entry.at)}-${String(index)}`}
-          className="orchestrator-memo-entry"
-        >
-          <div className="orchestrator-entry-byline">
-            {entry.by ?? "Orchestrator"}
-            <span className="orchestrator-entry-time">
-              {clock(entry.at)} · {span(now - entry.at)} ago
-            </span>
-          </div>
-          <div className="orchestrator-entry-body">
-            <RichText source={entry.text} agentId={agentId} cwd={cwd} />
-          </div>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-/** Under an escalation's thread: the memos it is about. */
-export function EscalationMemos({
-  memos,
-  agentId,
-  cwd,
-  now,
-  span,
-}: {
-  readonly memos: readonly OrchestratorMemoWire[];
-  readonly agentId: string | undefined;
-  readonly cwd: string | undefined;
-  readonly now: number;
-  readonly span: (ms: number) => string;
-}) {
-  if (memos.length === 0) return null;
+  if (memo === undefined) return null;
   return (
     <section className="orchestrator-memos" aria-label="メモ">
-      {memos.map((memo) => (
-        <div key={memo.subject} className="orchestrator-memos-one">
-          <h3 className="orchestrator-memos-heading">
-            メモ{" "}
-            <span className="orchestrator-memos-subject">{memo.token}</span>
-          </h3>
-          <MemoView
-            memo={memo}
-            agentId={agentId}
-            cwd={cwd}
-            now={now}
-            span={span}
-          />
-        </div>
-      ))}
+      <h3 className="orchestrator-memos-heading">
+        メモ <span className="orchestrator-memos-subject">{memo.token}</span>
+        <span className="orchestrator-entry-time">
+          {clock(memo.at)} · {span(now - memo.at)}前
+        </span>
+      </h3>
+      <MemoView memo={memo} agentId={agentId} cwd={cwd} />
     </section>
   );
 }
 
-/** A subject the 作業 lane lists: its work, its memo, or both. */
+/** A subject the 作業 lane lists: its work, its note, or both. */
 export interface WorkItem {
   readonly subject: string;
   readonly token: string;
@@ -139,7 +109,7 @@ export interface WorkItem {
 }
 
 /**
- * The 作業 lane's cards: every subject with a memo, and every subject whose
+ * The 作業 lane's cards: every subject with a note, and every subject whose
  * last agent is stopped and resumable, most recently touched first.
  */
 export function workItems(board: OrchestratorBoardWire): readonly WorkItem[] {
@@ -149,7 +119,7 @@ export function workItems(board: OrchestratorBoardWire): readonly WorkItem[] {
       subject: memo.subject,
       token: memo.token,
       memo,
-      at: memo.updatedAt,
+      at: memo.at,
     });
   for (const work of board.work ?? []) {
     const last = work.agents.at(-1);
@@ -179,9 +149,8 @@ export function WorkCard({
   readonly agentId: string | undefined;
   readonly cwd: string | undefined;
 }) {
-  const [open, setOpen] = useState(false);
   const last = item.work?.agents.at(-1);
-  const latest = item.memo?.entries.at(-1);
+  const memo = item.memo;
   const state =
     last === undefined
       ? undefined
@@ -192,20 +161,18 @@ export function WorkCard({
           : "停止 · 再開できない";
   return (
     <li>
-      <button
-        type="button"
+      <div
         className="orchestrator-card orchestrator-work-card"
         data-work-subject={item.subject}
-        aria-expanded={item.memo === undefined ? undefined : open}
-        onClick={() => {
-          setOpen((value) => !value);
-        }}
       >
         <span className="orchestrator-card-head">
           <span className="orchestrator-card-title">{item.token}</span>
-          {latest === undefined ? null : (
-            <span className="orchestrator-card-age">
-              メモ {span(now - latest.at)}前
+          {memo === undefined ? null : (
+            <span
+              className="orchestrator-card-age"
+              title={`メモ ${clock(memo.at)}`}
+            >
+              メモ {span(now - memo.at)}前
             </span>
           )}
         </span>
@@ -223,23 +190,12 @@ export function WorkCard({
             )}
           </span>
         )}
-        {latest === undefined || open ? null : (
-          <span className="orchestrator-card-preview">
-            {latest.text.replace(/^#+\s*/gmu, "").replace(/\s+/gu, " ")}
-          </span>
+        {memo === undefined ? null : (
+          <div className="orchestrator-work-memo">
+            <MemoView memo={memo} agentId={agentId} cwd={cwd} />
+          </div>
         )}
-      </button>
-      {open && item.memo !== undefined ? (
-        <div className="orchestrator-work-memo">
-          <MemoView
-            memo={item.memo}
-            agentId={agentId}
-            cwd={cwd}
-            now={now}
-            span={span}
-          />
-        </div>
-      ) : null}
+      </div>
     </li>
   );
 }

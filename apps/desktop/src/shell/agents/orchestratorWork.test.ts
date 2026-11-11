@@ -1,14 +1,14 @@
-/** The board's memos and work (`OrchestratorWork.tsx`): what is listed, and which memos an escalation shows. */
+/** The board's memos and work (`OrchestratorWork.tsx`): what is listed, and which note an escalation shows. */
 
 import { describe, expect, it } from "vitest";
 import type { EscalationWire, OrchestratorBoardWire } from "../../ipc/contract";
-import { escalationMemos, itemKeyOfUrl, workItems } from "./OrchestratorWork";
+import { escalationMemo, itemKeyOfUrl, workItems } from "./OrchestratorWork";
 
 const memo = (subject: string, at: number) => ({
   subject,
   token: subject,
-  updatedAt: at,
-  entries: [{ at, text: `memo of ${subject}` }],
+  text: `note of ${subject}`,
+  at,
 });
 
 const stopped = {
@@ -45,7 +45,7 @@ const board = {
 } as unknown as OrchestratorBoardWire;
 
 describe("the board's memos and work", () => {
-  it("lists every subject with a memo or a resumable agent, latest first", () => {
+  it("lists every subject with a note or a resumable agent, latest first", () => {
     expect(workItems(board).map((one) => one.subject)).toEqual([
       "item acme/app#9",
       "item acme/app#128",
@@ -57,15 +57,25 @@ describe("the board's memos and work", () => {
     });
   });
 
-  it("shows an escalation its own memo, its items' and its agents' work's", () => {
+  it("shows an escalation one note: its own, else its items', else its agents' work's", () => {
     const escalation = {
       id: 1,
       links: ["https://github.com/Acme/App/issues/128"],
       agents: [{ agentId: "a1" }],
     } as unknown as EscalationWire;
+    expect(escalationMemo(escalation, board)).toMatchObject({
+      subject: "esc 1",
+      text: "note of esc 1",
+    });
+    expect(escalationMemo({ ...escalation, id: 2 }, board)?.subject).toBe(
+      "item acme/app#128",
+    );
     expect(
-      escalationMemos(escalation, board).map((one) => one.subject),
-    ).toEqual(["esc 1", "item acme/app#128"]);
+      escalationMemo({ ...escalation, id: 2, links: [] }, board)?.subject,
+    ).toBe("item acme/app#128");
+    expect(
+      escalationMemo({ ...escalation, id: 2, links: [], agents: [] }, board),
+    ).toBeUndefined();
     expect(itemKeyOfUrl("https://github.com/a/b/pull/3/files")).toBe(
       "item a/b#3",
     );

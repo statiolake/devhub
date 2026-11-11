@@ -2352,7 +2352,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
 /**
  * The stopped agent whose work was done in `workspaceId` and can be resumed
  * (`OrchestratorWorkWire`), as the Workspace row's tooltip says it, with
- * the memo's latest line. Undefined: none.
+ * its memo (the note of what is next). Undefined: none.
  */
 function resumableWorkAt(
   board: SidebarValue["board"],
@@ -2362,7 +2362,7 @@ function resumableWorkAt(
     const last = work.agents.at(-1);
     if (last?.workspaceId !== workspaceId || !last.resumable) continue;
     const memo = board.memos?.find((one) => one.subject === work.subject);
-    const latest = memo?.entries.at(-1)?.text.replace(/\s+/gu, " ").trim();
+    const latest = memo?.text.replace(/\s+/gu, " ").trim();
     return {
       facts: [
         {

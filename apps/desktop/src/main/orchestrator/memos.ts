@@ -1,73 +1,54 @@
 /**
  * The orchestrator's memos (`docs/orchestrator.md`, "Memos"): per subject,
- * plain Markdown notes of where a piece of work stands — what remains, what
- * to do next, what was decided and why — written when work stops or is
- * handed over, and read before it goes on, by a later turn of the
- * orchestrator or by the agent that picks the work up.
+ * one short plain-text note of what the orchestrator means to do next with
+ * that piece of work — written when it sets the work aside or hands it
+ * off, so that, busy with everything else, it does not forget. The note
+ * shows wherever the work is listed or shown (`board`, `memo list`,
+ * `status`, `escalation show`), and goes with the prompt of the agent that
+ * picks the work up.
  *
  * **The subject** is the triage's key (`subjects.ts`): `item OWNER/REPO#N`,
- * `agent <id>`, `esc N`, `req N`. A memo is a list of entries, each with
- * its time and who wrote it (`by`: the agent's name, or the caller's label);
- * `memo add` appends one, `memo edit` replaces them all with one, `memo
- * clear` takes the memo away.
+ * `agent <id>`, `esc N`, `req N`. `memo set` replaces its note, `memo
+ * clear` takes it away; the note keeps only when it was last set.
  *
  * **Kept** on disk across restarts (`<userData>/devhub/orchestrator-memos.json`,
- * written whole and atomically), and pruned (`pruneMemos`):
+ * written whole and atomically), and pruned (`MemoBook.prune`):
  *
- * - an item's memo, `MEMO_DONE_GRACE_MS` (7 days) after the item was first
+ * - an item's note, `MEMO_DONE_GRACE_MS` (7 days) after the item was first
  *   read closed or merged; an escalation's, that long after it was closed;
  *   a request's, that long after it was filed; an escalation or request no
- *   longer in its store, at once — the work is over, and a week is long
- *   enough for a follow-up to read what was left;
- * - an agent's memo (work with no item, `issue=pending`), `MEMO_AGENT_GRACE_MS`
- *   (30 days) after its last entry once no agent and no work record has that
+ *   longer in its store, at once;
+ * - an agent's note (work with no item, `issue=pending`), `MEMO_AGENT_GRACE_MS`
+ *   (30 days) after it was set once no agent and no work record has that
  *   id — its subject moves with the work (`rename`) when it is linked to an
  *   Issue or resumed under a new id;
- * - any memo nothing has written to for `MEMO_MAX_AGE_MS` (180 days);
- * - beyond `MAX_MEMOS` subjects the least recently written go, and beyond
- *   `MAX_MEMO_ENTRIES` entries a memo's oldest go.
+ * - any note not set for `MEMO_MAX_AGE_MS` (180 days);
+ * - beyond `MAX_MEMOS` subjects, the least recently set.
+ *
+ * A version 1 file (a log of timestamped entries per subject) loads as its
+ * latest entry's text, at that entry's time.
  */
 
 import { VersionedJsonFile, type JsonFileIo } from "./jsonFile.js";
 import { normalSubject } from "./subjects.js";
 
-export interface MemoEntry {
-	readonly at: number;
-	/** Markdown, as written. */
-	readonly text: string;
-	/** Who wrote it: an agent's name, or an outside caller's `--as` label. */
-	readonly by?: string;
-}
-
 export interface Memo {
 	readonly subject: string;
-	/** Oldest first. */
-	readonly entries: readonly MemoEntry[];
+	/** Plain text (light Markdown at most): the next step. */
+	readonly text: string;
+	/** When it was last set. */
+	readonly at: number;
 	/** When its subject was first read done (closed, merged, filed); cleared when open again. */
 	readonly doneSince?: number;
 }
 
 export const MAX_MEMOS = 300;
-export const MAX_MEMO_ENTRIES = 50;
-/** One entry's most characters: a memo is a note, not a document. */
-export const MAX_MEMO_TEXT = 20_000;
+/** A note's most characters: the next step, not a report. */
+export const MAX_MEMO_TEXT = 500;
 export const MEMO_DONE_GRACE_MS = 7 * 24 * 60 * 60_000;
 export const MEMO_AGENT_GRACE_MS = 30 * 24 * 60 * 60_000;
 export const MEMO_MAX_AGE_MS = 180 * 24 * 60 * 60_000;
-export const MEMO_FILE_VERSION = 1;
-
-export function memoUpdatedAt(memo: Memo): number {
-	return memo.entries.at(-1)?.at ?? 0;
-}
-
-/** The latest entry, on one line, cut at `max` characters. */
-export function memoExcerpt(memo: Memo, max = 120): string {
-	const text = (memo.entries.at(-1)?.text ?? "")
-		.replace(/^#+\s*/gmu, "")
-		.replace(/\s+/gu, " ")
-		.trim();
-	return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
-}
+export const MEMO_FILE_VERSION = 2;
 
 /** `M/D HH:MM`, in local time: how a line says when. */
 export function memoClock(at: number): string {
@@ -76,14 +57,18 @@ export function memoClock(at: number): string {
 	return `${String(date.getMonth() + 1)}/${String(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-/** The whole memo as Markdown: each entry under its time and author. */
-export function memoMarkdown(memo: Memo): string {
-	return memo.entries
-		.map(
-			(entry) =>
-				`### ${new Date(entry.at).toISOString()}${entry.by === undefined ? "" : ` — ${entry.by}`}\n\n${entry.text}`,
-		)
-		.join("\n\n");
+/** The note on one line, for a listing. */
+export function memoLine(memo: Memo): string {
+	return memo.text.replace(/\s+/gu, " ").trim();
+}
+
+/** Why `text` is not a note, or undefined when it is one. */
+export function memoRefusal(text: string): string | undefined {
+	const trimmed = text.trim();
+	if (trimmed.length === 0) return "the note is empty.";
+	if (trimmed.length > MAX_MEMO_TEXT)
+		return `the note is ${String(trimmed.length)} characters; keep it to ${String(MAX_MEMO_TEXT)}: what you will do next with this work, in a line or a few. The details belong to the agent, the Issue or the escalation.`;
+	return undefined;
 }
 
 export interface MemoStorage {
@@ -91,7 +76,7 @@ export interface MemoStorage {
 	save(memos: readonly Memo[]): void;
 }
 
-/** What `pruneMemos` reads of a subject now. */
+/** What `MemoBook.prune` reads of a subject now. */
 export interface MemoFacts {
 	/** It is done (item closed/merged, escalation closed, request filed): since when. */
 	doneAt(subject: string): number | undefined;
@@ -102,7 +87,7 @@ export interface MemoFacts {
 }
 
 export class MemoBook {
-	/** By normal subject; insertion order is least recently written first. */
+	/** By normal subject; insertion order is least recently set first. */
 	readonly #memos = new Map<string, Memo>();
 
 	constructor(private readonly storage?: MemoStorage) {
@@ -114,28 +99,17 @@ export class MemoBook {
 		return this.#memos.get(normalSubject(subject));
 	}
 
-	/** Most recently written first. */
+	/** Most recently set first. */
 	all(): readonly Memo[] {
 		return [...this.#memos.values()].reverse();
 	}
 
-	add(subject: string, entry: MemoEntry): Memo {
+	/** `memo set`: the subject's note is now `text` (refused past `MAX_MEMO_TEXT`). */
+	set(subject: string, text: string, at: number): Memo {
+		const refusal = memoRefusal(text);
+		if (refusal !== undefined) throw new Error(refusal);
 		const key = normalSubject(subject);
-		const earlier = this.#memos.get(key);
-		const memo: Memo = {
-			subject: key,
-			entries: [...(earlier?.entries ?? []), clipped(entry)].slice(
-				-MAX_MEMO_ENTRIES,
-			),
-		};
-		this.#put(key, memo);
-		return memo;
-	}
-
-	/** `memo edit`: one entry in place of them all. */
-	replace(subject: string, entry: MemoEntry): Memo {
-		const key = normalSubject(subject);
-		const memo: Memo = { subject: key, entries: [clipped(entry)] };
+		const memo: Memo = { subject: key, text: text.trim(), at };
 		this.#put(key, memo);
 		return memo;
 	}
@@ -148,7 +122,7 @@ export class MemoBook {
 
 	/**
 	 * The work moved to another subject (`agent X` linked to its Issue, or
-	 * resumed as agent Y): its memo goes with it, after any the new one had.
+	 * resumed as agent Y): its note goes with it; of two, the later set stays.
 	 */
 	rename(from: string, to: string): boolean {
 		const fromKey = normalSubject(from);
@@ -157,12 +131,8 @@ export class MemoBook {
 		if (moving === undefined || fromKey === toKey) return false;
 		const there = this.#memos.get(toKey);
 		this.#memos.delete(fromKey);
-		this.#put(toKey, {
-			subject: toKey,
-			entries: [...(there?.entries ?? []), ...moving.entries]
-				.toSorted((a, b) => a.at - b.at)
-				.slice(-MAX_MEMO_ENTRIES),
-		});
+		const kept = there !== undefined && there.at > moving.at ? there : moving;
+		this.#put(toKey, { subject: toKey, text: kept.text, at: kept.at });
 		return true;
 	}
 
@@ -170,14 +140,13 @@ export class MemoBook {
 	prune(facts: MemoFacts, now: number): boolean {
 		let changed = false;
 		for (const [key, memo] of [...this.#memos]) {
-			const updated = memoUpdatedAt(memo);
-			if (now - updated > MEMO_MAX_AGE_MS || facts.gone(key)) {
+			if (now - memo.at > MEMO_MAX_AGE_MS || facts.gone(key)) {
 				this.#memos.delete(key);
 				changed = true;
 				continue;
 			}
 			if (key.startsWith("agent ")) {
-				if (!facts.agentKnown(key) && now - updated > MEMO_AGENT_GRACE_MS) {
+				if (!facts.agentKnown(key) && now - memo.at > MEMO_AGENT_GRACE_MS) {
 					this.#memos.delete(key);
 					changed = true;
 				}
@@ -221,19 +190,16 @@ export class MemoBook {
 	}
 }
 
-function clipped(entry: MemoEntry): MemoEntry {
-	return entry.text.length <= MAX_MEMO_TEXT
-		? entry
-		: { ...entry, text: `${entry.text.slice(0, MAX_MEMO_TEXT)}…` };
-}
-
-/** The file's memos, or a `TypeError` when it is not this file. */
+/**
+ * The file's notes, or a `TypeError` when it is not this file. Version 1
+ * (`entries: [{at, text, by?}]` per subject) loads as the latest entry.
+ */
 export function memosFromJson(value: unknown): Memo[] {
 	const file = value as { version?: unknown; memos?: unknown } | null;
 	if (
 		typeof file !== "object" ||
 		file === null ||
-		file.version !== MEMO_FILE_VERSION ||
+		(file.version !== MEMO_FILE_VERSION && file.version !== 1) ||
 		!Array.isArray(file.memos)
 	)
 		throw new TypeError(
@@ -241,19 +207,37 @@ export function memosFromJson(value: unknown): Memo[] {
 		);
 	const out: Memo[] = [];
 	for (const one of file.memos as unknown[]) {
-		const memo = one as Partial<Memo> | null;
-		if (typeof memo?.subject !== "string" || !Array.isArray(memo.entries))
-			continue;
-		const entries = memo.entries.filter(
-			(entry): entry is MemoEntry =>
-				typeof entry?.at === "number" &&
-				typeof entry.text === "string" &&
-				(entry.by === undefined || typeof entry.by === "string"),
-		);
-		if (entries.length === 0) continue;
+		const memo = one as {
+			subject?: unknown;
+			text?: unknown;
+			at?: unknown;
+			entries?: unknown;
+			doneSince?: unknown;
+		} | null;
+		if (typeof memo?.subject !== "string") continue;
+		let text: unknown = memo.text;
+		let at: unknown = memo.at;
+		if (file.version === 1) {
+			const latest = (Array.isArray(memo.entries) ? memo.entries : [])
+				.filter(
+					(entry): entry is { at: number; text: string } =>
+						typeof (entry as { at?: unknown } | null)?.at === "number" &&
+						typeof (entry as { text?: unknown }).text === "string",
+				)
+				.at(-1);
+			text = latest?.text;
+			at = latest?.at;
+		}
+		if (typeof text !== "string" || typeof at !== "number") continue;
+		const trimmed = text.trim();
+		if (trimmed.length === 0) continue;
 		out.push({
 			subject: memo.subject,
-			entries,
+			text:
+				trimmed.length <= MAX_MEMO_TEXT
+					? trimmed
+					: `${trimmed.slice(0, MAX_MEMO_TEXT - 1)}…`,
+			at,
 			...(typeof memo.doneSince === "number"
 				? { doneSince: memo.doneSince }
 				: {}),

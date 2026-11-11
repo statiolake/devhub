@@ -330,10 +330,11 @@ happens between two calls is missed - always read before waiting again.
   in a new GUI agent, its name and meta given back; \`session meta ID [set K V
   | unset K]\` tags a stopped one. \`sessions --folder PATH\` / \`--all\` look beyond
   your workspace; \`agent resume\` opens a closed folder unfocused.
-- \`memo show SUBJECT\` reads the orchestrator's memo of a piece of work
-  (\`issue=OWNER/REPO#N\`, \`pr=…\`, \`agent=ID\`): what remains and what was
-  decided. Read it when your prompt says there is one; \`memo add SUBJECT -\`
-  leaves a note of where you stopped.
+- The orchestrator keeps one short note per piece of work (\`issue=OWNER/REPO#N\`,
+  \`pr=…\`, \`agent=ID\`): what it means to do next. A prompt that resumes or
+  starts you on that work ends with it; \`memo list\` and \`status SUBJECT\`
+  show it too. It is the orchestrator's (\`memo set SUBJECT TEXT\`); say where
+  you stopped in your own reply.
 - **Tag the agents you start**: \`--meta parent=YOUR_ID --meta role=reviewer\`
   on \`agent new\` and \`issue assign\`, then find them again with
   \`agents --meta parent=YOUR_ID\`. \`agent meta A [set KEY VALUE | unset

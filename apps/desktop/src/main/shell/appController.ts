@@ -8218,9 +8218,9 @@ export class AppController {
 				subjectToken: (key) => orchestrator().subjectTokenOf(key),
 				memo: (key) => orchestrator().memo(key),
 				memos: () => orchestrator().memos(),
-				addMemo: (key, text, by) => orchestrator().addMemo(key, text, by),
-				editMemo: (key, text, by) => orchestrator().editMemo(key, text, by),
+				setMemo: (key, text) => orchestrator().setMemo(key, text),
 				clearMemo: (key) => orchestrator().clearMemo(key),
+				memoAbout: (subject) => orchestrator().memoAbout(subject),
 				workRecords: () => orchestrator().workRecords(),
 				resumeTarget: (text, workspace) =>
 					orchestrator().resumeTarget(text, workspace),

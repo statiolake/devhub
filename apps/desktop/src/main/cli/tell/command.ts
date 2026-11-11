@@ -454,15 +454,15 @@ export type TellCommand =
 	| { readonly verb: "orchestrator-priority-clear"; readonly subject: string }
 	| { readonly verb: "orchestrator-priority-list" }
 	/**
-	 * The memos (`orchestrator/memos.ts`): per subject, as the triage names
-	 * it (`issue=`, `pr=`, `agent=`, `esc=`, `req=`, an item's URL, `ws=`).
+	 * The memos (`orchestrator/memos.ts`): one note per subject, as the
+	 * triage names it (`issue=`, `pr=`, `agent=`, `esc=`, `req=`, an item's
+	 * URL, `ws=`).
 	 */
 	| {
-			readonly verb: "memo-add" | "memo-edit";
+			readonly verb: "memo-set";
 			readonly subject: string;
 			readonly text: string;
 	  }
-	| { readonly verb: "memo-show"; readonly subject: string }
 	| { readonly verb: "memo-clear"; readonly subject: string }
 	| { readonly verb: "memo-list" }
 	/** The person's requests (the board's +): listed, or marked filed. */
@@ -716,7 +716,7 @@ agents
                                    session, in its folder (an SSH host's
                                    too), with its name, metadata and
                                    management; --prompt is its first message,
-                                   with the subject's latest memo after it.
+                                   with the subject's memo (its note) after it.
                                    Refused, saying so, when DevHub has no
                                    such record or the session cannot be
                                    resumed (start a new agent then).
@@ -857,7 +857,8 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    agent (id, prefix or name) — the same of
                                    its item, its Workspace's facts as the
                                    Sidebar's tooltip has them, its 待機中
-                                   escalation and agent keep's note
+                                   escalation and agent keep's note; and
+                                   its memo (the orchestrator's note)
   escalation new --title <t> --body <text>|- [--agent <a>]...
                  [--link <url>[=<label>]]... [--attach <file>|<att-id>[=<caption>]]...
                  [--option <text>]... [--workspace <w>]
@@ -890,7 +891,8 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    orchestrator: kept 14 days, each under an
                                    id (att-1a2b3c4d) to put in your report;
                                    it attaches them with --attach <id>
-  escalation show <id>             the thread, the person's answers included
+  escalation show <id>             the thread, the person's answers included,
+                                   and its memo (or its item's)
                                    (this is what acknowledges an answer for
                                    'agent wait --any')
   escalation list [--state needs_answer|in_progress|waiting|closed]
@@ -943,18 +945,20 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    saving only lines about high ones go
   orchestrator priority [list] | clear <subject>
                                    the priorities, the last and next triage
-  memo add <subject> <text>|-      append a timestamped Markdown note to a
-                                   subject's memo (issue=OWNER/REPO#N, pr=…,
-                                   the item's URL, agent=ID, esc=N, req=N,
-                                   ws=<w>): what remains, what is next, what
-                                   was decided. An agent whose work is an
-                                   item's writes to the item's memo
-  memo show <subject>              the whole memo (--json: its entries)
-  memo list                        every memo, newest first, with its latest
-                                   line; and the recorded work: each
-                                   subject's agents, live or resumable
-  memo edit <subject> <text>|-     replace the memo with this one entry
-  memo clear <subject>             take the memo away
+  memo set <subject> <text>|-      the subject's one note (issue=OWNER/REPO#N,
+                                   pr=…, the item's URL, agent=ID, esc=N,
+                                   req=N, ws=<w>): what you will do next
+                                   with it, in a line or a few (500
+                                   characters at most); replaces the one
+                                   before. It shows in board, memo list,
+                                   status and escalation show, and goes
+                                   with agent resume / issue assign / agent
+                                   new --prompt. An agent whose work is an
+                                   item's notes on the item
+  memo list                        every note, newest first; and the
+                                   recorded work: each subject's agents,
+                                   live or resumable
+  memo clear <subject>             take the note away
   orchestrator request list | done <id> [--note <where>]
                                    the person's requests (the board's +):
                                    done says where it was filed as a task
@@ -1763,27 +1767,27 @@ function parseMemo(
 	rest: readonly string[],
 ): TellCommand {
 	switch (sub) {
-		case "add":
-		case "edit": {
+		case "set": {
 			const [subject, ...words] = readFlags(rest, NO_FLAGS).positional;
 			if (subject === undefined) throw new Refusal("missing <subject>.");
 			if (words.length === 0)
 				throw new Refusal("missing <text> (or - for stdin).");
 			const text = words.join(" ");
-			if (text.trim().length === 0) throw new Refusal("the memo is empty.");
-			return { verb: `memo-${sub}`, subject, text };
+			if (text.trim().length === 0) throw new Refusal("the note is empty.");
+			return { verb: "memo-set", subject, text };
 		}
-		case "show":
 		case "clear": {
 			const [subject] = positionals(readFlags(rest, NO_FLAGS), ["<subject>"]);
-			return { verb: `memo-${sub}`, subject: subject! };
+			return { verb: "memo-clear", subject: subject! };
 		}
 		case "list":
 		case undefined:
 			positionals(readFlags(rest, NO_FLAGS), []);
 			return { verb: "memo-list" };
 		default:
-			throw new Refusal("memo takes: add, show, list, edit, clear.");
+			throw new Refusal(
+				"memo takes: set, list, clear. A subject has one note: memo set replaces it.",
+			);
 	}
 }
 

@@ -565,20 +565,18 @@ describe("devhub --tell escalation link", () => {
 });
 
 describe("devhub --tell memo, and agent resume by subject", () => {
-	it("reads the memo verbs", () => {
-		expect(told("memo", "add", "issue=acme/app#1", "残り", "2", "件")).toEqual({
-			verb: "memo-add",
+	it("reads the memo verbs: set, list, clear", () => {
+		expect(
+			told("memo", "set", "issue=acme/app#1", "直させる", "次", "に"),
+		).toEqual({
+			verb: "memo-set",
 			subject: "issue=acme/app#1",
-			text: "残り 2 件",
+			text: "直させる 次 に",
 		});
-		expect(told("memo", "edit", "agent=ab12", "-")).toEqual({
-			verb: "memo-edit",
+		expect(told("memo", "set", "agent=ab12", "-")).toEqual({
+			verb: "memo-set",
 			subject: "agent=ab12",
 			text: "-",
-		});
-		expect(told("memo", "show", "esc=3")).toEqual({
-			verb: "memo-show",
-			subject: "esc=3",
 		});
 		expect(told("memo", "clear", "req=2")).toEqual({
 			verb: "memo-clear",
@@ -586,13 +584,17 @@ describe("devhub --tell memo, and agent resume by subject", () => {
 		});
 		expect(told("memo")).toEqual({ verb: "memo-list" });
 		expect(told("memo", "list")).toEqual({ verb: "memo-list" });
-		expect(refusal("memo", "add", "issue=acme/app#1")).toMatch(
+		expect(refusal("memo", "set", "issue=acme/app#1")).toMatch(
 			/missing <text>/,
 		);
-		expect(refusal("memo", "show")).toMatch(/<subject>/);
-		expect(refusal("memo", "drop")).toMatch(
-			/memo takes: add, show, list, edit, clear/,
+		expect(refusal("memo", "set", "issue=acme/app#1", " ")).toMatch(
+			/the note is empty/,
 		);
+		expect(refusal("memo", "clear")).toMatch(/<subject>/);
+		for (const gone of ["add", "edit", "show"])
+			expect(refusal("memo", gone, "esc=3", "x")).toMatch(
+				/memo takes: set, list, clear\. A subject has one note/,
+			);
 	});
 
 	it("takes a subject and a prompt on agent resume", () => {

@@ -47,8 +47,8 @@ import { RichText } from "./orchestratorRichText";
 import { listenForLightboxes } from "../conversation/lightboxLayer";
 import { FilesPage } from "./OrchestratorFiles";
 import {
-  EscalationMemos,
-  escalationMemos,
+  EscalationMemo,
+  escalationMemo,
   WorkCard,
   workItems,
 } from "./OrchestratorWork";
@@ -644,12 +644,12 @@ function BoardPage({
             />
           ))}
         </Lane>
-        {/* The work its agents did: each subject with a memo, or whose agent
+        {/* The work its agents did: each subject with a note, or whose agent
             is stopped and can be brought back; no heading when there is none. */}
         {work.length === 0 ? null : (
           <Lane
             title="作業"
-            hint="The orchestrator's memos, and work whose agent is stopped and can be resumed (devhub --tell agent resume <subject>). Click one to read its memo."
+            hint="What the orchestrator means to do next with each piece of work (its memo), and work whose agent is stopped and can be resumed (devhub --tell agent resume <subject>)."
             tone="work"
             count={work.length}
             empty="作業はありません。"
@@ -931,8 +931,8 @@ function EscalationView({
 }) {
   const pathsOn = escalation.agents[0]?.agentId ?? orchestratorAgentId;
   const { board } = useAgents();
-  const memos = useMemo(
-    () => escalationMemos(escalation, board),
+  const memo = useMemo(
+    () => escalationMemo(escalation, board),
     [escalation, board],
   );
   const root = useRef<HTMLDivElement>(null);
@@ -1134,8 +1134,8 @@ function EscalationView({
             </article>
           ),
         )}
-        <EscalationMemos
-          memos={memos}
+        <EscalationMemo
+          memo={memo}
           agentId={pathsOn}
           cwd={base}
           now={now}

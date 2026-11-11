@@ -677,19 +677,16 @@ export type OrchestratorModeWire = "full" | "saving" | "off";
  * The Orchestrator screen's board: the three lanes, the orchestrator, and
  * whether its events are paused. Pushed whenever any of it moves.
  */
-/** One subject's memo, as the board shows it. */
+/** One subject's memo — its one note, the next step — as the board shows it. */
 export interface OrchestratorMemoWire {
 	/** The key: `item OWNER/REPO#N`, `agent <id>`, `esc N`, `req N`. */
 	readonly subject: string;
 	/** As the command line names it: `issue=acme/app#12`, `agent=…`. */
 	readonly token: string;
-	readonly updatedAt: number;
-	/** Oldest first; Markdown. */
-	readonly entries: readonly {
-		readonly at: number;
-		readonly text: string;
-		readonly by?: string;
-	}[];
+	/** Plain text, light Markdown at most. */
+	readonly text: string;
+	/** When it was last set. */
+	readonly at: number;
 }
 
 /** One subject's work: the agents that did it, as the board shows them. */
@@ -760,8 +757,9 @@ export interface OrchestratorBoardWire {
 		Record<string, "high" | "normal" | "low">
 	>;
 	/**
-	 * The orchestrator's memos, per subject (`main/orchestrator/memos.ts`),
-	 * most recently written first: read-only on the board.
+	 * The orchestrator's memos, one note per subject
+	 * (`main/orchestrator/memos.ts`), most recently set first: read-only on
+	 * the board.
 	 */
 	readonly memos?: readonly OrchestratorMemoWire[];
 	/**

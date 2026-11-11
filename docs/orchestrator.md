@@ -1211,60 +1211,61 @@ the session in that folder.
 **On the board and in the Sidebar.** A managed Workspace whose agent was
 stopped is in 完了 under the Orchestrator row, as before; its row now says
 quietly that its agent can be resumed (再開可) and, in its tooltip, which
-agent, the command, and the memo's latest line. The board lists the same
+agent, the command, and the memo. The board lists the same
 work in its **作業** lane (below).
 
 ### Memos
 
-The orchestrator keeps notes per subject: what remains, what to do next,
-what was decided and why (`main/orchestrator/memos.ts`). Plain Markdown,
-appended with a time and who wrote it (the asking agent's name, or an outside
-caller's `--as` label).
+The orchestrator keeps one short note per subject: what it means to do next
+with that piece of work (`main/orchestrator/memos.ts`). It is there because,
+busy with everything else, the orchestrator tends to forget what it meant to
+have an agent do next; it writes the note when it sets the work aside or
+hands it off, and the note comes back to it wherever it lists or shows that
+work.
 
 ```sh
-devhub --tell memo add issue=acme/app#128 - <<'MD'
-## 残っていること
-- レビュー指摘 2 件 (エラーメッセージの文言、タイムアウトのテスト)
-## 決めたこと
-- セッション更新はロックではなく再試行で直す
-MD
-devhub --tell memo show issue=acme/app#128      # the whole memo (--json: its entries)
-devhub --tell memo list                         # every memo's latest line, and the recorded work
-devhub --tell memo edit issue=acme/app#128 -    # one entry in place of them all
+devhub --tell memo set issue=acme/app#128 "CI が通ったら、人にレビュー依頼を出させる"
+devhub --tell memo list                         # every note, newest first, and the recorded work
 devhub --tell memo clear issue=acme/app#128
 ```
 
-- **The subject** is the key above. `agent=ID` of an agent whose work is
-  linked to an item writes the item's memo: one memo per piece of work.
-- **In the orchestrator's context, short.** A delivered line about a subject
-  with a memo ends with its latest entry's time and first 80 characters
-  (`[メモ 11/11 10:27: … — 全文: devhub --tell memo show issue=…]`); an agent's
-  line carries its item's memo, an escalation's its own or its first linked
-  item's. `board --json` (what a triage reads) carries `memos` (each
-  subject's latest entry, 160 characters) and `resumable` (the stopped
-  agents that can be brought back). The whole text is `memo show`.
+- **One note, plain text** (light Markdown at most), up to 500 characters:
+  the refusal says to keep it to the next step. `memo set` replaces it
+  (`-` reads it from stdin); the note keeps only when it was last set.
+  `agent=ID` of an agent whose work is linked to an item notes on the item:
+  one note per piece of work.
+- **It flows in where the orchestrator lists or shows the work:**
+  `board` puts each note under the line of its subject (an escalation's —
+  its own, else its first linked item's —, a needs-action item's or
+  agent's, a resumable work's) and lists the rest after; `board --json` —
+  what a triage reads — carries every note in `memos` (`subject`, `text`,
+  `at`); `memo list`; `status <item|agent>`, `agent status` (and each row
+  of `agents --json`), `escalation show` and `orchestrator request list`
+  each end with their subject's note, and carry it as `memo` in `--json`.
+- **Not on every delivered line.** The note is not appended to the event
+  lines: the charter has the subagent that handles a line read the
+  subject's `status` (or `escalation show`) first, which carries it, and a
+  triage reads `board`; a suffix on every line would repeat the same note
+  in each delivery and push the line itself out of sight.
 - **Passed to the agent that picks the work up.** `agent resume`,
   `issue assign` and `agent new --meta issue=<URL>` with `--prompt` put the
-  subject's memo after the prompt: its latest entry in full (up to 4000
-  characters) and the command for the rest. So the agent reads where the
-  work stood before it goes on, and a resumed agent has its own conversation
-  besides.
-- **The person reads them on the board**, read-only, drawn by the
-  conversation's Markdown renderer: under an escalation's thread (its own
-  memo, its linked items', its agents' work's), and in the **作業** lane —
-  between 待機中 and 完了, there only while it has something, folding like
-  them — one card per subject with a memo or a stopped, resumable agent: the
-  subject, its agent (実行中, or 停止 … · 再開できる), the memo's latest line;
-  a click opens the memo in place.
+  subject's note after the prompt, whole.
+- **The person reads it on the board**, read-only, as light Markdown: under
+  an escalation's thread (its own note, else its linked items', else its
+  agents' work's), and in the **作業** lane — between 待機中 and 完了, there
+  only while it has something, folding like them — one card per subject
+  with a note or a stopped, resumable agent: the subject, its agent (実行中,
+  or 停止 … · 再開できる) and the note.
 - **Kept** in `<userData>/devhub/orchestrator-memos.json`, and pruned: an
-  item's memo 7 days after the item was first read closed or merged; an
+  item's note 7 days after the item was first read closed or merged; an
   escalation's 7 days after it closed, a request's 7 days after it was filed,
-  at once when either is gone from its store; an `agent=` memo 30 days after
-  its last entry once no open agent and no work record has that id; any memo
-  nothing has written to for 180 days; at most 300 subjects (the least
-  recently written go) and 50 entries each. The work records go the same
-  way: 7 days after their item was read done, 180 days unseen, at most 300,
-  5 agents each, 10 sessions each.
+  at once when either is gone from its store; an `agent=` note 30 days after
+  it was set once no open agent and no work record has that id; any note
+  not set for 180 days; at most 300 subjects (the least recently set go).
+  A file of the earlier format (a log of entries per subject) loads as each
+  subject's latest entry. The work records go the same way: 7 days after
+  their item was read done, 180 days unseen, at most 300, 5 agents each, 10
+  sessions each.
 
 ### The sources
 
@@ -1412,8 +1413,7 @@ devhub --tell orchestrator priority set SUBJECT high|normal|low [--note WHY]   #
 devhub --tell orchestrator priority [list] | clear SUBJECT   # the ranking, the last and next triage
 devhub --tell orchestrator request list | done N [--note WHERE]   # the person's requests (the board's +)
 devhub --tell agent resume SUBJECT|AGENT [--prompt -|TEXT]   # bring back the agent that did the work, on its conversation (see "Resuming")
-devhub --tell memo add SUBJECT -|TEXT | edit SUBJECT -|TEXT  # append to (or replace) a subject's memo
-devhub --tell memo show SUBJECT [--json] | list | clear SUBJECT   # read, list (with the recorded work), take away
+devhub --tell memo set SUBJECT -|TEXT | list | clear SUBJECT   # a subject's one note (what is next), every note (with the recorded work), take it away
 devhub --tell orchestrator pause | resume          # mode off (GitHub polling suspended) / mode full (delivers at once, as one message)
 devhub --tell orchestrator events [--last N] [--json]   # recent events and what came of them
 devhub --tell orchestrator emit --type custom.NAME --text TEXT|-
@@ -1500,15 +1500,16 @@ issue=pending`, linked once the Issue is filed), `--managed` (and `--meta parent
    short bad and good example.
 
 7. **Triage and requests** (see "Triage: priorities" and "Requests").
-8. **The same work, the same agent; memos**: to go on with something
-   already worked on (review feedback, a CI failure, a follow-up, an
-   answer), resume the agent that did it — `agent resume <subject>
-   --prompt …` — rather than start a new one; start a new one only for new
-   work, or when `agent resume` says it cannot (no record, no session, the
-   session gone, the profile gone). Write a memo of what remains and why
-   when stopping or handing off work (`memo add`), read it before going on
-   (`memo show`, flagged by `[メモ …]` on a line), and always give a resumed
-   or new agent a `--prompt`, which carries the memo to it.
+8. **The same work, the same agent; a note of what is next**: to go on
+   with something already worked on (review feedback, a CI failure, a
+   follow-up, an answer), resume the agent that did it — `agent resume
+   <subject> --prompt …` — rather than start a new one; start a new one
+   only for new work, or when `agent resume` says it cannot (no record, no
+   session, the session gone, the profile gone). When setting work aside
+   or handing it off, write in a line or a few what it will do next with
+   it (`memo set`); the note shows in board, memo list, status and
+   escalation show. Always give a resumed or new agent a `--prompt`, which
+   carries the note to it.
 
 How it is given: Claude (terminal and GUI) gets it appended to the system
 prompt — `--append-system-prompt`, after the profile's own, which is kept

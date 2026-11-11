@@ -117,14 +117,7 @@ import type {
 	OrchestratorWorkWire,
 	UsageLimitsWire,
 } from "../../ipc/contract.js";
-import {
-	MemoBook,
-	memoClock,
-	memoExcerpt,
-	memoUpdatedAt,
-	type Memo,
-	type MemoStorage,
-} from "./memos.js";
+import { MemoBook, type Memo, type MemoStorage } from "./memos.js";
 import {
 	WorkBook,
 	workSubjectOf,
@@ -426,7 +419,6 @@ export class OrchestratorService {
 		this.#memos = new MemoBook(ports.memos);
 		this.#work = new WorkBook(ports.work);
 		this.events = new EventDispatcher({
-			memo: (subject) => this.memoNote(subject),
 			high: (subject) => this.#isHigh(subject),
 			mode: this.#mode.mode,
 			inProgress: () => this.ports.inProgress?.(this.#laneBoard()) ?? 0,
@@ -796,22 +788,8 @@ export class OrchestratorService {
 		return this.#memos.all();
 	}
 
-	addMemo(key: string, text: string, by: string | undefined): Memo {
-		const memo = this.#memos.add(key, {
-			at: this.#now(),
-			text,
-			...(by === undefined ? {} : { by }),
-		});
-		this.publish();
-		return memo;
-	}
-
-	editMemo(key: string, text: string, by: string | undefined): Memo {
-		const memo = this.#memos.replace(key, {
-			at: this.#now(),
-			text,
-			...(by === undefined ? {} : { by }),
-		});
+	setMemo(key: string, text: string): Memo {
+		const memo = this.#memos.set(key, text, this.#now());
 		this.publish();
 		return memo;
 	}
@@ -823,18 +801,11 @@ export class OrchestratorService {
 	}
 
 	/**
-	 * The note a delivered line about `subject` carries of its memo: the
-	 * latest entry's time and its start, `[メモ 11/11 10:02: …]`. An agent's
-	 * line carries its work's (its item's) memo; an escalation's, its own or
-	 * that of the first item it links. Undefined: there is none.
+	 * The note that goes with `subject` where it is shown: its own; an
+	 * agent's, its work's (its item's); an escalation's, its own or that of
+	 * the first item it links. Undefined: there is none.
 	 */
-	memoNote(subject: string): string | undefined {
-		const memo = this.#memoAbout(subject);
-		if (memo === undefined) return undefined;
-		return `[メモ ${memoClock(memoUpdatedAt(memo))}: ${memoExcerpt(memo, 80)} — 全文: devhub --tell memo show ${this.subjectTokenOf(memo.subject)}]`;
-	}
-
-	#memoAbout(subject: string): Memo | undefined {
+	memoAbout(subject: string): Memo | undefined {
 		const key = normalSubject(subject);
 		const own = this.#memos.get(key);
 		if (own !== undefined) return own;
@@ -1005,12 +976,8 @@ export class OrchestratorService {
 		return this.#memos.all().map((memo) => ({
 			subject: memo.subject,
 			token: this.subjectTokenOf(memo.subject),
-			updatedAt: memoUpdatedAt(memo),
-			entries: memo.entries.map((entry) => ({
-				at: entry.at,
-				text: entry.text,
-				...(entry.by === undefined ? {} : { by: entry.by }),
-			})),
+			text: memo.text,
+			at: memo.at,
 		}));
 	}
 

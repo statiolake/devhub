@@ -218,18 +218,18 @@ describe("devhub --tell's words, as the app reads them", () => {
 describe("memo and agent resume text from stdin", () => {
 	it("puts what is piped in where - stood", () => {
 		expect(
-			tellFromWords(["memo", "add", "pr=a/b#1", "-"], "/w", "/h", undefined),
+			tellFromWords(["memo", "set", "pr=a/b#1", "-"], "/w", "/h", undefined),
 		).toEqual({
 			kind: "needs-stdin",
 		});
 		expect(
 			tellFromWords(
-				["memo", "add", "pr=a/b#1", "-"],
+				["memo", "set", "pr=a/b#1", "-"],
 				"/w",
 				"/h",
-				"## 残り\n- 1\n",
+				"CI を直させる\n",
 			),
-		).toMatchObject({ command: { verb: "memo-add", text: "## 残り\n- 1" } });
+		).toMatchObject({ command: { verb: "memo-set", text: "CI を直させる" } });
 		expect(
 			tellFromWords(
 				["agent", "resume", "pr=a/b#1", "--prompt", "-"],

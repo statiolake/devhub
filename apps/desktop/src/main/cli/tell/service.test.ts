@@ -287,9 +287,9 @@ class FakePorts implements TellPorts {
 		subjectToken: (key) => this.service.subjectTokenOf(key),
 		memo: (key) => this.service.memo(key),
 		memos: () => this.service.memos(),
-		addMemo: (key, text, by) => this.service.addMemo(key, text, by),
-		editMemo: (key, text, by) => this.service.editMemo(key, text, by),
+		setMemo: (key, text) => this.service.setMemo(key, text),
 		clearMemo: (key) => this.service.clearMemo(key),
+		memoAbout: (subject) => this.service.memoAbout(subject),
 		workRecords: () => this.service.workRecords(),
 		resumeTarget: (text, workspace) =>
 			this.service.resumeTarget(text, workspace),
@@ -2370,6 +2370,7 @@ describe("agent status", () => {
 			status: "waiting",
 			statusSince: "1970-01-01T00:01:30.000Z",
 			lastActivityAt: "1970-01-01T00:01:30.000Z",
+			memo: null,
 			activity: "Running tests",
 			turn: "running",
 			control: "running",
@@ -4772,7 +4773,6 @@ describe("the Orchestrator row from the command line", () => {
 		expect(Object.keys(ports.orchestrator).sort()).toEqual(
 			[
 				"acknowledge",
-				"addMemo",
 				"ask",
 				"board",
 				"clearMemo",
@@ -4780,7 +4780,6 @@ describe("the Orchestrator row from the command line", () => {
 				"clearTimer",
 				"close",
 				"configuredRoot",
-				"editMemo",
 				"emit",
 				"escalations",
 				"events",
@@ -4790,6 +4789,7 @@ describe("the Orchestrator row from the command line", () => {
 				"keep",
 				"link",
 				"memo",
+				"memoAbout",
 				"memos",
 				"mode",
 				"pause",
@@ -4801,6 +4801,7 @@ describe("the Orchestrator row from the command line", () => {
 				"resume",
 				"resumeTarget",
 				"resumeWait",
+				"setMemo",
 				"setMode",
 				"setPriority",
 				"setTimer",
@@ -5053,6 +5054,20 @@ describe("the Orchestrator row from the command line", () => {
 		expect(byAgent.message).toContain(
 			"pr=acme/app#9「設定画面」  open, assigned to me, in the population",
 		);
+		expect(byAgent.data).toMatchObject({ memo: null });
+		// The subject's note goes with it, the item's and its agent's alike.
+		ports.service.setMemo("item acme/app#9", "指摘 2 件を直させる");
+		const noted = await viaSocket(service, ["--json", "status", PR], undefined);
+		expect(noted.message).toMatch(
+			/\nmemo \(pr=acme\/app#9, \d+\/\d+ \d\d:\d\d\): 指摘 2 件を直させる$/u,
+		);
+		expect(noted.data).toMatchObject({
+			memo: { subject: "pr=acme/app#9", text: "指摘 2 件を直させる" },
+		});
+		expect(
+			(await viaSocket(service, ["status", worker.id], undefined)).message,
+		).toContain("memo (pr=acme/app#9, ");
+		ports.service.clearMemo("item acme/app#9");
 		// Work whose Issue is still to be filed: no item, and none missing.
 		ports.spaces[0] = {
 			...ports.spaces[0]!,
@@ -5564,103 +5579,138 @@ describe("memos and resuming the agent that did the work", () => {
 		session: "c1aa-0001",
 	};
 
-	it("adds, shows, lists, edits and clears a subject's memo, by any of its names", async () => {
+	it("sets, lists and clears a subject's one note, by any of its names", async () => {
 		const { service } = setup();
 		await viaSocket(
 			service,
-			["memo", "add", "issue=acme/app#128", "残り: 指摘 2 件"],
+			["memo", "set", "issue=acme/app#128", "指摘 2 件を直させる"],
 			self,
 		);
-		await viaSocket(
+		const set = await viaSocket(
 			service,
-			["memo", "add", ISSUE, "決めたこと: 再試行で直す"],
+			["--json", "memo", "set", ISSUE, "CI が通ったら人にレビューを頼む"],
 			self,
 		);
-		const shown = await viaSocket(
-			service,
-			["--json", "memo", "show", "acme/app#128"],
-			self,
-		);
-		expect(shown.message).toContain("# memo issue=acme/app#128");
-		expect(shown.message).toContain("残り: 指摘 2 件");
-		expect(shown.data).toMatchObject({
+		expect(set.data).toMatchObject({
 			subject: "issue=acme/app#128",
 			key: "item acme/app#128",
-			entries: [
-				{ text: "残り: 指摘 2 件", by: "Claude 1" },
-				{ text: "決めたこと: 再試行で直す", by: "Claude 1" },
-			],
+			text: "CI が通ったら人にレビューを頼む",
 		});
 		const listed = await viaSocket(service, ["memo", "list"], self);
 		expect(listed.message).toMatch(
-			/issue=acme\/app#128 .* \(2\) {2}決めたこと: 再試行で直す/u,
-		);
-		await viaSocket(
-			service,
-			["memo", "edit", "issue=acme/app#128", "一つだけ"],
-			self,
+			/memos \(1, newest first\):\n {2}issue=acme\/app#128 {2}\d+\/\d+ \d\d:\d\d {2}CI が通ったら人にレビューを頼む\n/u,
 		);
 		expect(
 			(
-				(
-					await viaSocket(
-						service,
-						["--json", "memo", "show", "issue=acme/app#128"],
-						self,
-					)
-				).data as { entries: unknown[] }
-			).entries,
-		).toHaveLength(1);
+				(await viaSocket(service, ["--json", "memo", "list"], self)).data as {
+					memos: unknown[];
+				}
+			).memos,
+		).toEqual([
+			expect.objectContaining({
+				subject: "issue=acme/app#128",
+				text: "CI が通ったら人にレビューを頼む",
+			}),
+		]);
+		await expect(
+			viaSocket(
+				service,
+				["memo", "set", "acme/app#128", "x".repeat(501)],
+				self,
+			),
+		).rejects.toThrow(/keep it to 500: what you will do next/u);
 		expect(
 			(await viaSocket(service, ["memo", "clear", "issue=acme/app#128"], self))
 				.message,
-		).toBe("issue=acme/app#128: its memo is cleared.");
+		).toBe("issue=acme/app#128: its note is cleared.");
 		await expect(
-			viaSocket(service, ["memo", "show", "esc=99"], self),
+			viaSocket(service, ["memo", "set", "esc=99", "x"], self),
 		).rejects.toThrow(/no escalation #99/);
 		await expect(
-			viaSocket(service, ["memo", "show", "nonsense"], self),
+			viaSocket(service, ["memo", "set", "nonsense", "x"], self),
 		).rejects.toThrow(/a subject is/);
 	});
 
-	it("writes an agent's memo under the item its work is linked to", async () => {
+	it("notes an agent's work under the item it is linked to", async () => {
 		const { service, ports } = setup();
 		withAgent(ports, "aaaa1111-0000", { meta: { issue: ISSUE } });
 		const answer = await viaSocket(
 			service,
-			["memo", "add", "agent=aaaa1111", "x"],
+			["memo", "set", "agent=aaaa1111", "x"],
 			self,
 		);
-		expect(answer.message).toMatch(/^issue=acme\/app#128:/u);
+		expect(answer.message).toMatch(/^issue=acme\/app#128: noted\./u);
 	});
 
-	it("says each line's memo in the delivery, and the board carries memos and resumable work", async () => {
+	it("shows the note in board (under its line, the rest after), its --json, agent status and escalation show", async () => {
 		const { service, ports } = setup();
 		ports.service.observeWork([live]);
 		ports.service.observeWork([]);
-		await viaSocket(
-			service,
-			["memo", "add", "issue=acme/app#128", "残り: 指摘 2 件"],
-			self,
+		ports.service.setMemo(
+			"item acme/app#128",
+			"指摘を直させてから人にレビューを頼む",
 		);
-		expect(ports.service.memoNote("item acme/app#128")).toMatch(
-			/^\[メモ \d+\/\d+ \d\d:\d\d: 残り: 指摘 2 件 — 全文: devhub --tell memo show issue=acme\/app#128\]$/u,
+		ports.service.raise({
+			title: "決めて",
+			markdown: "A or B?",
+			links: [ISSUE],
+		});
+		const board = await viaSocket(service, ["board"], self);
+		// Under the escalation that links the item, and under its resumable work.
+		expect(board.message).toMatch(
+			/ {2}#1 {2}決めて .*\n {6}memo \(issue=acme\/app#128, \d+\/\d+ \d\d:\d\d\): 指摘を直させてから人にレビューを頼む\n/u,
 		);
-		// An agent's line carries its item's memo.
-		withAgent(ports, "aaaa1111-0000", { meta: { issue: ISSUE } });
-		expect(ports.service.memoNote("agent aaaa1111-0000")).toContain("残り");
-		const board = await viaSocket(service, ["--json", "board"], self);
-		expect(board.data).toMatchObject({
-			memos: [{ subject: "issue=acme/app#128", latest: "残り: 指摘 2 件" }],
+		expect(board.message).toMatch(
+			/ {2}issue=acme\/app#128 {2}128 login fix \(dddd4444\)\n {6}memo \(issue=acme\/app#128/u,
+		);
+		expect(board.message).not.toContain("more, newest first");
+		const json = await viaSocket(service, ["--json", "board"], self);
+		expect(json.data).toMatchObject({
+			memos: [
+				{
+					subject: "issue=acme/app#128",
+					text: "指摘を直させてから人にレビューを頼む",
+				},
+			],
 			resumable: [{ subject: "issue=acme/app#128", agentId: "dddd4444-0000" }],
 		});
+		const shown = await viaSocket(
+			service,
+			["--json", "escalation", "show", "1"],
+			self,
+		);
+		expect(shown.message).toContain("memo (issue=acme/app#128, ");
+		expect(shown.data).toMatchObject({
+			memo: {
+				subject: "issue=acme/app#128",
+				text: "指摘を直させてから人にレビューを頼む",
+			},
+		});
+		// An agent shows its item's note.
+		withAgent(ports, "aaaa1111-0000", { meta: { issue: ISSUE } });
+		const status = await viaSocket(
+			service,
+			["--json", "agent", "status", "aaaa"],
+			self,
+		);
+		expect(status.message).toMatch(
+			/\nmemo {6}issue=acme\/app#128, \d+\/\d+ \d\d:\d\d: 指摘を直させてから人にレビューを頼む$/u,
+		);
+		expect(status.data).toMatchObject({
+			memo: { subject: "issue=acme/app#128" },
+		});
+		// A note whose subject is on none of the board's lines is listed after.
+		ports.service.setMemo("agent zzzz9999", "起票させる");
+		expect((await viaSocket(service, ["board"], self)).message).toMatch(
+			/memos \(1 more, newest first: what you meant to do next\):\n {2}agent=zzzz9999 {2}\d+\/\d+ \d\d:\d\d {2}起票させる$/u,
+		);
 	});
 
 	it("resumes a subject's agent on its latest session, in its folder, with the memo after the prompt", async () => {
 		const { service, ports } = setup();
 		ports.service.observeWork([live]);
 		ports.service.observeWork([]);
-		ports.service.addMemo("item acme/app#128", "残り: 指摘 2 件", "orch");
+		ports.service.setMemo("item acme/app#128", "指摘 2 件を直させる");
 		ports.paths.set("/src/app_128", "directory");
 		ports.pastIn.set("here /src/app_128 claude", [
 			{ ...PAST.claude![0]!, cwd: "/src/app_128" },
@@ -5684,15 +5734,13 @@ describe("memos and resuming the agent that did the work", () => {
 			agentId: "resumed-agent",
 			subject: "issue=acme/app#128",
 			was: "dddd4444-0000",
-			memo: 1,
+			memo: "指摘 2 件を直させる",
 		});
 		const [to, text] = ports.queued.at(-1)!;
 		expect(to).toBe("resumed-agent");
 		expect(text).toMatch(
-			/^指摘に対応して\n\n---\nDevHub より: この作業 \(issue=acme\/app#128\)/u,
+			/^指摘に対応して\n\n---\nDevHub より: この作業 \(issue=acme\/app#128\) のオーケストレーターのメモ \(\d+\/\d+ \d\d:\d\d\):\n指摘 2 件を直させる$/u,
 		);
-		expect(text).toContain("残り: 指摘 2 件");
-		expect(text).toContain("全文: devhub --tell memo show issue=acme/app#128");
 	});
 
 	it("names the agent by its id or name too, and says when there is nothing to resume", async () => {
@@ -5722,11 +5770,7 @@ describe("memos and resuming the agent that did the work", () => {
 
 	it("gives a new agent for a subject its memo with the prompt", async () => {
 		const { service, ports } = setup();
-		ports.service.addMemo(
-			"item acme/app#128",
-			"前回: 再試行で直すと決めた",
-			"orch",
-		);
+		ports.service.setMemo("item acme/app#128", "前回: 再試行で直すと決めた");
 		await viaSocket(
 			service,
 			[

@@ -9,12 +9,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-	MAX_MEMO_ENTRIES,
+	MAX_MEMO_TEXT,
 	MEMO_AGENT_GRACE_MS,
 	MEMO_DONE_GRACE_MS,
 	MemoBook,
 	MemoFile,
-	memoExcerpt,
 } from "./memos.js";
 import { readSubject, subjectToken, itemOfUrl } from "./subjects.js";
 import {
@@ -173,41 +172,55 @@ describe("who worked on what", () => {
 });
 
 describe("the memos", () => {
-	it("appends entries with their time and author, edits and clears", () => {
+	it("keeps one note per subject: set replaces it, clear takes it away", () => {
 		const book = new MemoBook();
-		book.add("item Acme/App#1", { at: 1, text: "## 残り\nレビュー指摘 2 件" });
-		book.add("item acme/app#1", { at: 2, text: "決めた: 再試行", by: "orch" });
-		expect(book.get("item acme/app#1")!.entries).toHaveLength(2);
-		expect(memoExcerpt(book.get("item acme/app#1")!)).toBe("決めた: 再試行");
-		book.replace("item acme/app#1", { at: 3, text: "一つ" });
-		expect(book.get("item acme/app#1")!.entries).toEqual([
-			{ at: 3, text: "一つ" },
-		]);
-		for (let at = 0; at < MAX_MEMO_ENTRIES + 5; at += 1)
-			book.add("esc 1", { at, text: String(at) });
-		expect(book.get("esc 1")!.entries).toHaveLength(MAX_MEMO_ENTRIES);
-		expect(book.clear("esc 1")).toBe(true);
-		expect(book.clear("esc 1")).toBe(false);
+		book.set("item Acme/App#1", "レビュー指摘 2 件を直させる", 1);
+		book.set("item acme/app#1", "  CI が通ったら人にレビューを頼む\n", 2);
+		expect(book.get("item acme/app#1")).toEqual({
+			subject: "item acme/app#1",
+			text: "CI が通ったら人にレビューを頼む",
+			at: 2,
+		});
+		expect(book.all()).toHaveLength(1);
+		expect(book.clear("item acme/app#1")).toBe(true);
+		expect(book.clear("item acme/app#1")).toBe(false);
 	});
 
-	it("follows its work to another subject", () => {
+	it("refuses a note that is empty or longer than the next step", () => {
 		const book = new MemoBook();
-		book.add("agent a1", { at: 1, text: "調査中" });
-		book.add("item acme/app#1", { at: 2, text: "Issue を起票" });
+		expect(() => book.set("esc 1", "  ", 1)).toThrow(/empty/u);
+		expect(() => book.set("esc 1", "x".repeat(MAX_MEMO_TEXT + 1), 1)).toThrow(
+			/keep it to 500: what you will do next/u,
+		);
+		expect(book.set("esc 1", "x".repeat(MAX_MEMO_TEXT), 1).text).toHaveLength(
+			MAX_MEMO_TEXT,
+		);
+	});
+
+	it("follows its work to another subject; of two, the later set stays", () => {
+		const book = new MemoBook();
+		book.set("agent a1", "調査が終わったら Issue を起票させる", 3);
+		book.set("item acme/app#1", "古い", 2);
 		book.rename("agent a1", "item acme/app#1");
 		expect(book.get("agent a1")).toBeUndefined();
-		expect(book.get("item acme/app#1")!.entries.map((one) => one.text)).toEqual(
-			["調査中", "Issue を起票"],
+		expect(book.get("item acme/app#1")).toMatchObject({
+			text: "調査が終わったら Issue を起票させる",
+			at: 3,
+		});
+		book.set("agent a2", "古いほう", 1);
+		book.rename("agent a2", "item acme/app#1");
+		expect(book.get("item acme/app#1")!.text).toBe(
+			"調査が終わったら Issue を起票させる",
 		);
 	});
 
 	it("is pruned: done subjects after a week, gone ones at once, an unknown agent's after a month", () => {
 		const book = new MemoBook();
-		book.add("item acme/app#1", { at: 0, text: "a" });
-		book.add("esc 3", { at: 0, text: "b" });
-		book.add("req 9", { at: 0, text: "c" });
-		book.add("agent a1", { at: 0, text: "d" });
-		book.add("agent a2", { at: 0, text: "e" });
+		book.set("item acme/app#1", "a", 0);
+		book.set("esc 3", "b", 0);
+		book.set("req 9", "c", 0);
+		book.set("agent a1", "d", 0);
+		book.set("agent a2", "e", 0);
 		const facts = {
 			doneAt: (key: string) => (key === "item acme/app#1" ? 10 : undefined),
 			gone: (key: string) => key === "req 9",
@@ -228,27 +241,53 @@ describe("the memos", () => {
 
 	it("is kept across restarts in its file", () => {
 		const path = tempPath("orchestrator-memos.json");
-		new MemoBook(new MemoFile(path)).add("item acme/app#1", {
-			at: 5,
-			text: "残り",
-			by: "orch",
-		});
+		new MemoBook(new MemoFile(path)).set("item acme/app#1", "残り", 5);
 		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
-			version: 1,
-			memos: [
-				{
-					subject: "item acme/app#1",
-					entries: [{ at: 5, text: "残り", by: "orch" }],
-				},
-			],
+			version: 2,
+			memos: [{ subject: "item acme/app#1", text: "残り", at: 5 }],
 		});
 		expect(new MemoBook(new MemoFile(path)).get("item acme/app#1")).toEqual({
 			subject: "item acme/app#1",
-			entries: [{ at: 5, text: "残り", by: "orch" }],
+			text: "残り",
+			at: 5,
 		});
 	});
 
-	it("is said at the end of a delivered line about its subject, not on init or triage", () => {
+	it("reads a version 1 file (a log of entries) as each subject's latest entry", () => {
+		const path = tempPath("orchestrator-memos.json");
+		writeFileSync(
+			path,
+			JSON.stringify({
+				version: 1,
+				memos: [
+					{
+						subject: "item acme/app#1",
+						entries: [
+							{ at: 1, text: "## 残り\n- 指摘 2 件", by: "orch" },
+							{ at: 4, text: "次: CI を直させる", by: "orch" },
+						],
+						doneSince: 9,
+					},
+					{ subject: "esc 2", entries: [] },
+				],
+			}),
+		);
+		const file = new MemoFile(path);
+		const book = new MemoBook(file);
+		expect(file.refused).toBeUndefined();
+		expect(book.all()).toEqual([
+			{
+				subject: "item acme/app#1",
+				text: "次: CI を直させる",
+				at: 4,
+				doneSince: 9,
+			},
+		]);
+		book.set("esc 3", "回答を待つ", 10);
+		expect(JSON.parse(readFileSync(path, "utf8")).version).toBe(2);
+	});
+
+	it("is not put on delivered lines: board, list and show carry it", () => {
 		const line: OrchestratorEvent = {
 			type: "needs_action",
 			subject: {
@@ -263,15 +302,11 @@ describe("the memos", () => {
 		};
 		const plan = composeDelivery(
 			[],
-			[{ type: "init" }, line, { type: "triage" }],
+			[line],
 			{ event_prompt: "{EVENT}", init_prompt: undefined },
 			0,
-			(subject) => (subject === "item acme/app#1" ? "[メモ …]" : "[never]"),
 		);
-		const lines = plan.batch!.split("\n");
-		expect(lines[1]).toMatch(
-			/^\[needs_action\] issue=acme\/app#1 .* \[メモ …\]$/u,
-		);
-		expect(plan.batch).not.toContain("[never]");
+		expect(plan.batch).toMatch(/^\[needs_action\] issue=acme\/app#1 /u);
+		expect(plan.batch).not.toContain("メモ");
 	});
 });

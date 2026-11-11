@@ -51,12 +51,7 @@ import {
 } from "../../orchestrator/attachments.js";
 import type { TellAttachment } from "./command.js";
 import type { Memo } from "../../orchestrator/memos.js";
-import {
-	memoClock,
-	memoExcerpt,
-	memoMarkdown,
-	memoUpdatedAt,
-} from "../../orchestrator/memos.js";
+import { memoClock, memoLine } from "../../orchestrator/memos.js";
 import type { WorkAgent, WorkRecord } from "../../orchestrator/work.js";
 import { itemKey, itemOfUrl } from "../../orchestrator/subjects.js";
 import { pollTimes } from "../../../model/orchestratorSettings.js";
@@ -786,9 +781,14 @@ export interface TellOrchestratorPorts {
 	subjectToken?(key: string): string;
 	memo?(key: string): Memo | undefined;
 	memos?(): readonly Memo[];
-	addMemo?(key: string, text: string, by: string | undefined): Memo;
-	editMemo?(key: string, text: string, by: string | undefined): Memo;
+	/** `memo set`: the subject's one note is now `text`. */
+	setMemo?(key: string, text: string): Memo;
 	clearMemo?(key: string): boolean;
+	/**
+	 * The note shown with a subject (a key, `esc N`, `agent <id>`, `item
+	 * …`): its own, an agent's work's, an escalation's linked item's.
+	 */
+	memoAbout?(subject: string): Memo | undefined;
 	/** Who worked on what, most recently seen first (`orchestrator/work.ts`). */
 	workRecords?(): readonly WorkRecord[];
 	/**
@@ -1199,6 +1199,15 @@ export interface TellAgentStatus {
 		readonly misses: number;
 		readonly autoCompactAt: string | null;
 	} | null;
+	/**
+	 * The orchestrator's note on its work (its item's, else its own):
+	 * what is next with it. Null: none.
+	 */
+	readonly memo: {
+		readonly subject: string;
+		readonly text: string;
+		readonly at: string;
+	} | null;
 }
 
 export class TellService {
@@ -1288,11 +1297,8 @@ export class TellService {
 				return this.sessions(command);
 			case "agent-resume":
 				return this.resumeAny(command);
-			case "memo-add":
-			case "memo-edit":
-				return this.writeMemo(command);
-			case "memo-show":
-				return this.showMemo(command.subject);
+			case "memo-set":
+				return this.setMemo(command);
 			case "memo-clear":
 				return this.clearMemo(command.subject);
 			case "memo-list":
@@ -1423,17 +1429,29 @@ export class TellService {
 			}
 			case "orchestrator-request-list": {
 				const list = this.ports.orchestrator.requests();
+				const memoOf = (id: number) =>
+					this.ports.orchestrator.memoAbout?.(`req ${String(id)}`);
 				return {
 					message:
 						list.length === 0
 							? "No requests."
 							: list
-									.map(
-										(one) =>
+									.flatMap((one) => {
+										const memo = memoOf(one.id);
+										return [
 											`req=${String(one.id)}  ${one.state}${one.filed?.note === undefined ? "" : ` (${one.filed.note})`}  ${one.text.replace(/\s+/gu, " ").slice(0, 100)}`,
-									)
+											...(memo === undefined
+												? []
+												: [`      ${this.memoText(memo)}`]),
+										];
+									})
 									.join("\n"),
-					data: { requests: list },
+					data: {
+						requests: list.map((one) => ({
+							...one,
+							memo: this.memoData(memoOf(one.id)),
+						})),
+					},
 				};
 			}
 			case "orchestrator-request-done": {
@@ -1554,21 +1572,22 @@ export class TellService {
 	private board(): TellAnswer {
 		const board = this.ports.orchestrator.board();
 		const now = this.clock.now();
-		// The triage's context, short: each memo's latest line, and the work
-		// whose agent is stopped and can be brought back.
-		const memos = (board.memos ?? []).map((memo) => {
-			const latest = memo.entries.at(-1);
-			const text = (latest?.text ?? "")
-				.replace(/^#+\s*/gmu, "")
-				.replace(/\s+/gu, " ")
-				.trim();
-			return {
-				subject: memo.token,
-				at: new Date(memo.updatedAt).toISOString(),
-				entries: memo.entries.length,
-				latest: text.length <= 160 ? text : `${text.slice(0, 159)}…`,
-			};
-		});
+		// The triage's context: every note (what the orchestrator meant to
+		// do next), and the work whose agent is stopped and can be brought
+		// back. In the text, a note goes under the line of its subject; the
+		// rest are listed after.
+		const memos = (board.memos ?? []).map((memo) => ({
+			subject: memo.token,
+			text: memo.text,
+			at: new Date(memo.at).toISOString(),
+		}));
+		const shown = new Set<string>();
+		const noteUnder = (subject: string): string[] => {
+			const memo = this.ports.orchestrator.memoAbout?.(subject);
+			if (memo === undefined) return [];
+			shown.add(memo.subject);
+			return [`      ${this.memoText(memo)}`];
+		};
 		const resumable = (board.work ?? []).flatMap((work) => {
 			const last = work.agents.at(-1);
 			return last === undefined || !last.resumable
@@ -1576,6 +1595,7 @@ export class TellService {
 				: [
 						{
 							subject: work.token,
+							key: work.subject,
 							agentId: last.agentId,
 							name: last.name,
 							machine: last.machine,
@@ -1589,37 +1609,43 @@ export class TellService {
 		const lines = [
 			`orchestrator: ${board.orchestratorAgentId ?? "none"}  (mode ${board.mode ?? "off"}${board.held > 0 ? `, ${String(board.held)} held` : ""})`,
 			`needs answer (${String(board.needsAnswer.length)}, priority then effort then age):`,
-			...board.needsAnswer.map(
-				(one) =>
-					`  #${String(one.id)}  ${one.title}  waiting ${span(now - one.stateSince)}  [${rankText(one)}]${agentsText(one)}`,
-			),
+			...board.needsAnswer.flatMap((one) => [
+				`  #${String(one.id)}  ${one.title}  waiting ${span(now - one.stateSince)}  [${rankText(one)}]${agentsText(one)}`,
+				...noteUnder(`esc ${String(one.id)}`),
+			]),
 			`in progress (${String(board.inProgress.length)}):`,
-			...board.inProgress.map(
-				(one) =>
-					`  #${String(one.id)}  ${one.title}  answered ${span(now - one.stateSince)} ago${agentsText(one)}${one.stalledSince === undefined ? "" : `  [停滞 ${span(now - one.stalledSince)}: no agent is working on it]`}`,
-			),
+			...board.inProgress.flatMap((one) => [
+				`  #${String(one.id)}  ${one.title}  answered ${span(now - one.stateSince)} ago${agentsText(one)}${one.stalledSince === undefined ? "" : `  [停滞 ${span(now - one.stalledSince)}: no agent is working on it]`}`,
+				...noteUnder(`esc ${String(one.id)}`),
+			]),
 			`waiting (${String(board.waiting.length)}, soonest first):`,
-			...board.waiting.map((one) => {
+			...board.waiting.flatMap((one) => {
 				const wait = one.entries.at(-1);
-				return `  #${String(one.id)}  ${one.title}  waiting on: ${wait?.markdown ?? ""}${wait?.dueAt === undefined ? "" : `  [${new Date(wait.dueAt).toISOString()}, ${dueWords(wait.dueAt, now)}]`}`;
+				return [
+					`  #${String(one.id)}  ${one.title}  waiting on: ${wait?.markdown ?? ""}${wait?.dueAt === undefined ? "" : `  [${new Date(wait.dueAt).toISOString()}, ${dueWords(wait.dueAt, now)}]`}`,
+					...noteUnder(`esc ${String(one.id)}`),
+				];
 			}),
-			...needsActionLines(board, now),
-			...(memos.length === 0
-				? []
-				: [
-						`memos (${String(memos.length)}, newest first; devhub --tell memo show <subject> for the whole):`,
-						...memos.map((one) => `  ${one.subject}  ${one.at}  ${one.latest}`),
-					]),
+			...needsActionLines(board, now, noteUnder),
 			...(resumable.length === 0
 				? []
 				: [
 						`resumable (${String(resumable.length)}: stopped agents whose work can go on, devhub --tell agent resume <subject>):`,
-						...resumable.map(
-							(one) =>
-								`  ${one.subject}  ${one.name} (${one.agentId.slice(0, 8)}${one.machine === "local" ? "" : `, ${one.machine}`})`,
-						),
+						...resumable.flatMap((one) => [
+							`  ${one.subject}  ${one.name} (${one.agentId.slice(0, 8)}${one.machine === "local" ? "" : `, ${one.machine}`})`,
+							...noteUnder(one.key),
+						]),
 					]),
 		];
+		const rest = (board.memos ?? []).filter((memo) => !shown.has(memo.subject));
+		if (rest.length > 0)
+			lines.push(
+				`memos (${String(rest.length)} more, newest first: what you meant to do next):`,
+				...rest.map(
+					(memo) =>
+						`  ${memo.token}  ${memoClock(memo.at)}  ${memo.text.replace(/\s+/gu, " ").trim()}`,
+				),
+			);
 		return {
 			message: lines.join("\n"),
 			data: {
@@ -1633,7 +1659,7 @@ export class TellService {
 				graceMs: board.graceMs,
 				needsAction: board.needsAction,
 				memos,
-				resumable,
+				resumable: resumable.map(({ key: _, ...one }) => one),
 			},
 		};
 	}
@@ -1788,6 +1814,7 @@ export class TellService {
 		this.memory.markEscalation(callerKey(this.caller), id, one.entries.length);
 		if (this.callerIsOrchestrator())
 			this.ports.orchestrator.acknowledge?.(id, one.entries.length);
+		const memo = this.ports.orchestrator.memoAbout?.(`esc ${String(id)}`);
 		const lines = [
 			`#${String(one.id)} ${one.title}  [${one.state}]`,
 			`rank: ${rankText(one)}`,
@@ -1797,6 +1824,7 @@ export class TellService {
 						`agents: ${one.agents.map((agent) => `${agent.name ?? "(gone)"} (${agent.agentId})`).join(", ")}`,
 					]),
 			...(one.links.length === 0 ? [] : [`links: ${one.links.join(" ")}`]),
+			...(memo === undefined ? [] : [this.memoText(memo)]),
 			...one.entries.flatMap((entry) =>
 				entry.kind !== undefined
 					? ["", noteLine(entry)]
@@ -1818,7 +1846,10 @@ export class TellService {
 						`--- closed ${new Date(one.closed.at).toISOString()}${one.closed.note === undefined ? "" : `: ${one.closed.note}`}`,
 					]),
 		];
-		return { message: lines.join("\n"), data: one };
+		return {
+			message: lines.join("\n"),
+			data: { ...one, memo: this.memoData(memo) },
+		};
 	}
 
 	private listEscalations(
@@ -2223,9 +2254,13 @@ export class TellService {
 					`DevHub has not read ${ref}: ${why}. Only the Issues and pull requests on [orchestrator.github] projects are read, while an orchestrator runs. ${githubPollingLine(this.ports.orchestrator.board())}`,
 				);
 			}
+			const memo = this.itemMemo(ref);
 			return {
-				message: subjectText(found, undefined, now),
-				data: subjectJson(found, undefined),
+				message: withMemoLine(
+					subjectText(found, undefined, now),
+					memo && this.memoText(memo),
+				),
+				data: { ...subjectJson(found, undefined), memo: this.memoData(memo) },
 			};
 		}
 		const agent = this.agent(ref);
@@ -2237,9 +2272,16 @@ export class TellService {
 		const workspace = this.ports
 			.workspaces()
 			.find((one) => one.agents.some((each) => each.id === agent.id));
+		const memo = this.ports.orchestrator.memoAbout?.(`agent ${agent.id}`);
 		return {
-			message: subjectText(found, workspace?.review, now),
-			data: subjectJson(found, workspace?.review ?? null),
+			message: withMemoLine(
+				subjectText(found, workspace?.review, now),
+				memo && this.memoText(memo),
+			),
+			data: {
+				...subjectJson(found, workspace?.review ?? null),
+				memo: this.memoData(memo),
+			},
 		};
 	}
 
@@ -3378,7 +3420,18 @@ export class TellService {
 		const cache = agent.promptCache ?? usage?.promptCache;
 		const tokens = usage?.contextTokens;
 		const window = usage?.contextWindow;
+		const memo = this.ports.orchestrator.memoAbout?.(`agent ${agent.id}`);
 		return {
+			memo:
+				memo === undefined
+					? null
+					: {
+							subject:
+								this.ports.orchestrator.subjectToken?.(memo.subject) ??
+								memo.subject,
+							text: memo.text,
+							at: new Date(memo.at).toISOString(),
+						},
 			agentId: agent.id,
 			name: agent.name,
 			kind: agent.kind,
@@ -3959,8 +4012,7 @@ export class TellService {
 			| "subjectToken"
 			| "memo"
 			| "memos"
-			| "addMemo"
-			| "editMemo"
+			| "setMemo"
 			| "clearMemo"
 			| "workRecords"
 			| "resumeTarget"
@@ -3972,8 +4024,7 @@ export class TellService {
 			o.subjectToken === undefined ||
 			o.memo === undefined ||
 			o.memos === undefined ||
-			o.addMemo === undefined ||
-			o.editMemo === undefined ||
+			o.setMemo === undefined ||
 			o.clearMemo === undefined ||
 			o.workRecords === undefined ||
 			o.resumeTarget === undefined
@@ -3998,47 +4049,42 @@ export class TellService {
 		return this.memoPorts().resolveSubject(text, this.subjectPlace(text));
 	}
 
-	/** Who is writing: the asking agent's name, or an outside caller's label. */
-	private writer(): string | undefined {
-		if (this.caller === undefined) return undefined;
-		if (this.caller.paneless === true)
-			return this.caller.label ?? OUTSIDE_LABEL;
-		const id = this.caller.agentId;
-		if (id === undefined) return undefined;
-		return (
-			this.ports
-				.workspaces()
-				.flatMap((workspace) => workspace.agents)
-				.find((agent) => agent.id === id)?.name ?? id
+	/** A note as a line says it: `memo (issue=…, 11/11 10:02): …`. */
+	private memoText(memo: Memo): string {
+		const token =
+			this.ports.orchestrator.subjectToken?.(memo.subject) ?? memo.subject;
+		return `memo (${token}, ${memoClock(memo.at)}): ${memoLine(memo)}`;
+	}
+
+	/** A note as `--json` carries it; null for none. */
+	private memoData(memo: Memo | undefined): Record<string, unknown> | null {
+		if (memo === undefined) return null;
+		return memoJson(
+			this.ports.orchestrator.subjectToken?.(memo.subject) ?? memo.subject,
+			memo,
 		);
 	}
 
-	private writeMemo(
-		command: Extract<TellCommand, { verb: "memo-add" | "memo-edit" }>,
+	/** The note `status <item>` shows: the item's, as `ref` names it. */
+	private itemMemo(ref: string): Memo | undefined {
+		const o = this.ports.orchestrator;
+		if (o.resolveSubject === undefined || o.memoAbout === undefined)
+			return undefined;
+		try {
+			return o.memoAbout(o.resolveSubject(ref).key);
+		} catch {
+			return undefined;
+		}
+	}
+
+	private setMemo(
+		command: Extract<TellCommand, { verb: "memo-set" }>,
 	): TellAnswer {
 		const ports = this.memoPorts();
 		const subject = this.subject(command.subject);
-		const memo =
-			command.verb === "memo-add"
-				? ports.addMemo(subject.key, command.text, this.writer())
-				: ports.editMemo(subject.key, command.text, this.writer());
+		const memo = ports.setMemo(subject.key, command.text);
 		return {
-			message: `${subject.token}: ${command.verb === "memo-add" ? "added to its memo" : "its memo is now this one entry"} (${String(memo.entries.length)} ${memo.entries.length === 1 ? "entry" : "entries"}).`,
-			data: memoJson(subject.token, memo),
-		};
-	}
-
-	private showMemo(text: string): TellAnswer {
-		const ports = this.memoPorts();
-		const subject = this.subject(text);
-		const memo = ports.memo(subject.key);
-		if (memo === undefined)
-			return {
-				message: `${subject.token} has no memo.`,
-				data: { subject: subject.token, key: subject.key, entries: [] },
-			};
-		return {
-			message: `# memo ${subject.token}\n\n${memoMarkdown(memo)}`,
+			message: `${subject.token}: noted. It shows in board, memo list and status (or escalation show), and goes with the --prompt of agent resume / issue assign / agent new.`,
 			data: memoJson(subject.token, memo),
 		};
 	}
@@ -4048,8 +4094,8 @@ export class TellService {
 		const had = this.memoPorts().clearMemo(subject.key);
 		return {
 			message: had
-				? `${subject.token}: its memo is cleared.`
-				: `${subject.token} had no memo.`,
+				? `${subject.token}: its note is cleared.`
+				: `${subject.token} had no note.`,
 			data: { subject: subject.token, cleared: had },
 		};
 	}
@@ -4070,7 +4116,7 @@ export class TellService {
 				`memos (${String(memos.length)}, newest first):`,
 				...memos.map(
 					(memo) =>
-						`  ${token(memo.subject)}  ${memoClock(memoUpdatedAt(memo))}  (${String(memo.entries.length)})  ${memoExcerpt(memo, 100)}`,
+						`  ${token(memo.subject)}  ${memoClock(memo.at)}  ${memoLine(memo)}`,
 				),
 				`work (${String(work.length)}, the agent resume <subject> brings back is the last):`,
 				...work.map(
@@ -4099,22 +4145,16 @@ export class TellService {
 	}
 
 	/**
-	 * `prompt` with the subject's memo after it, when it has one: its latest
-	 * entry in full and where the rest is, so the agent picking the work up
-	 * reads what was left before it goes on.
+	 * `prompt` with the subject's note after it, when it has one: what the
+	 * orchestrator meant to do next, so the agent picking the work up has it.
 	 */
 	private withMemo(prompt: string, key: string | undefined): string {
 		if (key === undefined) return prompt;
 		const o = this.ports.orchestrator;
 		const memo = o.memo?.(key);
-		const latest = memo?.entries.at(-1);
-		if (memo === undefined || latest === undefined) return prompt;
+		if (memo === undefined) return prompt;
 		const token = o.subjectToken?.(key) ?? key;
-		const text =
-			latest.text.length <= MEMO_IN_PROMPT
-				? latest.text
-				: `${latest.text.slice(0, MEMO_IN_PROMPT)}…`;
-		return `${prompt}\n\n---\nDevHub より: この作業 (${token}) にはオーケストレーターのメモがあります (${String(memo.entries.length)} 件)。続ける前に読んでください。最新 (${memoClock(latest.at)}${latest.by === undefined ? "" : `、${latest.by}`}):\n\n${text}\n\n全文: devhub --tell memo show ${token}`;
+		return `${prompt}\n\n---\nDevHub より: この作業 (${token}) のオーケストレーターのメモ (${memoClock(memo.at)}):\n${memo.text}`;
 	}
 
 	/**
@@ -4199,12 +4239,12 @@ export class TellService {
 			);
 		const memo = o.memo?.(target.key);
 		return {
-			message: `${answer.message}\nIt is ${target.token}'s agent ${agent.name} (was ${agent.agentId}), back on its conversation.${command.prompt === undefined ? "" : memo === undefined ? " It is told the prompt once it is ready." : " It is told the prompt, with the memo's latest entry, once it is ready."}`,
+			message: `${answer.message}\nIt is ${target.token}'s agent ${agent.name} (was ${agent.agentId}), back on its conversation.${command.prompt === undefined ? "" : memo === undefined ? " It is told the prompt once it is ready." : " It is told the prompt, with the subject's note, once it is ready."}`,
 			data: {
 				...(answer.data as object),
 				subject: target.token,
 				was: agent.agentId,
-				memo: memo === undefined ? null : memo.entries.length,
+				memo: memo === undefined ? null : memo.text,
 			},
 		};
 	}
@@ -4791,6 +4831,11 @@ function statusLines(state: TellAgentStatus, now: number): string[] {
 					`cache     ${cache.cold === null ? "no cached prefix" : cache.cold ? "cold" : `warm until ${cache.expiresAt ?? "-"}`} (TTL ${String(cache.ttlSeconds)}s)${cache.hitRatio === null ? "" : `, hit ${String(Math.round(cache.hitRatio * 100))}%`}, ${String(cache.misses)} miss(es)${cache.autoCompactAt === null ? "" : `, compacted at ${cache.autoCompactAt}`}`,
 				]),
 		...(state.failure === null ? [] : [`failure   ${state.failure}`]),
+		...(state.memo === null
+			? []
+			: [
+					`memo      ${state.memo.subject}, ${memoClock(Date.parse(state.memo.at))}: ${state.memo.text.replace(/\s+/gu, " ")}`,
+				]),
 	];
 }
 
@@ -5549,14 +5594,18 @@ function subjectText(
 }
 
 /** `board`'s invariant part: every subject that needs action now, and why. */
-function needsActionLines(board: OrchestratorBoardWire, now: number): string[] {
+function needsActionLines(
+	board: OrchestratorBoardWire,
+	now: number,
+	noteUnder: (subject: string) => readonly string[] = () => [],
+): string[] {
 	const list = board.needsAction;
 	return [
 		`needs action (${String(list.length)}):`,
-		...list.map(
-			(one) =>
-				`  ${one.line}  [${span(now - one.since)}${one.kept === undefined ? "" : `, kept: ${one.kept.note}`}]`,
-		),
+		...list.flatMap((one) => [
+			`  ${one.line}  [${span(now - one.since)}${one.kept === undefined ? "" : `, kept: ${one.kept.note}`}]`,
+			...noteUnder(one.subject),
+		]),
 	];
 }
 
@@ -5679,18 +5728,16 @@ function posixBasename(path: string): string {
 	return path.slice(path.lastIndexOf("/") + 1);
 }
 
-/** How much of a memo's latest entry goes in the prompt it is passed with. */
-const MEMO_IN_PROMPT = 4000;
-
 function memoJson(token: string, memo: Memo): Record<string, unknown> {
 	return {
 		subject: token,
 		key: memo.subject,
-		updatedAt: new Date(memoUpdatedAt(memo)).toISOString(),
-		entries: memo.entries.map((entry) => ({
-			at: new Date(entry.at).toISOString(),
-			text: entry.text,
-			by: entry.by ?? null,
-		})),
+		text: memo.text,
+		at: new Date(memo.at).toISOString(),
 	};
+}
+
+/** `status`'s text with its subject's note at the end, when there is one. */
+function withMemoLine(text: string, memo: string | undefined): string {
+	return memo === undefined ? text : `${text}\n${memo}`;
 }
