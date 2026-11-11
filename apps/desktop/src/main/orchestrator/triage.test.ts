@@ -39,6 +39,10 @@ function needsAction(n: number): OrchestratorEvent {
 function dispatcher(
 	mode: "full" | "saving",
 	priorities: Record<string, Priority>,
+	more: {
+		readonly standing?: readonly OrchestratorEvent[];
+		readonly tasks?: number;
+	} = {},
 ) {
 	const sent: string[] = [];
 	const events = new EventDispatcher({
@@ -51,8 +55,9 @@ function dispatcher(
 			delivery_interval: "5m",
 		}),
 		deliver: (_agent, text) => sent.push(text),
-		standing: () => [needsAction(1), needsAction(2)],
+		standing: () => [needsAction(1), needsAction(2), ...(more.standing ?? [])],
 		high: (subject) => priorities[subject] === "high",
+		inProgress: () => more.tasks ?? 0,
 		now: () => 0,
 	});
 	return { events, sent };
@@ -110,6 +115,40 @@ describe("saving's priority gate", () => {
 		expect(run.sent).toHaveLength(0);
 		run.events.setMode("full");
 		expect(run.sent).toHaveLength(1);
+		expect(run.sent[0]).toContain("acme/app#1");
+	});
+
+	it("lets a state change through whatever its priority: an agent that stopped, with 2 in progress", () => {
+		const run = dispatcher(
+			"saving",
+			{ "agent ab12cd34": "low" },
+			{
+				tasks: 2,
+				standing: [
+					{
+						type: "needs_action",
+						subject: { kind: "agent", agent: { id: "ab12cd34" } },
+						breach: { clause: "idle_no_escalation" },
+					},
+				],
+			},
+		);
+		run.events.flush();
+		expect(run.sent).toHaveLength(1);
+		expect(run.sent[0]).toContain("agent=ab12cd34");
+		// The unstarted items are nudges, not high: they wait.
+		expect(run.sent[0]).not.toContain("acme/app#");
+	});
+
+	it("holds a nudge about an unstarted low item until the triage", () => {
+		const run = dispatcher("saving", { "item acme/app#1": "low" });
+		run.events.flush();
+		expect(run.sent).toHaveLength(0);
+		expect(run.events.preview().when).toEqual({
+			kind: "saving_held",
+			lines: 2,
+		});
+		run.events.dispatch({ type: "triage" });
 		expect(run.sent[0]).toContain("acme/app#1");
 	});
 

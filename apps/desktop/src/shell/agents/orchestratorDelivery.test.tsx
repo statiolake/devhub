@@ -143,19 +143,18 @@ describe("the mode control's card", () => {
     expect(box).toHaveTextContent("1 line, 3 more counted");
   });
 
-  it("says saving holds it while 2 or more tasks are in progress", () => {
+  it("says when saving holds every line for the next triage", () => {
     mount({
       mode: "saving",
       nextDelivery: {
         human: [],
-        batch: "x",
-        lines: 1,
+        lines: 0,
         more: 0,
-        when: { kind: "saving_busy", tasks: 3 },
+        when: { kind: "saving_held", lines: 3 },
       },
     });
     expect(card()).toHaveTextContent(
-      "saving: held while 3 tasks are in progress (2 or more)",
+      "saving: 3 reminders wait for the next triage",
     );
   });
 

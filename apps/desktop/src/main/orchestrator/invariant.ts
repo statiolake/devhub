@@ -704,6 +704,28 @@ export class InvariantWatch {
 	}
 
 	/**
+	 * A `needs_action` line's state, for saving to tell a line with
+	 * something new from one said again (`EventDelivery.statePrint`): since
+	 * when its subject has needed action (a subject that settled and broke
+	 * again is new), its clause and its facts (its agents' status, its item's
+	 * and pull request's state, review, checks, its escalations). Undefined:
+	 * the subject does not need action now.
+	 */
+	print(event: OrchestratorEvent): string | undefined {
+		if (event.type !== "needs_action") return undefined;
+		const subject = subjectOf(event);
+		const one = this.#reading.needsAction.find(
+			(candidate) => subjectOf(eventOf(candidate)) === subject,
+		);
+		if (one === undefined) return undefined;
+		return [
+			String(this.#since.get(one.key) ?? 0),
+			breachWords(one.breach),
+			...one.facts,
+		].join(" ");
+	}
+
+	/**
 	 * `agent keep A --note`: leave a managed agent as it is, for `note`, until
 	 * its facts change. Refused for one that does not need action now.
 	 */

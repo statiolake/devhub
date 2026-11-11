@@ -54,8 +54,18 @@ describe("the orchestrator's timers", () => {
 		]);
 		time.advance(150_000);
 		expect(fired).toEqual([
-			{ type: "timer.elapsed", name: "tick", interval: "1m" },
-			{ type: "timer.elapsed", name: "tick", interval: "1m" },
+			{
+				type: "timer.elapsed",
+				name: "tick",
+				interval: "1m",
+				source: "settings",
+			},
+			{
+				type: "timer.elapsed",
+				name: "tick",
+				interval: "1m",
+				source: "settings",
+			},
 		]);
 	});
 
@@ -96,6 +106,20 @@ describe("the orchestrator's timers", () => {
 		]);
 	});
 
+	it("say a timer the orchestrator set as its own (source session), sent on time", () => {
+		const { time, fired, timers } = world([]);
+		timers.set("slack", "30m");
+		time.advance(30 * 60_000);
+		expect(fired).toEqual([
+			{
+				type: "timer.elapsed",
+				name: "slack",
+				interval: "30m",
+				source: "session",
+			},
+		]);
+	});
+
 	it("keep at most one pending event each", () => {
 		const time = clock();
 		const dispatcher = new EventDispatcher({
@@ -121,8 +145,18 @@ describe("the orchestrator's timers", () => {
 		timers.sync();
 		time.advance(100_000);
 		expect(dispatcher.held()).toEqual([
-			{ type: "timer.elapsed", name: "tick", interval: "10s" },
-			{ type: "timer.elapsed", name: "sweep", interval: "20s" },
+			{
+				type: "timer.elapsed",
+				name: "tick",
+				interval: "10s",
+				source: "settings",
+			},
+			{
+				type: "timer.elapsed",
+				name: "sweep",
+				interval: "20s",
+				source: "settings",
+			},
 		]);
 	});
 });

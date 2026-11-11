@@ -283,7 +283,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | \`needs_action\` | 不変条件 (下記) を満たしていないアイテム (Issue / PR) か管理対象エージェントと、満たしていない条項のコード。解消しないうちは配信のたび (\`[orchestrator] delivery_interval\`、既定 5m ごと) に毎回。\`agent keep\` した対象は、状態が変わる (keep が解ける) まで載らない | issue / pr / agent, ws, コード |
 | \`waiting.changed\` | 待機中のエスカレーションの条件が満たされたかもしれない: 対象のアイテム (Issue / PR) やエージェントの状態が変わった (\`subjects_changed\`) か、\`--at\` の時刻が来た (\`due\`、待機 1 回につき 1 回)。行はどのエスカレーションかと、そのどちらかだけ | esc, 理由 |
 | \`usage.threshold\` | CLI のプラン枠の使用率が \`[orchestrator] usage_thresholds\` (既定 80, 95) を上向きに超えた | cli, window, pct, resets |
-| \`triage\` | 優先度を見直す時刻 (full で 30 分ごと、saving で 1 時間ごと)。開いている仕事それぞれに \`orchestrator priority set\`。saving では high の対象の行だけが届き、残りは次の triage と一緒に届く | なし |
+| \`triage\` | 優先度を見直す時刻 (full で 30 分ごと、saving で 1 時間ごと)。開いている仕事それぞれに \`orchestrator priority set\`。saving では状態の変化はいつも届き、催促は high の対象のものだけが届き、残りは次の triage と一緒に届く | なし |
 | \`request\` | 人がボードの + から送った依頼。人の言葉としてすぐ届く (「req=N 人からの依頼」)。タスクとして登録し \`orchestrator request done N --note\` | req, 本文 |
 | \`timer.elapsed\` | \`[[orchestrator.timers]]\` か \`orchestrator timer set\` のタイマー | 名前 |
 | \`custom.*\` | \`orchestrator emit\` でスクリプトや他ツールが送るもの | 本文 |

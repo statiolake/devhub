@@ -309,6 +309,48 @@ describe("the watch", () => {
 	const due = (made: InvariantWatch) =>
 		made.due().map((one) => eventLine(one, 0));
 
+	it("prints each standing line's state for saving: the same while nothing moves, new when it does or it breaks again", () => {
+		const { watch: made, clock } = watch();
+		made.observe(idle(), true);
+		const [item, worker] = made.due();
+		const first = made.print(worker!);
+		expect(first).toContain("status=idle");
+		expect(made.print(item!)).toContain("agents=a1b2c3d4:idle");
+		clock.now = 60_000;
+		made.observe(idle(), true);
+		expect(made.print(worker!)).toBe(first);
+		// Its pull request's checks failed: a new state.
+		made.observe(
+			readInvariant({
+				items: [
+					issue({
+						pull: {
+							number: 9,
+							url: PR,
+							state: "open",
+							review: "none",
+							unresolved: 0,
+							checks: "failing",
+						},
+					}),
+				],
+				agents: [agent({ status: "idle" })],
+				escalations: [],
+			}),
+			true,
+		);
+		expect(made.print(worker!)).not.toBe(first);
+		// Settled (working), then stopped again: a new since.
+		made.observe(
+			readInvariant({ items: [issue()], agents: [agent()], escalations: [] }),
+			true,
+		);
+		expect(made.print(worker!)).toBeUndefined();
+		clock.now = 120_000;
+		made.observe(idle(), true);
+		expect(made.print(worker!)).not.toBe(first);
+	});
+
 	it("gives every subject that needs action now, by its clause, never its state, at once and each time", () => {
 		const { watch: made, said, clock } = watch();
 		made.observe(idle(), true);

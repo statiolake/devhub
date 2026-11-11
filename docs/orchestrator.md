@@ -983,6 +983,10 @@ A message whose text could not be read says so and where to read it
   `{EVENT_JSON}` the same as JSON when the template has it; `init_prompt`
   for a batch carrying `init`. The first batch after a quiet spell goes at
   once (after a 300 ms window).
+- **Wake-ups the orchestrator set go on time** (a `timer set` timer, a
+  wait's `--at`): each as a message of its own when it comes, not with a
+  batch and not held by the interval (see "Saving: state changes and
+  nudges"); only off holds them.
 - **Held only by a foreground turn**: the orchestrator `working`, or a
   message of ours still queued for it (`busy` in the controller). Its own
   background work — shells, tasks, subagents it started (`background`) — does
@@ -1013,8 +1017,8 @@ mode full`, `resume`, the board's Full or Saving): the person's held words, each
   held words, each as its own message, then the batch as `event_prompt`
   renders it (pending lines, stale ones left out, then the standing
   `needs_action` lines, kept ones left out) — and when it goes: now, at the
-  interval's end, when the orchestrator's turn ends, not while saving holds
-  it for the work in progress, or not while off;
+  interval's end, when the orchestrator's turn ends, when saving holds every
+  line `saving: N reminders wait for the next triage`, or not while off;
   "Nothing to send" when nothing would. Main composes it with the delivery's
   own `composeDelivery` (`EventDispatcher.preview`, on the board as
   `nextDelivery`), reading only: nothing is marked delivered, logged or
@@ -1035,40 +1039,37 @@ rebindable like every command) and `devhub --tell orchestrator mode
 full`. The Sidebar row's tooltip names the mode; the header shows `auto`
 beside it when saving came by itself, and its card says why.
 
-| mode       | what is delivered                                                                                                                                                                                       |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **full**   | everything, as described above: a batch at most every `delivery_interval`, each carrying every `needs_action` subject again (what "on" was)                                                             |
-| **saving** | the same, more rarely: at most every **3 ×** `delivery_interval` (`SAVING_INTERVAL_FACTOR`), and **no batch at all while 2 or more tasks are in progress**. The person's words and `init` go as in full |
-| **off**    | nothing: everything is held, the person's words too, and GitHub is not polled (what "off" was)                                                                                                          |
+| mode       | what is delivered                                                                                                                                                                                                                                                                                                |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **full**   | everything, as described above: a batch at most every `delivery_interval`, each carrying every `needs_action` subject again (what "on" was)                                                                                                                                                                      |
+| **saving** | the same, more rarely: at most every **3 ×** `delivery_interval` (`SAVING_INTERVAL_FACTOR`). **State changes** about the work always go; **nudges** go only when high, and while 2 or more tasks are in progress only about those tasks (below). The person's words, requests, `init` and `triage` go as in full |
+| **off**    | nothing: everything is held, the person's words too, and GitHub is not polled (what "off" was)                                                                                                                                                                                                                   |
 
-- **A nudge** is a batch: the pending lines and the standing `needs_action`
-  lines, the message that has the orchestrator prod its agents (or itself)
-  on. The person's words are not nudges and go at once in saving too; a
-  batch carrying `init` (a start) is not held by the work in progress.
+- **A batch** is the pending lines and the standing `needs_action` lines,
+  the message that has the orchestrator act on its agents (or itself). In
+  saving each line is a **state change** or a **nudge** (the next section),
+  and only the nudges are throttled. The person's words are not batches and
+  go at once in saving too.
 - **Why 3 ×.** Every delivery is one orchestrator turn — reading the batch,
   handing each line to a subagent — and the nag puts an unresolved subject on
   every one, so the interval is what it spends while things stand still.
-  Three times the interval cuts that by two thirds and still says an
-  unresolved subject again within a quarter of an hour at the default 5m
-  (3 minutes at 1m): nothing waits long enough to be forgotten. Four times
-  would leave a stuck subject unsaid for 20 minutes, a sizeable piece of a
-  5-hour window.
+  Three times the interval cuts that by two thirds and still says what
+  happened to the work within a quarter of an hour at the default 5m (3
+  minutes at 1m): nothing waits long enough to be forgotten, and an agent
+  that stopped is picked up within that. Four times would leave it unsaid for
+  20 minutes, a sizeable piece of a 5-hour window.
 - **A task in progress** is an item under the Orchestrator row in its
   **対応中** lane — the number the Sidebar's 対応中 heading shows (an
   escalation about it 対応中, or one of its agents at work: working,
-  background, on a prompt, still being read). Main counts it with the
-  Sidebar's own rule (`ipc/orchestratorLanes.ts`, `inProgressCount`), so the
-  rule and the heading cannot disagree. With two at work, the orchestrator
-  has its hands full and the agents are moving by themselves: a nudge would
-  only spend tokens telling it what it is already doing. A batch held this
-  way is looked at again on every projection (an agent stopping) and every
-  30 s, and goes as soon as fewer than two are in progress; the preview
-  says `saving: held while N tasks are in progress`. Turning on into saving
-  holds the batch this way too (the person's held words still go).
+  background, on a prompt, still being read). Main reads it with the
+  Sidebar's own rule (`ipc/orchestratorLanes.ts`: `inProgressCount`, and
+  `inProgressAgentIds` for whose agents they are), so the rule and the
+  heading cannot disagree.
 - **Nothing else changes.** GitHub is polled at its own interval in full and
   saving alike (it costs GitHub quota, not tokens), timers fire as set, and
   no line is dropped: held lines wait, one per subject, and go with the next
-  batch. Nothing beyond the interval and the gate was added to saving.
+  triage or with full. Nothing beyond the interval and the gate was added
+  to saving.
 - **Off at every launch.** The mode is not written anywhere — not
   `state.json`, not `escalations.json` — so DevHub always starts off: an
   orchestrator agent restored with its session costs nothing until the
@@ -1077,6 +1078,88 @@ beside it when saving came by itself, and its card says why.
   `orchestrator start`) turns an off one to full — starting one is asking it
   to work — and leaves full or saving as they are. The control works with no
   orchestrator running.
+
+### Saving: state changes and nudges
+
+Saving is there to spend fewer tokens on reminders, never to leave the work
+waiting on the orchestrator. So it tells two kinds of line apart
+(`main/orchestrator/mode.ts`: `SAVING_CLASSES`, `savingClassOf`,
+`savingHolds`), and throttles only the second:
+
+- **On time** — a wake-up the orchestrator set itself: a timer it set
+  (`orchestrator timer set`, "look at Slack at 15:00", "re-read the thread
+  in 30 minutes") and the time it gave a 待機中 escalation
+  (`escalation wait --at`). **Sent at its time, alone** — its one line in `event_prompt`
+  as a message of its own, like the person's words: never batched, never
+  held by the interval, the pickup wait, the priority gate or the tasks in
+  progress, in full and saving alike (`onTime`). What the orchestrator
+  wakes for often touches other people (a Slack thread, someone's
+  question), so a late wake-up has consequences outside DevHub. Only off
+  holds it (below).
+
+- **A state change** — something happened to work in progress, or to work
+  waiting on the orchestrator: an agent finished its turn or stopped, is on
+  a prompt (a question, a permission), errored; its item's pull request was
+  merged or closed, got a review, its checks failed or passed; a 待機中
+  escalation's subjects moved. **Always delivered** in
+  saving, with the next batch at saving's interval, whatever the subject's
+  priority and however many tasks are in progress.
+- **A nudge** — a reminder or chatter: a subject said again with nothing new
+  about it ("still idle"), an item nobody has started, a settings timer
+  (`[[orchestrator.timers]]`, a periodic re-prompt), the usage readout,
+  `custom.*`. **Goes only when its subject is ranked high**; the rest
+  waits, one line per subject, for the next triage (hourly in saving) or for
+  full.
+- **Never held** — the person's words, their requests, `init` and
+  `triage`, as in full. A batch carrying `init` or `triage` takes everything
+  pending and standing with it, so the orchestrator ranks with the whole
+  picture.
+
+Every kind of line the dispatcher handles, explicitly:
+
+| kind                                     | class        | what it is                                                                                                                                                               |
+| ---------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `escalation_answered`                    | never held   | the person's answer                                                                                                                                                      |
+| `escalation.human_direct`                | never held   | the person wrote to an escalation's agent                                                                                                                                |
+| `request`                                | never held   | the person's request from the board's +                                                                                                                                  |
+| `init`                                   | never held   | the orchestrator started                                                                                                                                                 |
+| `triage`                                 | never held   | time to rank the open work; takes everything with it                                                                                                                     |
+| `needs_action` agent (any clause)        | state change | a managed agent newly needing action, or whose state moved since its line last went: stopped, on a prompt, errored, its item or pull request moved, its escalation moved |
+| `needs_action` item `idle_no_escalation` | state change | an item whose agents have all stopped, newly or with its state moved                                                                                                     |
+| `needs_action` item `no_agent`           | nudge        | an item nobody has started: new work                                                                                                                                     |
+| `needs_action` said again                | nudge        | any `needs_action` subject standing as it stood when its line last went (the nag)                                                                                        |
+| `waiting.changed` `subjects_changed`     | state change | what a 待機中 escalation is about moved (CI, a review, a merge, its agents)                                                                                              |
+| `waiting.changed` `due`                  | on time      | the time the orchestrator set for a 待機中 escalation (`escalation wait --at`) came; with `subjects_changed` folded in, still on time                                    |
+| `timer.elapsed` from `timer set`         | on time      | a timer the orchestrator set itself (`source: "session"`): its own wake-up                                                                                               |
+| `timer.elapsed` from the settings        | nudge        | one of `[[orchestrator.timers]]`: a periodic re-prompt                                                                                                                   |
+| `usage.threshold`                        | nudge        | the plan's use: status                                                                                                                                                   |
+| `custom.*`                               | nudge        | what a script says: not DevHub's to judge                                                                                                                                |
+
+- **Said again.** A `needs_action` line is standing, not an event, so what
+  is new about it is read off its state: since when its subject has needed
+  action, its clause and its facts (its agents' status, its item's and pull
+  request's state, review, unresolved count and checks, its escalations;
+  `InvariantWatch.print`). The dispatcher remembers each subject's state as
+  its line last went; the same state again is a nudge, a moved one (an agent
+  that stopped again, checks that failed) a state change. A subject that
+  settled is forgotten, so its next breach is new.
+- **Two or more tasks in progress.** The intent is not to pile new work on an
+  orchestrator that already has its hands full. So while
+  `SAVING_BUSY_TASKS` (2) or more tasks are in progress, saving also holds
+  the nudges about **other** work — starting an item, pushing an agent that
+  is not one of the tasks in progress — high ones included. A nudge about a
+  task in progress (an agent of a 対応中 item, an item one of them is on, an
+  escalation 対応中 or about one of them) goes when high, as with fewer. What
+  the in-progress agents themselves do is a state change and is never held:
+  an agent in progress that stops is delivered with the next batch, so it
+  does not sit waiting for the orchestrator.
+- **The preview** shows only what would go; with nothing to send and lines
+  waiting it says `saving: N reminders wait for the next triage`.
+- **Off holds the wake-ups too.** Off holds everything: a timer keeps
+  firing while off, and its `timer.elapsed` waits pending (one line per
+  timer: a timer that fired several times is one line), as does a wait's
+  `due`; turning on sends them with the rest, in the one batch. A wake-up
+  that came while off is late by as long as it was off.
 
 **The automatic switch.** While the mode is **full** and any plan window of
 the usage readout — Claude's 5-hour or weekly, Codex's when it is read —
@@ -1131,21 +1214,21 @@ and keeps the ranking where DevHub reads it (`main/orchestrator/triage.ts`).
   escalation's 優先 chip and order as before, a request's 優先 chip, an
   agent's in its Sidebar tooltip (`priority: high`), and each `needsAction`
   subject's in `board --json`.
-- **In saving, only high goes.** A batch carries only the lines about a
-  subject ranked **high** — an escalation, an item, an agent or a request
-  whose priority is `high`. Every other line — a subject ranked normal or
-  low, one not ranked yet, and lines about no subject (timers, the usage
-  readout, `custom.*`) — stays pending, one line per subject as always, and
-  goes with the next batch that carries `triage` (a triage takes everything
-  pending and every standing `needs_action` line with it, so the
+- **In saving, only high nudges go.** State changes go whatever their
+  priority ("Saving: state changes and nudges"); a nudge goes only when its
+  subject is ranked **high** — an escalation, an item, an agent or a request
+  whose priority is `high`. Every other nudge — about a subject ranked
+  normal or low, one not ranked yet, and nudges about no subject (timers,
+  the usage readout, `custom.*`) — stays pending, one line per subject as
+  always, and goes with the next batch that carries `triage` (a triage takes
+  everything pending and every standing `needs_action` line with it, so the
   orchestrator ranks with the whole picture), or as soon as the mode is
   full. **High** is the level, not a count: the charter asks the
   orchestrator to keep it for what makes the person or other work wait (a
   person waiting on an answer, a deadline, production, an item blocking
   others), and to keep it to about three. The person's words, requests,
-  `init` and `triage` are never held by it. Saving's other rules stand: no
-  batch at all while two or more tasks are in progress, a triage's
-  included.
+  `init` and `triage` are never held by it, a triage not even with two or
+  more tasks in progress.
 
 ### Requests: the board's +
 

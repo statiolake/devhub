@@ -672,7 +672,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="Saving threshold"
-          help="At or over this percent of a plan window (Claude's 5-hour or weekly), an Orchestrator in full switches to saving by itself: nudges come a third as often, and none while 2 or more tasks are in progress. It goes back to full when the window resets — unless you chose saving yourself. Off is never left by itself."
+          help="At or over this percent of a plan window (Claude's 5-hour or weekly), an Orchestrator in full switches to saving by itself: deliveries come a third as often, and reminders that are not high wait for the hourly triage (what happens to the work in progress still comes). It goes back to full when the window resets — unless you chose saving yourself. Off is never left by itself."
         >
           <TextField
             label="Orchestrator saving threshold"

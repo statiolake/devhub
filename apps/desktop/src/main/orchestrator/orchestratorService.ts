@@ -218,6 +218,12 @@ export interface OrchestratorServicePorts {
 	 * Sidebar reads them (`inProgressCount`). Absent: none.
 	 */
 	readonly inProgress?: (board: LaneBoard) => number;
+	/**
+	 * The agents of the tasks in progress — of the items in the Sidebar's
+	 * 対応中 lane (`inProgressAgentIds`) — for saving's "the work in
+	 * progress is never held". Absent: none.
+	 */
+	readonly inProgressAgents?: (board: LaneBoard) => ReadonlySet<string>;
 	/** The mode moved: by the person, or by the usage readout. */
 	readonly modeChanged?: (
 		change: ModeChange,
@@ -422,6 +428,8 @@ export class OrchestratorService {
 			high: (subject) => this.#isHigh(subject),
 			mode: this.#mode.mode,
 			inProgress: () => this.ports.inProgress?.(this.#laneBoard()) ?? 0,
+			inProgressSubject: (subject) => this.#inProgressSubject(subject),
+			statePrint: (event) => this.#invariant.print(event),
 			orchestrator: () => this.orchestratorAgentId,
 			settings: () => this.ports.settings(),
 			deliver: (agentId, text) => {
@@ -565,6 +573,34 @@ export class OrchestratorService {
 			return this.ports.store.all().find((one) => one.id === Number(esc[1]))
 				?.priority;
 		return this.#priorities.get(subject)?.priority;
+	}
+
+	/**
+	 * Whether a line's subject is one of the tasks in progress: an agent of
+	 * a 対応中 item, an item one of those agents is linked to, an escalation
+	 * 対応中 or one of whose agents is one of those.
+	 */
+	#inProgressSubject(subject: string): boolean {
+		const agents = this.ports.inProgressAgents?.(this.#laneBoard());
+		if (agents === undefined) return false;
+		const match = /^(agent|item|esc) (.+)$/u.exec(subject);
+		if (match === null) return false;
+		const [, kind, rest] = match as unknown as [string, string, string];
+		if (kind === "agent") return agents.has(rest);
+		if (kind === "item")
+			return (
+				findItem(this.#invariant.reading, rest)?.agents.some((id) =>
+					agents.has(id),
+				) ?? false
+			);
+		const one = this.ports.store
+			.all()
+			.find((escalation) => String(escalation.id) === rest);
+		return (
+			one !== undefined &&
+			(escalationState(one) === "in_progress" ||
+				one.agents.some((id) => agents.has(id)))
+		);
 	}
 
 	#isHigh(subject: string): boolean {

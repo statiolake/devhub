@@ -326,7 +326,10 @@ import {
 import { MAX_REQUEST_LENGTH, RequestFile } from "../orchestrator/requests.js";
 import { MemoFile } from "../orchestrator/memos.js";
 import { WorkFile, type LiveWorkAgent } from "../orchestrator/work.js";
-import { inProgressCount } from "../../ipc/orchestratorLanes.js";
+import {
+	inProgressAgentIds,
+	inProgressCount,
+} from "../../ipc/orchestratorLanes.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
 import { AppConditions } from "./appConditions.js";
@@ -7716,6 +7719,7 @@ export class AppController {
 			// No `mode`: off, as every launch starts (`mode.ts`).
 			// Saving's gate: the Sidebar's 対応中, read by the Sidebar's rule.
 			inProgress: (board) => inProgressCount(this.snapshot(), board),
+			inProgressAgents: (board) => inProgressAgentIds(this.snapshot(), board),
 			// An automatic switch says why, quietly: a notice that hides by
 			// itself and stays in the notice center, taken down when saving
 			// ends or the person chooses.

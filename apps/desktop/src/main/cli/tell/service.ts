@@ -5401,8 +5401,8 @@ function modeLine(
 			return "mode: off (everything held, GitHub not polled; every launch starts off)";
 		case "saving":
 			return auto === undefined
-				? "mode: saving (chosen): deliveries 3x as rare, none while 2+ tasks are in progress"
-				: `mode: saving (automatic: ${auto.cli} ${auto.window} at ${String(Math.round(auto.usedPercent))}%, saving_threshold ${String(auto.threshold)}%): deliveries 3x as rare, none while 2+ tasks are in progress; back to full when it resets`;
+				? "mode: saving (chosen): deliveries 3x as rare, reminders only when high"
+				: `mode: saving (automatic: ${auto.cli} ${auto.window} at ${String(Math.round(auto.usedPercent))}%, saving_threshold ${String(auto.threshold)}%): deliveries 3x as rare, reminders only when high; back to full when it resets`;
 	}
 }
 

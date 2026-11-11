@@ -17,12 +17,18 @@
  * when the mode went on: `init` already has the orchestrator read the
  * board). Never while off.
  *
- * **Saving's gate.** In saving, a batch carries only the lines about a
- * subject ranked **high**; every other line stays pending (one per subject,
- * as always) until a batch carrying `triage` — which takes everything
- * pending and standing with it — or until the mode is full. Lines that are
- * about no ranked subject (timers, the usage readout, `custom.*`) wait the
- * same way. The person's words, `init` and `triage` are never held by it.
+ * **Saving's gate** (`mode.ts`, `SAVING_CLASSES`). In saving a state change
+ * about the work (an agent stopped, on a prompt, errored, its pull request's
+ * review or checks, a wait that may be ready) goes with every batch whatever
+ * its priority; a **nudge** (a subject said again unchanged, an item nobody
+ * started, a settings timer, the usage readout, `custom.*`) goes only when
+ * its subject is ranked **high** — and, while two or more tasks are in
+ * progress, only when it is about one of them. Every other nudge stays
+ * pending (one per subject, as always) until a batch carrying `triage` —
+ * which takes everything pending and standing with it — or until the mode
+ * is full. The person's words, requests, `init` and `triage` are never held
+ * by it, and the orchestrator's own wake-ups (`timer set`, a wait's `--at`)
+ * go on time.
  */
 
 import {
@@ -53,9 +59,9 @@ export function isPriority(value: unknown): value is Priority {
 export const TRIAGE_INTERVAL_MS = 30 * 60_000;
 
 /**
- * Saving's: once an hour. Saving holds every line that is not about a high
- * subject until the next triage, so this is also how long a low line waits
- * at most; an hour is a fifth of the 5-hour window, and keeps triage itself
+ * Saving's: once an hour. Saving holds every nudge that is not about a
+ * high subject until the next triage, so this is also how long a low nudge
+ * waits at most; an hour is a fifth of the 5-hour window, and keeps triage itself
  * to a handful of turns per window.
  */
 export const SAVING_TRIAGE_INTERVAL_MS = 60 * 60_000;

@@ -29,7 +29,7 @@ export const MODES: readonly {
   {
     mode: "saving",
     label: "Saving",
-    hint: "Saving: deliveries a third as often, and none while 2 or more tasks are in progress. Your words still go at once.",
+    hint: "Saving: deliveries a third as often; what happens to the work still comes, reminders only when high. Your words still go at once.",
   },
   {
     mode: "off",
@@ -74,8 +74,8 @@ export function deliveryWhenWords(
       return "when the orchestrator has taken the last message";
     case "paused":
       return "off: sent when the mode is turned to full or saving";
-    case "saving_busy":
-      return `saving: held while ${String(when.tasks)} tasks are in progress (2 or more)`;
+    case "saving_held":
+      return `saving: ${String(when.lines)} ${when.lines === 1 ? "reminder waits" : "reminders wait"} for the next triage`;
     case "nobody":
       return "never: no orchestrator is running";
   }

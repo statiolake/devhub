@@ -3,9 +3,10 @@
  * row, and in which lane (`docs/orchestrator.md`, "The orchestrator's work in
  * the Sidebar").
  *
- * Shared: the Sidebar draws it, and main counts the 対応中 lane with it for
- * saving mode's "no nudge while two or more tasks are in progress"
- * (`main/orchestrator/mode.ts`), so the rule and the heading cannot disagree.
+ * Shared: the Sidebar draws it, and main reads the 対応中 lane with it for
+ * saving mode — how many tasks are in progress, and whose agents they are
+ * (`main/orchestrator/mode.ts`) — so the rule and the heading cannot
+ * disagree.
  *
  * **What is there.** Two kinds of item, read off the snapshot and never
  * stored here:
@@ -214,8 +215,8 @@ export function groupByLane<T>(
 
 /**
  * How many items are in 対応中 now: the number the Sidebar's 対応中 heading
- * shows, before its settle delay. Saving mode holds every nudge while this is
- * two or more.
+ * shows, before its settle delay. While this is two or more, saving mode holds
+ * the nudges about other work.
  */
 export function inProgressCount(
 	snapshot: Parameters<typeof orchestratorItems>[0],
@@ -224,4 +225,23 @@ export function inProgressCount(
 	return orchestratorItems(snapshot, board).filter(
 		(item) => item.lane === "progress",
 	).length;
+}
+
+/**
+ * The agents of the items in 対応中 now (a helper's own; a Workspace's, the
+ * orchestrator's left out): saving never holds what is about them.
+ */
+export function inProgressAgentIds(
+	snapshot: Parameters<typeof orchestratorItems>[0],
+	board: LaneBoard,
+): ReadonlySet<string> {
+	const ids = new Set<string>();
+	for (const item of orchestratorItems(snapshot, board)) {
+		if (item.lane !== "progress") continue;
+		if (item.kind === "helper") ids.add(item.agent.id);
+		else
+			for (const agent of item.workspace.agents)
+				if (agent.id !== snapshot.orchestratorAgentId) ids.add(agent.id);
+	}
+	return ids;
 }

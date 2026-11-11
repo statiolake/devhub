@@ -645,14 +645,15 @@ export interface OrchestratorNextDeliveryWire {
 	/**
 	 * `now` (within the batch window), `at` the interval's end,
 	 * `after_turn` once the orchestrator takes it, `paused` until resumed,
-	 * `nobody` with no orchestrator. Absent: nothing to send.
+	 * `saving_held` when saving holds every line (nudges waiting for the
+	 * next triage), `nobody` with no orchestrator. Absent: nothing to send.
 	 */
 	readonly when?:
 		| { readonly kind: "now" }
 		| { readonly kind: "at"; readonly at: number }
 		| { readonly kind: "after_turn" }
 		| { readonly kind: "paused" }
-		| { readonly kind: "saving_busy"; readonly tasks: number }
+		| { readonly kind: "saving_held"; readonly lines: number }
 		| { readonly kind: "nobody" };
 }
 

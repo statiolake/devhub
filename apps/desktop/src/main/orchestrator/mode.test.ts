@@ -8,11 +8,21 @@ import { describe, expect, it } from "vitest";
 import type { UsageLimitsWire } from "../../ipc/contract.js";
 import { DEFAULT_ORCHESTRATOR } from "../../model/orchestratorSettings.js";
 import { EscalationStore } from "./escalationStore.js";
-import { EventDispatcher, type OrchestratorEvent } from "./events.js";
+import {
+	BATCH_WINDOW_MS,
+	EVENT_TYPES,
+	EventDispatcher,
+	type OrchestratorEvent,
+} from "./events.js";
 import {
 	LAUNCH_MODE,
 	OrchestratorModeControl,
+	SAVING_BUSY_TASKS,
+	SAVING_CLASSES,
 	SAVING_INTERVAL_FACTOR,
+	savingClassOf,
+	savingHolds,
+	savingKindOf,
 	savingNotice,
 	usageOver,
 	type UsageOver,
@@ -126,7 +136,7 @@ describe("the mode's transitions", () => {
 		expect(control.mode).toBe("saving");
 		expect(control.auto).toEqual(OVER);
 		expect(savingNotice(change!)).toBe(
-			"Orchestrator switched to saving: Claude's 5-hour window is at 82% (saving_threshold 80%). Nudges come less often, and none while 2 or more tasks are in progress. It goes back to full when the window resets.",
+			"Orchestrator switched to saving: Claude's 5-hour window is at 82% (saving_threshold 80%). What happens to the work in progress still comes, less often; reminders wait for the hourly triage unless high. It goes back to full when the window resets.",
 		);
 	});
 
@@ -254,15 +264,15 @@ describe("saving's nudges", () => {
 		expect(saving.sent).toHaveLength(2);
 	});
 
-	it("do not come at all while 2 or more tasks are in progress, and come again below", () => {
+	it("about other work wait while 2 or more tasks are in progress, and come again below", () => {
 		const tasks = { n: 2 };
 		const saving = dispatcher("saving", tasks);
 		saving.events.flush();
 		saving.advance(60 * 60_000);
 		expect(saving.sent).toHaveLength(0);
 		expect(saving.events.preview().when).toEqual({
-			kind: "saving_busy",
-			tasks: 2,
+			kind: "saving_held",
+			lines: 1,
 		});
 		tasks.n = 1;
 		saving.events.flush();
@@ -295,7 +305,7 @@ describe("saving's nudges", () => {
 		expect(saving.sent[0]).toContain("[init]");
 	});
 
-	it("turning on into saving still holds the batch for the work in progress", () => {
+	it("turning on into saving still holds a nudge about other work while 2 are in progress", () => {
 		const saving = dispatcher("off", { n: 2 });
 		expect(saving.events.setMode("saving")).toBe(0);
 		expect(saving.sent).toHaveLength(0);
@@ -308,6 +318,356 @@ describe("saving's nudges", () => {
 		expect(run.sent).toHaveLength(1);
 		run.events.setMode("full");
 		expect(run.sent).toHaveLength(2);
+	});
+});
+
+function agentLine(id: string): OrchestratorEvent {
+	return {
+		type: "needs_action",
+		subject: { kind: "agent", agent: { id, name: id } },
+		ws: "web",
+		breach: { clause: "idle_no_escalation" },
+	};
+}
+
+describe("saving: state changes and nudges", () => {
+	it("classifies every kind of line, explicitly", () => {
+		expect(SAVING_CLASSES).toEqual({
+			init: "never_held",
+			triage: "never_held",
+			escalation_answered: "never_held",
+			"escalation.human_direct": "never_held",
+			request: "never_held",
+			"needs_action agent": "state_change",
+			"needs_action item idle_no_escalation": "state_change",
+			"needs_action item no_agent": "nudge",
+			"needs_action said again": "nudge",
+			"waiting.changed subjects_changed": "state_change",
+			"waiting.changed due": "on_time",
+			"timer.elapsed timer set": "on_time",
+			"timer.elapsed settings": "nudge",
+			"usage.threshold": "nudge",
+			"custom.*": "nudge",
+		});
+		// Every type DevHub emits has its kind.
+		const kinds = Object.keys(SAVING_CLASSES);
+		for (const type of EVENT_TYPES)
+			expect(
+				kinds.some((kind) => kind === type || kind.startsWith(`${type} `)),
+			).toBe(true);
+	});
+
+	it("reads each event's kind, a standing line said again as a nudge", () => {
+		expect(savingKindOf(agentLine("a"))).toBe("needs_action agent");
+		expect(
+			savingKindOf({
+				type: "needs_action",
+				subject: { kind: "agent", agent: { id: "a" } },
+				breach: { clause: "outside_population", outside: "closed" },
+			}),
+		).toBe("needs_action agent");
+		expect(savingKindOf(needsAction(1))).toBe("needs_action item no_agent");
+		expect(
+			savingKindOf({
+				...needsAction(1),
+				breach: { clause: "idle_no_escalation" },
+			} as OrchestratorEvent),
+		).toBe("needs_action item idle_no_escalation");
+		expect(savingClassOf(agentLine("a"), true)).toBe("nudge");
+		expect(
+			savingKindOf({
+				type: "waiting.changed",
+				escalationId: 1,
+				reasons: ["due"],
+				waitSince: 0,
+			}),
+		).toBe("waiting.changed due");
+		expect(
+			savingKindOf({
+				type: "waiting.changed",
+				escalationId: 1,
+				reasons: ["due", "subjects_changed"],
+				waitSince: 0,
+			}),
+		).toBe("waiting.changed due");
+		expect(
+			savingKindOf({
+				type: "timer.elapsed",
+				name: "slack",
+				interval: "30m",
+				source: "session",
+			}),
+		).toBe("timer.elapsed timer set");
+		expect(
+			savingKindOf({ type: "timer.elapsed", name: "sweep", interval: "30m" }),
+		).toBe("timer.elapsed settings");
+		expect(savingKindOf({ type: "custom.deploy", text: "x" })).toBe("custom.*");
+	});
+
+	it("holds a nudge not high, or about other work with 2 or more in progress; never a state change", () => {
+		const busy = SAVING_BUSY_TASKS;
+		const nudge = { class: "nudge" as const };
+		expect(
+			savingHolds({ ...nudge, high: true, inProgress: false, tasks: 0 }),
+		).toBeUndefined();
+		expect(
+			savingHolds({ ...nudge, high: false, inProgress: true, tasks: busy }),
+		).toBe("not_high");
+		expect(
+			savingHolds({ ...nudge, high: true, inProgress: false, tasks: busy }),
+		).toBe("busy");
+		expect(
+			savingHolds({ ...nudge, high: true, inProgress: true, tasks: busy }),
+		).toBeUndefined();
+		for (const one of ["state_change", "never_held", "on_time"] as const)
+			expect(
+				savingHolds({ class: one, high: false, inProgress: false, tasks: 9 }),
+			).toBeUndefined();
+	});
+});
+
+/**
+ * A saving dispatcher on a clock with what DevHub reads: the standing lines
+ * and their state, the priorities, the tasks in progress and whose.
+ */
+function savingRun(options: {
+	readonly tasks: number;
+	readonly high?: readonly string[];
+	readonly inProgress?: readonly string[];
+}) {
+	const sent: string[] = [];
+	const state = {
+		now: NOW,
+		standing: [] as { event: OrchestratorEvent; print: string }[],
+		inProgress: new Set(options.inProgress ?? []),
+	};
+	const timers: { at: number; run: () => void }[] = [];
+	const events = new EventDispatcher({
+		mode: "saving",
+		orchestrator: () => "orch",
+		settings: () => ({
+			event_prompt: "{EVENT}",
+			init_prompt: undefined,
+			events: ["*"],
+			delivery_interval: "5m",
+		}),
+		deliver: (_agent, text) => sent.push(text),
+		standing: () => state.standing.map((one) => one.event),
+		statePrint: (event) =>
+			state.standing.find((one) => one.event === event)?.print,
+		high: (subject) => (options.high ?? []).includes(subject),
+		inProgress: () => options.tasks,
+		inProgressSubject: (subject) => state.inProgress.has(subject),
+		now: () => state.now,
+		setTimer: (ms, run) => {
+			const timer = { at: state.now + ms, run };
+			timers.push(timer);
+			return {
+				cancel: () => {
+					timers.splice(timers.indexOf(timer), 1);
+				},
+			};
+		},
+	});
+	const advance = (ms: number) => {
+		const until = state.now + ms;
+		for (;;) {
+			const next = timers
+				.filter((one) => one.at <= until)
+				.sort((a, b) => a.at - b.at)[0];
+			if (next === undefined) break;
+			state.now = next.at;
+			timers.splice(timers.indexOf(next), 1);
+			next.run();
+		}
+		state.now = until;
+	};
+	return { events, sent, state, advance };
+}
+
+const MIN = 60_000;
+
+describe("saving's dispatcher: the work in progress is never held", () => {
+	it("delivers a non-high in-progress agent finishing, with 2 or more in progress, within saving's interval", () => {
+		const run = savingRun({ tasks: 3, inProgress: ["agent a", "agent b"] });
+		// A batch just went: the interval counts from it.
+		run.events.dispatch({
+			type: "waiting.changed",
+			escalationId: 7,
+			reasons: ["subjects_changed"],
+			waitSince: 1,
+		});
+		run.advance(BATCH_WINDOW_MS);
+		expect(run.sent).toHaveLength(1);
+		// Agent a (not high) ends its turn: it left 対応中 with it.
+		run.state.inProgress.delete("agent a");
+		run.state.standing = [{ event: agentLine("a"), print: "t1 idle" }];
+		run.events.flush();
+		expect(run.sent).toHaveLength(1);
+		run.advance(SAVING_INTERVAL_FACTOR * 5 * MIN - 1);
+		expect(run.sent).toHaveLength(1);
+		run.advance(1);
+		expect(run.sent).toHaveLength(2);
+		expect(run.sent[1]).toContain("agent=a");
+	});
+
+	it("says a standing line again only when its state moved, or when high", () => {
+		const run = savingRun({ tasks: 2 });
+		run.state.standing = [
+			{ event: agentLine("a"), print: "t1 checks=pending" },
+		];
+		run.events.flush();
+		expect(run.sent).toHaveLength(1);
+		// Still idle, nothing new: a reminder, held.
+		run.advance(60 * MIN);
+		expect(run.sent).toHaveLength(1);
+		expect(run.events.preview().when).toEqual({
+			kind: "saving_held",
+			lines: 1,
+		});
+		// Its pull request's checks failed: a state change, it goes.
+		run.state.standing = [
+			{ event: agentLine("a"), print: "t1 checks=failing" },
+		];
+		run.events.flush();
+		expect(run.sent).toHaveLength(2);
+		// Settled, then stopped again: new again.
+		run.state.standing = [];
+		run.events.flush();
+		run.advance(15 * MIN);
+		run.state.standing = [
+			{ event: agentLine("a"), print: "t1 checks=failing" },
+		];
+		run.events.flush();
+		expect(run.sent).toHaveLength(3);
+	});
+
+	it("holds a nudge about an unstarted low item, and a high one while 2 are in progress, until the triage", () => {
+		const run = savingRun({
+			tasks: 2,
+			high: ["item acme/app#2"],
+			inProgress: ["agent a"],
+		});
+		run.state.standing = [
+			{ event: needsAction(1), print: "t1 no_agent" },
+			{ event: needsAction(2), print: "t1 no_agent" },
+		];
+		run.events.dispatch({
+			type: "timer.elapsed",
+			name: "sweep",
+			interval: "30m",
+		});
+		run.advance(60 * MIN);
+		expect(run.sent).toHaveLength(0);
+		// A state change still goes alone, the nudges left waiting.
+		run.state.standing.push({ event: agentLine("b"), print: "t2 idle" });
+		run.events.flush();
+		expect(run.sent).toHaveLength(1);
+		expect(run.sent[0]).toContain("agent=b");
+		expect(run.sent[0]).not.toContain("acme/app#");
+		expect(run.sent[0]).not.toContain("sweep");
+		// The triage goes whatever is in progress, and takes everything.
+		run.advance(15 * MIN);
+		run.events.dispatch({ type: "triage" });
+		run.advance(1_000);
+		expect(run.sent).toHaveLength(2);
+		for (const piece of ["[triage]", "acme/app#1", "acme/app#2", "sweep"])
+			expect(run.sent[1]).toContain(piece);
+	});
+
+	it("lets a high nudge about the work in progress go with 2 or more in progress", () => {
+		const run = savingRun({
+			tasks: 2,
+			high: ["item acme/app#1", "agent a"],
+			inProgress: ["agent a"],
+		});
+		run.state.standing = [
+			{ event: agentLine("a"), print: "t1 idle" },
+			{ event: needsAction(1), print: "t1 no_agent" },
+		];
+		run.events.flush();
+		expect(run.sent).toHaveLength(1);
+		run.advance(15 * MIN);
+		// Said again: agent a is high and in progress; item 1 is other work.
+		expect(run.sent).toHaveLength(2);
+		expect(run.sent[1]).toContain("agent=a");
+		expect(run.sent[1]).not.toContain("acme/app#1");
+	});
+
+	it("sends the orchestrator's own timer at its time, alone: not batched, not held by the interval or for triage", () => {
+		const run = savingRun({ tasks: 3 });
+		run.state.standing = [{ event: needsAction(1), print: "t1 no_agent" }];
+		run.events.dispatch({
+			type: "waiting.changed",
+			escalationId: 7,
+			reasons: ["subjects_changed"],
+			waitSince: 1,
+		});
+		run.advance(BATCH_WINDOW_MS);
+		expect(run.sent).toEqual(["[waiting.changed] esc=7 — subjects_changed"]);
+		// A minute later, well inside saving's 15 minutes: at once, alone.
+		run.advance(MIN);
+		run.events.dispatch({
+			type: "timer.elapsed",
+			name: "slack",
+			interval: "30m",
+			source: "session",
+		});
+		expect(run.sent).toEqual([
+			"[waiting.changed] esc=7 — subjects_changed",
+			"[timer.elapsed] slack",
+		]);
+		// A settings timer is a periodic re-prompt: it waits.
+		run.events.dispatch({
+			type: "timer.elapsed",
+			name: "sweep",
+			interval: "30m",
+		});
+		run.advance(60 * MIN);
+		expect(run.sent).toHaveLength(2);
+		expect(run.events.held().map((one) => one.type)).toEqual(["timer.elapsed"]);
+	});
+
+	it("sends a wait's time on time too, and holds it only while off", () => {
+		const run = savingRun({ tasks: 2 });
+		run.events.dispatch({ type: "custom.x", text: "batch" });
+		run.events.dispatch({
+			type: "waiting.changed",
+			escalationId: 3,
+			reasons: ["subjects_changed"],
+			waitSince: 1,
+		});
+		run.advance(BATCH_WINDOW_MS);
+		expect(run.sent).toHaveLength(1);
+		run.events.dispatch({
+			type: "waiting.changed",
+			escalationId: 4,
+			reasons: ["due"],
+			waitSince: 1,
+		});
+		expect(run.sent[1]).toBe("[waiting.changed] esc=4 — due");
+		run.events.setMode("off");
+		run.events.dispatch({
+			type: "timer.elapsed",
+			name: "slack",
+			interval: "30m",
+			source: "session",
+		});
+		expect(run.sent).toHaveLength(2);
+		run.events.setMode("saving");
+		expect(run.sent[2]).toContain("[timer.elapsed] slack");
+	});
+
+	it("delivers a wait that may be ready, low and with 3 in progress", () => {
+		const run = savingRun({ tasks: 3 });
+		run.events.dispatch({
+			type: "waiting.changed",
+			escalationId: 4,
+			reasons: ["subjects_changed"],
+			waitSince: 1,
+		});
+		run.advance(1_000);
+		expect(run.sent).toEqual(["[waiting.changed] esc=4 — subjects_changed"]);
 	});
 });
 

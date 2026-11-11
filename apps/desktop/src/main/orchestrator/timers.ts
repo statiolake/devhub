@@ -7,6 +7,10 @@
  * one is off until DevHub restarts or `set` turns it on again. Settings that
  * change while DevHub runs move the timers nobody set by hand.
  *
+ * A `timer set` one is the orchestrator's own wake-up (`source: "session"`):
+ * the dispatcher sends it on time, in every mode but off (`mode.ts`,
+ * `SAVING_CLASSES`); a settings one is a periodic re-prompt.
+ *
  * At most one `timer.elapsed` per timer is ever pending: the dispatcher
  * folds the next into the one already waiting (`events.ts`, `merge`).
  */
@@ -112,6 +116,7 @@ export class OrchestratorTimers {
 				type: "timer.elapsed",
 				name,
 				interval: running.interval,
+				source: running.source,
 			});
 		});
 	}

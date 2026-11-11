@@ -19,6 +19,10 @@
  *    a usage window, a custom type and text). A newer statement about a
  *    pending subject replaces the older one (`merge`):
  *    a line says how the subject stands now, not what happened to it;
+ * 3a. sends **the orchestrator's own wake-ups** (`onTime`: a `timer set`
+ *    timer, a wait's `due`) at once, each its one line as a message of its
+ *    own — not batched, not held by the interval or saving; only a pause
+ *    holds them;
  * 4. just before delivery, drops what no longer needs attention (`relevant`:
  *    a wait no longer waiting, a usage window reset) as `dropped-stale`;
  * 5. delivers everything pending, and **the invariant's `needs_action`
@@ -36,10 +40,14 @@
  *    A delivery with nothing to carry is not sent.
  *
  * **The mode** (`mode.ts`): `full` is all of the above; `saving` makes the
- * interval `SAVING_INTERVAL_FACTOR` times as long and holds every batch
- * while `inProgress` is `SAVING_BUSY_TASKS` or more (a batch carrying
- * `init` excepted; the person's words are never batches); `off` is the
- * pause below.
+ * interval `SAVING_INTERVAL_FACTOR` times as long and sorts each line into a
+ * state change or a nudge (`savingClassOf`): state changes go with every
+ * batch; a nudge only when its subject is ranked high and — while
+ * `inProgress` is `SAVING_BUSY_TASKS` or more — about a task in progress
+ * (`savingHolds`). A `needs_action` line standing as it stood when it last
+ * went (`statePrint`) is said again: a nudge. A batch carrying `init` or
+ * `triage` takes everything; the person's words are never batches. `off` is
+ * the pause below.
  *
  * **Paused** (`off`) holds everything, the person's words too, and the sources that
  * cost something (GitHub) are suspended (`paused`); `resume` sends at once
@@ -64,8 +72,10 @@
  */
 
 import {
-	SAVING_BUSY_TASKS,
 	SAVING_INTERVAL_FACTOR,
+	onTime,
+	savingClassOf,
+	savingHolds,
 	type OrchestratorMode,
 } from "./mode.js";
 import {
@@ -161,6 +171,12 @@ export type OrchestratorEvent =
 			readonly type: "timer.elapsed";
 			readonly name: string;
 			readonly interval: string;
+			/**
+			 * `session`: the orchestrator set it (`orchestrator timer set`), its
+			 * own wake-up — sent on time. `settings` (or absent): one of
+			 * `[[orchestrator.timers]]`, a periodic re-prompt.
+			 */
+			readonly source?: "settings" | "session";
 	  }
 	/**
 	 * A plan window's use crossed `threshold` upward (`[orchestrator]
@@ -619,16 +635,29 @@ export interface EventDelivery {
 	readonly paused?: (paused: boolean) => void;
 	/**
 	 * How many tasks are in progress now (the Sidebar's 対応中 heading): in
-	 * saving, a batch waits while it is `SAVING_BUSY_TASKS` or more. Absent:
-	 * none.
+	 * saving, while it is `SAVING_BUSY_TASKS` or more, the nudges about other
+	 * work wait. Absent: none.
 	 */
 	readonly inProgress?: () => number;
 	/**
+	 * Whether a line's subject (`subjectOf`) is one of the tasks in progress
+	 * (an agent of a 対応中 item, an item one of them is on, an escalation
+	 * 対応中 or about one of them). Absent: none is.
+	 */
+	readonly inProgressSubject?: (subject: string) => boolean;
+	/**
 	 * Whether a line's subject (`subjectOf`) is ranked high now
-	 * (`triage.ts`): in saving only those go, until a batch carries
-	 * `triage`. Absent: every subject is (no gate).
+	 * (`triage.ts`): in saving a nudge goes only then, until a batch carries
+	 * `triage`. Absent: every subject is.
 	 */
 	readonly high?: (subject: string, event: OrchestratorEvent) => boolean;
+	/**
+	 * A standing `needs_action` line's state as DevHub reads it — since when
+	 * it has needed action, its clause, its facts — to tell a line with
+	 * something new (a state change) from one said again as it stood (a
+	 * nudge). Undefined, or absent: every standing line is new.
+	 */
+	readonly statePrint?: (event: OrchestratorEvent) => string | undefined;
 	/** The mode it starts in. Absent: `full` (tests); main starts `off`. */
 	readonly mode?: OrchestratorMode;
 	/**
@@ -652,9 +681,6 @@ interface PendingLine {
 	entry: EventLogEntry;
 }
 
-/** How often a batch saving holds for the work in progress looks again. */
-const SAVING_RECHECK_MS = 30_000;
-
 export class EventDispatcher {
 	#mode: OrchestratorMode;
 	/** Pending, one line per subject, in the order the subjects came up. */
@@ -668,6 +694,8 @@ export class EventDispatcher {
 	#awaiting: { readonly at: number; sawBusy: boolean } | undefined;
 	/** When the last batch went: the next waits `delivery_interval`. */
 	#lastBatchAt: number | undefined;
+	/** Each standing subject's `statePrint` when its line last went. */
+	readonly #said = new Map<string, string>();
 
 	constructor(private readonly delivery: EventDelivery) {
 		this.#mode = delivery.mode ?? "full";
@@ -746,9 +774,44 @@ export class EventDispatcher {
 			);
 			line.entry = entry;
 		}
+		// The orchestrator's own wake-up: at its time, alone, in any mode on.
+		if (!this.paused && onTime(entry.event)) {
+			this.#sendOnTime(orchestrator, subject);
+			this.delivery.changed?.();
+			return entry;
+		}
 		this.delivery.changed?.();
 		this.#schedule(BATCH_WINDOW_MS);
 		return entry;
+	}
+
+	/**
+	 * A wake-up the orchestrator set (`onTime`): sent now as its own message
+	 * (`event_prompt` around its one line), not batched, not held by the
+	 * interval, the pickup wait or saving — like the person's words, queued
+	 * for the orchestrator and taken when its turn ends. Re-read first: a
+	 * wait that is no longer 待機中 is dropped-stale. The batch's interval
+	 * is not moved by it.
+	 */
+	#sendOnTime(agentId: string, subject: string): void {
+		const line = this.#lines.find((one) => one.subject === subject);
+		if (line === undefined) return;
+		this.#lines.splice(this.#lines.indexOf(line), 1);
+		const now = this.#now();
+		const entry = line.entry;
+		if (this.delivery.relevant?.(entry.event) === false) {
+			entry.fate = "dropped-stale";
+			entry.reason = "no longer needs attention";
+			entry.settledAt = now;
+			return;
+		}
+		this.delivery.deliver(
+			agentId,
+			eventsMessage([entry.event], this.delivery.settings(), now),
+		);
+		entry.fate = "delivered";
+		entry.settledAt = now;
+		this.delivery.delivered?.([entry.event]);
 	}
 
 	/** The person's words, now, as messages of their own. */
@@ -777,7 +840,7 @@ export class EventDispatcher {
 	 * deliver at once — the person's held words, then what is pending and
 	 * what needs action now as one message, with no batch window, interval,
 	 * pickup wait or turn to wait for: the person asked for them (in saving,
-	 * the batch still waits while two or more tasks are in progress). The
+	 * the nudges it holds still wait). The
 	 * interval counts from this delivery. Between full and saving: the
 	 * interval and the gate change, and what waits is looked at again now.
 	 * How many lines went out.
@@ -840,15 +903,14 @@ export class EventDispatcher {
 	}
 
 	/**
-	 * Saving's priority gate: which lines go now, by their subject — none of
-	 * it outside saving, or in a batch carrying `init` or `triage` (which
-	 * takes everything with it).
+	 * Saving's gate: which lines go now (`savingHolds`) — none of it outside
+	 * saving, or in a batch carrying `init` or `triage` (which takes
+	 * everything with it).
 	 */
-	#priorityGate():
+	#savingGate():
 		| ((subject: string, event: OrchestratorEvent) => boolean)
 		| undefined {
-		const high = this.delivery.high;
-		if (this.#mode !== "saving" || high === undefined) return undefined;
+		if (this.#mode !== "saving") return undefined;
 		if (
 			this.#lines.some(
 				(line) =>
@@ -857,19 +919,38 @@ export class EventDispatcher {
 			)
 		)
 			return undefined;
-		return high;
+		const tasks = this.delivery.inProgress?.() ?? 0;
+		const high = this.delivery.high;
+		return (subject, event) =>
+			savingHolds({
+				class: savingClassOf(event, this.#saidAgain(subject, event)),
+				high: high === undefined || high(subject, event),
+				inProgress: this.delivery.inProgressSubject?.(subject) ?? false,
+				tasks,
+			}) === undefined;
 	}
 
-	/**
-	 * Saving's gate: how many tasks are in progress, when that holds the
-	 * batch now — never for one carrying `init` (a start is not a nudge).
-	 */
-	#savingHold(): number | undefined {
-		if (this.#mode !== "saving") return undefined;
-		if (this.#lines.some((line) => line.entry.event.type === "init"))
-			return undefined;
-		const tasks = this.delivery.inProgress?.() ?? 0;
-		return tasks >= SAVING_BUSY_TASKS ? tasks : undefined;
+	/** A standing line whose subject stands as it did when it last went. */
+	#saidAgain(subject: string, event: OrchestratorEvent): boolean {
+		if (event.type !== "needs_action") return false;
+		const print = this.delivery.statePrint?.(event);
+		return print !== undefined && this.#said.get(subject) === print;
+	}
+
+	/** The standing lines that went: what each said is what it stood as. */
+	#markSaid(events: readonly OrchestratorEvent[]): void {
+		for (const event of events) {
+			if (event.type !== "needs_action") continue;
+			const print = this.delivery.statePrint?.(event);
+			if (print !== undefined) this.#said.set(subjectOf(event), print);
+		}
+	}
+
+	/** Forget what was said of a subject that no longer stands. */
+	#forgetSettled(standing: readonly OrchestratorEvent[]): void {
+		const now = new Set(standing.map(subjectOf));
+		for (const subject of [...this.#said.keys()])
+			if (!now.has(subject)) this.#said.delete(subject);
 	}
 
 	/** The `needs_action` lines a delivery now would carry. */
@@ -916,15 +997,10 @@ export class EventDispatcher {
 			this.delivery.changed?.();
 			return 0;
 		}
-		if (this.#lines.length === 0 && this.#standing().length === 0) return 0;
+		const standingNow = this.#standing();
+		this.#forgetSettled(standingNow);
+		if (this.#lines.length === 0 && standingNow.length === 0) return 0;
 		const now = this.#now();
-		// Saving, with two or more tasks in progress: no nudge at all, a
-		// resume's included. Looked at again on every projection, and now and
-		// then besides (an escalation moving is not one).
-		if (this.#savingHold() !== undefined) {
-			this.#retry(SAVING_RECHECK_MS);
-			return 0;
-		}
 		const hold = force ? undefined : this.#hold(agentId, now);
 		if (hold !== undefined) {
 			if (hold.kind === "busy") {
@@ -933,9 +1009,10 @@ export class EventDispatcher {
 			return 0;
 		}
 		this.#dropStale(now);
-		// Saving: only what is about a subject ranked high goes; the rest
-		// waits for the next triage (or full), one line per subject.
-		const goes = this.#priorityGate();
+		// Saving: state changes go; a nudge only when high (and, with two or
+		// more tasks in progress, about one of them). The rest waits for the
+		// next triage (or full), one line per subject.
+		const goes = this.#savingGate();
 		const standing = this.#standing().filter(
 			(event) => goes === undefined || goes(subjectOf(event), event),
 		);
@@ -973,6 +1050,7 @@ export class EventDispatcher {
 			this.delivery.busy === undefined
 				? undefined
 				: { at: now, sawBusy: false };
+		this.#markSaid(sent.map((line) => line.entry.event));
 		this.delivery.delivered?.(sent.map((line) => line.entry.event));
 		this.delivery.changed?.();
 		// Still needing action at the next delivery: it is said again then.
@@ -1019,33 +1097,35 @@ export class EventDispatcher {
 	preview(): DeliveryPreview {
 		const now = this.#now();
 		const stale = new Set(this.#stale());
-		const goes = this.#priorityGate();
+		const goes = this.#savingGate();
+		const waiting = [
+			...this.#lines
+				.filter((line) => !stale.has(line))
+				.map((line) => ({ subject: line.subject, event: line.entry.event })),
+			...this.#standing().map((event) => ({
+				subject: subjectOf(event),
+				event,
+			})),
+		];
+		const going = waiting.filter(
+			(one) => goes === undefined || goes(one.subject, one.event),
+		);
+		const held = waiting.length - going.length;
 		const plan = composeDelivery(
 			this.#human.flatMap((entry) =>
 				isHumanInput(entry.event) ? [entry.event] : [],
 			),
-			[
-				...this.#lines
-					.filter((line) => !stale.has(line))
-					.filter(
-						(line) =>
-							goes === undefined || goes(line.subject, line.entry.event),
-					)
-					.map((line) => line.entry.event),
-				...this.#standing().filter(
-					(event) => goes === undefined || goes(subjectOf(event), event),
-				),
-			],
+			going.map((one) => one.event),
 			this.delivery.settings(),
 			now,
 		);
 		const agentId = this.delivery.orchestrator();
 		if (agentId === undefined) return { ...plan, when: { kind: "nobody" } };
 		if (this.paused) return { ...plan, when: { kind: "paused" } };
-		if (plan.batch === undefined) return plan;
-		const tasks = this.#savingHold();
-		if (tasks !== undefined)
-			return { ...plan, when: { kind: "saving_busy", tasks } };
+		if (plan.batch === undefined)
+			return held === 0
+				? plan
+				: { ...plan, when: { kind: "saving_held", lines: held } };
 		const hold = this.#hold(agentId, now);
 		return {
 			...plan,
@@ -1108,16 +1188,19 @@ export interface DeliveryPlan {
 /**
  * When the next delivery goes: now (or within the batch window), at the
  * interval's end, when the orchestrator has taken the last message or ended
- * its turn, not while paused, not while saving holds it for the work in
- * progress, never with no orchestrator.
+ * its turn, not while paused, not before the next triage when saving holds
+ * every line, never with no orchestrator.
  */
 export type DeliveryWhen =
 	| { readonly kind: "now" }
 	| { readonly kind: "at"; readonly at: number }
 	| { readonly kind: "after_turn" }
 	| { readonly kind: "paused" }
-	/** Saving, while `tasks` (two or more) are in progress. */
-	| { readonly kind: "saving_busy"; readonly tasks: number }
+	/**
+	 * Saving, with nothing to send now: `lines` nudges wait for the next
+	 * triage (or full).
+	 */
+	| { readonly kind: "saving_held"; readonly lines: number }
 	| { readonly kind: "nobody" };
 
 /** `preview()`: the plan, and when it goes (absent: nothing to send). */
