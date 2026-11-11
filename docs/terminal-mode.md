@@ -36,14 +36,14 @@ Option+¥, so under `true` it is `ESC \`; a JIS user who wants Alt mappings
 and `\` uses `"left"` and types `\` with the right Option (or keeps `false`).
 This is the same answer iTerm2 and Ghostty give.
 
-xterm.js does the encoding (its `macOptionIsMeta`); DevHub decides, per key,
-whether that switch is on (`shell/surfaces/optionKey.ts`). The left Option is
-followed from its own keydown and keyup, since a letter's keydown does not say
-which Option is held; one already held when the terminal took focus counts as
-up until it is pressed again. A refused value is `invalid_mac_option_is_meta`.
+DevHub decides, per key, whether Option is Meta
+(`shell/surfaces/optionKey.ts`). The left Option is followed from its own
+keydown and keyup, since a letter's keydown does not say which Option is held;
+one already held when the terminal took focus counts as up until it is pressed
+again. A refused value is `invalid_mac_option_is_meta`.
 
-In tmux control mode, and in the Neovim editor drawn in a pane, nothing
-encodes for DevHub: a Meta chord is named by its physical key (`code`), read
+In the terminal, and in the Neovim editor drawn in a pane, a Meta chord is
+named by its physical key (`code`), read
 through the keyboard layout (`shell/surfaces/baseKeys.ts`: what each key
 typed without Option, learned from plain keydowns, else Chromium's
 `navigator.keyboard.getLayoutMap()`, else US), never by `key`, which is the
@@ -52,8 +52,7 @@ is `M-x` to tmux and `<M-x>` to Neovim, Option+Shift+X `M-X`, Option+E
 `M-e`, Option+Up `M-Up`, and on JIS Option+@ `M-@` and Option+¥ `M-\`
 (`M-|` with Shift). A non-letter whose Shift the layout has not shown yet is
 the key and Shift (`M-S-2`). Option+Left and Right are `M-b` and `M-f`,
-Cmd+Left, Right and Backspace `C-a`, `C-e` and `C-u`, Ghostty's bindings as
-in the xterm.js terminal. A key main takes on its way into a terminal's page
+Cmd+Left, Right and Backspace `C-a`, `C-e` and `C-u`, Ghostty's bindings. A key main takes on its way into a terminal's page
 and has typed into a Neovim there (`TerminalNeovimKeyWire`) carries its
 physical key, and whether the left Option is held, which that Neovim's input
 did not see go down.
@@ -62,12 +61,12 @@ A Meta key sends only its `ESC` sequence. Option+N, E, U, I and `` ` `` are dead
 keys on a US layout, and macOS starts their composition before the page sees
 the key, so cancelling the keydown is not enough: the next key would commit
 the mark (Option+N then Option+P used to add `˜π` after `ESC n ESC p`). A
-composition that starts on a Meta key is therefore kept from xterm and its
-text dropped (`shell/surfaces/xtermSession.ts`); one that starts on any other
-key — the right Option under `"left"`, every Option under `false`, an IME — is
-untouched, so Option+E then e is still `é`. The control-mode terminal and the
-Neovim editor do the same (`MetaComposition` in `optionKey.ts`), and send the
-keys typed while that composition is dropped by their physical key: Option+N
+composition that starts on a Meta key therefore has its text dropped
+(`MetaComposition` in `optionKey.ts`, in the terminal and the Neovim editor
+alike); one that starts on any other key — the right Option under `"left"`,
+every Option under `false`, an IME — is untouched, so Option+E then e is still
+`é`. The keys typed while that composition is dropped are sent by their
+physical key: Option+N
 then Option+P is `M-n`, `M-p`; Option+N then n is `M-n`, `n`.
 
 ```toml
@@ -252,16 +251,22 @@ marker probe judges the latter). The same rule meets a future bump of the
 pinned version: the server of the previous one is refused until it is
 stopped.
 
-## The terminal in tmux control mode (in progress)
+## The terminal: tmux control mode
 
-DevHub's terminals are moving from one xterm.js per tmux _client_ (tmux
-draws the whole window, status line and pane borders included, into one
-grid) to **tmux control mode** (`tmux -C`, the protocol iTerm2's integration
-uses): one control client per session, DevHub keeps a terminal engine per
-_pane_, fed by that pane's `%output`, and draws every pane itself with the
-Neovim editor's cell painter (`shell/neovim/painter.ts`). Panes, borders,
-the status line and the window tabs become DevHub's; tmux keeps the
-sessions, the processes, the layout and the key bindings.
+Every DevHub terminal is a **tmux control client** (`tmux -C`, the protocol
+iTerm2's integration uses): one control client per session, a terminal
+engine per _pane_, fed by that pane's `%output`, and every pane drawn by
+DevHub itself with the Neovim editor's cell painter
+(`shell/neovim/painter.ts`). Panes, borders, the status line and the window
+tabs are DevHub's; tmux keeps the sessions, the processes, the layout and
+the key bindings.
+
+It used to be one xterm.js per tmux _client_ (tmux drew the whole window,
+status line and pane borders included, into one grid), with control mode
+behind `[terminal] tmux_control_mode` while both existed. That path went in
+phase 4 (below): there is no other terminal, and `tmux_control_mode` is a
+retired key — a file that still has it loads, with a notice that the key is
+gone and control mode is always on, and the next save drops it.
 
 What tmux does not draw for a control client — `display-popup`,
 `display-menu`, `command-prompt` / `confirm-before`, choose-tree and copy
@@ -408,23 +413,36 @@ em under the font's own baseline for Source Code Pro (2 px at 12 px; 2.45
 at 15): its descenders touched the row below. Here the capitals are
 centred in the row.
 
-### The setting, while both paths exist
+### Where the client runs
 
-`[terminal] tmux_control_mode = true` selects the control-mode terminal;
-the xterm.js path stays the default until the new one does everything the
-old one does. It reaches the pages with the appearance
-(`terminalTmuxControlMode`); a surface reads it when it attaches and asks
-main for a control client (`mode: "control"` on the attach). Main runs that
-client only in the pty host — the attach argv with `-C`, on pipes, and over
-SSH with `ssh -T` rather than `-tt`, since a terminal would echo the
-commands and cut them at its line length — and refuses it where the host is
-not available. Written to `settings.toml` only when on.
+A surface's attach asks main for a control client; main resolves the exact
+session and runs the client in the pty host (`main/ptyHost/`,
+`docs/process-model.md`) — the attach argv with `-C`, on pipes, and over SSH
+with `ssh -T` rather than `-tt`, since a terminal would echo the commands
+and cut them at its line length. Nowhere else: there is no client in main
+any more, so an attach the host cannot take is refused as
+`pty_unavailable`.
+
+**When the pty host ends.** Its clients end with it; the sessions are
+tmux's and are untouched. Each surface that had a client there is told
+(`ended`, `host_restarted`) and attaches a new one 250 ms later, in a new
+host. A host that ends three times within a minute is not started again
+(`PtyHostClient`, `MAX_RESTARTS`): the surfaces say "DevHub's terminals have
+stopped", calmly, with the reason folded under it and one action, **Restart
+Terminals**, which is also the palette's `restart_terminals` ("Restart
+Terminals"). It forgets those ends, ends whatever host there is (its exit
+then is not counted), and tells every page (`TERMINAL_CHANNELS.revived`):
+each surface without a client attaches again, in a new host, to the same
+session. Checked in the app by killing the pty host from outside, once (the
+terminals came back by themselves) and three times in a row (the failure,
+then Restart Terminals: every terminal back on its session, the shell's
+history and a running `top` as they were).
 
 ### The surface
 
-With the key on, every terminal surface — a Workspace's, an Agent's — is
-`shell/terminal/control/ControlTerminalSurface.tsx`; `TerminalSurface`
-picks it by the setting and mounts the other one when it changes.
+Every terminal surface — a Workspace's, an Agent's — is
+`shell/terminal/control/ControlTerminalSurface.tsx` (`TerminalSurface` is
+its name for the pages that mount one).
 
 - **Drawing.** Each pane of the shown window is a grid of the Neovim
   editor's `GridPainter` at the rectangle tmux's layout gives it
@@ -476,8 +494,7 @@ picks it by the setting and mounts the other one when it changes.
 - **Mouse.** A click selects its pane; a pane whose program asked for SGR
   mouse reports gets presses, releases and the wheel. Scrolling back
   through history is copy mode's (phase 3).
-- **Connection.** As the xterm.js surface (b73a4f71): a session that ended
-  is made again every time, and said to be disconnected only when one made
+- **Connection.** A session that ended is made again every time, and said to be disconnected only when one made
   again ends within 3 s with nothing typed (a key or a paste, not the
   stream); Retry and every connect put the keys in the terminal when it is
   on screen and nothing outside it has them. A surface never shown is not
@@ -546,9 +563,10 @@ Measured in the app (Xvfb, the person's tmux.conf, zsh, a busy 4-core
 machine at load 6): key to paint p50 6.3 ms, p90 9.0 ms, max 17.3 ms over 40
 keys (keydown to the painter's first glyph after it).
 
-### The two paths, side by side
+### Against the xterm.js path it replaced
 
-Measured on one machine in one run of the app (Xvfb, software compositing,
+What decided that control mode could be the only terminal. Measured on one
+machine in one run of the app (Xvfb, software compositing,
 4 cores at load 0.4–1.5, the person's tmux.conf, zsh, one Workspace terminal
 192×60), switching `tmux_control_mode` between runs. Key to paint is the
 keydown in the terminal's page to the first draw after it: the painter's
@@ -597,17 +615,16 @@ painter's canvas every frame under Xvfb's software compositing; it is not
 cheap to change here, and with the Mac's GPU compositing it is to be
 measured before anything is changed.
 
-### Next (phase 2 still open)
+### Next
 
 - The painter's frames cost the compositor more than xterm.js' DOM rows
-  under Xvfb (below); to be measured again on the person's Mac, where
-  xterm.js draws with WebGL and both composite on the GPU, before the
-  xterm.js path is deleted.
+  did under Xvfb (above); to be measured on the person's Mac, where both
+  composite on the GPU.
 - `faint` is drawn mixed, not with a font weight.
 
 ### Handoff: where phases 3 and 4 start
 
-**State (phase 3 done but for what is listed below; next is phase 4).**
+**State (phases 3 and 4 done but for what is listed below).**
 Everything tmux does not draw for a control client is now DevHub's (below,
 "What waits on a control client"): `display-popup` (with `-e`, `-b none`
 and the mouse), `command-prompt`/`confirm-before`, `display-menu` and the
@@ -626,9 +643,9 @@ binding that holds a waiting command beside others (not one command, not an
 
 Open, in order:
 
-- **Phase 4**: the tabs are done (mock A, above, "The window tabs");
-  deleting the xterm.js path, the pty clients of the pty host and the
-  `tmux_control_mode` key together is next.
+- **Phase 4** is done: the tabs (mock A, above, "The window tabs"), and the
+  xterm.js path, the pty clients of the pty host and the
+  `tmux_control_mode` key deleted together.
 - **The GPU process's compositing** (36–40 % under Xvfb) and the in-app
   `cat` time are to be measured on the Mac (see "Throughput, profiled").
 - Smaller: a drag or double-click selection in copy mode (tmux takes the
@@ -673,9 +690,7 @@ node-pty: false` is pnpm 11's format); without that line it writes the
   marks) carries the y / Y copies. `%paste-buffer-changed` is where a
   copy that tmux made (`copy-pipe`, `load-buffer -w`) reaches the system
   clipboard.
-- **Tabs (phase 4).** Done: "The window tabs", above. Next, delete the
-  xterm.js path, the pty clients of the pty host and the
-  `tmux_control_mode` key together.
+- **Tabs (phase 4).** Done: "The window tabs", above.
 
 ### What waits on a control client, until DevHub draws it
 
@@ -897,8 +912,8 @@ What DevHub does not draw yet is not let do that
   repeats and `switch-client -T`. The prefix is held until the key after it
   says which binding it is; a binding whose command waits on the client
   (the commands above, their aliases, inside an `if-shell` too) is not sent,
-  and the page says so quietly ("C-q m: display-popup is not available in
-  control mode yet"). A table tmux was already in is reset. Keys typed
+  and the page says so quietly ("C-q m: display-popup is not drawn by DevHub
+  yet"). A table tmux was already in is reset. Keys typed
   before the bindings were first read wait for them.
 - A key bound to nothing in the root table is the pane's, and goes to it
   as itself (`send-keys` without `-K`, `KeyRoute.pane`): tmux would only
@@ -922,7 +937,7 @@ DevHub's own.
 ### Phases
 
 1. **Engine** — done (above).
-2. **Control-mode core** behind the setting: one control client per
+2. **Control-mode core**, behind a setting then: one control client per
    session in a utility process, the panes' layout, an engine per pane fed
    by `%output`, flow control (`pause-after`, resync by `capture-pane`), the
    painter drawing each pane with native borders, keys through `send-keys`
@@ -932,4 +947,4 @@ DevHub's own.
    a pane DevHub shows as a float), menus, prompts, choose-tree, copy mode
    with the person's copy-mode-vi bindings and the prompt-mark copy.
 4. **The status line as DevHub's tabs**, then control mode as the only
-   terminal: the xterm.js path and the setting deleted.
+   terminal: the xterm.js path and the setting deleted — done.

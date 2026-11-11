@@ -193,6 +193,8 @@ export interface ChordHost {
 	openTaskManager(): void;
 	/** Put the `devhub` launcher on the PATH, and say where it went. */
 	installCli(): void;
+	/** Start the pty host afresh; every terminal attaches again. */
+	restartTerminals(): void;
 	/** Every command, by name — `Cmd+Q :`. */
 	openCommandPalette(): void;
 }
@@ -340,6 +342,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "install-cli":
 			host.installCli();
+			return;
+		case "restart-terminals":
+			host.restartTerminals();
 			return;
 		case "open-command-palette":
 			host.openCommandPalette();

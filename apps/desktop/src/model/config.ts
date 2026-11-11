@@ -504,18 +504,19 @@ export interface AppearanceConfig {
    * ours to misplace. Raising it is still a viewer's choice; it just is not a
    * choice DevHub makes for them.
    *
-   * That is xterm.js. The control-mode panes and every Neovim DevHub draws
-   * take the same row (`shell/neovim/cellFont.ts`, `cellMetrics`) but set
-   * the text on the font's own baseline, centred in it.
+   * That is xterm.js, which DevHub's terminal used to be. The panes and
+   * every Neovim DevHub draws take the same row (`shell/neovim/cellFont.ts`,
+   * `cellMetrics`) but set the text on the font's own baseline, centred in
+   * it.
    */
   readonly terminalLineHeight: number;
   /**
    * How far one notch of the wheel, or one flick of the trackpad, scrolls an
    * Agent pane.
    *
-   * A multiplier on what the mouse reports, in lines. xterm.js turns a wheel
-   * event into at most one report per event, so at 1 a trackpad flick moves a
-   * single line whether tmux is reading the mouse or DevHub is showing its own
+   * A multiplier on what the mouse reports, in lines. One report per wheel
+   * event is what a terminal gives on its own, so at 1 a trackpad flick moves
+   * a single line whether tmux is reading the mouse or DevHub is showing its own
    * scrollback — far heavier than every other terminal on the machine. Must be
    * between 0.1 and 20; zero or less would be a pane that does not scroll at
    * all, which is a setting nobody wants and a bug report DevHub would have to
@@ -554,13 +555,6 @@ export interface ScratchConfig {
 export interface TerminalConfig {
   /** `[terminal] mac_option_is_meta`. See `model/macOption.ts`. */
   readonly macOptionIsMeta: MacOptionIsMeta;
-  /**
-   * `[terminal] tmux_control_mode`: terminals are tmux control clients that
-   * DevHub draws pane by pane (`docs/terminal-mode.md`). Default `false`.
-   * The key exists only while both terminals do: it is deleted, not kept,
-   * when control mode is the only one.
-   */
-  readonly tmuxControlMode: boolean;
 }
 
 export interface ProjectsConfig {
@@ -803,7 +797,6 @@ export function defaultConfig(): Config {
     themes: [],
     terminal: {
       macOptionIsMeta: DEFAULT_MAC_OPTION_IS_META,
-      tmuxControlMode: false,
     },
     keybindings: defaultKeybindings(),
     workspaceSources: defaultWorkspaceSources(),
@@ -979,6 +972,8 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
     "it discarded VS Code workbenches, and DevHub has no VS Code any more",
   "runtimes.tmux":
     "DevHub runs its own tmux, inside the app (and the same one on an SSH host), never one from your PATH",
+  "terminal.tmux_control_mode":
+    "DevHub's terminals are always tmux control clients now, every pane drawn by DevHub; there is no other terminal to choose (docs/terminal-mode.md)",
   "runtimes.herdr":
     "an Agent is now a tmux session on DevHub's own socket, so there is no separate Agent runtime to point at; the program to run is each profile's own `command`",
 };
@@ -1546,9 +1541,6 @@ export function validateConfig(config: Config): void {
   validateThemes(config.themes);
   if (!isMacOptionIsMeta(config.terminal.macOptionIsMeta)) {
     fail("invalid_mac_option_is_meta", "terminal.mac_option_is_meta");
-  }
-  if (typeof config.terminal.tmuxControlMode !== "boolean") {
-    fail("invalid_type", "terminal.tmux_control_mode");
   }
   validateKeybindings(config.keybindings);
   validateWorkspaceSources(config.workspaceSources);
@@ -2177,15 +2169,7 @@ export function interpretConfig(document: unknown): Config {
   );
 
   const terminalTable = requireTable(table["terminal"] ?? {}, "terminal");
-  checkKeys(
-    terminalTable,
-    ["mac_option_is_meta", "tmux_control_mode"],
-    "terminal",
-  );
-  const tmuxControlMode = terminalTable["tmux_control_mode"] ?? false;
-  if (typeof tmuxControlMode !== "boolean") {
-    fail("invalid_type", "terminal.tmux_control_mode");
-  }
+  checkKeys(terminalTable, ["mac_option_is_meta"], "terminal");
   const macOptionIsMeta =
     terminalTable["mac_option_is_meta"] ?? DEFAULT_MAC_OPTION_IS_META;
   if (!isMacOptionIsMeta(macOptionIsMeta)) {
@@ -2326,7 +2310,7 @@ export function interpretConfig(document: unknown): Config {
       ),
     },
     themes: customThemesFromValue(table["themes"]),
-    terminal: { macOptionIsMeta, tmuxControlMode },
+    terminal: { macOptionIsMeta },
     keybindings: {
       prefix: optionalString(
         keybindingsTable,
@@ -2533,9 +2517,6 @@ export function configDocument(config: Config): Record<string, TomlValue> {
         }),
     terminal: {
       mac_option_is_meta: config.terminal.macOptionIsMeta,
-      // Written only when on: a file that never asked for it stays without
-      // a key that is to be deleted.
-      ...(config.terminal.tmuxControlMode ? { tmux_control_mode: true } : {}),
     },
     keybindings: {
       prefix: config.keybindings.prefix,

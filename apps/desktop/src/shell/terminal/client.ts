@@ -2,7 +2,7 @@
  * The page's terminal client.
  *
  * One client is bound to one mounted surface, by the channel id it allocates:
- * every request it sends and every frame it receives belong to that surface and
+ * every request it sends and every message it receives belong to that surface and
  * no other. This is where a refusal from the main process — a value on the
  * wire, so the contract's error code survives the bridge — becomes a thrown
  * `TerminalFailure`, and it is the only place that conversion happens.
@@ -13,29 +13,21 @@
 
 import { surfaceBridge } from "./surfaceBridge";
 import {
-  MAX_INPUT_BYTES,
   TerminalFailure,
   type DevhubTerminalApi,
-  type TerminalAckRequest,
   type TerminalAttachReceipt,
   type TerminalAttachRequest,
   type TerminalDetachRequest,
-  type TerminalInputRequest,
-  type TerminalResizeRequest,
   type TerminalResult,
 } from "../../ipc/terminal";
 import type { ControlRequest } from "../../ipc/terminalControl";
 
 export type {
-  TerminalAckRequest,
   TerminalAttachReceipt,
   TerminalAttachRequest,
   TerminalDetachRequest,
-  TerminalInputRequest,
   TerminalReceipt,
-  TerminalResizeRequest,
   TerminalSize,
-  TerminalFrame,
 } from "../../ipc/terminal";
 
 /** The transport is exactly what the preload exposes; tests supply a fake. */
@@ -43,16 +35,18 @@ export type TerminalTransport = DevhubTerminalApi;
 
 export interface TerminalClient {
   readonly channelId: string;
+  /** `onMessage`: the control client's news (`ControlToPage`), in order. */
   attach(
     request: TerminalAttachRequest,
-    onFrame: (value: unknown) => void,
+    onMessage: (value: unknown) => void,
   ): Promise<TerminalAttachReceipt>;
-  input(request: TerminalInputRequest): Promise<void>;
-  resize(request: TerminalResizeRequest): Promise<void>;
-  acknowledge(request: TerminalAckRequest): Promise<void>;
   detach(request: TerminalDetachRequest): Promise<void>;
-  /** A request to a control client (`control/`); only for one in the pty host. */
+  /** A request to the control client (`control/`). */
   control(request: ControlRequest): Promise<void>;
+  /** "Restart Terminals": the pty host started afresh, every terminal attached again. */
+  restart(): Promise<void>;
+  /** The terminals were restarted, from this page or any other; the unsubscribe. */
+  onRevived(listener: () => void): () => void;
 }
 
 /**
@@ -84,17 +78,8 @@ export function createTerminalClient(
 ): TerminalClient {
   return {
     channelId,
-    async attach(request, onFrame) {
-      return unwrap(await transport.attach(channelId, request, onFrame));
-    },
-    async input(request) {
-      unwrap(await transport.input(channelId, request));
-    },
-    async resize(request) {
-      unwrap(await transport.resize(channelId, request));
-    },
-    async acknowledge(request) {
-      unwrap(await transport.acknowledge(channelId, request));
+    async attach(request, onMessage) {
+      return unwrap(await transport.attach(channelId, request, onMessage));
     },
     async detach(request) {
       unwrap(await transport.detach(channelId, request));
@@ -102,31 +87,9 @@ export function createTerminalClient(
     async control(request) {
       unwrap(await transport.control(channelId, request));
     },
+    restart: () => transport.restart(),
+    onRevived: (listener) => transport.onRevived(listener),
   };
-}
-
-export function terminalInputChunks(
-  value: Uint8Array,
-): readonly (readonly number[])[] {
-  const chunks: (readonly number[])[] = [];
-  let offset = 0;
-  while (offset < value.byteLength) {
-    let end = Math.min(value.byteLength, offset + MAX_INPUT_BYTES);
-    // xterm emits UTF-8 text. Keep a paste/code point in one request whenever
-    // possible; malformed bytes are still forwarded losslessly and are only
-    // split at the hard byte limit the main process enforces.
-    if (end < value.byteLength) {
-      while (end > offset && (value[end] & 0xc0) === 0x80) {
-        end -= 1;
-      }
-      if (end === offset) {
-        end = Math.min(value.byteLength, offset + MAX_INPUT_BYTES);
-      }
-    }
-    chunks.push(Array.from(value.subarray(offset, end)));
-    offset = end;
-  }
-  return chunks;
 }
 
 /**

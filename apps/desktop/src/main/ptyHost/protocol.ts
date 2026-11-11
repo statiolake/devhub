@@ -2,10 +2,11 @@
  * What main, the pty host and the pages say to each other (`client.ts`,
  * `host.ts`, `preload/terminal.ts`).
  *
- * Main asks the host to start and stop clients and hands it each page's port;
- * the host says when a client has started, could not start, or has ended.
- * A page and the host talk over the page's port: frames one way; input,
- * resizes and acks the other, each answered with a `TerminalResult`.
+ * Main asks the host to start and stop control clients and hands it each
+ * page's port; the host says when a client has started, could not start, or
+ * has ended. A page and the host talk over the page's port: the client's news
+ * one way, the page's requests the other, each answered with a
+ * `TerminalResult`.
  */
 
 import type {
@@ -25,11 +26,10 @@ export interface OpenSpec {
 	readonly size: TerminalSize;
 	/** The page's number, as `page` gave it. */
 	readonly page: number;
-	/** The page's channel id for this surface: what its frames are sent under. */
+	/** The page's channel id for this surface: what its news is sent under. */
 	readonly channelId: string;
+	/** The tmux control client (`control/controlClient.ts`), run on pipes. */
 	readonly launch: PtyLaunch;
-	/** A tmux control client (`control/controlClient.ts`), run on pipes. */
-	readonly control?: boolean;
 	/** What its popups are opened as (`control/popup.ts`), in a pty. */
 	readonly popupLaunch?: PtyLaunch;
 }
@@ -72,28 +72,14 @@ export type FromPtyHost =
 	  };
 
 export type PageToPtyHost = {
-	/** `control`: a `ControlRequest`, for a control client. */
-	readonly type: "input" | "resize" | "ack" | "control";
+	/** A `ControlRequest`, for a control client. */
+	readonly type: "control";
 	readonly rid: number;
 	/** The request as the page sent it; validated by the host. */
 	readonly request: unknown;
 };
 
 export type PtyHostToPage =
-	| {
-			readonly type: "frame";
-			readonly channelId: string;
-			/**
-			 * Whose frame: a channel's next attachment can start while the one
-			 * it replaced still has frames on the way.
-			 */
-			readonly attachmentId: string;
-			readonly sequence: number;
-			/** An exited or error frame: nothing follows it on this channel. */
-			readonly last: boolean;
-			/** `encodeTerminalFrame`'s bytes, as main's frames are. */
-			readonly frame: Uint8Array;
-	  }
 	| {
 			/** A control client's news for the page that drew it. */
 			readonly type: "control";

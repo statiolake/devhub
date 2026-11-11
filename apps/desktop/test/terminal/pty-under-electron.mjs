@@ -1,6 +1,6 @@
 /* The lint config gives Node's globals to `.ts`/`.tsx` only, and this file is
    plain JavaScript because its interpreter has no TypeScript. */
-/* global Buffer, URL, TextDecoder, TextEncoder, process, setTimeout, clearTimeout */
+/* global Buffer, URL, TextEncoder, process, setTimeout, clearTimeout */
 
 /**
  * The whole terminal, end to end, on the real native module and a real tmux.
@@ -8,8 +8,8 @@
  * This is the one terminal test that cannot run under plain Node: `node-pty` is
  * a native module built for VS Code's Electron, so the test runs under that
  * binary as Node (`run-under-electron.sh`). Everything else about the terminal
- * — framing, the ack window, the input ledger, the marker protocol, the socket
- * transitions — is tested under vitest.
+ * — the ledger, the control client against a real tmux, the marker protocol,
+ * the socket transitions — is tested under vitest.
  *
  * Ported from the Rust `real_tmux_pty_roundtrip_resize_detach_and_replacement_preserve_session`.
  * What it proves is the property the tmux runtime exists for: the shell lives in
@@ -23,6 +23,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -45,11 +46,8 @@ import {
   SCRATCH_TARGET,
 } from "../../out/test-terminal/main/terminal/ports.js";
 import { OperationDeadline } from "../../out/test-terminal/main/terminal/command.js";
-import {
-  decodeTerminalFrame,
-  encodeTerminalFrame,
-} from "../../out/test-terminal/ipc/terminal.js";
 import { PtyHost } from "../../out/test-terminal/main/ptyHost/host.js";
+import { LibGhosttyVt } from "../../out/test-terminal/main/ptyHost/vt/libghosttyVt.js";
 
 /** Scratch lives inside the repository, never in the OS temp directory. */
 const SCRATCH_ROOT = fileURLToPath(
@@ -191,259 +189,6 @@ test("node-pty, DevHub's own dependency, drives a real child", async (t) => {
   pty.kill();
 });
 
-test(
-  "a terminal surface is a tmux client, and detaching it keeps the session",
-  { skip: TMUX === undefined ? "tmux is not installed" : false },
-  async (t) => {
-    const home = scratchDirectory("tmux-pty");
-    const socket = `dhpty${process.pid}`;
-    t.after(() => {
-      killTmuxServer(socket);
-      rmSync(home, { recursive: true, force: true });
-    });
-
-    await withSocketGuard(socket, async () => {
-      const runtime = new TmuxTerminalRuntime({
-        context: { home, environment: { ...process.env } },
-        tmux: { kind: "resolved", value: { path: TMUX, basename: "tmux" } },
-        shell: { path: "/bin/sh", basename: "sh" },
-        tmuxArgs: [],
-        effectiveSocketName: socket,
-        timeoutMs: 15_000,
-        bootstrapDirectory: home,
-      });
-      const surfaces = new TerminalSurfaces({
-        // One real tmux, on this machine. The lookup asserts the machine it
-        // is asked for rather than ignoring it: a target naming another one
-        // and being answered with this server would be a green test about
-        // nothing.
-        runtimeFor: (machine) => {
-          assert.equal(machine, "local");
-          return Promise.resolve(runtime);
-        },
-        attachments: new AttachmentManager({
-          randomBytes: (count) => new Uint8Array(randomBytes(count)),
-          environment: () => terminalEnvironment(process.env),
-        }),
-      });
-
-      const frames = [];
-      let onFrame = () => undefined;
-      const sink = (frame) => {
-        // Encode and decode exactly as the wire does, so the test only ever
-        // sees frames the page could have parsed.
-        const decoded = decodeTerminalFrame(encodeTerminalFrame(frame));
-        frames.push(decoded);
-        onFrame(decoded);
-        return true;
-      };
-
-      const receipt = await surfaces.attach({
-        target: SCRATCH_TARGET,
-        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-        viewLabel: "real-pty-window",
-        size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
-        sink,
-      });
-      const identity = {
-        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-        attachmentId: receipt.attachmentId,
-        targetGeneration: receipt.targetGeneration,
-        viewLabel: "real-pty-window",
-      };
-      assert.equal(frames.length, 1);
-      assert.equal(frames[0].type, "started");
-      assert.equal(frames[0].sequence, 0);
-
-      const text = () =>
-        frames
-          .filter((frame) => frame.type === "output")
-          .map((frame) => Buffer.from(frame.bytes).toString("utf8"))
-          .join("");
-
-      const waitForText = (needle, what) =>
-        deadline(
-          new Promise((resolve) => {
-            const check = () => {
-              if (text().includes(needle)) resolve();
-            };
-            onFrame = (frame) => {
-              // Acknowledging is what keeps the output window open; a
-              // view that never acknowledges is disconnected by design.
-              if (frame.type === "output") {
-                surfaces.acknowledge(identity, frame.sequence);
-              }
-              check();
-            };
-            check();
-          }),
-          20_000,
-          what,
-        );
-
-      let sequence = 0;
-      const type = (line) => {
-        sequence += 1;
-        surfaces.input(identity, sequence, new TextEncoder().encode(line));
-      };
-
-      // The quotes split the marker in the command the shell echoes back, so
-      // waiting for it cannot match the echo of the keystrokes themselves.
-      type("printf 'DEVHUB_PTY_''ROUNDTRIP\\n'\r");
-      await waitForText("DEVHUB_PTY_ROUNDTRIP", "the pane to echo the marker");
-
-      await surfaces.resize(identity, {
-        cols: 100,
-        rows: 30,
-        pixelWidth: 0,
-        pixelHeight: 0,
-      });
-
-      /**
-       * The pane must fill the client exactly — no more.
-       *
-       * A window is the client minus the rows tmux draws itself in, so on a
-       * session with a status bar a 30-row client gives a 29-row window. The
-       * pane may never be told it is taller than that: the extra row would be
-       * where the status bar is, and a full-screen TUI's bottom line would be
-       * drawn there and never seen. DevHub used to force exactly that by
-       * calling `resize-window` with the client's own rows.
-       *
-       * The expectation is computed from tmux's own chrome rather than
-       * written as a number, so this holds for a status bar that is there and
-       * one that is not.
-       */
-      const geometry = async () => {
-        const message = await runtime.runTmux(
-          socket,
-          [
-            "display-message",
-            "-p",
-            "-t",
-            "scratch:0.0",
-            "#{pane_width} #{pane_height} #{client_height} #{status} #{window-size}",
-          ],
-          home,
-          new CancellationToken(),
-          OperationDeadline.in(15_000),
-        );
-        const [width, height, client, status, mode] = message.stdout
-          .toString("utf8")
-          .trim()
-          .split(/\s+/);
-        // tmux spells the status bar as off, on, or a count of lines.
-        const lines =
-          status === "off" ? 0 : status === "on" ? 1 : Number(status);
-        assert.ok(
-          Number.isInteger(lines),
-          `tmux reported a status bar this test cannot read: ${status}`,
-        );
-        return {
-          width: Number(width),
-          height: Number(height),
-          client: Number(client),
-          status: lines,
-          mode,
-        };
-      };
-
-      const resizeDeadline = Date.now() + 15_000;
-      let pane = await geometry();
-      while (
-        Date.now() < resizeDeadline &&
-        !(pane.width === 100 && pane.client === 30)
-      ) {
-        await sleep(20);
-        pane = await geometry();
-      }
-      assert.equal(
-        pane.width,
-        100,
-        "the pane must observe the requested width",
-      );
-      assert.equal(
-        pane.client,
-        30,
-        "the client must observe the requested rows",
-      );
-      assert.equal(
-        pane.height,
-        30 - pane.status,
-        "the pane must be the client's rows minus tmux's own status lines",
-      );
-      // Left at its default, the window keeps following the client. An
-      // explicit `resize-window` latches it to `manual` for good, and tmux
-      // then ignores every later resize.
-      assert.equal(
-        pane.mode,
-        "latest",
-        "the window must keep following the client",
-      );
-
-      await sleep(250);
-      type("printf 'DEVHUB_PTY_''SIZE:'; stty size; printf '\\n'\r");
-      await waitForText(
-        `${30 - pane.status} 100`,
-        "the shell to observe the size it can actually draw in",
-      );
-
-      surfaces.detach(identity);
-      assert.equal(surfaces.attachmentCount, 0);
-      const survivors = await runtime.listSessions(
-        socket,
-        new CancellationToken(),
-        OperationDeadline.in(15_000),
-      );
-      // The whole point: the client is gone and the session is not.
-      assert.ok(
-        survivors.some((session) => session.name === "scratch"),
-        "the tmux session must survive its client",
-      );
-
-      // Attaching again replaces the view's client only. The stale receipt is
-      // refused by identity, and the session underneath is untouched.
-      const replacement = await surfaces.attach({
-        target: SCRATCH_TARGET,
-        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-        viewLabel: "real-pty-window",
-        size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
-        sink: () => true,
-      });
-      const latest = await surfaces.attach({
-        target: SCRATCH_TARGET,
-        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-        viewLabel: "real-pty-window",
-        size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
-        sink: () => true,
-      });
-      assert.notEqual(replacement.attachmentId, latest.attachmentId);
-      assert.throws(
-        () =>
-          surfaces.input(
-            {
-              surfaceKey:
-                "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-              attachmentId: replacement.attachmentId,
-              targetGeneration: replacement.targetGeneration,
-              viewLabel: "real-pty-window",
-            },
-            1,
-            new TextEncoder().encode("stale\r"),
-          ),
-        (error) => error.code === "wrong_attachment",
-      );
-
-      surfaces.detach({
-        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-        attachmentId: latest.attachmentId,
-        targetGeneration: latest.targetGeneration,
-        viewLabel: "real-pty-window",
-      });
-      assert.equal(surfaces.attachmentCount, 0);
-    });
-  },
-);
-
 /** A port pair whose ends deliver a task later, as `MessagePortMain` does. */
 function portPair() {
   const make = () => {
@@ -478,79 +223,221 @@ function portPair() {
   return [a, b];
 }
 
-test("the pty host runs a real PTY's client with its page over a port", async () => {
-  const toMain = [];
-  const host = new PtyHost({
-    post: (message) => toMain.push(message),
-    spawn: openPty,
+/** A tmux control client on pipes, as the pty host's entry starts one. */
+function spawnPipes(launch) {
+  const child = spawn(launch.file, [...launch.args], {
+    cwd: launch.cwd,
+    env: launch.env,
+    stdio: ["pipe", "pipe", "pipe"],
   });
-  const [hostEnd, pageEnd] = portPair();
-  const frames = [];
-  const replies = new Map();
-  pageEnd.on("message", ({ data }) => {
-    if (data.type === "frame") frames.push(decodeTerminalFrame(data.frame));
-    else replies.get(data.rid)?.(data.result);
-  });
-  host.receive({ type: "page", page: 1, viewLabel: "9" }, [hostEnd]);
-  host.receive({
-    type: "open",
-    rid: 1,
-    spec: {
-      id: "a".repeat(32),
-      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-      viewLabel: "9",
-      targetGeneration: 5,
-      size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
-      page: 1,
-      channelId: "c",
-      launch: {
-        file: "/bin/sh",
-        args: [],
-        cwd: "/",
-        cols: 80,
-        rows: 24,
-        pixelWidth: 0,
-        pixelHeight: 0,
-        env: terminalEnvironment({ PATH: process.env.PATH, PS1: "$ " }),
-      },
-    },
-  });
-  assert.deepEqual(toMain, [{ type: "opened", rid: 1 }]);
-  const text = () =>
-    frames
-      .filter((frame) => frame.type === "output")
-      .map((frame) => new TextDecoder().decode(frame.bytes))
-      .join("");
-  const reply = await new Promise((resolve) => {
-    replies.set(1, resolve);
-    pageEnd.postMessage({
-      type: "input",
-      rid: 1,
-      request: {
-        schemaVersion: 1,
-        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-        attachmentId: "a".repeat(32),
-        targetGeneration: 5,
-        inputSequence: 1,
-        bytes: [...new TextEncoder().encode("echo pty-host-$((40+2))\r")],
-      },
+  child.stdin.on("error", () => undefined);
+  return {
+    write: (text) => child.stdin.write(text),
+    onData: (listener) =>
+      child.stdout.on("data", (chunk) => listener(new Uint8Array(chunk))),
+    onExit: (listener) =>
+      child.on("exit", (code) => listener(code ?? undefined)),
+    kill: () => child.kill(),
+  };
+}
+
+const VT_WASM = new URL(
+  "../../vendor/libghostty-vt/ghostty-vt.wasm",
+  import.meta.url,
+);
+
+test(
+  "a terminal surface is a control client in the pty host, and detaching it keeps the session",
+  { skip: TMUX === undefined ? "tmux is not installed" : false },
+  async (t) => {
+    const home = scratchDirectory("tmux-pty");
+    const socket = `dhpty${process.pid}`;
+    t.after(() => {
+      killTmuxServer(socket);
+      rmSync(home, { recursive: true, force: true });
     });
-  });
-  assert.deepEqual(reply, { ok: true, value: undefined });
-  const end = Date.now() + 5_000;
-  while (!text().includes("pty-host-42") && Date.now() < end) await sleep(20);
-  assert.match(text(), /pty-host-42/);
-  assert.equal(frames[0].type, "started");
-  // The page going takes its client with it.
-  hostEnd.close();
-  await sleep(50);
-  assert.equal(host.clientCount, 0);
-  assert.deepEqual(toMain.at(-1), {
-    type: "ended",
-    id: "a".repeat(32),
-    reason: "detached",
-  });
-});
+
+    await withSocketGuard(socket, async () => {
+      const runtime = new TmuxTerminalRuntime({
+        context: { home, environment: { ...process.env } },
+        tmux: { kind: "resolved", value: { path: TMUX, basename: "tmux" } },
+        shell: { path: "/bin/sh", basename: "sh" },
+        tmuxArgs: [],
+        effectiveSocketName: socket,
+        timeoutMs: 15_000,
+        bootstrapDirectory: home,
+      });
+      // The pty host, in this process, with its real children: the control
+      // client on pipes, its popups on node-pty, its panes' engine.
+      const fromHost = [];
+      const host = new PtyHost({
+        post: (message) => fromHost.push(message),
+        spawn: openPty,
+        spawnPipes,
+        loadVt: async () => LibGhosttyVt.load(readFileSync(VT_WASM)),
+      });
+      const [hostEnd, pageEnd] = portPair();
+      host.receive({ type: "page", page: 1, viewLabel: "real-pty-window" }, [
+        hostEnd,
+      ]);
+      const news = [];
+      const replies = new Map();
+      let nextRid = 1;
+      const toHost = (request) =>
+        new Promise((resolve) => {
+          const rid = nextRid++;
+          replies.set(rid, resolve);
+          pageEnd.postMessage({ type: "control", rid, request });
+        });
+      let identity;
+      pageEnd.on("message", ({ data }) => {
+        if (data.type === "reply") {
+          replies.get(data.rid)?.(data.result);
+          return;
+        }
+        news.push(data.message);
+        // The page acks each pane frame once it has it, as the surface does
+        // once it has painted one.
+        if (data.message.kind === "pane" && identity !== undefined)
+          void toHost({ ...identity, message: { kind: "ack", seq: data.message.seq } });
+      });
+      // Main's side of the host, reduced to what the ledger asks of it.
+      let rid = 1;
+      const hosted = {
+        available: true,
+        async open(spec) {
+          const mine = rid++;
+          const { route, ...rest } = spec;
+          host.receive({
+            type: "open",
+            rid: mine,
+            spec: { ...rest, page: 1, channelId: route.channelId },
+          });
+          const end = Date.now() + 15_000;
+          while (Date.now() < end) {
+            const answer = fromHost.find((m) => m.rid === mine);
+            if (answer?.type === "opened") return 1;
+            if (answer?.type === "open-failed") throw new Error(answer.message);
+            await sleep(10);
+          }
+          throw new Error("the pty host did not answer the open");
+        },
+        stop(id, reason) {
+          host.receive({ type: "stop", id, reason });
+        },
+      };
+      const surfaces = new TerminalSurfaces({
+        // One real tmux, on this machine. The lookup asserts the machine it
+        // is asked for rather than ignoring it: a target naming another one
+        // and being answered with this server would be a green test about
+        // nothing.
+        runtimeFor: (machine) => {
+          assert.equal(machine, "local");
+          return Promise.resolve(runtime);
+        },
+        attachments: new AttachmentManager({
+          randomBytes: (count) => new Uint8Array(randomBytes(count)),
+          hosted,
+        }),
+      });
+      const SURFACE = "workspace-terminal:00000000-0000-4000-8000-00000000005c";
+      const attach = () =>
+        surfaces.attach({
+          target: SCRATCH_TARGET,
+          surfaceKey: SURFACE,
+          viewLabel: "real-pty-window",
+          size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
+          route: { page: {}, channelId: "c" },
+        });
+      const receipt = await attach();
+      identity = {
+        surfaceKey: SURFACE,
+        attachmentId: receipt.attachmentId,
+        targetGeneration: receipt.targetGeneration,
+      };
+
+      // The pane's rows, as the page would paint them.
+      const screen = () => {
+        const rows = [];
+        for (const message of news) {
+          if (message.kind !== "pane") continue;
+          for (const row of message.frame.dirty)
+            rows[row.y] = row.cells.join("").trimEnd();
+        }
+        return rows.join("\n");
+      };
+      const waitFor = async (check, what) => {
+        const end = Date.now() + 20_000;
+        while (Date.now() < end) {
+          if (check()) return;
+          await sleep(20);
+        }
+        assert.fail(`timed out waiting for ${what}\n${screen()}`);
+      };
+      await waitFor(
+        () => news.some((message) => message.kind === "layout"),
+        "the session's layout",
+      );
+
+      // The quotes split the marker in the command the shell echoes back, so
+      // waiting for it cannot match the echo of the keystrokes themselves.
+      const typed = await toHost({
+        ...identity,
+        message: {
+          kind: "bytes",
+          bytes: new TextEncoder().encode("printf 'DEVHUB_PTY_''ROUNDTRIP\\n'\r"),
+        },
+      });
+      assert.deepEqual(typed, { ok: true, value: undefined });
+      await waitFor(
+        () => screen().includes("DEVHUB_PTY_ROUNDTRIP"),
+        "the pane to echo the marker",
+      );
+
+      surfaces.detach({ ...identity, viewLabel: "real-pty-window" });
+      assert.equal(surfaces.attachmentCount, 0);
+      await waitFor(
+        () => news.some((message) => message.kind === "ended"),
+        "the client's end",
+      );
+      assert.deepEqual(news.at(-1), { kind: "ended", reason: "detached" });
+      const survivors = await runtime.listSessions(
+        socket,
+        new CancellationToken(),
+        OperationDeadline.in(15_000),
+      );
+      // The whole point: the client is gone and the session is not.
+      assert.ok(
+        survivors.some((session) => session.name === "scratch"),
+        "the tmux session must survive its client",
+      );
+
+      // Attaching again replaces the view's client only. The stale handle is
+      // refused by identity, and the session underneath is untouched.
+      const replacement = await attach();
+      const latest = await attach();
+      assert.notEqual(replacement.attachmentId, latest.attachmentId);
+      const stale = await toHost({
+        surfaceKey: SURFACE,
+        attachmentId: replacement.attachmentId,
+        targetGeneration: replacement.targetGeneration,
+        message: { kind: "visible", visible: true },
+      });
+      assert.equal(stale.ok, false);
+      assert.equal(stale.error.code, "wrong_attachment");
+      surfaces.detach({
+        surfaceKey: SURFACE,
+        attachmentId: latest.attachmentId,
+        targetGeneration: latest.targetGeneration,
+        viewLabel: "real-pty-window",
+      });
+      assert.equal(surfaces.attachmentCount, 0);
+      hostEnd.close();
+      await sleep(50);
+      assert.equal(host.clientCount, 0);
+    });
+  },
+);
 
 /**
  * The child of the test below, Electron run as Node like the utility

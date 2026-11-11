@@ -10,8 +10,8 @@ export interface CellSize {
 
 /**
  * How far short of whole cells an element can be and still hold them: one
- * over an xterm.js screen has each edge put on the nearest whole pixel
- * (`PolledNeovims.tsx`), so where a cell is not a whole number of pixels
+ * with each edge put on the nearest whole pixel, where a cell is not a
+ * whole number of pixels
  * (16.5 on a Retina screen) it is up to a pixel short of its pane's cells
  * — and that pixel is not a row less.
  */

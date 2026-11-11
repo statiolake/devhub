@@ -1,15 +1,15 @@
 /**
  * Whether this key event's Option is Meta, by `[terminal] mac_option_is_meta`.
  *
- * xterm.js has one switch for it, `macOptionIsMeta`, and reads it inside its
- * own keydown handler, after the custom key handler has run. So the decision is
- * made here, per event, and the switch is set to it just before xterm looks:
- * xterm still does every bit of the encoding — `ESC x` for Option+X, `ESC X`
- * with Shift, `ESC ^X` with Control, Option+E as `ESC e` rather than a dead key
- * — and the only thing DevHub adds is *which* Option presses that applies to.
+ * The decision is made here, per event, for DevHub's terminals
+ * (`terminal/control/controlKeys.ts`) and the Neovim editor
+ * (`neovim/keys.ts`): Option as Meta is the key as tmux or Neovim names it
+ * with `M-` — `M-x` for Option+X, `M-X` with Shift, Option+E as `M-e` rather
+ * than a dead key — and what is decided here is *which* Option presses that
+ * applies to.
  *
  * - `false`: never. Option composes, as on any Mac text field (the default).
- * - `true`: always, as xterm's own switch.
+ * - `true`: always.
  * - `"left"`: only while the left Option is held, so the right one still types
  *   `≈`, `@` or `{` — what iTerm2's "Left Option key: Esc+" and Ghostty's
  *   `macos-option-as-alt = left` do. A letter's keydown does not say which
@@ -24,8 +24,8 @@
  * ones a layout types a character with (Option+¥ is `\` on a JIS Mac). Who
  * needs those and Alt mappings both uses `"left"`, as in iTerm2 and Ghostty.
  *
- * Off a Mac none of this matters: xterm reads Alt as Meta there regardless of
- * the switch.
+ * Off a Mac none of this matters: Alt is Meta there regardless of the
+ * setting.
  */
 
 import type { MacOptionIsMeta } from "../../model/macOption";

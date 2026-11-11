@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "../../neovim/neovim.css";
-import "../../surfaces/xtermSession.css";
 import "../terminal.css";
 import "./control.css";
 import "./popup.css";
@@ -40,7 +39,10 @@ import {
   terminalErrorSummary,
   type TerminalReceipt,
 } from "../client";
-import { TERMINAL_PROTOCOL_VERSION } from "../../../ipc/terminal";
+import {
+  TERMINAL_PROTOCOL_VERSION,
+  TerminalFailure,
+} from "../../../ipc/terminal";
 import type { TerminalPanesWire } from "../../../ipc/contract";
 import { inNeovim, type PaneNeovim } from "../../pane/PaneNeovims";
 import type { NeovimHandle } from "../../neovim/NeovimApp";
@@ -101,16 +103,16 @@ import { CompletionMenu } from "../../completion/CompletionMenu";
 import type { Kind } from "../../neovim/kinds";
 
 /**
- * A terminal surface in tmux control mode (`[terminal] tmux_control_mode`,
- * `docs/terminal-mode.md`): one control client for the surface's session,
+ * A terminal surface (`docs/terminal-mode.md`): one tmux control client for
+ * the surface's session,
  * in the pty host, and every pane of the shown window drawn here by the
  * Neovim editor's painter, at the rectangle tmux gives it, with hairlines
  * between panes instead of border characters. Keys go to tmux by name, so
  * the prefix and the bindings are tmux's (`controlKeys.ts`); what tmux does
  * not draw for a control client is not let wait on it (`keyGuard.ts`).
  *
- * The connection follows the xterm.js surface's rules (`TerminalSurface`):
- * a session that ended is made again every time (`reattachOnExit`), and said
+ * The connection: a session that ended is made again every time
+ * (`reattachOnExit`), and said
  * to be disconnected only when one made again ends within
  * `REATTACH_ON_EXIT_MS` with nothing typed into it — a shell that cannot
  * start; "typed" is a key or a paste on the surface, never the stream. Retry
@@ -120,6 +122,8 @@ import type { Kind } from "../../neovim/kinds";
  */
 
 const REATTACH_ON_EXIT_MS = 3_000;
+/** How soon a client is attached again once its pty host has ended. */
+const HOST_RESTART_REATTACH_MS = 250;
 /**
  * How long a committed layout waits at most for its panes' new pictures
  * (`waitingFor`) before it is drawn with what has come.
@@ -241,6 +245,11 @@ export function ControlTerminalSurface({
   const colors = useMemo(() => colorsOf(palette), [palette]);
   const [connection, setConnection] = useState<Connection>("connecting");
   const [error, setError] = useState<string | undefined>();
+  /**
+   * The attach was refused because the pty host was given up on
+   * (`pty_unavailable`): the failure offers "Restart Terminals".
+   */
+  const [stopped, setStopped] = useState(false);
   const [notice, setNotice] = useState<string | undefined>();
   const [noticeLeaving, setNoticeLeaving] = useState(false);
   const [tabs, setTabs] = useState<ControlView["windows"]>([]);
@@ -1520,6 +1529,18 @@ export function ControlTerminalSurface({
         unpaintedNeovims.resume();
         const ended = receipt;
         receipt = undefined;
+        // The pty host ended under it (`TERMINAL_CHANNELS.restarted`): the
+        // session is tmux's and still there, so a new client is attached to
+        // it in a moment, in the host started for it — or the attach is
+        // refused, if the host keeps ending, and says so.
+        if (message.reason === "host_restarted") {
+          report();
+          setConnection("connecting");
+          window.setTimeout(() => {
+            if (!disposed && attachSerial === serial) void attach();
+          }, HOST_RESTART_REATTACH_MS);
+          return;
+        }
         const lived = typed || Date.now() - connectedAt >= REATTACH_ON_EXIT_MS;
         if (ended !== undefined) void detach(ended);
         report();
@@ -1660,7 +1681,6 @@ export function ControlTerminalSurface({
             rows: size.rows,
             pixelWidth: Math.round(size.cols * cell().width),
             pixelHeight: Math.round(size.rows * cell().height),
-            mode: "control",
           },
           onMessage(mine),
         );
@@ -1673,6 +1693,7 @@ export function ControlTerminalSurface({
         connectedAt = Date.now();
         setConnection("connected");
         setError(undefined);
+        setStopped(false);
         const now = live.current.colors;
         send({
           kind: "colors",
@@ -1696,6 +1717,10 @@ export function ControlTerminalSurface({
         }
         staleRetries = 0;
         setError(terminalErrorSummary(failure));
+        setStopped(
+          failure instanceof TerminalFailure &&
+            failure.code === "pty_unavailable",
+        );
         setConnection("disconnected");
       }
     };
@@ -2129,9 +2154,15 @@ export function ControlTerminalSurface({
 
     void attach();
     if (!live.current.hidden) input.focus();
+    // "Restart Terminals", from here or anywhere: a surface without a
+    // client attaches again (one with a client was told its host ended).
+    const offRevived = boundClient.onRevived(() => {
+      if (!disposed && receipt === undefined) void attach();
+    });
 
     return () => {
       disposed = true;
+      offRevived();
       serial += 1;
       observer.disconnect();
       if (gate !== undefined) clearTimeout(gate.timer);
@@ -2273,7 +2304,24 @@ export function ControlTerminalSurface({
         </div>
       )}
       {connection === "connecting" && <Waiting label="Connecting…" />}
-      {connection === "disconnected" && (
+      {connection === "disconnected" && stopped && (
+        <Failure
+          summary="DevHub's terminals have stopped."
+          detail="The process that runs them ended several times in a row, so it was not started again. Your sessions are still running in tmux: restarting the terminals connects to them again."
+          {...(error === undefined ? {} : { technical: error })}
+          actions={[
+            {
+              label: "Restart Terminals",
+              primary: true,
+              run: () => {
+                void boundClient.restart();
+                controllerRef.current?.focus();
+              },
+            },
+          ]}
+        />
+      )}
+      {connection === "disconnected" && !stopped && (
         <Failure
           summary="The terminal session is not connected."
           {...(error === undefined ? {} : { detail: error })}

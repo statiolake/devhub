@@ -8,8 +8,7 @@
  * Once one has, DevHub's chrome takes its colours from the Workbench's own
  * colour theme instead. The Workbench is not a provider surface DevHub sits
  * beside — it is the thing DevHub is a frame around — so a shell in macOS grey
- * around a Solarized editor is two applications in one window. xterm keeps its
- * own theme.
+ * around a Solarized editor is two applications in one window.
  *
  * A theme replaces exactly six values — `--canvas`, `--chrome`, `--surface`,
  * `--primary`, `--accent` and `--accent-ink` — and resolves `color-scheme`.
@@ -912,21 +911,19 @@ a {
    that may grow keeps the bar's room whether or not it scrolls
    (`scrollbar-gutter: stable`; docs/motion.md).
 
-   A terminal's is xterm's own, drawn by xterm (it keeps its theme), so its
-   subtree is left alone. The workbench is a page of its own and never sees
-   this sheet. */
-:not(.xterm, .xterm *)::-webkit-scrollbar {
+   The workbench is a page of its own and never sees this sheet. */
+::-webkit-scrollbar {
   width: 10px;
   height: 10px;
   background: transparent;
 }
 
-:not(.xterm, .xterm *)::-webkit-scrollbar-track,
-:not(.xterm, .xterm *)::-webkit-scrollbar-corner {
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 
-:not(.xterm, .xterm *)::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 999px;
   background: color-mix(
@@ -937,7 +934,7 @@ a {
     padding-box;
 }
 
-:not(.xterm, .xterm *)::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover {
   border-width: 2px;
   background-color: color-mix(
     in srgb,

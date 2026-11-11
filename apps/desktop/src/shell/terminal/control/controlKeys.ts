@@ -75,8 +75,7 @@ const SILENT = new Set([
  * when Chromium handed it to the input method), so Option+X is `M-x`,
  * Option+Shift+X `M-X`, Option+E `M-e` and Option+@ on JIS `M-@`.
  *
- * The Mac editing chords are Ghostty's bindings, as in the xterm.js
- * terminal (`surfaces/keys.ts`): Cmd+Left `C-a`, Cmd+Right `C-e`,
+ * The Mac editing chords are Ghostty's bindings: Cmd+Left `C-a`, Cmd+Right `C-e`,
  * Cmd+Backspace `C-u`, Option+Left `M-b` and Option+Right `M-f` — either
  * Option, whatever the setting.
  */

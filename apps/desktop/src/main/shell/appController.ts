@@ -794,9 +794,9 @@ export class AppController {
 	 */
 	private conversationEngine: EngineClient | undefined;
 	/**
-	 * Where the terminal surfaces' tmux clients run (`ptyHost/`): a utility
-	 * process the pages reach over ports of their own.
-	 * `DEVHUB_TERMINALS_IN_MAIN=1` runs them in main instead.
+	 * Where the terminal surfaces' tmux control clients run (`ptyHost/`): a
+	 * utility process the pages reach over ports of their own. The only
+	 * place they run; "Restart Terminals" starts it afresh (`restart`).
 	 */
 	private ptyHost: PtyHostClient | undefined;
 	/**
@@ -1154,12 +1154,9 @@ export class AppController {
 		// machine, so it is asked on that machine, once, when its adapter is
 		// built (`terminalRuntimes.ts`) — and the Settings window asks its own
 		// for this Mac, which is what that window is about.
-		this.ptyHost =
-			process.env["DEVHUB_TERMINALS_IN_MAIN"] === "1"
-				? undefined
-				: new PtyHostClient({ launch: electronPtyHostLauncher });
+		this.ptyHost = new PtyHostClient({ launch: electronPtyHostLauncher });
 		this.terminalsWiring = wireTerminals({
-			...(this.ptyHost === undefined ? {} : { ptyHost: this.ptyHost }),
+			ptyHost: this.ptyHost,
 			settings: this.settings,
 			effectiveSocketName: this.state.tmux.effective_socket_name,
 			// One tmux config, in DevHub's own config directory, beside
@@ -2020,6 +2017,9 @@ export class AppController {
 			},
 			installCli: () => {
 				void this.installCli().catch(report);
+			},
+			restartTerminals: () => {
+				this.terminalsWiring?.service.restart();
 			},
 			navigateHistory: (direction) => this.navigateHistory(direction),
 			openCommandPalette: () => {
@@ -4195,7 +4195,6 @@ export class AppController {
 			// without a theme (in a test) has DevHub's own.
 			shellThemeIfInstalled()?.terminalPalette(),
 			config.terminal.macOptionIsMeta,
-			config.terminal.tmuxControlMode,
 		);
 	}
 
@@ -9388,7 +9387,7 @@ export class AppController {
 		receive(NEOVIM_CHANNELS.call, (_event, call: NeovimCall) => {
 			this.neovimEditors?.call(call);
 		});
-		// A terminal's page in tmux control mode: what its panes are.
+		// A terminal's page: what its panes are.
 		receive(
 			CHANNELS.reportTerminalPanes,
 			(_event, terminalId: unknown, panes: unknown) => {

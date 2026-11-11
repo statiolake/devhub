@@ -123,8 +123,8 @@ export interface PtyPlan {
 /**
  * The environment the tmux client starts with.
  *
- * The surface is xterm.js, so its capability set is deliberately stable across
- * launch environments: inheriting the host's `TERM` (`dumb`, or a Ghostty- or
+ * The client's capability set is deliberately stable across launch
+ * environments: inheriting the host's `TERM` (`dumb`, or a Ghostty- or
  * WezTerm-specific value) can make tmux refuse the client outright, or describe
  * capabilities the page does not have. `TMUX`/`TMUX_PANE` are removed because a
  * DevHub launched from inside a tmux pane must not let its client believe it is
@@ -137,8 +137,9 @@ export interface PtyPlan {
  * and `COLORTERM` is the out-of-band channel invented precisely because
  * terminfo could not express 24-bit colour. tmux reads it from the attaching
  * client and adds the `RGB` feature for that client on its own; programs that
- * do not know tmux read it directly. xterm.js renders 24-bit already, so the
- * page needs nothing — the whole of the fix is telling the truth about it here.
+ * do not know tmux read it directly. The panes' engines render 24-bit already,
+ * so the page needs nothing — the whole of the fix is telling the truth about
+ * it here.
  */
 export function terminalEnvironment(
 	base: Readonly<Record<string, string | undefined>> = process.env,

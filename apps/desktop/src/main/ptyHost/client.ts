@@ -3,21 +3,24 @@
  * each page's port to it, and the ledger's view of it (`HostedPtys`).
  *
  * Main resolves which tmux session a surface attaches to and keeps who owns
- * which client (`terminal/attachments.ts`); the host opens the client's PTY
- * and runs its data path with the page directly. A page gets a
- * `MessagePort` to the host the first time it attaches a client there
- * (`TERMINAL_CHANNELS.port`), one per page per host; its frames, input,
- * resizes and acks never pass main.
+ * which client (`terminal/attachments.ts`); the host runs the control client
+ * and its data path with the page directly. A page gets a `MessagePort` to
+ * the host the first time it attaches a client there
+ * (`TERMINAL_CHANNELS.port`), one per page per host; what the client and the
+ * page say to each other never passes main.
  *
- * **When the host is gone.** Its clients end with it — the tmux clients lose
- * their PTYs and exit; the sessions are the tmux server's and are not
+ * **When the host is gone.** Its clients end with it — the control clients'
+ * pipes close and they exit; the sessions are the tmux server's and are not
  * touched. A start it had not answered fails as `host_restarted`, every
  * client it held is ended in the ledger, and every page that had a port to it
  * is told (`TERMINAL_CHANNELS.restarted`), so its surfaces show that they are
  * reconnecting and attach again; the next start starts a new host. A host
- * that keeps dying is given up on, as the process host and the conversation
- * engine are: after `MAX_RESTARTS` exits within a minute, clients start in
- * main from then on (`available` is false), and that is said once.
+ * that keeps dying is given up on: after `MAX_RESTARTS` exits within a
+ * minute no new one is started (`available` is false), attaches are refused
+ * as `pty_unavailable`, and that is said once. There is no other place for a
+ * terminal to run, so the person is offered "Restart Terminals"
+ * (`restart`), which forgets those exits and starts a new host for the
+ * surfaces to attach to again.
  */
 
 import { join } from "node:path";
@@ -233,7 +236,12 @@ export class PtyHostClient implements HostedPtys {
 		}
 	}
 
-	#lost(code: number): void {
+	/**
+	 * A host's end: its requests and clients fail, its pages are told.
+	 * `counted`: an end of its own, towards giving up; a restart the person
+	 * asked for is not one.
+	 */
+	#lost(code: number | "restart", counted = true): void {
 		const generation = this.#generation;
 		this.#host = undefined;
 		const pending = [...this.#pending.values()];
@@ -252,7 +260,7 @@ export class PtyHostClient implements HostedPtys {
 			if (port.generation !== generation || page.isDestroyed()) continue;
 			page.send(TERMINAL_CHANNELS.restarted, { generation });
 		}
-		if (this.#disposed) return;
+		if (this.#disposed || !counted) return;
 		const at = (this.#options.now ?? Date.now)();
 		this.#exits.push(at);
 		while (
@@ -267,7 +275,7 @@ export class PtyHostClient implements HostedPtys {
 		if (this.#exits.length >= MAX_RESTARTS) {
 			this.#gaveUp = true;
 			this.#log(
-				`[devhub] pty host ended ${String(this.#exits.length)} times in a minute; terminal clients start in main from now on`,
+				`[devhub] pty host ended ${String(this.#exits.length)} times in a minute; no new one is started until the terminals are restarted`,
 			);
 		}
 	}
@@ -330,7 +338,6 @@ export class PtyHostClient implements HostedPtys {
 					...(spec.popupLaunch === undefined
 						? {}
 						: { popupLaunch: spec.popupLaunch }),
-					...(spec.control === true ? { control: true } : {}),
 				},
 			});
 		});
@@ -349,6 +356,24 @@ export class PtyHostClient implements HostedPtys {
 		if (known.generation === this.#generation) {
 			this.#host?.postMessage({ type: "page-gone", page: known.page });
 		}
+	}
+
+	/**
+	 * "Restart Terminals": whatever host there is ends (its clients with it,
+	 * each page told as for any end), its past ends are forgotten, and the
+	 * next attach starts a new one. The tmux sessions are untouched: the
+	 * surfaces attach to them again, as after a host that ended by itself.
+	 */
+	restart(): void {
+		if (this.#disposed) return;
+		this.#exits.length = 0;
+		this.#gaveUp = false;
+		const running = this.#host;
+		if (running === undefined) return;
+		this.#log("[devhub] pty host restarted on request");
+		// Its own exit, after this, is not news: `#host` is not it any more.
+		this.#lost("restart", false);
+		running.kill();
 	}
 
 	/** Quit: the host goes, and its clients with it; the sessions stay. */

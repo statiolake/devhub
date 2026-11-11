@@ -1812,8 +1812,8 @@ export interface AgentsBridge
 	 *
 	 * A terminal surface's OSC 52 writes come through here rather than through
 	 * `navigator.clipboard`: the browser API is gated on the document being
-	 * focused, and the write arrives from a PTY at a moment nobody chose. See
-	 * `clipboardProvider` in `shell/surfaces/xtermSession.ts`.
+	 * focused, and the write arrives from tmux at a moment nobody chose
+	 * (`ControlToPage` `clipboard`).
 	 */
 	writeClipboard(text: string): Promise<void>;
 	/**
@@ -1904,11 +1904,10 @@ export interface PaneBridge
 		AppearanceBridge,
 		TerminalSurfaceBridge {
 	/**
-	 * In tmux control mode, what the terminal's panes are — the shown
-	 * window's, which is active, every pane's mode and `@devhub-nvim` — for
-	 * the Neovims drawn over them; `null` once the page is not a
-	 * control-mode one (`main/editor/terminalNeovims.ts`, "In tmux control
-	 * mode"). Where a pane is drawn is the page's own business.
+	 * What the terminal's panes are — the shown window's, which is active,
+	 * every pane's mode and `@devhub-nvim` — for the Neovims drawn over them;
+	 * `null` once the surface goes (`main/editor/terminalNeovims.ts`, "Where
+	 * an overlay goes"). Where a pane is drawn is the page's own business.
 	 */
 	reportTerminalPanes(
 		terminalId: string,
@@ -1957,18 +1956,6 @@ export interface TerminalNeovimWire {
 	readonly pane: number;
 	/** tmux shows the pane: its window, not a zoomed sibling, not in a mode. */
 	readonly shown: boolean;
-	/**
-	 * Without control mode (tmux polled): the pane's cells in the client's
-	 * screen, whose size is `cols` by `rows`.
-	 */
-	readonly cells?: {
-		readonly x: number;
-		readonly y: number;
-		readonly width: number;
-		readonly height: number;
-		readonly cols: number;
-		readonly rows: number;
-	};
 }
 
 /** `PaneBridge.onTerminalNeovimKey`: a keystroke as `before-input-event` had it. */

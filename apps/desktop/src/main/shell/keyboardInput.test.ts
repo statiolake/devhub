@@ -159,6 +159,7 @@ function host(zoomActs = true) {
 		previewColorTheme: record("previewColorTheme"),
 		openTaskManager: record("openTaskManager"),
 		installCli: record("installCli"),
+		restartTerminals: record("restartTerminals"),
 		openCommandPalette: record("openCommandPalette"),
 	};
 	return { calls, chordHost, interactions };

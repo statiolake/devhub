@@ -221,6 +221,7 @@ export type ChordEffect =
 	| { readonly kind: "open-task-manager" }
 	/** Put the `devhub` launcher on the PATH (`cli/install.ts`). */
 	| { readonly kind: "install-cli" }
+	| { readonly kind: "restart-terminals" }
 	/** Every command, by name: the registry as a picker. */
 	| { readonly kind: "open-command-palette" }
 	/** Back or Forward through the places the window has shown. */
@@ -501,6 +502,9 @@ export function resolveChord(
 
 		case "install_cli":
 			return { kind: "install-cli" };
+
+		case "restart_terminals":
+			return { kind: "restart-terminals" };
 
 		case "show_chord_help":
 			return { kind: "open-chord-help" };

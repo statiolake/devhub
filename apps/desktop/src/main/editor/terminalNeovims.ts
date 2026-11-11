@@ -11,84 +11,54 @@
  * This is DevHub's half — which panes have one, where each pane is on the
  * screen, and whether the keys are its.
  *
- * # One reading of tmux, for all three
- *
- * While a terminal is on screen its session is read every so often
- * (150 ms here, slower on a host): every pane's place in its window, which
- * window and pane are active, zoom and modes, the socket a pane's `nvim` named
- * (`@devhub-nvim`), and the DevHub client's size, key table and prefix. tmux
- * pushes none of this — a window switch, a zoom, a pane moved by `swap-pane`
- * or a resize are events only of the client — and one `list-panes` plus one
- * `list-clients` per round is all of it. A terminal that is not on screen is
- * not read: its Neovims keep their pages, hidden, and come back where they
- * are when it does.
- *
  * # Where an overlay goes
  *
- * In the terminal's own page, over its pane: the page mounts each overlay's
- * Neovim (`shell/pane/PaneNeovims.tsx`) and draws it among the pane's own
- * layers. In control mode the page lays out the panes itself and puts the
- * Neovim in its pane, moving with it (`docs/pane-motion.md`); polled, it is
- * told the pane's cells and whether a status line on top pushes it down
- * (`neovims`), and places the Neovim over its emulator's screen. It is
- * hidden whenever the pane is not what tmux shows: another window, a zoomed
- * sibling, the pane in a mode (copy mode, a chooser), or no DevHub client.
+ * In the terminal's own page, over its pane: the page draws the panes itself,
+ * from the layout tmux pushes to its control client, so it knows each pane
+ * and says what they are (`controlPanes`): the shown window's panes, which is
+ * active, every pane's mode and `@devhub-nvim`, the client and the prefixes.
+ * It mounts each overlay's Neovim (`shell/pane/PaneNeovims.tsx`) in its pane
+ * and moves it with it (`docs/pane-motion.md`). Nothing is polled. An
+ * overlay is hidden whenever the pane is not what tmux shows: another
+ * window, the pane in a mode (copy mode, a chooser), or no DevHub client.
+ *
+ * The sockets the page names are only a hint: each change of them is a
+ * reading of tmux here (`TerminalNeovimPorts.read`), and only a socket that
+ * reading confirms is attached to; the control client in the pty host reads
+ * a pane's socket from tmux itself and says so directly (`paneSocket`).
  *
  * # The keyboard
  *
  * The overlay has the keys whenever the terminal would and its pane is the
- * active pane and shown. The tmux prefix typed in it is tmux's (DevHub puts
- * the client in its prefix table and the terminal takes the keys), and so is
- * the key after it; once that has been handled — a zoom, a pane switch — the
- * overlay takes the keys back if its pane is still the active one. A binding
- * that opens a prompt or a chooser keeps them in the terminal until it is
- * answered (Enter, Escape). A click outside the overlay gives them to the
- * terminal; a key typed there that tmux would only hand to the pane under the
- * overlay (whose Neovim does not read its tty) goes to the overlay instead.
- * DevHub's own chords are caught before any of this, on every page.
- *
- * # In tmux control mode
- *
- * A terminal in control mode (`docs/terminal-mode.md`) draws its panes
- * itself, from the layout tmux pushes, so its page knows each pane's
- * panes and says what they are (`controlPanes`): the shown window's panes,
- * which is active, every pane's mode and `@devhub-nvim`, the client and the
- * prefixes. Nothing is polled; the page moves the Neovim with its pane. The sockets the page
- * names are only a hint: each change of them is a reading of tmux here, and
- * only a socket that reading confirms is attached to. The prefix typed in
- * the overlay is handed to the terminal surface as the keystroke it was, since
- * that page's control client keeps its own place in tmux's key tables
- * (`ptyHost/control/keyGuard.ts`); a prompt or a chooser is DevHub's to draw
- * there (or refused), so every key after the prefix gives the keys back once
- * its binding has run.
+ * active pane and shown. The tmux prefix typed in it is handed to the
+ * terminal surface as the keystroke it was, since that page's control client
+ * keeps its own place in tmux's key tables (`ptyHost/control/keyGuard.ts`);
+ * a prompt or a chooser is DevHub's to draw there (or refused), and covers
+ * the panes while it is open (`covered`), so every key after the prefix gives
+ * the keys back once its binding has run. A click outside the overlay gives
+ * them to the terminal; a key typed there that tmux would only hand to the
+ * pane under the overlay (whose Neovim does not read its tty) goes to the
+ * overlay instead. DevHub's own chords are caught before any of this, on
+ * every page.
  */
 
 import type { RuntimeId } from "../runtime/runtime.js";
 import type { WorkspaceTerminalTarget } from "../terminal/ports.js";
 
-/** A pane of the terminal's session, as one reading has it. */
+/** A pane of the terminal's session, as its page has it. */
 export interface TerminalNeovimPane {
 	readonly paneId: string;
+	/** In the window the page shows (a zoomed pane alone). */
 	readonly windowActive: boolean;
 	readonly paneActive: boolean;
-	readonly zoomed: boolean;
-	readonly left: number;
-	readonly top: number;
-	readonly width: number;
-	readonly height: number;
 	readonly inMode: boolean;
 	/** `@devhub-nvim`: the socket its `nvim` listens on, on its machine. */
 	readonly socket: string;
 }
 
-/** DevHub's tmux client on the session. */
+/** DevHub's control client on the session. */
 export interface TerminalNeovimClient {
 	readonly name: string;
-	readonly width: number;
-	readonly height: number;
-	readonly keyTable: string;
-	/** Rows a status line takes above the window. */
-	readonly statusTop: number;
 	/** `prefix` and `prefix2`, as tmux names keys; `None` left out. */
 	readonly prefixes: readonly string[];
 }
@@ -98,88 +68,18 @@ export interface TerminalNeovimReading {
 	readonly client: TerminalNeovimClient | undefined;
 }
 
-const PANE_FIELDS = [
-	"pane_id",
-	"window_active",
-	"pane_active",
-	"window_zoomed_flag",
-	"pane_left",
-	"pane_top",
-	"pane_width",
-	"pane_height",
-	"pane_in_mode",
-	"@devhub-nvim",
-] as const;
-const CLIENT_FIELDS = [
-	"client_name",
-	"client_width",
-	"client_height",
-	"client_key_table",
-	"status",
-	"status-position",
-	"prefix",
-	"prefix2",
-] as const;
+/** What a reading of tmux asks for each pane: its id and its socket. */
+export const SOCKET_FORMAT = "#{pane_id}\t#{@devhub-nvim}";
 
-/** What a reading asks tmux for each pane, tab-separated. */
-export const PANE_FORMAT = PANE_FIELDS.map((field) => `#{${field}}`).join("\t");
-/** And for each client of the session. */
-export const CLIENT_FORMAT = CLIENT_FIELDS.map((field) => `#{${field}}`).join(
-	"\t",
-);
-/** Marks the client lines apart from the pane lines in one output. */
-export const CLIENT_LINE_MARK = "client\t";
-
-function statusRows(status: string): number {
-	if (status === "on") return 1;
-	const rows = Number(status);
-	return Number.isInteger(rows) && rows > 0 ? rows : 0;
-}
-
-/** A reading's output: pane lines, then client lines marked `client\t`. */
-export function parseTerminalNeovimReading(
-	output: string,
-): TerminalNeovimReading {
-	const panes: TerminalNeovimPane[] = [];
-	let client: TerminalNeovimClient | undefined;
+/** A reading's output: each pane's id and `@devhub-nvim`, by pane id. */
+export function parseSocketReading(output: string): Map<string, string> {
+	const sockets = new Map<string, string>();
 	for (const line of output.split("\n")) {
-		if (line.startsWith(CLIENT_LINE_MARK)) {
-			if (client !== undefined) continue;
-			const [name, width, height, keyTable, status, position, p1, p2] = line
-				.slice(CLIENT_LINE_MARK.length)
-				.split("\t");
-			if (name === undefined || name === "") continue;
-			client = {
-				name,
-				width: Number(width),
-				height: Number(height),
-				keyTable: keyTable ?? "root",
-				statusTop: position === "top" ? statusRows(status ?? "") : 0,
-				prefixes: [p1, p2].filter(
-					(key): key is string =>
-						key !== undefined && key !== "" && key !== "None",
-				),
-			};
-			continue;
-		}
-		const fields = line.split("\t");
-		if (fields.length < PANE_FIELDS.length || !/^%\d+$/.test(fields[0] ?? ""))
-			continue;
-		const [id, wa, pa, zoom, left, top, width, height, mode, socket] = fields;
-		panes.push({
-			paneId: id ?? "",
-			windowActive: wa === "1",
-			paneActive: pa === "1",
-			zoomed: zoom === "1",
-			left: Number(left),
-			top: Number(top),
-			width: Number(width),
-			height: Number(height),
-			inMode: mode === "1",
-			socket: socket ?? "",
-		});
+		const [id, socket] = line.split("\t");
+		if (id === undefined || !/^%\d+$/.test(id)) continue;
+		sockets.set(id, socket ?? "");
 	}
-	return { panes, client };
+	return sockets;
 }
 
 /** Whether tmux is showing this pane to DevHub's client. */
@@ -187,16 +87,11 @@ export function paneShown(
 	pane: TerminalNeovimPane,
 	reading: TerminalNeovimReading,
 ): boolean {
-	return (
-		reading.client !== undefined &&
-		pane.windowActive &&
-		(!pane.zoomed || pane.paneActive) &&
-		!pane.inMode
-	);
+	return reading.client !== undefined && pane.windowActive && !pane.inMode;
 }
 
 /**
- * A control-mode terminal's panes, as its page has them (`controlPanes`,
+ * A terminal's panes, as its page has them (`controlPanes`,
  * `TerminalPanesWire`): what each is, not where it is drawn.
  */
 export interface ControlPanes {
@@ -277,9 +172,9 @@ export function parseControlPanes(value: unknown): ControlPanes | undefined {
 }
 
 /**
- * A control-mode page's panes as a reading, with the sockets a reading of
- * tmux confirmed (`confirmed`, by pane id) in place of the page's hints.
- * Where a pane is is not in it: the page places its Neovim itself.
+ * A page's panes as a reading, with the sockets a reading of tmux confirmed
+ * (`confirmed`, by pane id) in place of the page's hints. Where a pane is is
+ * not in it: the page places its Neovim itself.
  */
 export function controlReading(
 	panes: ControlPanes,
@@ -294,11 +189,6 @@ export function controlReading(
 				paneId,
 				windowActive: box !== undefined,
 				paneActive: box?.active ?? false,
-				zoomed: false,
-				left: 0,
-				top: 0,
-				width: 0,
-				height: 0,
 				inMode: pane.inMode,
 				socket: confirmed.get(paneId) ?? "",
 			};
@@ -306,14 +196,7 @@ export function controlReading(
 		client:
 			panes.client === ""
 				? undefined
-				: {
-						name: panes.client,
-						width: 0,
-						height: 0,
-						keyTable: "root",
-						statusTop: 0,
-						prefixes: panes.prefixes,
-					},
+				: { name: panes.client, prefixes: panes.prefixes },
 	};
 }
 
@@ -384,30 +267,6 @@ export class LeftOption {
 	}
 }
 
-/**
- * Keys after the prefix that open something of tmux's that wants the keys
- * after it — a prompt, a chooser, a mode — in tmux's default table.
- */
-const INTERACTIVE_AFTER_PREFIX = new Set([
-	":",
-	"[",
-	"?",
-	"w",
-	"s",
-	",",
-	"$",
-	".",
-	"'",
-	"f",
-	"t",
-	"q",
-	"=",
-	"/",
-	"PageUp",
-]);
-/** What answers a prompt or leaves a chooser. */
-const PROMPT_ENDS = new Set(["Enter", "Escape"]);
-
 export interface OverlayTerminal {
 	readonly terminalId: string;
 	readonly machine: RuntimeId;
@@ -421,16 +280,15 @@ export interface OverlayTerminal {
 /** What DevHub does to tmux and to the machine on the overlays' behalf. */
 export interface TerminalNeovimPorts {
 	/**
-	 * The terminal's session read, or `undefined` when it cannot be;
-	 * `announce`: state the overlay's server option on the way.
+	 * The sockets of the terminal's panes (`@devhub-nvim`, by pane id), or
+	 * `undefined` when they cannot be read; `announce`: state the overlay's
+	 * server option on the way.
 	 */
 	read(
 		terminal: OverlayTerminal,
 		announce: boolean,
-	): Promise<TerminalNeovimReading | undefined>;
+	): Promise<ReadonlyMap<string, string> | undefined>;
 	selectPane(terminal: OverlayTerminal, paneId: string): Promise<void>;
-	/** Put DevHub's client in tmux's prefix table. */
-	enterPrefix(terminal: OverlayTerminal, client: string): Promise<void>;
 	/** A socket on this Mac that reaches `socket` on the terminal's machine. */
 	reach(terminal: OverlayTerminal, socket: string): Promise<string>;
 	/** Told once a UI is attached: the theme, say. */
@@ -448,7 +306,6 @@ export interface TerminalNeovimsOptions {
 	 * every Neovim of its terminal and stays, so its going says nothing.
 	 */
 	readonly gone?: (key: string) => void;
-	readonly pollMs?: (machine: RuntimeId) => number;
 	readonly settleMs?: number;
 }
 
@@ -460,15 +317,6 @@ export interface OverlayView {
 	readonly pane: number;
 	/** tmux shows its pane to DevHub's client. */
 	readonly shown: boolean;
-	/** Polled: the pane's cells in the client's screen (`TerminalNeovimWire`). */
-	readonly cells?: {
-		readonly x: number;
-		readonly y: number;
-		readonly width: number;
-		readonly height: number;
-		readonly cols: number;
-		readonly rows: number;
-	};
 }
 
 /** The Neovims over one terminal's panes, and which has the keys. */
@@ -499,23 +347,20 @@ type Lend =
 			readonly kind: "prefix";
 			readonly armed: boolean;
 	  }
-	| { readonly kind: "interactive" }
 	| { readonly kind: "user" };
 
 interface Watch {
 	terminal: OverlayTerminal;
 	onScreen: boolean;
 	reading: TerminalNeovimReading | undefined;
-	timer: ReturnType<typeof setTimeout> | undefined;
-	reading$: boolean;
 	lend: Lend | undefined;
 	/** The overlay's pane was active and shown at the last reading. */
 	activeShown: boolean;
 	/** `neovims` as the last change said it. */
 	said: string;
 	/**
-	 * In control mode: the page's panes, and the sockets the last reading of
-	 * tmux confirmed. Absent: the page is xterm.js, and tmux is polled.
+	 * The page's panes, and the sockets the last reading of tmux confirmed.
+	 * Absent until the terminal's page has said what its panes are.
 	 */
 	control:
 		| {
@@ -546,7 +391,7 @@ export class TerminalNeovims {
 	 * started again in a new pane listens on the same socket path.
 	 */
 	private readonly dead = new Set<string>();
-	/** Control-mode pages that spoke before their terminal was known. */
+	/** Pages that spoke before their terminal was known. */
 	private readonly earlyControl = new Map<string, ControlPanes>();
 	private serial = 1;
 	/** Counts the readings of tmux, main's and the control clients'. */
@@ -568,8 +413,7 @@ export class TerminalNeovims {
 
 	/**
 	 * The terminals there are — Agents' and Workspaces' — and which are on
-	 * screen. Only those on screen are read; one that is gone takes its
-	 * overlays with it.
+	 * screen. One that is gone takes its overlays with it.
 	 */
 	setTerminals(
 		terminals: readonly OverlayTerminal[],
@@ -579,7 +423,6 @@ export class TerminalNeovims {
 		let changed = false;
 		for (const [terminalId, watch] of [...this.watches]) {
 			if (known.has(terminalId)) continue;
-			this.stop(watch);
 			for (const overlay of watch.overlays.values()) {
 				this.byKey.delete(overlay.key);
 				this.options.gone?.(overlay.key);
@@ -594,8 +437,6 @@ export class TerminalNeovims {
 					terminal,
 					onScreen: false,
 					reading: undefined,
-					timer: undefined,
-					reading$: false,
 					lend: undefined,
 					activeShown: false,
 					said: "",
@@ -612,16 +453,14 @@ export class TerminalNeovims {
 			if (shown === watch.onScreen) continue;
 			watch.onScreen = shown;
 			changed ||= watch.overlays.size > 0;
-			if (shown) this.schedule(watch, 0);
-			else this.stop(watch);
 		}
 		if (changed) this.changed();
 	}
 
 	/**
-	 * A control-mode terminal's page, saying where its panes are drawn and
-	 * what each is (see the file's comment); `undefined`: it is not a
-	 * control-mode page any more, and tmux is polled again.
+	 * A terminal's page, saying what each of its panes is (see the file's
+	 * comment); `undefined`: the page's surface went. The overlays stand as
+	 * they are until a page speaks for the terminal again.
 	 */
 	controlPanes(terminalId: string, panes: ControlPanes | undefined): void {
 		const watch = this.watches.get(terminalId);
@@ -632,12 +471,9 @@ export class TerminalNeovims {
 			return;
 		}
 		if (panes === undefined) {
-			if (watch.control === undefined) return;
 			watch.control = undefined;
-			if (watch.onScreen) this.schedule(watch, 0);
 			return;
 		}
-		this.stop(watch);
 		const hints = JSON.stringify(
 			panes.panes.map((pane) => [pane.pane, pane.socket]),
 		);
@@ -683,7 +519,7 @@ export class TerminalNeovims {
 	}
 
 	/**
-	 * A control-mode terminal's control client read, from tmux, that pane
+	 * A terminal's control client read, from tmux, that pane
 	 * `paneId`'s `@devhub-nvim` is `socket` (`""`: none). It runs in the pty
 	 * host, main's own process, and asked tmux itself — on the OSC the pane's
 	 * `nvim` writes, at once — so this is confirmed as a reading of main's
@@ -721,12 +557,10 @@ export class TerminalNeovims {
 		if (watch === undefined) return { overlays: [] };
 		const overlays: OverlayView[] = [];
 		for (const overlay of watch.overlays.values()) {
-			const cells = this.cellsOf(watch, overlay);
 			overlays.push({
 				key: overlay.key,
 				pane: Number(overlay.paneId.slice(1)),
 				shown: this.shown(watch, overlay),
-				...(cells !== undefined ? { cells } : {}),
 			});
 		}
 		const keys = this.keyboardOverlay(terminalId);
@@ -768,7 +602,6 @@ export class TerminalNeovims {
 		watch.lend = undefined;
 		this.changed();
 		if (watch.control !== undefined) void this.confirm(watch);
-		else if (watch.onScreen) this.schedule(watch, 0);
 	}
 
 	/** Where an overlay's page attaches: the socket, reached from here. */
@@ -814,8 +647,7 @@ export class TerminalNeovims {
 			watch.lend = undefined;
 		}
 		this.changed();
-		if (watch?.control !== undefined) this.applyControl(watch);
-		else if (watch?.onScreen === true) this.schedule(watch, 0);
+		if (watch !== undefined) this.applyControl(watch);
 	}
 
 	/** The overlay's page took the keyboard (a click into it). */
@@ -832,10 +664,7 @@ export class TerminalNeovims {
 		if (pane !== undefined && !pane.paneActive) {
 			void this.options.ports
 				.selectPane(watch.terminal, overlay.paneId)
-				.catch(() => undefined)
-				.then(() => {
-					if (watch.control === undefined) this.schedule(watch, 0);
-				});
+				.catch(() => undefined);
 		} else if (lent) {
 			this.changed();
 		}
@@ -851,12 +680,11 @@ export class TerminalNeovims {
 	}
 
 	/**
-	 * A key typed in the overlay: `prefix` when it is tmux's prefix, which
-	 * the terminal is to take (the client is put in the prefix table here);
-	 * `hand`, in control mode, when the terminal's page is to be given the
-	 * keystroke itself (its control client keeps its own key tables).
+	 * A key typed in the overlay: `hand` when it is tmux's prefix, and the
+	 * terminal's page is to be given the keystroke itself (its control client
+	 * keeps its own key tables).
 	 */
-	overlayKey(key: string, input: KeyInput): "prefix" | "hand" | "pass" {
+	overlayKey(key: string, input: KeyInput): "hand" | "pass" {
 		if (input.type !== "keyDown") return "pass";
 		const overlay = this.byKey.get(key);
 		const watch =
@@ -868,17 +696,9 @@ export class TerminalNeovims {
 		if (!client.prefixes.some((prefix) => isTmuxKey(prefix, input))) {
 			return "pass";
 		}
-		if (watch.control !== undefined) {
-			watch.lend = { kind: "prefix", armed: true };
-			this.changed();
-			return "hand";
-		}
 		watch.lend = { kind: "prefix", armed: true };
-		void this.options.ports
-			.enterPrefix(watch.terminal, client.name)
-			.catch(() => undefined);
 		this.changed();
-		return "prefix";
+		return "hand";
 	}
 
 	/**
@@ -899,29 +719,15 @@ export class TerminalNeovims {
 		const lend = watch.lend;
 		// The key after the prefix, the prefix again (`send-prefix`) included.
 		if (lend?.kind === "prefix" && lend.armed) {
-			if (
-				watch.control === undefined &&
-				INTERACTIVE_AFTER_PREFIX.has(input.key)
-			) {
-				watch.lend = { kind: "interactive" };
-			} else {
-				watch.lend = { kind: "prefix", armed: false };
-				this.settle(watch);
-			}
+			watch.lend = { kind: "prefix", armed: false };
+			this.settle(watch);
 			return "pass";
 		}
 		if (client.prefixes.some((prefix) => isTmuxKey(prefix, input))) {
 			watch.lend = { kind: "prefix", armed: true };
 			return "pass";
 		}
-		if (lend?.kind === "interactive") {
-			if (PROMPT_ENDS.has(input.key) || (input.control && input.key === "c")) {
-				this.settle(watch);
-			}
-			return "pass";
-		}
 		if (lend?.kind === "prefix") return "pass";
-		if (client.keyTable !== "root") return "pass";
 		watch.lend = undefined;
 		this.changed();
 		return "redirect";
@@ -937,7 +743,6 @@ export class TerminalNeovims {
 	/** DevHub is quitting: the Neovims run on, and the next DevHub adopts them. */
 	dispose(): void {
 		this.disposed = true;
-		for (const watch of this.watches.values()) this.stop(watch);
 	}
 
 	/** The overlay on the pane tmux has active in the window it shows. */
@@ -963,99 +768,34 @@ export class TerminalNeovims {
 		return pane !== undefined && paneShown(pane, reading);
 	}
 
-	/** Polled: the overlay's pane in the client's cells, while it is shown. */
-	private cellsOf(watch: Watch, overlay: Overlay): OverlayView["cells"] {
-		const client = watch.reading?.client;
-		if (watch.control !== undefined || client === undefined) return undefined;
-		if (!this.shown(watch, overlay)) return undefined;
-		const pane = watch.reading?.panes.find(
-			(candidate) => candidate.paneId === overlay.paneId,
-		);
-		if (pane === undefined || !(client.width > 0 && client.height > 0))
-			return undefined;
-		return {
-			x: pane.left,
-			y: pane.top + client.statusTop,
-			width: pane.width,
-			height: pane.height,
-			cols: client.width,
-			rows: client.height,
-		};
-	}
-
-	/** After a prefix binding ran: read again, and take the keys back if it is ours. */
+	/** After a prefix binding ran: the keys back, if its pane is the active one. */
 	private settle(watch: Watch): void {
 		setTimeout(() => {
 			if (watch.lend === undefined || watch.lend.kind === "user") return;
 			watch.lend = { kind: "user" };
-			const read =
-				watch.control === undefined ? this.poll(watch) : Promise.resolve();
-			void read.then(() => {
-				if (watch.lend?.kind !== "user") return;
-				if (watch.reading?.client?.keyTable !== "root") return;
-				if (this.activeOverlay(watch) === undefined) return;
-				watch.lend = undefined;
-				this.changed();
-			});
+			if (this.activeOverlay(watch) === undefined) return;
+			watch.lend = undefined;
+			this.changed();
 		}, this.options.settleMs ?? 120);
 	}
 
-	private stop(watch: Watch): void {
-		if (watch.timer !== undefined) clearTimeout(watch.timer);
-		watch.timer = undefined;
-	}
-
-	private schedule(watch: Watch, delayMs: number): void {
-		if (this.disposed || !watch.onScreen || watch.control !== undefined) return;
-		this.stop(watch);
-		watch.timer = setTimeout(() => {
-			watch.timer = undefined;
-			void this.poll(watch).finally(() => {
-				if (watch.timer === undefined && watch.onScreen) {
-					this.schedule(
-						watch,
-						this.options.pollMs?.(watch.terminal.machine) ??
-							(watch.terminal.machine === "local" ? 150 : 400),
-					);
-				}
-			});
-		}, delayMs);
-	}
-
-	private async poll(watch: Watch): Promise<void> {
-		if (watch.reading$) return;
-		watch.reading$ = true;
-		let reading: TerminalNeovimReading | undefined;
-		try {
-			reading = await this.options.ports.read(watch.terminal, this.enabled);
-		} catch {
-			reading = undefined;
-		} finally {
-			watch.reading$ = false;
-		}
-		if (reading === undefined || this.disposed) return;
-		this.apply(watch, reading);
-	}
-
 	/**
-	 * Read tmux for a control-mode terminal's sockets (and state the
-	 * overlay's server option on the way): what its page names is a hint.
+	 * Read tmux for a terminal's sockets (and state the overlay's server
+	 * option on the way): what its page names is a hint.
 	 */
 	private async confirm(watch: Watch): Promise<void> {
 		this.readings += 1;
 		const started = this.readings;
-		let reading: TerminalNeovimReading | undefined;
+		let sockets: ReadonlyMap<string, string> | undefined;
 		try {
-			reading = await this.options.ports.read(watch.terminal, this.enabled);
+			sockets = await this.options.ports.read(watch.terminal, this.enabled);
 		} catch {
-			reading = undefined;
+			sockets = undefined;
 		}
 		const control = watch.control;
-		if (reading === undefined || control === undefined || this.disposed) return;
+		if (sockets === undefined || control === undefined || this.disposed) return;
 		control.confirmed = new Map(
-			reading.panes
-				.filter((pane) => pane.socket !== "")
-				.map((pane) => [pane.paneId, pane.socket]),
+			[...sockets].filter(([, socket]) => socket !== ""),
 		);
 		// What a control client read after this reading started is newer.
 		for (const [paneId, direct] of control.direct) {

@@ -38,12 +38,7 @@ import type {
 	RuntimeId,
 	UserTmuxConfig,
 } from "../runtime/runtime.js";
-import {
-	terminalEnvironment,
-	type Pty,
-	type PtyLaunch,
-	type PtyPlan,
-} from "./pty.js";
+import { terminalEnvironment, type PtyLaunch, type PtyPlan } from "./pty.js";
 import { createHash, randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -113,11 +108,7 @@ import {
 	neovimShimKeys,
 	neovimShimZshenv,
 } from "../editor/terminalNeovimShim.js";
-import {
-	CLIENT_FORMAT as NEOVIM_CLIENT_FORMAT,
-	CLIENT_LINE_MARK,
-	PANE_FORMAT as NEOVIM_PANE_FORMAT,
-} from "../editor/terminalNeovims.js";
+import { SOCKET_FORMAT as NEOVIM_SOCKET_FORMAT } from "../editor/terminalNeovims.js";
 
 const PROTOCOL_OPTION = "@devhub-protocol";
 const PROTOCOL_VALUE = "1";
@@ -372,8 +363,9 @@ function bootstrapConfig(
 	const names = Object.keys(sessionEnvironment).sort();
 	return [
 		'source-file -q "$DEVHUB_USER_TMUX_CONFIG"',
-		// Every client this server will ever have is an xterm.js in DevHub's own
-		// window, and xterm.js renders 24-bit colour. Saying so once, on the server,
+		// Every client this server will ever have is a control client DevHub
+		// draws itself, and its panes' engines render 24-bit colour. Saying so
+		// once, on the server,
 		// is what makes a pane's programs emit 24-bit sequences instead of asking
 		// terminfo and quantising to 256 — the visible symptom being a colour ramp
 		// that comes out in bands.
@@ -1756,19 +1748,12 @@ export class TmuxTerminalRuntime {
 	}
 
 	/**
-	 * A PTY on the machine tmux is on.
-	 *
-	 * The attaching client has to run where the server is — a `tmux -L devhub
-	 * attach` on this Mac reaches nothing across a network — so the client is
-	 * opened through the same `Runtime` every other tmux command goes through,
-	 * and the ssh hop, where there is one, is that runtime's business and not
+	 * What a client of this server is started as, said for the pty host to
+	 * start (`Runtime.ptyPlan`): the client has to run where the server is — a
+	 * `tmux -L devhub attach` on this Mac reaches nothing across a network —
+	 * so the ssh hop, where there is one, is that runtime's business and not
 	 * the attachment logic's.
 	 */
-	spawnPty(launch: PtyLaunch): Pty {
-		return this.host.spawnPty(launch);
-	}
-
-	/** What `spawnPty` would open here, for the pty host to open (`Runtime.ptyPlan`). */
 	ptyPlan(launch: PtyLaunch): PtyPlan | undefined {
 		return this.host.ptyPlan?.(launch);
 	}
@@ -4069,10 +4054,10 @@ export class TmuxTerminalRuntime {
 	/**
 	 * One reading of a terminal's session for the Neovims drawn over its
 	 * panes (`editor/terminalNeovims.ts`): an Agent terminal's `tm-`
-	 * session, by its id, or a Workspace's `ws-` one. Every pane, then
-	 * DevHub's client, marked. The overlay's server option is stated in the
-	 * same queue, so a server started since is told too. `undefined`: no
-	 * such session (yet, or any more).
+	 * session, by its id, or a Workspace's `ws-` one. Every pane's id and
+	 * `@devhub-nvim`. The overlay's server option is stated in the same
+	 * queue, so a server started since is told too. `undefined`: no such
+	 * session (yet, or any more).
 	 */
 	async terminalNeovimReading(
 		terminal:
@@ -4102,13 +4087,7 @@ export class TmuxTerminalRuntime {
 					"-t",
 					session,
 					"-F",
-					NEOVIM_PANE_FORMAT,
-					";",
-					"list-clients",
-					"-t",
-					session,
-					"-F",
-					`${CLIENT_LINE_MARK}${NEOVIM_CLIENT_FORMAT}`,
+					NEOVIM_SOCKET_FORMAT,
 				],
 				this.contextHome,
 				cancel,
@@ -4170,24 +4149,15 @@ export class TmuxTerminalRuntime {
 	}
 
 	/**
-	 * What the overlays ask of tmux: make a pane the active one, put
-	 * DevHub's client in the prefix table.
-	 * Every target is a pane id or a client name a reading just gave.
+	 * What an overlay asks of tmux: make its pane the active one (a click
+	 * into a Neovim on another pane). The target is a pane id a reading gave.
 	 */
-	async terminalNeovimCommand(
-		command:
-			| { readonly kind: "select"; readonly paneId: string }
-			| { readonly kind: "prefix"; readonly client: string },
+	async selectNeovimPane(
+		paneId: string,
 		cancel = new CancellationToken(),
 	): Promise<void> {
-		const target = command.kind === "prefix" ? command.client : command.paneId;
-		if (command.kind !== "prefix" && !PANE_ID.test(target)) {
-			throw portFailure("failed");
-		}
-		const args =
-			command.kind === "select"
-				? ["select-pane", "-t", target]
-				: ["switch-client", "-c", target, "-T", "prefix"];
+		if (!PANE_ID.test(paneId)) throw portFailure("failed");
+		const args = ["select-pane", "-t", paneId];
 		const release = await this.gate.acquireOperation(cancel);
 		try {
 			const output = await this.runTmux(

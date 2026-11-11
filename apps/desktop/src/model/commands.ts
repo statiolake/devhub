@@ -75,6 +75,7 @@
  * | (palette only)              | `preview_color_theme`     |
  * | (palette only)              | `open_task_manager`       |
  * | (palette only)              | `install_cli`             |
+ * | (palette only)              | `restart_terminals`       |
  * | `Cmd+Q ?`                   | `show_chord_help`         |
  * | `Cmd+Q :`                   | `open_command_palette`    |
  * | `Cmd+Q H` / `L`              | `navigate_back` / `navigate_forward` |
@@ -328,14 +329,15 @@
  * cannot be on a key and missing from the palette. A command may also be
  * *palette only* — no default key — when it already has a gesture somewhere
  * else and a chord for it would take a key some other command wants — or is
- * rare enough not to be worth a key. Six are today, and
+ * rare enough not to be worth a key. Seven are today, and
  * `PALETTE_ONLY_COMMANDS` names them so that a command cannot lose its key by
  * accident: `focus_sidebar`, whose `S` was taken for a while and is left
  * unbound now (a click on a row is its other gesture), `open_log`, which
  * is for the moment something went wrong, `open_recently_closed`, the
  * picker over what `Cmd+Q Shift+T` reopens one at a time,
  * `preview_color_theme`, `open_task_manager`, which is for the moment
- * the Mac is slow, and `install_cli`, which is run once per install. (Back and Forward were
+ * the Mac is slow, `install_cli`, which is run once per install, and
+ * `restart_terminals`, which is for terminals that have stopped. (Back and Forward were
  * once palette only too; they are `Cmd+Q H` / `L` now, see below.)
  * `:` is matched as the
  * character, so it is Shift+; on a US layout and the unshifted key beside L on
@@ -431,6 +433,7 @@ export type CommandId =
   | "preview_color_theme"
   | "open_task_manager"
   | "install_cli"
+  | "restart_terminals"
   | "show_chord_help"
   | "open_command_palette"
   | "navigate_back"
@@ -841,6 +844,18 @@ export const COMMANDS: readonly CommandDefinition[] = [
     defaultKeys: [],
   },
   {
+    // The pty host started afresh and every terminal attached again
+    // (`TerminalService.restart`); the tmux sessions are untouched. For
+    // terminals that stopped (the host kept ending and was given up on),
+    // where it is also the failure's own action. Palette only: see
+    // `PALETTE_ONLY_COMMANDS`.
+    id: "restart_terminals",
+    label: "Restart Terminals",
+    needs: "nothing",
+    category: "DevHub",
+    defaultKeys: [],
+  },
+  {
     id: "show_chord_help",
     label: "Keyboard shortcuts",
     needs: "nothing",
@@ -893,6 +908,7 @@ export const PALETTE_ONLY_COMMANDS: ReadonlySet<CommandId> = new Set([
   "preview_color_theme",
   "open_task_manager",
   "install_cli",
+  "restart_terminals",
 ]);
 
 const BY_ID = new Map<string, CommandDefinition>(

@@ -1,19 +1,19 @@
 /**
- * The main-process attachment logic, on a fake PTY.
+ * The attachment ledger, on a fake pty host.
  *
- * Ported from the Rust `terminal/pty.rs` tests. The Rust checked the same
- * invariants against threads and condition variables; here they are checked
- * against what the view actually observes, which is what those invariants
- * existed to protect: frame order, the ack window, the input ledger, latest-wins
- * resize, and who owns which attachment.
+ * Ported from the Rust `terminal/pty.rs` tests. What is checked is who owns
+ * which control client: the receipt, the generation, a surface replacing its
+ * own client, an older attach losing to a newer one, and the releases of a
+ * page, a target and the app. The client's data path is the pty host's
+ * (`src/main/ptyHost/ptyHost.test.ts`).
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AttachmentManager,
-  FlowControl,
-  OUTPUT_COALESCE_MS,
   type AttachContext,
+  type HostedOpen,
+  type HostedPtys,
 } from "../../src/main/terminal/attachments";
 import {
   CancellationToken,
@@ -21,67 +21,17 @@ import {
   workspaceTarget,
   type TerminalTarget,
 } from "../../src/main/terminal/ports";
-import {
-  MAX_OUTPUT_FRAME_BYTES,
-  TerminalFailure,
-  decodeTerminalFrame,
-  encodeTerminalFrame,
-  type TerminalFrame,
-} from "../../src/ipc/terminal";
-import type { Pty, PtyLaunch } from "../../src/main/terminal/pty";
+import type { ExitReason } from "../../src/ipc/terminal";
 
-class FakePty implements Pty {
-  readonly pid = 4242;
-  readonly written: Uint8Array[] = [];
-  readonly resizes: { cols: number; rows: number }[] = [];
-  killed = false;
-  paused = false;
-  private data: ((bytes: Uint8Array) => void) | undefined;
-  private exit: (() => void) | undefined;
-
-  constructor(readonly launch: PtyLaunch) {}
-
-  onData(listener: (bytes: Uint8Array) => void) {
-    this.data = listener;
-  }
-  onExit(listener: () => void) {
-    this.exit = listener;
-  }
-  write(bytes: Uint8Array) {
-    this.written.push(new Uint8Array(bytes));
-  }
-  resize(size: { cols: number; rows: number }) {
-    this.resizes.push({ cols: size.cols, rows: size.rows });
-  }
-  kill() {
-    this.killed = true;
-  }
-  pause() {
-    this.paused = true;
-  }
-  resume() {
-    this.paused = false;
-  }
-
-  /** Whatever the child printed. */
-  emit(bytes: Uint8Array | string) {
-    this.data?.(
-      typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes,
-    );
-  }
-  end() {
-    this.exit?.();
-  }
-}
-
+const SCRATCH_SURFACE =
+  "workspace-terminal:00000000-0000-4000-8000-00000000005c";
 const WORKSPACE_SURFACE =
   "workspace-terminal:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const OTHER_WORKSPACE_SURFACE =
   "workspace-terminal:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 function targetFor(surfaceKey: string): TerminalTarget {
-  if (surfaceKey === "workspace-terminal:00000000-0000-4000-8000-00000000005c")
-    return SCRATCH_TARGET;
+  if (surfaceKey === SCRATCH_SURFACE) return SCRATCH_TARGET;
   if (surfaceKey === OTHER_WORKSPACE_SURFACE) {
     return workspaceTarget(
       "local",
@@ -96,509 +46,186 @@ function targetFor(surfaceKey: string): TerminalTarget {
   );
 }
 
-/**
- * The per-attach factory these tests never reach.
- *
- * Production takes the PTY from the target's machine, through the context;
- * these tests give the manager one fake for every machine at once, which is
- * the override that wins. A factory that throws says so rather than letting a
- * mistake here open something real.
- */
-const unusedSpawn = (): never => {
-  throw new Error("the manager's injected spawn should have been used");
-};
+/** The pty host as the ledger sees it: what it was asked to start and stop. */
+class FakeHost implements HostedPtys {
+  available = true;
+  readonly opened: HostedOpen[] = [];
+  readonly stopped = new Map<string, ExitReason>();
 
-interface Harness {
-  readonly manager: AttachmentManager;
-  readonly ptys: FakePty[];
-  attach(overrides?: Partial<AttachContext>): {
-    receipt: ReturnType<AttachmentManager["attach"]>;
-    frames: TerminalFrame[];
-    pty: FakePty;
-  };
+  open(spec: HostedOpen): Promise<number> {
+    this.opened.push(spec);
+    return Promise.resolve(1);
+  }
+
+  stop(id: string, reason: ExitReason): void {
+    this.stopped.set(id, reason);
+  }
 }
 
 function harness(
   onEndedByItself?: ConstructorParameters<
     typeof AttachmentManager
   >[0]["onEndedByItself"],
-): Harness {
-  const ptys: FakePty[] = [];
+) {
+  const host = new FakeHost();
   let counter = 0;
   const manager = new AttachmentManager({
     onEndedByItself,
     randomBytes: (count) =>
       Uint8Array.from({ length: count }, () => (counter += 7) & 0xff),
-    spawn: (launch) => {
-      const pty = new FakePty(launch);
-      ptys.push(pty);
-      return pty;
-    },
+    hosted: host,
   });
+  const ended = vi.fn();
+  const context = (overrides?: Partial<AttachContext>): AttachContext => {
+    const surfaceKey = overrides?.surfaceKey ?? SCRATCH_SURFACE;
+    return {
+      surfaceKey,
+      viewLabel: "shell:1",
+      target: targetFor(surfaceKey),
+      file: "/usr/bin/tmux",
+      args: ["-L", "devhub", "attach-session", "-t", "scratch"],
+      cwd: ".",
+      environment: { TERM: "xterm-256color" },
+      size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
+      plan: (launch) => ({ launch, ended }),
+      route: { page: {}, channelId: "c" },
+      ...overrides,
+    };
+  };
   return {
+    host,
     manager,
-    ptys,
-    attach(overrides) {
-      const frames: TerminalFrame[] = [];
-      const before = ptys.length;
-      const surfaceKey =
-        overrides?.surfaceKey ??
-        "workspace-terminal:00000000-0000-4000-8000-00000000005c";
-      const viewLabel = overrides?.viewLabel ?? "shell:1";
-      const target = overrides?.target ?? targetFor(surfaceKey);
+    ended,
+    context,
+    async attach(overrides?: Partial<AttachContext>) {
+      const full = context(overrides);
       // Two phases, as in production: claim the ledger, resolve the session,
       // then publish. The test does the resolving instantly.
       const permit = manager.beginAttach(
-        target,
-        surfaceKey,
-        viewLabel,
+        full.target,
+        full.surfaceKey,
+        full.viewLabel,
         new CancellationToken(),
       );
-      const receipt = manager.attach(permit, {
-        surfaceKey,
-        viewLabel,
-        target,
-        spawn: unusedSpawn,
-        file: "/usr/bin/tmux",
-        args: ["-L", "devhub", "attach-session", "-t", "scratch"],
-        cwd: ".",
-        environment: { TERM: "xterm-256color" },
-        size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
-        // The frames are encoded and decoded exactly as they cross the real
-        // boundary, so a test can never assert on a frame the page could not
-        // have parsed.
-        sink: (frame) => {
-          frames.push(decodeTerminalFrame(encodeTerminalFrame(frame)));
-          return true;
-        },
-        ...overrides,
-      });
-      permit.release();
-      return { receipt, frames, pty: ptys[before] };
+      try {
+        const receipt = await manager.attach(permit, full);
+        return { receipt, spec: host.opened.at(-1) as HostedOpen };
+      } finally {
+        permit.release();
+      }
     },
   };
 }
 
-afterEach(() => {
-  vi.useRealTimers();
-});
-
-/**
- * Let the output coalescer's window pass.
- *
- * Output is gathered in main for a few milliseconds before it becomes a frame,
- * so a test that wants one read to be one frame has to say when that window
- * ended. Fake timers are what make that a statement about the contract rather
- * than about how fast the machine is.
- */
-function flushOutput(): void {
-  vi.advanceTimersByTime(OUTPUT_COALESCE_MS);
-}
-
-describe("flow control", () => {
-  it("holds output at the window until a cumulative ack", () => {
-    const flow = new FlowControl();
-    for (let sequence = 1; sequence <= 8; sequence += 1) {
-      expect(flow.reserve(sequence, 1)).toBe(true);
-    }
-    expect(flow.reserve(9, 1)).toBe(false);
-    expect(flow.acknowledge(8)).toBe(true);
-    expect(flow.reserve(9, 1)).toBe(true);
-  });
-
-  it("refuses a future ack and an unbounded frame", () => {
-    const flow = new FlowControl();
-    expect(() => flow.acknowledge(0)).toThrow();
-    expect(() => flow.acknowledge(1)).toThrowError(
-      expect.objectContaining({ code: "invalid_request" }) as unknown as Error,
-    );
-    expect(() => flow.reserve(1, MAX_OUTPUT_FRAME_BYTES + 1)).toThrowError(
-      expect.objectContaining({ code: "backpressure" }) as unknown as Error,
-    );
-    expect(() => flow.acknowledge(Number.MAX_SAFE_INTEGER + 2)).toThrow();
-  });
+const identityOf = (
+  receipt: { surfaceKey: string; attachmentId: string; targetGeneration: number },
+  viewLabel: string,
+) => ({
+  surfaceKey: receipt.surfaceKey,
+  attachmentId: receipt.attachmentId,
+  targetGeneration: receipt.targetGeneration,
+  viewLabel,
 });
 
 describe("attach", () => {
-  it("gives the view a started frame before any output, and a receipt to match", () => {
-    vi.useFakeTimers();
+  it("starts a control client in the pty host and hands back its receipt", async () => {
     const test = harness();
-    const { receipt, frames, pty } = test.attach();
-    expect(receipt.surfaceKey).toBe(
-      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-    );
+    const { receipt, spec } = await test.attach();
+    expect(receipt.surfaceKey).toBe(SCRATCH_SURFACE);
     expect(receipt.attachmentId).toMatch(/^[0-9a-f]{32}$/u);
     expect(receipt.targetGeneration).toBeGreaterThan(0);
-    expect(frames).toHaveLength(1);
-    expect(frames[0]).toMatchObject({
-      type: "started",
-      sequence: 0,
-      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
+    expect(spec).toMatchObject({
+      id: receipt.attachmentId,
+      surfaceKey: SCRATCH_SURFACE,
       targetGeneration: receipt.targetGeneration,
-      cols: 80,
-      rows: 24,
+      route: { channelId: "c" },
     });
-    pty.emit("hello");
-    flushOutput();
-    expect(frames[1]).toMatchObject({ type: "output", sequence: 1 });
-    expect(pty.launch.cwd).toBe(".");
-    // The client is tmux, never a shell: the shell lives in the session.
-    expect(pty.launch.file).toBe("/usr/bin/tmux");
-    expect(pty.launch.args).toContain("attach-session");
+    // The client is tmux -C on pipes, never a shell: the shell lives in the
+    // session.
+    expect(spec.launch.file).toBe("/usr/bin/tmux");
+    expect(spec.launch.args).toEqual([
+      "-L",
+      "devhub",
+      "-C",
+      "attach-session",
+      "-t",
+      "scratch",
+    ]);
+    expect(spec.launch.pipes).toBe(true);
+    // Its popups are a shell on the same machine, in a PTY.
+    expect(spec.popupLaunch?.file).toBe("/bin/sh");
+    expect(test.manager.hostedGeneration(receipt.attachmentId)).toBe(1);
   });
 
-  it("allocates a monotonic generation per attachment", () => {
+  it("allocates a monotonic generation per attachment", async () => {
     const test = harness();
-    const first = test.attach({ viewLabel: "shell:a" }).receipt;
-    const second = test.attach({
-      viewLabel: "shell:b",
-      surfaceKey: WORKSPACE_SURFACE,
-    }).receipt;
+    const first = (await test.attach({ viewLabel: "shell:a" })).receipt;
+    const second = (
+      await test.attach({ viewLabel: "shell:b", surfaceKey: WORKSPACE_SURFACE })
+    ).receipt;
     expect(second.targetGeneration).toBe(first.targetGeneration + 1);
     expect(second.attachmentId).not.toBe(first.attachmentId);
   });
 
-  it("replaces the attachment the same surface already had", () => {
+  it("replaces the client the same surface already had", async () => {
     const test = harness();
-    const first = test.attach();
-    const second = test.attach();
-    expect(first.pty.killed).toBe(true);
-    expect(first.frames.at(-1)).toMatchObject({
-      type: "exited",
-      reason: "detached",
-    });
-    expect(second.pty.killed).toBe(false);
+    const first = await test.attach();
+    const second = await test.attach();
+    expect(test.host.stopped.get(first.receipt.attachmentId)).toBe("detached");
+    expect(test.host.stopped.has(second.receipt.attachmentId)).toBe(false);
     expect(test.manager.count).toBe(1);
   });
 
-  it("supersedes an older in-flight attach before either can publish", () => {
+  it("supersedes an older in-flight attach before either can publish", async () => {
     // Resolving a tmux session is not instantaneous, so two attaches for one
     // view can overlap. The older one must lose definitively — not by timing.
     const test = harness();
     const first = test.manager.beginAttach(
       SCRATCH_TARGET,
-      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
+      SCRATCH_SURFACE,
       "shell:1",
       new CancellationToken(),
     );
     const second = test.manager.beginAttach(
       SCRATCH_TARGET,
-      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
+      SCRATCH_SURFACE,
       "shell:1",
       new CancellationToken(),
     );
     expect(first.cancel.isCancelled).toBe(true);
     expect(second.cancel.isCancelled).toBe(false);
-
-    const context = {
-      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-      viewLabel: "shell:1",
-      target: SCRATCH_TARGET,
-      spawn: unusedSpawn,
-      file: "/usr/bin/tmux",
-      args: [],
-      cwd: ".",
-      environment: { TERM: "xterm-256color" },
-      size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
-      sink: () => true,
-    } as const;
-    expect(() => test.manager.attach(first, { ...context })).toThrowError(
-      expect.objectContaining({ code: "stale_target" }) as unknown as Error,
-    );
-    expect(test.ptys).toHaveLength(0);
-
+    await expect(
+      test.manager.attach(first, test.context()),
+    ).rejects.toMatchObject({ code: "stale_target" });
+    expect(test.host.opened).toHaveLength(0);
     // Releasing the stale permit must not unregister the replacement: that is
     // the publication barrier the receipt depends on.
     first.release();
-    expect(test.manager.attach(second, { ...context }).surfaceKey).toBe(
-      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-    );
+    expect(
+      (await test.manager.attach(second, test.context())).surfaceKey,
+    ).toBe(SCRATCH_SURFACE);
     second.release();
   });
 
-  it("tells the view when no PTY could be opened, then refuses the request", () => {
-    const frames: TerminalFrame[] = [];
-    const manager = new AttachmentManager({
-      randomBytes: (count) => new Uint8Array(count).fill(1),
-      spawn: () => {
-        throw new Error("no pty for you");
-      },
+  it("is refused while the pty host is given up on, or its machine cannot say what to run", async () => {
+    const test = harness();
+    test.host.available = false;
+    await expect(test.attach()).rejects.toMatchObject({
+      code: "pty_unavailable",
     });
-    const permit = manager.beginAttach(
-      SCRATCH_TARGET,
-      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-      "shell:1",
-      new CancellationToken(),
-    );
-    expect(() =>
-      manager.attach(permit, {
-        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-        viewLabel: "shell:1",
-        target: SCRATCH_TARGET,
-        spawn: unusedSpawn,
-        file: "/usr/bin/tmux",
-        args: [],
-        cwd: ".",
-        environment: { TERM: "xterm-256color" },
-        size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
-        sink: (frame) => {
-          frames.push(frame);
-          return true;
-        },
-      }),
-    ).toThrowError(
-      expect.objectContaining({
-        code: "pty_unavailable",
-        // The reason the PTY could not open must not be lost on the way out.
-        cause: expect.objectContaining({ message: "no pty for you" }),
-      }) as unknown as Error,
-    );
-    expect(frames.map((frame) => frame.type)).toEqual(["error", "exited"]);
-    expect(frames[0]).toMatchObject({
-      error: { code: "pty_unavailable" },
-      sequence: 0,
+    test.host.available = true;
+    await expect(test.attach({ plan: () => undefined })).rejects.toMatchObject({
+      code: "pty_unavailable",
     });
-  });
-});
-
-/**
- * Coalescing PTY output.
- *
- * A curses redraw arrives as several reads; sending each one as its own frame
- * makes the view render the redraw's intermediate states. So the reads of one
- * window become one frame, and everything the frame contract promised about
- * order and bounds still holds across that.
- */
-describe("output coalescing", () => {
-  const outputsOf = (frames: TerminalFrame[]) =>
-    frames.filter((frame) => frame.type === "output");
-  const textOf = (frames: TerminalFrame[]) =>
-    outputsOf(frames)
-      .map((frame) =>
-        frame.type === "output" ? new TextDecoder().decode(frame.bytes) : "",
-      )
-      .join("");
-
-  it("makes one frame of the reads inside one window, in order", () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const { frames, pty } = test.attach();
-    pty.emit("[H");
-    pty.emit("row one");
-    pty.emit("[2;1H");
-    pty.emit("row two");
-    // Nothing has been sent yet: the redraw is still arriving.
-    expect(outputsOf(frames)).toHaveLength(0);
-    flushOutput();
-    const outputs = outputsOf(frames);
-    expect(outputs).toHaveLength(1);
-    expect(outputs[0]).toMatchObject({ sequence: 1 });
-    expect(textOf(frames)).toBe("[Hrow one[2;1Hrow two");
+    expect(test.host.opened).toHaveLength(0);
+    expect((await test.attach()).receipt.surfaceKey).toBe(SCRATCH_SURFACE);
   });
 
-  it("starts a new window for the next read", () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const { frames, pty } = test.attach();
-    pty.emit("a");
-    flushOutput();
-    pty.emit("b");
-    flushOutput();
-    expect(outputsOf(frames).map((frame) => frame.sequence)).toEqual([1, 2]);
-    expect(textOf(frames)).toBe("ab");
-  });
-
-  it("does not wait once the pending bytes fill a frame", () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const { frames, pty } = test.attach();
-    pty.emit(new Uint8Array(MAX_OUTPUT_FRAME_BYTES - 1).fill(0x41));
-    expect(outputsOf(frames)).toHaveLength(0);
-    // The read that crosses the bound flushes what is pending immediately,
-    // tail included, rather than leaving the remainder for the timer.
-    pty.emit("BB");
-    const outputs = outputsOf(frames);
-    expect(outputs).toHaveLength(2);
-    expect(outputs.map((frame) => frame.sequence)).toEqual([1, 2]);
-    expect(
-      outputs.reduce(
-        (total, frame) =>
-          total + (frame.type === "output" ? frame.bytes.byteLength : 0),
-        0,
-      ),
-    ).toBe(MAX_OUTPUT_FRAME_BYTES + 1);
-    expect(textOf(frames).endsWith("ABB")).toBe(true);
-    // And the window is over: the timer has nothing left to send.
-    flushOutput();
-    expect(outputsOf(frames)).toHaveLength(2);
-  });
-
-  it("sends what is pending before the exit frame", () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const { frames, pty } = test.attach();
-    pty.emit("last words");
-    pty.end();
-    expect(frames.map((frame) => frame.type)).toEqual([
-      "started",
-      "output",
-      "exited",
-    ]);
-    expect(textOf(frames)).toBe("last words");
-    expect(frames.at(-1)).toMatchObject({ type: "exited", reason: "eof" });
-  });
-
-  it("sends what is pending before a failure frame", () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const { frames, pty } = test.attach();
-    // Fill the window with frames the view never acknowledges, then let the
-    // backpressure timeout end the attachment while a read is still pending.
-    for (let index = 0; index < 9; index += 1) {
-      pty.emit("x");
-      flushOutput();
-    }
-    pty.emit("pending");
-    vi.advanceTimersByTime(2_000);
-    const types = frames.map((frame) => frame.type);
-    expect(types.slice(-2)).toEqual(["error", "exited"]);
-    // The pending read was flushed first — the window had no room left for it,
-    // so it is dropped exactly as the queue is, but it never appears after the
-    // error frame.
-    expect(types.indexOf("error")).toBe(types.length - 2);
-    expect(frames.at(-2)).toMatchObject({ error: { code: "backpressure" } });
-  });
-
-  it("sends what is pending before a detach's exit frame", () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const { receipt, frames, pty } = test.attach();
-    pty.emit("half a redraw");
-    test.manager.detach({
-      surfaceKey: receipt.surfaceKey,
-      attachmentId: receipt.attachmentId,
-      targetGeneration: receipt.targetGeneration,
-      viewLabel: "shell:1",
-    });
-    expect(frames.map((frame) => frame.type)).toEqual([
-      "started",
-      "output",
-      "exited",
-    ]);
-    expect(textOf(frames)).toBe("half a redraw");
-    expect(pty.killed).toBe(true);
-  });
-
-  it("emits nothing more once the attachment has stopped", () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const { frames, pty } = test.attach();
-    pty.emit("before");
-    pty.end();
-    const settled = frames.length;
-    pty.emit("after");
-    flushOutput();
-    expect(frames).toHaveLength(settled);
-    expect(textOf(frames)).toBe("before");
-  });
-
-  it("meters coalesced frames through the same window", () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const { receipt, frames, pty } = test.attach();
-    const identity = {
-      surfaceKey: receipt.surfaceKey,
-      attachmentId: receipt.attachmentId,
-      targetGeneration: receipt.targetGeneration,
-      viewLabel: "shell:1",
-    };
-    // Eight coalesced frames fill the window; the ninth waits for an ack, and
-    // the child is paused meanwhile.
-    for (let index = 0; index < 9; index += 1) {
-      pty.emit("aa");
-      pty.emit("bb");
-      flushOutput();
-    }
-    expect(outputsOf(frames)).toHaveLength(8);
-    expect(pty.paused).toBe(true);
-    test.manager.acknowledge(identity, 8);
-    expect(outputsOf(frames)).toHaveLength(9);
-    expect(pty.paused).toBe(false);
-    expect(textOf(frames)).toBe("aabb".repeat(9));
-  });
-});
-
-describe("output", () => {
-  it("splits at the frame bound and keeps the sequence contiguous", () => {
-    const test = harness();
-    const { frames, pty } = test.attach();
-    pty.emit(new Uint8Array(MAX_OUTPUT_FRAME_BYTES + 10).fill(0x41));
-    const outputs = frames.filter((frame) => frame.type === "output");
-    expect(outputs).toHaveLength(2);
-    expect(outputs.map((frame) => frame.sequence)).toEqual([1, 2]);
-    expect(
-      outputs.reduce(
-        (total, frame) =>
-          total + (frame.type === "output" ? frame.bytes.byteLength : 0),
-        0,
-      ),
-    ).toBe(MAX_OUTPUT_FRAME_BYTES + 10);
-  });
-
-  it("pauses the child once the view stops consuming, and resumes on ack", () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const { receipt, frames, pty } = test.attach();
-    const identity = {
-      surfaceKey: receipt.surfaceKey,
-      attachmentId: receipt.attachmentId,
-      targetGeneration: receipt.targetGeneration,
-      viewLabel: "shell:1",
-    };
-    // Each read is separated by the coalescing window, so this is nine frames
-    // and not one: the window is what is under test here, not the coalescer.
-    for (let index = 0; index < 9; index += 1) {
-      pty.emit("x");
-      flushOutput();
-    }
-    expect(frames.filter((frame) => frame.type === "output")).toHaveLength(8);
-    expect(pty.paused).toBe(true);
-    test.manager.acknowledge(identity, 8);
-    expect(frames.filter((frame) => frame.type === "output")).toHaveLength(9);
-    expect(pty.paused).toBe(false);
-  });
-
-  it("disconnects a view that never acknowledges", () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const { frames, pty } = test.attach();
-    for (let index = 0; index < 9; index += 1) {
-      pty.emit("x");
-      flushOutput();
-    }
-    vi.advanceTimersByTime(2_000);
-    expect(frames.at(-2)).toMatchObject({ error: { code: "backpressure" } });
-    expect(frames.at(-1)).toMatchObject({
-      type: "exited",
-      reason: "detached",
-    });
-    expect(pty.killed).toBe(true);
-  });
-
-  it("ends the attachment when the child exits", () => {
-    const test = harness();
-    const { frames, pty } = test.attach();
-    pty.emit("done\n");
-    pty.end();
-    expect(frames.at(-1)).toMatchObject({ type: "exited", reason: "eof" });
-    expect(test.manager.count).toBe(0);
-  });
-
-  it("says a client ended on its own, and nothing DevHub ended itself", () => {
+  it("says a client ended on its own, and nothing DevHub ended itself", async () => {
     const ended = vi.fn();
     const test = harness(ended);
-    const own = test.attach({ surfaceKey: WORKSPACE_SURFACE });
-    own.pty.end();
+    const own = await test.attach({ surfaceKey: WORKSPACE_SURFACE });
+    test.manager.hostedEnded(own.receipt.attachmentId, "eof");
     expect(ended).toHaveBeenCalledTimes(1);
     expect(ended).toHaveBeenCalledWith({
       surfaceKey: WORKSPACE_SURFACE,
@@ -606,161 +233,27 @@ describe("output", () => {
     });
     // A detach, a closed view, a close of the target, and quit stop the
     // client first: none of those is a session that ended.
-    const detached = test.attach({ surfaceKey: WORKSPACE_SURFACE });
+    const detached = await test.attach({ surfaceKey: WORKSPACE_SURFACE });
     test.manager.detachTarget(targetFor(WORKSPACE_SURFACE));
-    detached.pty.end();
-    const view = test.attach({
+    test.manager.hostedEnded(detached.receipt.attachmentId, "eof");
+    const view = await test.attach({
       surfaceKey: OTHER_WORKSPACE_SURFACE,
       viewLabel: "pane:2",
     });
     test.manager.detachView("pane:2");
-    view.pty.end();
-    const quit = test.attach({ surfaceKey: WORKSPACE_SURFACE });
+    test.manager.hostedEnded(view.receipt.attachmentId, "eof");
+    const quit = await test.attach({ surfaceKey: WORKSPACE_SURFACE });
     test.manager.detachAll();
-    quit.pty.end();
+    test.manager.hostedEnded(quit.receipt.attachmentId, "eof");
     expect(ended).toHaveBeenCalledTimes(1);
-  });
-
-  it("stops producing for a view that has gone away", () => {
-    const ptys: FakePty[] = [];
-    const manager = new AttachmentManager({
-      randomBytes: (count) => new Uint8Array(count).fill(3),
-      spawn: (launch) => {
-        const pty = new FakePty(launch);
-        ptys.push(pty);
-        return pty;
-      },
-    });
-    // A sink that reports the view is gone must end the attachment, not go on
-    // reading a PTY nobody can see.
-    const permit = manager.beginAttach(
-      SCRATCH_TARGET,
-      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-      "shell:1",
-      new CancellationToken(),
-    );
-    expect(() =>
-      manager.attach(permit, {
-        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-        viewLabel: "shell:1",
-        target: SCRATCH_TARGET,
-        spawn: unusedSpawn,
-        file: "/usr/bin/tmux",
-        args: [],
-        cwd: ".",
-        environment: { TERM: "xterm-256color" },
-        size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
-        sink: () => false,
-      }),
-    ).toThrowError(
-      expect.objectContaining({ code: "channel_closed" }) as unknown as Error,
-    );
-    expect(ptys[0].killed).toBe(true);
-    expect(manager.count).toBe(0);
-  });
-});
-
-describe("input", () => {
-  it("accepts a strict sequence and refuses replays and gaps", () => {
-    const test = harness();
-    const { receipt, pty } = test.attach();
-    const identity = {
-      surfaceKey: receipt.surfaceKey,
-      attachmentId: receipt.attachmentId,
-      targetGeneration: receipt.targetGeneration,
-      viewLabel: "shell:1",
-    };
-    test.manager.input(identity, 1, new TextEncoder().encode("first\n"));
-    expect(() =>
-      test.manager.input(identity, 3, new TextEncoder().encode("gap")),
-    ).toThrowError(
-      expect.objectContaining({ code: "invalid_request" }) as unknown as Error,
-    );
-    test.manager.input(identity, 2, new TextEncoder().encode("second\n"));
-    expect(() =>
-      test.manager.input(identity, 2, new TextEncoder().encode("replay")),
-    ).toThrow();
-    expect(
-      new TextDecoder().decode(
-        Uint8Array.from(pty.written.flatMap((bytes) => [...bytes])),
-      ),
-    ).toBe("first\nsecond\n");
-  });
-
-  it("refuses a request that does not own the attachment", () => {
-    const test = harness();
-    const { receipt } = test.attach();
-    const identity = {
-      surfaceKey: receipt.surfaceKey,
-      attachmentId: receipt.attachmentId,
-      targetGeneration: receipt.targetGeneration,
-      viewLabel: "shell:1",
-    };
-    for (const wrong of [
-      { ...identity, viewLabel: "shell:2" },
-      { ...identity, targetGeneration: identity.targetGeneration + 1 },
-      { ...identity, attachmentId: "f".repeat(32) },
-      {
-        ...identity,
-        surfaceKey: WORKSPACE_SURFACE,
-      },
-    ]) {
-      expect(() =>
-        test.manager.input(wrong, 1, Uint8Array.from([65])),
-      ).toThrowError(
-        expect.objectContaining({
-          code: "wrong_attachment",
-        }) as unknown as Error,
-      );
-    }
-  });
-});
-
-describe("resize", () => {
-  it("is latest-wins and reaches the PTY once per interval", () => {
-    vi.useFakeTimers();
-    const test = harness();
-    const { receipt, pty } = test.attach();
-    const identity = {
-      surfaceKey: receipt.surfaceKey,
-      attachmentId: receipt.attachmentId,
-      targetGeneration: receipt.targetGeneration,
-      viewLabel: "shell:1",
-    };
-    test.manager.resize(identity, {
-      cols: 80,
-      rows: 24,
-      pixelWidth: 0,
-      pixelHeight: 0,
-    });
-    test.manager.resize(identity, {
-      cols: 100,
-      rows: 30,
-      pixelWidth: 0,
-      pixelHeight: 0,
-    });
-    test.manager.resize(identity, {
-      cols: 120,
-      rows: 40,
-      pixelWidth: 0,
-      pixelHeight: 0,
-    });
-    expect(pty.resizes).toHaveLength(0);
-    vi.advanceTimersByTime(16);
-    expect(pty.resizes).toEqual([{ cols: 120, rows: 40 }]);
   });
 });
 
 describe("detach", () => {
-  it("is idempotent for the exact handle and refuses a different one", () => {
+  it("is idempotent for the exact handle and refuses a different one", async () => {
     const test = harness();
-    const { receipt, frames, pty } = test.attach();
-    const identity = {
-      surfaceKey: receipt.surfaceKey,
-      attachmentId: receipt.attachmentId,
-      targetGeneration: receipt.targetGeneration,
-      viewLabel: "shell:1",
-    };
+    const { receipt } = await test.attach();
+    const identity = identityOf(receipt, "shell:1");
     expect(() =>
       test.manager.detach({ ...identity, viewLabel: "shell:2" }),
     ).toThrowError(
@@ -769,107 +262,47 @@ describe("detach", () => {
       }) as unknown as Error,
     );
     test.manager.detach(identity);
-    expect(pty.killed).toBe(true);
-    expect(frames.at(-1)).toMatchObject({
-      type: "exited",
-      reason: "detached",
-    });
+    expect(test.host.stopped.get(receipt.attachmentId)).toBe("detached");
     // The handle is gone, and a second release of it is not an error.
     expect(() => test.manager.detach(identity)).not.toThrow();
     expect(test.manager.count).toBe(0);
   });
 
-  it("takes a closed view's and the whole app's attachments with it", () => {
+  it("takes a closed view's and the whole app's clients with it", async () => {
     const test = harness();
-    const first = test.attach({ viewLabel: "shell:a" });
-    const second = test.attach({
+    const first = await test.attach({ viewLabel: "shell:a" });
+    const second = await test.attach({
       viewLabel: "shell:b",
       surfaceKey: WORKSPACE_SURFACE,
     });
     test.manager.detachView("shell:a");
-    expect(first.pty.killed).toBe(true);
-    expect(second.pty.killed).toBe(false);
+    expect(test.host.stopped.has(first.receipt.attachmentId)).toBe(true);
+    expect(test.host.stopped.has(second.receipt.attachmentId)).toBe(false);
     test.manager.detachAll();
-    expect(second.pty.killed).toBe(true);
+    expect(test.host.stopped.has(second.receipt.attachmentId)).toBe(true);
     expect(test.manager.count).toBe(0);
-  });
-
-  it("refuses every request once the attachment has ended", () => {
-    const test = harness();
-    const { receipt, pty } = test.attach();
-    const identity = {
-      surfaceKey: receipt.surfaceKey,
-      attachmentId: receipt.attachmentId,
-      targetGeneration: receipt.targetGeneration,
-      viewLabel: "shell:1",
-    };
-    pty.end();
-    expect(() =>
-      test.manager.input(identity, 1, Uint8Array.from([65])),
-    ).toThrowError(TerminalFailure);
   });
 });
 
 /**
  * Who owns an attachment.
  *
- * Every terminal surface of a window — Scratch and each workspace — is a
- * component of one App Shell page, and the pool keeps them all mounted, so the
- * page label names the page and nothing finer. Ownership is the (page, surface)
- * pair: these are the cases that pair has to get right, and every one of them
- * is what the page label alone would get wrong.
+ * Every terminal surface of a window can be a component of one page, so the
+ * page label names the page and nothing finer. Ownership is the (page,
+ * surface) pair: these are the cases that pair has to get right, and every one
+ * of them is what the page label alone would get wrong.
  */
 describe("ownership", () => {
   const PAGE = "7";
   const OTHER_PAGE = "9";
 
-  const identityOf = (
-    receipt: ReturnType<AttachmentManager["attach"]>,
-    viewLabel: string,
-  ) => ({
-    surfaceKey: receipt.surfaceKey,
-    attachmentId: receipt.attachmentId,
-    targetGeneration: receipt.targetGeneration,
-    viewLabel,
-  });
-
-  it("lets every terminal surface of one page hold its own attachment", () => {
+  it("lets every terminal surface of one page hold its own client", async () => {
     const test = harness();
-    const scratch = test.attach({ viewLabel: PAGE });
-    const workspace = test.attach({
-      viewLabel: PAGE,
-      surfaceKey: WORKSPACE_SURFACE,
-    });
-    const other = test.attach({
-      viewLabel: PAGE,
-      surfaceKey: OTHER_WORKSPACE_SURFACE,
-    });
-
+    await test.attach({ viewLabel: PAGE });
+    await test.attach({ viewLabel: PAGE, surfaceKey: WORKSPACE_SURFACE });
+    await test.attach({ viewLabel: PAGE, surfaceKey: OTHER_WORKSPACE_SURFACE });
     expect(test.manager.count).toBe(3);
-    for (const surface of [scratch, workspace, other]) {
-      expect(surface.pty.killed).toBe(false);
-      expect(surface.frames.at(-1)).toMatchObject({ type: "started" });
-    }
-    // All three are usable at once: a keystroke reaches the pane it was typed
-    // into, and only that one.
-    test.manager.input(
-      identityOf(scratch.receipt, PAGE),
-      1,
-      new TextEncoder().encode("a"),
-    );
-    test.manager.input(
-      identityOf(workspace.receipt, PAGE),
-      1,
-      new TextEncoder().encode("b"),
-    );
-    test.manager.input(
-      identityOf(other.receipt, PAGE),
-      1,
-      new TextEncoder().encode("c"),
-    );
-    expect(scratch.pty.written.map((bytes) => bytes[0])).toEqual([0x61]);
-    expect(workspace.pty.written.map((bytes) => bytes[0])).toEqual([0x62]);
-    expect(other.pty.written.map((bytes) => bytes[0])).toEqual([0x63]);
+    expect(test.host.stopped.size).toBe(0);
   });
 
   it("keeps two attaches of one page in flight together", () => {
@@ -879,7 +312,7 @@ describe("ownership", () => {
     const test = harness();
     const scratch = test.manager.beginAttach(
       SCRATCH_TARGET,
-      "workspace-terminal:00000000-0000-4000-8000-00000000005c",
+      SCRATCH_SURFACE,
       PAGE,
       new CancellationToken(),
     );
@@ -895,95 +328,52 @@ describe("ownership", () => {
     workspace.release();
   });
 
-  it("supersedes the surface that remounted, and only that one", () => {
+  it("supersedes the surface that remounted, and only that one", async () => {
     const test = harness();
-    const scratch = test.attach({ viewLabel: PAGE });
-    const workspace = test.attach({
+    const scratch = await test.attach({ viewLabel: PAGE });
+    const workspace = await test.attach({
       viewLabel: PAGE,
       surfaceKey: WORKSPACE_SURFACE,
     });
     // The pooled workspace surface remounts: it attaches again before React
     // has run the old unmount's detach.
-    const remounted = test.attach({
+    const remounted = await test.attach({
       viewLabel: PAGE,
       surfaceKey: WORKSPACE_SURFACE,
     });
-
-    expect(workspace.pty.killed).toBe(true);
-    expect(workspace.frames.at(-1)).toMatchObject({
-      type: "exited",
-      reason: "detached",
-    });
-    expect(remounted.pty.killed).toBe(false);
-    expect(scratch.pty.killed).toBe(false);
+    expect(test.host.stopped.get(workspace.receipt.attachmentId)).toBe(
+      "detached",
+    );
+    expect(test.host.stopped.has(remounted.receipt.attachmentId)).toBe(false);
+    expect(test.host.stopped.has(scratch.receipt.attachmentId)).toBe(false);
     expect(test.manager.count).toBe(2);
-  });
-
-  it("refuses a receipt only once it is genuinely stale", () => {
-    const test = harness();
-    const scratch = test.attach({ viewLabel: PAGE });
-    const workspace = test.attach({
-      viewLabel: PAGE,
-      surfaceKey: WORKSPACE_SURFACE,
-    });
-    const remounted = test.attach({
-      viewLabel: PAGE,
-      surfaceKey: WORKSPACE_SURFACE,
-    });
-
-    // The superseded receipt is the one stale handle; the sibling's is not,
-    // and neither is the replacement's.
+    // The superseded handle is the one stale one; a live handle presented by
+    // another page is still foreign.
     expect(() =>
-      test.manager.input(
-        identityOf(workspace.receipt, PAGE),
-        1,
-        Uint8Array.from([65]),
-      ),
-    ).toThrowError(
-      expect.objectContaining({ code: "wrong_attachment" }) as unknown as Error,
-    );
-    expect(() =>
-      test.manager.input(
-        identityOf(scratch.receipt, PAGE),
-        1,
-        Uint8Array.from([65]),
-      ),
+      test.manager.detach(identityOf(workspace.receipt, PAGE)),
     ).not.toThrow();
     expect(() =>
-      test.manager.input(
-        identityOf(remounted.receipt, PAGE),
-        1,
-        Uint8Array.from([65]),
-      ),
-    ).not.toThrow();
-    // A live handle presented by another page is still foreign.
-    expect(() =>
-      test.manager.input(
-        identityOf(scratch.receipt, OTHER_PAGE),
-        2,
-        Uint8Array.from([65]),
-      ),
+      test.manager.detach(identityOf(scratch.receipt, OTHER_PAGE)),
     ).toThrowError(
       expect.objectContaining({ code: "wrong_attachment" }) as unknown as Error,
     );
   });
 
-  it("releases every surface of a page that goes away, and no other page's", () => {
+  it("releases every surface of a page that goes away, and no other page's", async () => {
     const test = harness();
-    const scratch = test.attach({ viewLabel: PAGE });
-    const workspace = test.attach({
+    const scratch = await test.attach({ viewLabel: PAGE });
+    const workspace = await test.attach({
       viewLabel: PAGE,
       surfaceKey: WORKSPACE_SURFACE,
     });
-    const elsewhere = test.attach({
+    const elsewhere = await test.attach({
       viewLabel: OTHER_PAGE,
       surfaceKey: OTHER_WORKSPACE_SURFACE,
     });
-
     test.manager.detachView(PAGE);
-    expect(scratch.pty.killed).toBe(true);
-    expect(workspace.pty.killed).toBe(true);
-    expect(elsewhere.pty.killed).toBe(false);
+    expect(test.host.stopped.has(scratch.receipt.attachmentId)).toBe(true);
+    expect(test.host.stopped.has(workspace.receipt.attachmentId)).toBe(true);
+    expect(test.host.stopped.has(elsewhere.receipt.attachmentId)).toBe(false);
     expect(test.manager.count).toBe(1);
   });
 });

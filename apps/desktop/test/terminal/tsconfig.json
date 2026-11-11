@@ -21,6 +21,7 @@
     "../../src/main/terminal/service.ts",
     "../../src/main/terminal/childRun.ts",
     "../../src/main/terminal/cleanSpawn.ts",
-    "../../src/main/ptyHost/host.ts"
+    "../../src/main/ptyHost/host.ts",
+    "../../src/main/ptyHost/vt/libghosttyVt.ts"
   ]
 }

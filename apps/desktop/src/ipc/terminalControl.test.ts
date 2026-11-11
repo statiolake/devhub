@@ -23,12 +23,11 @@ const attach = {
 };
 
 describe("control-mode requests", () => {
-	it("attaches a control client only when asked, and only by that name", () => {
-		expect(validateAttachRequest(attach).mode).toBeUndefined();
-		expect(validateAttachRequest({ ...attach, mode: "control" }).mode).toBe(
-			"control",
-		);
-		expect(() => validateAttachRequest({ ...attach, mode: "pty" })).toThrow();
+	it("attaches a control client, with no mode to name: there is no other kind", () => {
+		expect(validateAttachRequest(attach).surfaceKey).toBe(SURFACE);
+		expect(() =>
+			validateAttachRequest({ ...attach, mode: "control" }),
+		).toThrow();
 	});
 
 	it("takes the page's messages of the shapes it knows", () => {

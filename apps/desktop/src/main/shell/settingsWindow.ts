@@ -244,7 +244,6 @@ function toWireConfig(config: Config): SettingsConfigWire {
 		})),
 		terminal: {
 			macOptionIsMeta: config.terminal.macOptionIsMeta,
-			tmuxControlMode: config.terminal.tmuxControlMode,
 		},
 		keybindings: {
 			prefix: config.keybindings.prefix,
@@ -403,7 +402,6 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 		})),
 		terminal: {
 			macOptionIsMeta: wire.terminal.macOptionIsMeta,
-			tmuxControlMode: wire.terminal.tmuxControlMode === true,
 		},
 		keybindings: {
 			prefix: wire.keybindings.prefix,

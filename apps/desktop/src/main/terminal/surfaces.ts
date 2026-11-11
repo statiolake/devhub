@@ -4,8 +4,8 @@
  * Ported from the `attach_surface` / `terminal_*` half of the Rust
  * `terminal/mod.rs`. The runtime owns tmux sessions; this owns the short-lived
  * clients that show them. Attaching resolves and verifies the exact marked
- * session first, then runs `tmux attach-session` on a PTY — so a client is only
- * ever pointed at a session DevHub has just proven it owns.
+ * session first, then starts a tmux control client on it in the pty host — so
+ * a client is only ever pointed at a session DevHub has just proven it owns.
  *
  * Detaching kills the client and nothing else. The session, its shell, its
  * scrollback and whatever is running in it stay on the server, which is what
@@ -20,7 +20,6 @@ import {
 import { OperationDeadline } from "./command.js";
 import {
 	AttachmentManager,
-	type FrameSink,
 	type HostedRoute,
 	type RequestIdentity,
 } from "./attachments.js";
@@ -87,14 +86,8 @@ export interface AttachSurfaceRequest {
 	/** The page the surface is mounted in; with the key, it names the owner. */
 	readonly viewLabel: string;
 	readonly size: TerminalSize;
-	readonly sink: FrameSink;
-	/**
-	 * The page as the pty host reaches it, when the client may run there; the
-	 * frames then go to the page's port to the host, not to `sink`.
-	 */
-	readonly route?: HostedRoute;
-	/** A tmux control client the page draws pane by pane (`AttachContext.control`). */
-	readonly control?: boolean;
+	/** The page as the pty host reaches it: the client talks to it there. */
+	readonly route: HostedRoute;
 }
 
 export interface TerminalSurfacesOptions {
@@ -127,7 +120,7 @@ export class TerminalSurfaces {
 	}
 
 	/**
-	 * Attach one PTY client to an already verified marked session.
+	 * Attach one control client to an already verified marked session.
 	 *
 	 * The operation permit excludes a socket transition for the whole of it, so
 	 * the session resolved at the start is still on the socket the client is
@@ -165,14 +158,12 @@ export class TerminalSurfaces {
 				// whose full marker triple was just read back.
 				if (!exact) throw new TerminalFailure("session_unavailable");
 				operation.check();
-				return await this.attachments.attachVia(permit, {
+				return await this.attachments.attach(permit, {
 					surfaceKey: request.surfaceKey,
 					viewLabel: request.viewLabel,
 					target: request.target,
-					spawn: (launch) => runtime.spawnPty(launch),
 					plan: (launch) => runtime.ptyPlan(launch),
-					...(request.route === undefined ? {} : { route: request.route }),
-					...(request.control === true ? { control: true } : {}),
+					route: request.route,
 					file: runtime.tmuxPath(),
 					args: runtime.attachArgv(exact.name),
 					// The client runs from the launch home: a workspace folder
@@ -180,7 +171,6 @@ export class TerminalSurfaces {
 					cwd: runtime.contextHome,
 					environment: runtime.tmuxEnv(),
 					size: request.size,
-					sink: request.sink,
 				});
 			} finally {
 				release();
@@ -220,38 +210,6 @@ export class TerminalSurfaces {
 		} finally {
 			release();
 		}
-	}
-
-	input(identity: RequestIdentity, sequence: number, bytes: Uint8Array): void {
-		this.attachments.input(identity, sequence, bytes);
-	}
-
-	acknowledge(identity: RequestIdentity, sequence: number): void {
-		this.attachments.acknowledge(identity, sequence);
-	}
-
-	/**
-	 * Resize the client PTY, and only the client PTY.
-	 *
-	 * The PTY is the tmux client's terminal, and its size is the one fact tmux
-	 * needs: under the default `window-size latest` the window follows the
-	 * client that last used it, on attach and on every SIGWINCH after.
-	 *
-	 * It is important that DevHub does *not* also `resize-window` to the same
-	 * numbers, which it used to. A window is the client minus the rows tmux
-	 * draws itself in, so on a session with a status bar a client of 30 rows
-	 * gives a 29-row window. Forcing the window to 30 told the program in the
-	 * pane it had a row that the status bar was standing on — the bottom line
-	 * of a full-screen TUI, drawn where nothing could show it. Worse, an
-	 * explicit `resize-window` latches the window to `window-size manual` for
-	 * good, so tmux stopped following the client at all and every later resize
-	 * only made the discrepancy visible for the instant before it was reapplied.
-	 *
-	 * Letting tmux subtract its own chrome is the whole fix, and it is one rule
-	 * for a bar that is there and a bar that is not.
-	 */
-	async resize(identity: RequestIdentity, size: TerminalSize): Promise<void> {
-		this.attachments.resize(identity, size);
 	}
 
 	detach(identity: RequestIdentity): void {

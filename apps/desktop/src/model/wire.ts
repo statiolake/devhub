@@ -175,7 +175,6 @@ export function appearanceWire(
   sequence: number,
   terminal: TerminalPaletteWire | undefined,
   macOptionIsMeta: MacOptionIsMeta = DEFAULT_MAC_OPTION_IS_META,
-  tmuxControlMode = false,
 ): AppAppearanceWire {
   const wire: AppAppearanceWire = {
     sequence,
@@ -189,7 +188,6 @@ export function appearanceWire(
     terminalMargin: config.terminalMargin,
     terminalTheme: terminalThemeWire(terminal),
     terminalMacOptionIsMeta: macOptionIsMeta,
-    terminalTmuxControlMode: tmuxControlMode,
   };
   validateAppearanceWire(wire);
   return wire;
@@ -213,7 +211,6 @@ function validateAppearanceWire(wire: AppAppearanceWire): void {
     wire.terminalScrollSensitivity > 20 ||
     wire.terminalMargin > 64 ||
     !isMacOptionIsMeta(wire.terminalMacOptionIsMeta) ||
-    typeof wire.terminalTmuxControlMode !== "boolean" ||
     !terminalPaletteIsValid(wire.terminalTheme.light) ||
     !terminalPaletteIsValid(wire.terminalTheme.dark)
   ) {

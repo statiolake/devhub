@@ -171,8 +171,8 @@ export interface TerminalWiringOptions {
 	 * person detached from it (`AttachmentManagerOptions.onEndedByItself`).
 	 */
 	readonly onSurfaceEnded?: (surfaceKey: string) => void;
-	/** Where the surfaces' clients run (`ptyHost/`); absent: in main. */
-	readonly ptyHost?: PtyHostClient;
+	/** Where the surfaces' clients run (`ptyHost/`). */
+	readonly ptyHost: PtyHostClient;
 }
 
 export interface TerminalWiring {
@@ -209,7 +209,7 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 		runtimeFor: runtimeFromId,
 		resolveSurface,
 		onEndedByItself: ({ surfaceKey }) => options.onSurfaceEnded?.(surfaceKey),
-		...(options.ptyHost === undefined ? {} : { ptyHost: options.ptyHost }),
+		ptyHost: options.ptyHost,
 	});
 
 	// What a close confirmation says about this workspace's terminals, and what

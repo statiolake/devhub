@@ -95,7 +95,7 @@ floating surface's title band is), the field two. No key and no command changed.
 
 It is mounted in the terminal page, not on the modal layer, because the
 preview is a live grid the terminal's painter draws and the keys are routed
-to the pty host by the terminal (control mode has no Neovim to own them).
+to the pty host by the terminal (a terminal has no Neovim to own them).
 
 `display-menu` stays a menu: its items are chosen by their own letters and
 it opens at the mouse, a pane or the status line (`-x`/`-y`) — a menu, not

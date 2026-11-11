@@ -2,7 +2,8 @@
  * The pty host end to end, in one process: main's ledger
  * (`AttachmentManager`), main's side of the host (`PtyHostClient`) and the
  * host's work (`PtyHost`), wired by fake ports and a fake utility process, on
- * fake PTYs. What a page sees is what arrives on the port main handed it.
+ * fake control clients' children. What a page sees is what arrives on the
+ * port main handed it.
  */
 
 import { describe, expect, it } from "vitest";
@@ -11,51 +12,40 @@ import {
 	TERMINAL_CHANNELS,
 	TERMINAL_PROTOCOL_VERSION,
 	TerminalFailure,
-	decodeTerminalFrame,
-	type TerminalFrame,
 	type TerminalResult,
 } from "../../ipc/terminal.js";
+import type { ControlToPage } from "../../ipc/terminalControl.js";
 import { AttachmentManager } from "../terminal/attachments.js";
 import { CancellationToken, workspaceTarget } from "../terminal/ports.js";
-import type { Pty, PtyLaunch } from "../terminal/pty.js";
+import type { PtyLaunch } from "../terminal/pty.js";
 import {
 	PtyHostClient,
 	type HostedPage,
 	type PtyHostProcess,
 } from "./client.js";
+import type { ControlProcess } from "./control/controlClient.js";
 import { PtyHost, type HostPort } from "./host.js";
 import type { FromPtyHost, PtyHostToPage, ToPtyHost } from "./protocol.js";
+import type { LibGhosttyVt } from "./vt/libghosttyVt.js";
 
-class FakePty implements Pty {
-	readonly pid = 7;
+/** A control client's child on pipes: what it was told, and its end. */
+class FakeChild implements ControlProcess {
 	readonly written: string[] = [];
-	readonly resizes: number[][] = [];
 	killed = false;
-	#data: ((bytes: Uint8Array) => void) | undefined;
-	#exit: (() => void) | undefined;
+	#exit: ((code?: number) => void) | undefined;
 	constructor(readonly launch: PtyLaunch) {}
-	onData(listener: (bytes: Uint8Array) => void) {
-		this.#data = listener;
+	write(text: string) {
+		this.written.push(text);
 	}
-	onExit(listener: () => void) {
+	onData() {}
+	onExit(listener: (code?: number) => void) {
 		this.#exit = listener;
-	}
-	write(bytes: Uint8Array) {
-		this.written.push(new TextDecoder().decode(bytes));
-	}
-	resize(size: { cols: number; rows: number }) {
-		this.resizes.push([size.cols, size.rows]);
 	}
 	kill() {
 		this.killed = true;
 	}
-	pause() {}
-	resume() {}
-	emit(text: string) {
-		this.#data?.(new TextEncoder().encode(text));
-	}
 	end() {
-		this.#exit?.();
+		this.#exit?.(0);
 	}
 }
 
@@ -104,7 +94,7 @@ class FakePage implements HostedPage {
 	destroyed = false;
 	readonly sent: [string, unknown][] = [];
 	ports: { generation: number; port: FakePort }[] = [];
-	readonly frames = new Map<string, TerminalFrame[]>();
+	readonly news = new Map<string, ControlToPage[]>();
 	readonly #replies = new Map<number, (result: TerminalResult<void>) => void>();
 	#nextRid = 1;
 	constructor(readonly id: number) {}
@@ -121,24 +111,20 @@ class FakePage implements HostedPage {
 				this.#replies.get(data.rid)?.(data.result);
 				return;
 			}
-			if (data.type === "control") return;
-			const list = this.frames.get(data.channelId) ?? [];
-			list.push(decodeTerminalFrame(data.frame));
-			this.frames.set(data.channelId, list);
+			const list = this.news.get(data.channelId) ?? [];
+			list.push(data.message);
+			this.news.set(data.channelId, list);
 		}) as never);
 	}
 	send(channelName: string, ...args: unknown[]) {
 		this.sent.push([channelName, args[0]]);
 	}
-	request(
-		type: "input" | "resize" | "ack",
-		request: unknown,
-	): Promise<TerminalResult<void>> {
+	control(request: unknown): Promise<TerminalResult<void>> {
 		const port = this.ports.at(-1)!.port;
 		const rid = this.#nextRid++;
 		return new Promise((resolve) => {
 			this.#replies.set(rid, resolve);
-			port.postMessage({ type, rid, request });
+			port.postMessage({ type: "control", rid, request });
 		});
 	}
 }
@@ -151,8 +137,9 @@ const TARGET = workspaceTarget(
 );
 
 function world() {
-	const ptys: FakePty[] = [];
+	const children: FakeChild[] = [];
 	const hosts: { host: PtyHost; crash: (code?: number) => void }[] = [];
+	const killed: number[] = [];
 	const launch = (): PtyHostProcess => {
 		const toMain: ((message: FromPtyHost) => void)[] = [];
 		const exits: ((code: number) => void)[] = [];
@@ -162,13 +149,19 @@ function world() {
 				setTimeout(() => {
 					if (!dead) for (const listener of toMain) listener(message);
 				}, 0),
-			spawn: (ptyLaunch) => {
-				if (ptyLaunch.file === "/missing") throw new Error("no such file");
-				const pty = new FakePty(ptyLaunch);
-				ptys.push(pty);
-				return pty;
+			spawn: () => {
+				throw new Error("no popup is opened in these cases");
 			},
+			spawnPipes: (childLaunch) => {
+				if (childLaunch.file === "/missing") throw new Error("no such file");
+				const child = new FakeChild(childLaunch);
+				children.push(child);
+				return child;
+			},
+			// No pane is made in these cases: the engine is never asked.
+			loadVt: () => Promise.resolve({} as LibGhosttyVt),
 		});
+		const index = hosts.length;
 		hosts.push({
 			host,
 			crash: (code = 70) => {
@@ -185,6 +178,11 @@ function world() {
 			onExit: (listener) => exits.push(listener),
 			kill: () => {
 				dead = true;
+				killed.push(index);
+				// A killed utility process exits, as Electron's does.
+				setTimeout(() => {
+					for (const listener of exits) listener(15);
+				}, 0);
 			},
 		};
 	};
@@ -198,9 +196,7 @@ function world() {
 	});
 	const endedByItself: string[] = [];
 	const plansEnded: string[] = [];
-	const mainFrames: TerminalFrame[] = [];
 	let counter = 0;
-	const localPtys: FakePty[] = [];
 	const manager = new AttachmentManager({
 		randomBytes: (count) =>
 			Uint8Array.from({ length: count }, () => (counter += 13) & 0xff),
@@ -216,28 +212,21 @@ function world() {
 			new CancellationToken(),
 		);
 		try {
-			return await manager.attachVia(permit, {
+			return await manager.attach(permit, {
 				surfaceKey: SURFACE,
 				viewLabel: String(page.id),
 				target: TARGET,
-				spawn: (ptyLaunch) => {
-					const pty = new FakePty(ptyLaunch);
-					localPtys.push(pty);
-					return pty;
-				},
-				plan: (ptyLaunch) => ({
-					launch: { ...ptyLaunch, file },
-					ended: () => plansEnded.push(file),
+				plan: (planned) => ({
+					launch: { ...planned, file: planned.pipes ? file : planned.file },
+					ended: () => {
+						if (planned.pipes) plansEnded.push(file);
+					},
 				}),
 				file,
 				args: ["attach-session", "-t", "ws"],
 				cwd: "/",
 				environment: {},
 				size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
-				sink: (frame) => {
-					mainFrames.push(frame);
-					return true;
-				},
 				route: { page, channelId },
 			});
 		} finally {
@@ -245,16 +234,15 @@ function world() {
 		}
 	};
 	return {
-		ptys,
-		localPtys,
+		children,
 		hosts,
+		killed,
 		client,
 		manager,
 		attach,
 		logs,
 		endedByItself,
 		plansEnded,
-		mainFrames,
 		advance: (ms: number) => {
 			now += ms;
 		},
@@ -265,45 +253,33 @@ const identity = (receipt: {
 	attachmentId: string;
 	targetGeneration: number;
 }) => ({
-	schemaVersion: TERMINAL_PROTOCOL_VERSION,
 	surfaceKey: SURFACE,
 	attachmentId: receipt.attachmentId,
 	targetGeneration: receipt.targetGeneration,
 });
 
 describe("a terminal client in the pty host", () => {
-	it("is started there, and its frames and input pass between the page and the host only", async () => {
+	it("is started there, on pipes, and its page's requests pass between the page and the host only", async () => {
 		const w = world();
 		const page = new FakePage(3);
 		const receipt = await w.attach(page);
 		expect(w.manager.hostedGeneration(receipt.attachmentId)).toBe(1);
+		expect(receipt.schemaVersion).toBe(TERMINAL_PROTOCOL_VERSION);
 		// The port came before the answer, and the client is the host's.
 		expect(page.ports.map((p) => p.generation)).toEqual([1]);
-		expect(w.ptys).toHaveLength(1);
-		expect(w.localPtys).toHaveLength(0);
+		expect(w.children).toHaveLength(1);
+		expect(w.children[0]!.launch.args).toEqual([
+			"-C",
+			"attach-session",
+			"-t",
+			"ws",
+		]);
 		await settle();
-		w.ptys[0]!.emit("hello");
-		await settle();
-		const frames = page.frames.get("c1")!;
-		expect(frames.map((frame) => frame.type)).toEqual(["started", "output"]);
-		expect(frames[0]).toMatchObject({
-			attachmentId: receipt.attachmentId,
-			surfaceKey: SURFACE,
-		});
-		const input = await page.request("input", {
+		const reply = await page.control({
 			...identity(receipt),
-			inputSequence: 1,
-			bytes: [...new TextEncoder().encode("ls\r")],
+			message: { kind: "resize", cols: 100, rows: 40 },
 		});
-		expect(input).toEqual({ ok: true, value: undefined });
-		expect(w.ptys[0]!.written).toEqual(["ls\r"]);
-		const ack = await page.request("ack", {
-			...identity(receipt),
-			sequence: 1,
-		});
-		expect(ack.ok).toBe(true);
-		// Nothing of it went through main's frame path.
-		expect(w.mainFrames).toEqual([]);
+		expect(reply).toEqual({ ok: true, value: undefined });
 	});
 
 	it("refuses a request for a client the page was not given", async () => {
@@ -311,11 +287,10 @@ describe("a terminal client in the pty host", () => {
 		const page = new FakePage(3);
 		const receipt = await w.attach(page);
 		await settle();
-		const wrong = await page.request("input", {
+		const wrong = await page.control({
 			...identity(receipt),
 			targetGeneration: receipt.targetGeneration + 1,
-			inputSequence: 1,
-			bytes: [65],
+			message: { kind: "visible", visible: false },
 		});
 		expect(wrong).toMatchObject({
 			ok: false,
@@ -325,36 +300,36 @@ describe("a terminal client in the pty host", () => {
 		await w.attach(other, "c9");
 		await settle();
 		// The other page's port, with the first page's handle.
-		const stolen = await other.request("input", {
+		const stolen = await other.control({
 			...identity(receipt),
-			inputSequence: 1,
-			bytes: [65],
+			message: { kind: "visible", visible: false },
 		});
 		expect(stolen.ok).toBe(false);
-		expect(w.ptys[0]!.written).toEqual([]);
 	});
 
 	it("is ended in the host when main's ledger detaches it, and gives back what its machine held", async () => {
 		const w = world();
 		const page = new FakePage(3);
 		const receipt = await w.attach(page);
+		await settle();
 		w.manager.detach({ ...identity(receipt), viewLabel: "3" });
 		expect(w.manager.count).toBe(0);
 		await settle();
-		expect(w.ptys[0]!.killed).toBe(true);
-		expect(page.frames.get("c1")!.at(-1)).toMatchObject({
-			type: "exited",
+		expect(w.children[0]!.killed).toBe(true);
+		expect(w.children[0]!.written).toContain("detach-client\n");
+		expect(page.news.get("c1")!.at(-1)).toEqual({
+			kind: "ended",
 			reason: "detached",
 		});
 		expect(w.plansEnded).toEqual(["/tmux"]);
 		expect(w.endedByItself).toEqual([]);
 	});
 
-	it("says when it ended on its own, as a client in main did", async () => {
+	it("says when it ended on its own", async () => {
 		const w = world();
 		const page = new FakePage(3);
 		await w.attach(page);
-		w.ptys[0]!.end();
+		w.children[0]!.end();
 		await settle();
 		expect(w.manager.count).toBe(0);
 		expect(w.endedByItself).toEqual([SURFACE]);
@@ -367,21 +342,17 @@ describe("a terminal client in the pty host", () => {
 		await w.attach(page);
 		w.client.pageGone(page);
 		await settle();
-		expect(w.ptys[0]!.killed).toBe(true);
+		expect(w.children[0]!.killed).toBe(true);
 		expect(w.manager.count).toBe(0);
 	});
 
-	it("that could not be opened is refused as main refused it, with the frames that say so", async () => {
+	it("that could not be started is refused, and gives back what its machine held", async () => {
 		const w = world();
 		const page = new FakePage(3);
 		await expect(w.attach(page, "c1", "/missing")).rejects.toMatchObject({
 			code: "pty_unavailable",
 		});
 		await settle();
-		expect(page.frames.get("c1")!.map((frame) => frame.type)).toEqual([
-			"error",
-			"exited",
-		]);
 		expect(w.manager.count).toBe(0);
 		expect(w.plansEnded).toEqual(["/missing"]);
 	});
@@ -415,7 +386,7 @@ describe("when the pty host ends", () => {
 		expect(w.manager.count).toBe(0);
 	});
 
-	it("three times in a minute, clients start in main from then on", async () => {
+	it("three times in a minute, it is not started again until the terminals are restarted", async () => {
 		const w = world();
 		const page = new FakePage(3);
 		for (let i = 0; i < 3; i++) {
@@ -425,10 +396,42 @@ describe("when the pty host ends", () => {
 		}
 		expect(w.client.available).toBe(false);
 		expect(w.logs.join("\n")).toMatch(/3 times in a minute/u);
+		// There is nowhere else for a client to run: the attach is refused.
+		await expect(w.attach(page)).rejects.toMatchObject({
+			code: "pty_unavailable",
+		});
+		expect(w.hosts).toHaveLength(3);
+		// "Restart Terminals": the count is forgotten and a new host is
+		// started for the next attach.
+		w.client.restart();
+		expect(w.client.available).toBe(true);
 		const receipt = await w.attach(page);
-		expect(w.manager.hostedGeneration(receipt.attachmentId)).toBeUndefined();
-		expect(w.localPtys).toHaveLength(1);
-		expect(w.mainFrames[0]).toMatchObject({ type: "started" });
+		expect(w.hosts).toHaveLength(4);
+		expect(w.manager.hostedGeneration(receipt.attachmentId)).toBe(4);
+	});
+
+	it("restarted on request, it ends with its clients, its pages are told, and that is no crash", async () => {
+		const w = world();
+		const page = new FakePage(3);
+		await w.attach(page);
+		await w.attach(new FakePage(4), "c2");
+		w.client.restart();
+		expect(w.killed).toEqual([0]);
+		expect(w.manager.count).toBe(0);
+		expect(page.sent).toEqual([
+			[TERMINAL_CHANNELS.restarted, { generation: 1 }],
+		]);
+		await settle();
+		// The killed host's own exit is not counted, and is not news.
+		for (let i = 0; i < 2; i++) {
+			await w.attach(page);
+			w.client.restart();
+			await settle();
+		}
+		expect(w.client.available).toBe(true);
+		expect(w.logs.join("\n")).not.toMatch(/ended with exit code/u);
+		const again = await w.attach(page);
+		expect(w.manager.hostedGeneration(again.attachmentId)).toBe(4);
 	});
 
 	it("now and then is restarted every time", async () => {

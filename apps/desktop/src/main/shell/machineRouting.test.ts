@@ -40,7 +40,7 @@ import { TerminalSurfaces } from "../terminal/surfaces.js";
 import { portFailure, workspaceTarget } from "../terminal/ports.js";
 import type { AttachmentManager } from "../terminal/attachments.js";
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
-import type { Pty, PtyLaunch } from "../terminal/pty.js";
+import type { PtyLaunch, PtyPlan } from "../terminal/pty.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import { NO_USER_TMUX_CONFIG } from "../runtime/runtime.js";
 import type {
@@ -161,18 +161,12 @@ class FakeMachine implements Runtime {
 		});
 	}
 
-	spawnPty(request: PtyLaunch): Pty {
+	spawnPty(): never {
+		throw new Error("not asked for in these cases");
+	}
+	ptyPlan(request: PtyLaunch): PtyPlan {
 		this.ptys.push(request);
-		return {
-			pid: 1,
-			onData: () => {},
-			onExit: () => {},
-			write: () => {},
-			resize: () => {},
-			kill: () => {},
-			pause: () => {},
-			resume: () => {},
-		};
+		return { launch: request, ended: () => {} };
 	}
 	spawnStream(): never {
 		throw new Error("not asked for in these cases");
@@ -393,11 +387,11 @@ describe("a round about one machine", () => {
 	});
 });
 
-describe("the Agent pane's PTY", () => {
-	it("is opened on the machine the session is on", async () => {
+describe("the Agent pane's client", () => {
+	it("is started on the machine the session is on", async () => {
 		const { b, runtimes } = machines();
 		const there = await runtimes.for(b);
-		there.spawnPty({
+		there.ptyPlan({
 			file: "/usr/bin/tmux",
 			args: ["-L", "devhub", "attach-session", "-t", "agent"],
 			cwd: "/home/there",

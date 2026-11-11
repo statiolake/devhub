@@ -6,7 +6,6 @@ import {
   activePalette,
   terminalFontStack,
   terminalSurfaceStyle,
-  xtermTheme,
   type TerminalAppearance,
 } from "../../src/shell/terminal/theme";
 
@@ -97,17 +96,6 @@ describe("terminal font stack", () => {
 });
 
 describe("terminal palette projection", () => {
-  it("maps the ANSI array onto xterm's names in canonical order", () => {
-    const theme = xtermTheme(palette("#ffffff"));
-    expect(theme.black).toBe("#000000");
-    expect(theme.white).toBe("#070707");
-    expect(theme.brightBlack).toBe("#080808");
-    expect(theme.brightWhite).toBe("#0f0f0f");
-    expect(theme.background).toBe("#ffffff");
-    // xterm calls the cursor's text colour `cursorAccent`.
-    expect(theme.cursorAccent).toBe("#ffffff");
-  });
-
   it("chooses the scheme by system appearance, not by a saved choice", () => {
     const appearance = {
       terminalTheme: { dark: palette("#121314"), light: palette("#ffffff") },

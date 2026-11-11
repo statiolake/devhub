@@ -517,7 +517,8 @@ describe.skipIf(TMUX === undefined)(
         test.cancel,
         deadline(test.runtime),
       );
-      // Every client of this server is an xterm.js, which renders 24-bit.
+      // Every client of this server is DevHub's control client, whose panes
+      // render 24-bit.
       // Without the declaration tmux asks terminfo instead and a colour ramp
       // comes out in bands.
       expect(features.stdout.toString("utf8")).toContain("*:RGB");

@@ -5,7 +5,7 @@
  * (`PaneBridge.onTerminalNeovims`, `main/editor/terminalNeovims.ts`); this
  * mounts a `NeovimSurface` for each, in an element of its own that the
  * terminal surface places in its pane (`PaneNeovims`, read by
- * `ControlTerminalSurface` and `TerminalSurface`). The element is made
+ * `ControlTerminalSurface`). The element is made
  * once per Neovim and never handed to React to place: the surface moves it
  * with its pane by transforms (docs/pane-motion.md), and it is never moved
  * from one parent to another, since a GUI window's iframe in it would load
@@ -42,7 +42,6 @@ import { createPortal } from "react-dom";
 import type {
   PaneBridge,
   TerminalNeovimKeyWire,
-  TerminalNeovimWire,
   TerminalNeovimsWire,
 } from "../../ipc/contract";
 import type { AppAppearance } from "../../ipc/appShell";
@@ -58,8 +57,6 @@ export interface PaneNeovim {
   readonly pane: number;
   /** tmux shows its pane. */
   readonly shown: boolean;
-  /** Polled: its pane's cells in the client's screen. */
-  readonly cells: TerminalNeovimWire["cells"];
   /** What it is drawn in; the surface places it. */
   readonly element: HTMLDivElement;
   /** Its editor, once made. */
@@ -96,7 +93,6 @@ interface Entry {
   key: string;
   pane: number;
   shown: boolean;
-  cells: TerminalNeovimWire["cells"];
   readonly element: HTMLDivElement;
   handle: NeovimHandle | undefined;
   placed: boolean;
@@ -194,7 +190,6 @@ export class PaneNeovims {
           key: overlay.key,
           pane: overlay.pane,
           shown: overlay.shown,
-          cells: overlay.cells,
           element,
           handle: undefined,
           placed: false,
@@ -205,7 +200,6 @@ export class PaneNeovims {
       entry.goneAt = undefined;
       entry.pane = overlay.pane;
       entry.shown = overlay.shown;
-      entry.cells = overlay.cells;
     }
     this.setKeys(wire.keys);
     this.changed();

@@ -16,8 +16,8 @@
  *
  * # Why one view and not one per Agent
  *
- * An Agent's pane is an xterm.js instance attached to a tmux session that
- * lives in main. The terminal is cheap and the session is not drawn at all
+ * An Agent's pane is a terminal surface attached to a tmux session that
+ * lives on its machine. The terminal is cheap and the session is not drawn at all
  * while it is hidden, so there is nothing to win by giving each Agent a
  * renderer of its own and a great deal to lose: a new view per Agent is a new
  * process per Agent, a new page load between selecting one and seeing it, and

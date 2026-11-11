@@ -875,7 +875,7 @@ selection passes over it — so Back skips what `Cmd+Q N`/`P` only flicked past:
 | Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                                                                                                                                                                                                                                  | no                    |
 
 "In it" means its views: the Agents' page (a
-GUI conversation or a TUI's xterm) and a terminal pane (`pane.html`, the Neovim
+GUI conversation or a TUI's terminal) and a terminal pane (`pane.html`, the Neovim
 editor's too) — `isDestinationSurface` in
 `historyKeys.ts`. The Sidebar is choosing where to go, not being somewhere, and
 the window's own page holds the title bar's arrows, so neither counts; nor do

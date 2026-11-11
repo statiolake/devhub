@@ -18,8 +18,8 @@
  * and `ESC p`.
  *
  * `true` sends `ESC` and the key for Option with a key — what `<A-…>` and
- * `<M-…>` mappings, readline's `M-b` and tmux's `M-` bindings read — exactly
- * as xterm.js's own `macOptionIsMeta` does. `"left"` does that for the left
+ * `<M-…>` mappings, readline's `M-b` and tmux's `M-` bindings read — as
+ * iTerm2's and Ghostty's own switches do. `"left"` does that for the left
  * Option only and leaves the right one composing, which is what iTerm2
  * ("Left Option key: Esc+") and Ghostty (`macos-option-as-alt = left`) offer:
  * both, on one keyboard. No key is excepted from `true`: a JIS keyboard that

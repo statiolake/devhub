@@ -10,7 +10,7 @@ import { NeovimClient } from "./neovimRpc.js";
 import { PUBLISH_THEME_LUA } from "./managedNeovim.js";
 import { forwardedSocketPath } from "./neovimMachines.js";
 import {
-	parseTerminalNeovimReading,
+	parseSocketReading,
 	TerminalNeovims,
 	type OverlayTerminal,
 } from "./terminalNeovims.js";
@@ -97,19 +97,10 @@ export function wireTerminalNeovims(
 						: { workspace: terminal.workspace },
 					announce,
 				);
-				return output === undefined
-					? undefined
-					: parseTerminalNeovimReading(output);
+				return output === undefined ? undefined : parseSocketReading(output);
 			},
 			selectPane: async (terminal, paneId) => {
-				await (
-					await options.tmuxOf(terminal.machine)
-				).terminalNeovimCommand({ kind: "select", paneId });
-			},
-			enterPrefix: async (terminal, client) => {
-				await (
-					await options.tmuxOf(terminal.machine)
-				).terminalNeovimCommand({ kind: "prefix", client });
+				await (await options.tmuxOf(terminal.machine)).selectNeovimPane(paneId);
 			},
 			reach: async (terminal, socket) => {
 				if (terminal.machine === "local") return socket;

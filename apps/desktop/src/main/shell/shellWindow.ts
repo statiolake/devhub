@@ -68,7 +68,7 @@ import { workspaceTerminalPageId } from "../../ipc/terminal.js";
  */
 export interface TerminalNeovimHooks {
 	keyboardOverlay(terminalId: string): string | undefined;
-	overlayKey(key: string, input: KeyInput): "prefix" | "hand" | "pass";
+	overlayKey(key: string, input: KeyInput): "hand" | "pass";
 	terminalKey(terminalId: string, input: KeyInput): "pass" | "redirect";
 	overlayFocused(key: string): void;
 	terminalFocused(terminalId: string): void;
@@ -616,13 +616,10 @@ export class ShellWindow {
 				const answer = hooks.overlayKey(keyed, input);
 				if (answer === "pass") return;
 				// tmux's prefix, typed in the Neovim: tmux's, as in any pane.
-				// Polled, the client is in its prefix table now and the
-				// terminal takes the next key; in control mode the terminal
-				// is typed the prefix itself, its control client keeping its
-				// own place in tmux's key tables.
+				// The terminal is typed the prefix itself, its control client
+				// keeping its own place in tmux's key tables.
 				event.preventDefault();
-				if (answer === "hand") typeInto("");
-				else this.sayNeovims(id, contents);
+				typeInto("");
 				return;
 			}
 			if (hooks.terminalKey(id, input) !== "redirect") return;

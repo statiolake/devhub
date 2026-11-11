@@ -145,6 +145,7 @@ describe("the registry itself", () => {
       "preview_color_theme",
       "open_task_manager",
       "install_cli",
+      "restart_terminals",
     ]);
     expect(keysForCommand(bindings, "focus_sidebar")).toEqual([]);
   });

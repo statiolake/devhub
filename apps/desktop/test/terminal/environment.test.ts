@@ -17,10 +17,10 @@ describe("the tmux client's environment", () => {
       COLORTERM: undefined,
       PATH: "/opt/tools/bin",
     });
-    // The surface is xterm.js whatever DevHub was launched from, so its
+    // The surface is DevHub's own whatever DevHub was launched from, so its
     // capability set must not vary with the host's terminal.
     expect(env.TERM).toBe("xterm-256color");
-    // xterm.js renders 24-bit. `COLORTERM` is the channel terminfo could not
+    // The panes' engines render 24-bit. `COLORTERM` is the channel terminfo could not
     // express, and tmux reads it from the attaching client.
     expect(env.COLORTERM).toBe("truecolor");
     expect(env.PATH).toBe("/opt/tools/bin");

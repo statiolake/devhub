@@ -6,8 +6,6 @@
  * meaning; the App Shell's appearance snapshot satisfies them structurally.
  */
 
-import type { ITheme } from "@xterm/xterm";
-
 /** One scheme's colours. `ansi` is the canonical 16-entry order. */
 export interface TerminalPalette {
   readonly background: string;
@@ -43,8 +41,6 @@ export interface TerminalAppearance {
   readonly terminalTheme: TerminalTheme;
   /** `[terminal] mac_option_is_meta`. See `../surfaces/optionKey.ts`. */
   readonly terminalMacOptionIsMeta: boolean | "left";
-  /** `[terminal] tmux_control_mode`: the control-mode surface (`control/`). */
-  readonly terminalTmuxControlMode?: boolean;
 }
 
 /**
@@ -130,56 +126,6 @@ export function terminalFontStack(family: string | undefined): string {
     .join(", ");
 }
 
-/**
- * Project a configured palette onto xterm's theme. The ANSI array is in the
- * canonical order the config documents, and this is the one place that order
- * becomes names.
- */
-export function xtermTheme(palette: TerminalPalette): ITheme {
-  const [
-    black,
-    red,
-    green,
-    yellow,
-    blue,
-    magenta,
-    cyan,
-    white,
-    brightBlack,
-    brightRed,
-    brightGreen,
-    brightYellow,
-    brightBlue,
-    brightMagenta,
-    brightCyan,
-    brightWhite,
-  ] = palette.ansi;
-  return {
-    background: palette.background,
-    foreground: palette.foreground,
-    cursor: palette.cursor,
-    cursorAccent: palette.cursorText,
-    selectionBackground: palette.selectionBackground,
-    selectionForeground: palette.selectionForeground,
-    black,
-    red,
-    green,
-    yellow,
-    blue,
-    magenta,
-    cyan,
-    white,
-    brightBlack,
-    brightRed,
-    brightGreen,
-    brightYellow,
-    brightBlue,
-    brightMagenta,
-    brightCyan,
-    brightWhite,
-  };
-}
-
 /** The palette for the scheme the page is in; `useColorScheme` says which. */
 export function activePalette(
   appearance: TerminalAppearance | undefined,
@@ -203,8 +149,8 @@ export const DEFAULT_TERMINAL_MARGIN = 4;
  *
  * `--terminal-background` is the same colour `--content` carries around the
  * pane: both are this palette's background, and the palette is chosen once,
- * from the page's scheme, for both. That is what makes the emulator look like
- * it fills the viewport instead of sitting on a differently-coloured mat.
+ * from the page's scheme, for both. That is what makes the panes look like
+ * they fill the viewport instead of sitting on a differently-coloured mat.
  */
 export function terminalSurfaceStyle(
   palette: TerminalPalette | undefined,

@@ -9,31 +9,29 @@
 
 import { describe, expect, it, vi } from "vitest";
 import {
-  MAX_INPUT_BYTES,
   TERMINAL_PROTOCOL_VERSION,
   TerminalFailure,
 } from "../../src/ipc/terminal";
 import {
   createTerminalClient,
   terminalErrorSummary,
-  terminalInputChunks,
   type TerminalTransport,
 } from "../../src/shell/terminal/client";
 
 function transportHarness(refuse?: TerminalFailure) {
   const calls: Array<{ method: string; channelId: string; request: unknown }> =
     [];
-  const frameSinks: Array<(value: unknown) => void> = [];
+  const sinks: Array<(value: unknown) => void> = [];
   const answer = <T>(value: T) =>
     refuse
       ? ({ ok: false, error: refuse.toWire() } as const)
       : ({ ok: true, value } as const);
   const record =
     (method: string) =>
-    async (channelId: string, request: unknown, onFrame?: unknown) => {
+    async (channelId: string, request: unknown, onMessage?: unknown) => {
       calls.push({ method, channelId, request });
-      if (typeof onFrame === "function") {
-        frameSinks.push(onFrame as (value: unknown) => void);
+      if (typeof onMessage === "function") {
+        sinks.push(onMessage as (value: unknown) => void);
       }
       return answer(
         method === "attach"
@@ -49,22 +47,20 @@ function transportHarness(refuse?: TerminalFailure) {
     };
   const transport = {
     attach: vi.fn(record("attach")),
-    input: vi.fn(record("input")),
-    resize: vi.fn(record("resize")),
-    acknowledge: vi.fn(record("acknowledge")),
+    control: vi.fn(record("control")),
     detach: vi.fn(record("detach")),
   } as unknown as TerminalTransport;
   return {
     client: createTerminalClient("channel-1", transport),
     calls,
-    frameSinks,
+    sinks,
   };
 }
 
 describe("terminal client transport", () => {
-  it("addresses every request to its own surface and binds attach to one frame sink", async () => {
+  it("addresses every request to its own surface and binds attach to one listener", async () => {
     const harness = transportHarness();
-    const onFrame = vi.fn();
+    const onMessage = vi.fn();
     const receipt = await harness.client.attach(
       {
         schemaVersion: TERMINAL_PROTOCOL_VERSION,
@@ -75,32 +71,13 @@ describe("terminal client transport", () => {
         pixelWidth: 0,
         pixelHeight: 0,
       },
-      onFrame,
+      onMessage,
     );
-    await harness.client.input({
-      schemaVersion: TERMINAL_PROTOCOL_VERSION,
+    await harness.client.control({
       surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
       attachmentId: receipt.attachmentId,
       targetGeneration: receipt.targetGeneration,
-      inputSequence: 1,
-      bytes: [0xe3, 0x81, 0x82],
-    });
-    await harness.client.resize({
-      schemaVersion: TERMINAL_PROTOCOL_VERSION,
-      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-      attachmentId: receipt.attachmentId,
-      targetGeneration: receipt.targetGeneration,
-      cols: 100,
-      rows: 40,
-      pixelWidth: 0,
-      pixelHeight: 0,
-    });
-    await harness.client.acknowledge({
-      schemaVersion: TERMINAL_PROTOCOL_VERSION,
-      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
-      attachmentId: receipt.attachmentId,
-      targetGeneration: receipt.targetGeneration,
-      sequence: 1,
+      message: { kind: "resize", cols: 100, rows: 40 },
     });
     await harness.client.detach({
       schemaVersion: TERMINAL_PROTOCOL_VERSION,
@@ -109,12 +86,10 @@ describe("terminal client transport", () => {
       targetGeneration: receipt.targetGeneration,
     });
 
-    expect(harness.frameSinks).toEqual([onFrame]);
+    expect(harness.sinks).toEqual([onMessage]);
     expect(harness.calls.map(({ method }) => method)).toEqual([
       "attach",
-      "input",
-      "resize",
-      "acknowledge",
+      "control",
       "detach",
     ]);
     expect(
@@ -145,16 +120,6 @@ describe("terminal client transport", () => {
         code: "surface_unavailable",
       }) as unknown as Error,
     );
-  });
-
-  it("chunks raw UTF-8 bytes without splitting or reordering Unicode", () => {
-    const prefix = new TextEncoder().encode("日本語💻");
-    const input = new Uint8Array(MAX_INPUT_BYTES + prefix.byteLength + 1);
-    input.set(prefix, MAX_INPUT_BYTES - prefix.byteLength);
-    input[input.byteLength - 1] = 0xff;
-    const chunks = terminalInputChunks(input);
-    expect(chunks.every((chunk) => chunk.length <= MAX_INPUT_BYTES)).toBe(true);
-    expect(Uint8Array.from(chunks.flat())).toEqual(input);
   });
 
   it("shows the words the main process chose, not the code again", () => {

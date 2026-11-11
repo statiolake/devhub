@@ -796,7 +796,7 @@ export class ControlClient {
 				}
 				this.#o.post({
 					kind: "notice",
-					text: `${formatKeys(route.refused.keys)}: ${route.refused.command} is not available in control mode yet.`,
+					text: `${formatKeys(route.refused.keys)}: ${route.refused.command} is not drawn by DevHub yet.`,
 				});
 			}
 		}
@@ -856,7 +856,7 @@ export class ControlClient {
 		await this.#command(["copy-mode", "-q", "-t", target]);
 		this.#o.post({
 			kind: "notice",
-			text: `${mode !== undefined && mode !== "" ? mode : "This mode"} is not available in control mode yet.`,
+			text: `${mode !== undefined && mode !== "" ? mode : "This mode"} is not drawn by DevHub yet.`,
 		});
 	}
 
@@ -1182,7 +1182,7 @@ export class ControlClient {
 		if (waiting !== undefined) {
 			this.#o.post({
 				kind: "notice",
-				text: `${waiting} is not available in control mode yet.`,
+				text: `${waiting} is not drawn by DevHub yet.`,
 			});
 			return;
 		}

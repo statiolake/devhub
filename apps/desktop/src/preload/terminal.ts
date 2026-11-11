@@ -1,56 +1,46 @@
 /**
- * `window.devhub.terminal`: the page's only way to reach a PTY.
+ * `window.devhub.terminal`: the page's only way to reach a terminal client.
  *
  * Nothing here decides anything. Each member forwards one request and returns
  * exactly what was answered, refusals included — turning a refusal into a
  * thrown failure is the page client's job, and doing it here as well would
  * give the same condition two shapes.
  *
- * A client runs in one of two places, and this is the only code that knows
- * which. Most run in the pty host (`main/ptyHost/`): main hands the page a
+ * Every client runs in the pty host (`main/ptyHost/`): main hands the page a
  * port to it (`TERMINAL_CHANNELS.port`) and says so in the attach's answer,
- * and from then on the client's frames arrive on that port and its input,
- * resizes and acks go back on it — main is not on the path. One that runs in
- * main (a host given up on, a machine that cannot say what it would open) has
- * its frames on `TERMINAL_CHANNELS.frame` and its requests as `invoke`s, as
- * before. Attach and detach are always main's.
+ * and from then on the client's news arrives on that port and the page's
+ * requests go back on it — main is not on the path. Attach and detach are
+ * main's.
  *
- * A frame for a surface that has already unbound is dropped here, which is
+ * A message for a surface that has already unbound is dropped here, which is
  * the only place that can know it.
  *
  * **When the host ends.** Main says so (`TERMINAL_CHANNELS.restarted`). Each
- * surface whose client was there is handed one last frame, an error of
- * `host_restarted` in the client's own sequence, so it shows that it is
- * reconnecting and attaches again; an attach main had not answered yet is
- * answered with the same refusal; and a request waiting on the host is
- * answered with it too.
+ * surface whose client was there is handed one last message, `ended` with the
+ * reason `host_restarted`, so it shows that it is reconnecting and attaches
+ * again; an attach main had not answered yet is answered with that refusal;
+ * and a request waiting on the host is answered with it too.
  */
 
 import { ipcRenderer } from "electron";
 import {
 	TERMINAL_CHANNELS,
-	TERMINAL_PROTOCOL_VERSION,
 	TerminalFailure,
-	encodeTerminalFrame,
 	type DevhubTerminalApi,
-	type TerminalAckRequest,
 	type TerminalAttachReply,
 	type TerminalAttachRequest,
 	type TerminalDetachRequest,
-	type TerminalInputRequest,
-	type TerminalResizeRequest,
 	type TerminalResult,
 } from "../ipc/terminal.js";
-import type { ControlRequest } from "../ipc/terminalControl.js";
+import type { ControlRequest, ControlToPage } from "../ipc/terminalControl.js";
 import type { PageToPtyHost, PtyHostToPage } from "../main/ptyHost/protocol.js";
 
 interface Channel {
-	readonly listener: (frame: unknown) => void;
+	readonly listener: (message: unknown) => void;
 	/** The host generation whose port carries this client, once main has said so. */
 	hosted: number | undefined;
 	attachmentId: string | undefined;
-	/** The last frame's sequence from the host, and whether it was the last there will be. */
-	sequence: number;
+	/** Its last message has come: nothing more will. */
 	ended: boolean;
 	/** A host that ended while this channel's attach was unanswered. */
 	restartedDuringAttach: number | undefined;
@@ -58,10 +48,10 @@ interface Channel {
 
 const channels = new Map<string, Channel>();
 /**
- * Per channel, the attachments its surface let go of whose last frame has not
- * come. A surface attaches again on the same channel id (a retry, a reveal
- * after more than it kept), and the client it replaced may still have frames
- * on the way, its end among them: they are not the new attachment's, and its
+ * Per channel, the attachments its surface let go of whose last message has
+ * not come. A surface attaches again on the same channel id (a retry, a
+ * reattach), and the client it replaced may still have messages on the way,
+ * its end among them: they are not the new attachment's, and its
  * end must not end the new one's channel.
  */
 const retired = new Map<string, string[]>();
@@ -85,12 +75,10 @@ function forget(channelId: string, attachmentId: string): void {
 	else retired.set(channelId, ids);
 }
 
-ipcRenderer.on(
-	TERMINAL_CHANNELS.frame,
-	(_event, channelId: string, frame: unknown) => {
-		channels.get(channelId)?.listener(frame);
-	},
-);
+const revived = new Set<() => void>();
+ipcRenderer.on(TERMINAL_CHANNELS.revived, () => {
+	for (const listener of [...revived]) listener();
+});
 
 let host: { port: MessagePort; generation: number } | undefined;
 const replies = new Map<number, (result: TerminalResult<void>) => void>();
@@ -122,7 +110,7 @@ ipcRenderer.on(
 			}
 			const channel = channels.get(data.channelId);
 			// A channel main has said runs here, on this host, or one whose
-			// attach is still unanswered: its `started` comes before the answer.
+			// attach is still unanswered: its first news can come before the answer.
 			if (
 				channel === undefined ||
 				channel.ended ||
@@ -131,14 +119,7 @@ ipcRenderer.on(
 				return;
 			}
 			if (data.last) channel.ended = true;
-			if (data.type === "control") {
-				// A control client's news is a message, not frame bytes: its surface
-				// reads it as such (`shell/terminal/control/`).
-				channel.listener(data.message);
-				return;
-			}
-			channel.sequence = data.sequence;
-			channel.listener(data.frame);
+			channel.listener(data.message);
 		};
 		port.start();
 	},
@@ -166,15 +147,10 @@ ipcRenderer.on(
 				continue;
 			}
 			channel.ended = true;
-			channel.listener(
-				encodeTerminalFrame({
-					type: "error",
-					schemaVersion: TERMINAL_PROTOCOL_VERSION,
-					attachmentId: channel.attachmentId,
-					sequence: channel.sequence + 1,
-					error: new TerminalFailure("host_restarted").toWire(),
-				}),
-			);
+			channel.listener({
+				kind: "ended",
+				reason: "host_restarted",
+			} satisfies ControlToPage);
 		}
 	},
 );
@@ -202,12 +178,11 @@ function hostedChannel(channelId: string): Channel | undefined {
 }
 
 export const terminalApi: DevhubTerminalApi = {
-	attach: async (channelId, request: TerminalAttachRequest, onFrame) => {
+	attach: async (channelId, request: TerminalAttachRequest, onMessage) => {
 		const channel: Channel = {
-			listener: onFrame,
+			listener: onMessage,
 			hosted: undefined,
 			attachmentId: undefined,
-			sequence: 0,
 			ended: false,
 			restartedDuringAttach: undefined,
 		};
@@ -238,40 +213,10 @@ export const terminalApi: DevhubTerminalApi = {
 		return result;
 	},
 
-	input: (channelId, request: TerminalInputRequest) => {
-		const channel = hostedChannel(channelId);
-		if (channel !== undefined) return toHost(channel, "input", request);
-		return ipcRenderer.invoke(
-			TERMINAL_CHANNELS.input,
-			channelId,
-			request,
-		) as Promise<TerminalResult<void>>;
-	},
-
-	resize: (channelId, request: TerminalResizeRequest) => {
-		const channel = hostedChannel(channelId);
-		if (channel !== undefined) return toHost(channel, "resize", request);
-		return ipcRenderer.invoke(
-			TERMINAL_CHANNELS.resize,
-			channelId,
-			request,
-		) as Promise<TerminalResult<void>>;
-	},
-
 	control: (channelId, request: ControlRequest) => {
 		const channel = hostedChannel(channelId);
 		if (channel === undefined) return Promise.resolve(restarted());
 		return toHost(channel, "control", request);
-	},
-
-	acknowledge: (channelId, request: TerminalAckRequest) => {
-		const channel = hostedChannel(channelId);
-		if (channel !== undefined) return toHost(channel, "ack", request);
-		return ipcRenderer.invoke(
-			TERMINAL_CHANNELS.acknowledge,
-			channelId,
-			request,
-		) as Promise<TerminalResult<void>>;
 	},
 
 	detach: async (channelId, request: TerminalDetachRequest) => {
@@ -295,5 +240,16 @@ export const terminalApi: DevhubTerminalApi = {
 			channels.delete(channelId);
 		}
 		return result;
+	},
+
+	restart: async () => {
+		await ipcRenderer.invoke(TERMINAL_CHANNELS.restart);
+	},
+
+	onRevived: (listener) => {
+		revived.add(listener);
+		return () => {
+			revived.delete(listener);
+		};
 	},
 };

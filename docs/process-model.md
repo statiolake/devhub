@@ -18,10 +18,10 @@ and which come next.
 | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **main** (Electron's browser process)                       | the window, its child views, menus, focus (`shell/`); the chord layer, a `before-input-event` handler on every web contents (`shell/keyboard.ts`); the terminal ledger: which marked session a surface attaches to, the attach permits and who owns which client, told only when a client starts or ends (`terminal/service.ts`, `surfaces.ts`, `attachments.ts`); tmux control and polling: the agent round and the terminal activity round (`terminal/tmux.ts`, `shell/agentWiring.ts`); every managed Neovim's lifecycle connection (`editor/managedNeovim.ts`: start, adopt, file jumps, theme) and the Neovim editors' attaches, ports and clipboard (`editor/neovimEditors.ts`); a proxy per GUI Agent's conversation (`agent/conversation/handle.ts`, `agentEngine/client.ts`): the facts the engine pushes, the requests, the host of an Agent on another machine; `state.json` (`shell/saveCoalescer.ts`); the Orchestrator (invariant, events, timers, GitHub polling); repository status (git), usage readers, Task Manager sampling, the `devhub` CLI's control socket, voice |
 | **process host** (utility process, new)                     | starts every child main runs: each bounded command — tmux, git, ssh, the GUI Agents' host scripts — and each long-lived stream (a remote Agent's journal over `ssh -T`), its bytes sent to the process that reads them over a port of their own (`main/processHost/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| **pty host** (utility process, new)                         | every terminal surface's tmux client (node-pty), its output coalesced and framed, its acks, input and resizes, directly with the page over the page's `MessagePort` (`main/ptyHost/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **pty host** (utility process, new)                         | every terminal surface's tmux control client (`tmux -C` on pipes), its panes' engines (libghostty-vt) and its popups' PTYs (node-pty), directly with the page over the page's `MessagePort` (`main/ptyHost/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **Neovim host** (utility process, new)                      | every Neovim editor's UI: its own connection to the Neovim's socket, the msgpack decoding, the attach, the GUI windows, each redraw sent to the page over the page's `MessagePort` and the page's calls back on it (`main/neovimHost/`, `editor/neovimUiSessions.ts`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **conversation engine** (utility process, new)              | every GUI Agent's `AgentConversation`: the journal followed (an Agent on this machine), the protocol adapter, the fold, the held messages, the usage-limit and cache keepers; the Agents page's snapshot and events over a `MessagePort` (`main/agentEngine/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| DevHub's pages (one renderer each)                          | the window's own page, the Sidebar, **the Agents page (the terminal Agents' xterms and the Orchestrator's board) and the Conversations page (the GUI Agents' conversations), laid in the same place, two renderers**, an Agent's terminal pane, a Workspace's terminal (with every Neovim drawn in its panes), notices, questions, tooltip; Settings and Task Manager windows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| DevHub's pages (one renderer each)                          | the window's own page, the Sidebar, **the Agents page (the terminal Agents' panes and the Orchestrator's board)  and the Conversations page (the GUI Agents' conversations), laid in the same place, two renderers**, an Agent's terminal pane, a Workspace's terminal (with every Neovim drawn in its panes), notices, questions, tooltip; Settings and Task Manager windows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | outside Electron                                            | DevHub's tmux server (every terminal and every Agent's session), the GUI Agents' hosts and CLIs, Neovim (`nvim --headless --listen`, kept by tmux)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ### The data paths
@@ -32,16 +32,15 @@ and which come next.
   A key waits for main whatever surface it is for. Note that this is true of
   Chromium's input routing itself, not only of DevHub's handler: removing
   the handler saves a JS call per key, not the hop.
-- **A key in a terminal.** page → its port → the pty host → the tmux
-  client's pty → tmux → the program; its echo: tmux → the client's pty →
-  the pty host reads, coalesces 5 ms → the port → page → xterm, and the page
-  acks each frame on the same port. Main is on none of it (until phase 5 it
-  was on it three times: the input `invoke`, the read and `send`, the ack
-  `invoke`). Attaching and detaching are still a request to main, which
-  resolves the session and keeps who owns which client. A surface that is
-  hidden acks its frames as they come and does not hand them to xterm
-  (phase 6), and once it has missed more than it keeps it lets its client
-  go until it is shown (phase 6d).
+- **A key in a terminal.** page → its port → the pty host → the control
+  client's `send-keys` on its pipe → tmux → the program; its echo: tmux's
+  `%output` → the pty host's engine for that pane → the pane's dirty rows on
+  the port → the page's painter, and the page acks each pane frame on the
+  same port. Main is on none of it (until phase 5 it was on it three times:
+  the input `invoke`, the read and `send`, the ack `invoke`). Attaching and
+  detaching are still a request to main, which resolves the session and
+  keeps who owns which client. A surface that is hidden tells its client,
+  which stops sending rows until it is shown (`docs/terminal-mode.md`).
 - **Neovim.** page → its port → the Neovim host → socket → nvim; a redraw:
   nvim → socket → the Neovim host decodes msgpack → its port (structured
   clone) → page. Main is on none of it (until phase 5c it decoded every
@@ -330,12 +329,23 @@ takes its clients with it (tmux keeps the sessions), the pages are told
 (`TERMINAL_CHANNELS.restarted`), and each surface gets a `host_restarted`
 error in its own frame sequence, shows "Reconnecting…" and attaches again,
 to a new host; an attach in flight is refused with the same code and
-retried the same way. Three exits in a minute and clients start in main
-again, as `DEVHUB_TERMINALS_IN_MAIN=1` does from the start. Measured by
+retried the same way. Three exits in a minute and clients started in main
+again, as `DEVHUB_TERMINALS_IN_MAIN=1` did from the start. Measured by
 killing it: five terminals were on a new host three seconds later (the
 surface waits 250 ms), their seven sessions intact, keys at 8.5 ms p50;
 after the third kill the clients were main's children and typing was the
-same. The tmux control commands were already the process host's (phase 2);
+same.
+
+That fallback went with the xterm.js terminal (`docs/terminal-mode.md`,
+phase 4): a control client runs only in the pty host, so there is no client
+in main and no `DEVHUB_TERMINALS_IN_MAIN`. Three exits in a minute now
+stop the host from being started again, and the surfaces say the terminals
+have stopped, with **Restart Terminals** (on the failure, and the palette's
+`restart_terminals`): `PtyHostClient.restart` forgets the exits, ends any
+host there is, and every page is told (`TERMINAL_CHANNELS.revived`), so each
+surface attaches again, in a new host, to its session. The host's PTY data
+path (`PtyAttachment`, the coalescer, the ack window, the input ledger) went
+with the xterm.js clients; a popup's PTY is the control client's own. The tmux control commands were already the process host's (phase 2);
 their rounds' scheduling stays in main with the other rounds (phase 7).
 The Neovim RPC sockets were the next step: phase 5c.
 
@@ -446,8 +456,9 @@ Not moved: the dev-container relay (`container.ts`'s `spawnRelay`, a
 which is the editor's remote traffic for a container on a host, not a
 stream DevHub reads, and the whisper server, which is started once.
 
-**Phase 6a.** A terminal surface that has been on screen and is hidden
-again (`TerminalSurface`, the Agents page's pool) keeps its client and
+**Phase 6a** (the xterm.js surface's, gone with it; the control client's
+hidden surface sends no rows at all). A terminal surface that has been on
+screen and is hidden again (`TerminalSurface`, the Agents page's pool) keeps its client and
 acks each frame the moment it arrives, so tmux is never held back, and
 does not hand it to xterm. It keeps what arrived while that is under
 128 KiB and writes it, in order, when it is shown: the exact stream, one
@@ -962,7 +973,7 @@ complete.
 - What is left on main under GUI Agents is the conversation engine itself
   (adapter and fold, ~15% during a replay): phase 4.
 - f (everything at once) still has terminal keys at 600 ms p99: four
-  terminals streaming into hidden xterms keep the same Agents page at
+  terminals streaming into hidden xterms (then) keep the same Agents page at
   ~60%, and tmux at 70–85%. Phase 6 (and the hidden-terminal half of
   phase 1, below) is that.
 

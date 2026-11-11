@@ -1,11 +1,11 @@
 /**
  * The terminal surface's main-process service.
  *
- * It is the only place terminal IPC is registered. Requests arrive as
- * `ipcMain.handle` calls and are answered with a result value; output frames go
- * back the one way frames go, `webContents.send` on a single channel carrying
- * the page's channel id, so a page with several mounted surfaces routes each
- * frame to the surface that asked for it.
+ * It is the only place terminal IPC is registered. Attaches and detaches
+ * arrive as `ipcMain.handle` calls and are answered with a result value; the
+ * control client itself runs in the pty host (`main/ptyHost/`), and what it
+ * and the page say to each other passes over the page's own port to it, not
+ * through here.
  *
  * Ported from the Tauri app's `terminal/mod.rs` command surface. What it does
  * *not* do is decide what a surface means: the surface key names a place in
@@ -17,28 +17,23 @@ import { randomBytes } from "node:crypto";
 import {
 	app,
 	ipcMain,
+	webContents,
 	type IpcMainInvokeEvent,
 	type WebContents,
 } from "electron";
 import {
 	TERMINAL_CHANNELS,
 	TerminalFailure,
-	encodeTerminalFrame,
-	validateAckRequest,
 	validateAttachRequest,
 	validateDetachRequest,
-	validateInputRequest,
-	validateResizeRequest,
 	type TerminalAttachReply,
 	type TerminalResult,
 } from "../../ipc/terminal.js";
 import {
 	AttachmentManager,
 	type AttachmentManagerOptions,
-	type RequestIdentity,
 } from "./attachments.js";
 import type { PtyHostClient } from "../ptyHost/client.js";
-import { type PtyFactory } from "./pty.js";
 import type { TerminalTarget } from "./ports.js";
 import { TerminalSurfaces, terminalFailureFromPort } from "./surfaces.js";
 import type { TmuxTerminalRuntime } from "./tmux.js";
@@ -59,21 +54,22 @@ export interface TerminalServiceOptions {
 	/** One tmux adapter per machine; a target says which. */
 	readonly runtimeFor: (machine: RuntimeId) => Promise<TmuxTerminalRuntime>;
 	readonly resolveSurface: SurfaceResolver;
-	/** Overridden only by tests; production always opens a real PTY. */
-	readonly spawn?: PtyFactory;
 	/** A client ended on its own (`AttachmentManagerOptions.onEndedByItself`). */
 	readonly onEndedByItself?: AttachmentManagerOptions["onEndedByItself"];
-	/**
-	 * Where clients run while it is available (`main/ptyHost/`): their
-	 * frames, input, resizes and acks then pass between the page and the host
-	 * and not through here. Absent, or given up on: in this process.
-	 */
-	readonly ptyHost?: PtyHostClient;
+	/** Where every client runs (`main/ptyHost/`). */
+	readonly ptyHost: PtyHostClient;
 }
 
 export interface TerminalService {
 	/** Detaches every client and unregisters the IPC handlers. */
 	dispose(): void;
+	/**
+	 * "Restart Terminals" (`restart_terminals`, and the action on a terminal
+	 * that could not attach): the pty host is started afresh
+	 * (`PtyHostClient.restart`) and every page is told, so each surface
+	 * attaches its control client again. tmux keeps the sessions.
+	 */
+	restart(): void;
 	readonly attachmentCount: number;
 	readonly surfaces: TerminalSurfaces;
 }
@@ -107,12 +103,11 @@ export function registerTerminalService(
 ): TerminalService {
 	const ptyHost = options.ptyHost;
 	const attachments = new AttachmentManager({
-		spawn: options.spawn,
 		onEndedByItself: options.onEndedByItself,
 		randomBytes: (count) => new Uint8Array(randomBytes(count)),
-		...(ptyHost === undefined ? {} : { hosted: ptyHost }),
+		hosted: ptyHost,
 	});
-	const stopHearing = ptyHost?.onEnded((id, reason) =>
+	const stopHearing = ptyHost.onEnded((id, reason) =>
 		attachments.hostedEnded(id, reason),
 	);
 	const surfaces = new TerminalSurfaces({
@@ -126,25 +121,11 @@ export function registerTerminalService(
 	 *
 	 * Which surface it is about is the surface key, which every request already
 	 * carries: the two together are what the attachment ledger owns by. The
-	 * channel id is not part of it — it addresses frames back to one mounted
-	 * client, and a surface that remounts gets a new one while remaining the
-	 * same surface of the same page.
+	 * channel id is not part of it — it addresses the client's messages to one
+	 * mounted surface, and a surface that remounts gets a new one while
+	 * remaining the same surface of the same page.
 	 */
 	const viewLabel = (event: IpcMainInvokeEvent) => String(event.sender.id);
-
-	const identityOf = (
-		event: IpcMainInvokeEvent,
-		request: {
-			surfaceKey: string;
-			attachmentId: string;
-			targetGeneration: number;
-		},
-	): RequestIdentity => ({
-		surfaceKey: request.surfaceKey,
-		attachmentId: request.attachmentId,
-		targetGeneration: request.targetGeneration,
-		viewLabel: viewLabel(event),
-	});
 
 	const targetFor = (surfaceKey: string): TerminalTarget => {
 		const target = options.resolveSurface(surfaceKey);
@@ -165,7 +146,7 @@ export function registerTerminalService(
 		// fall out of step with the ledger.
 		const gone = () => {
 			surfaces.detachView(String(sender.id));
-			ptyHost?.pageGone(sender);
+			ptyHost.pageGone(sender);
 		};
 		// A page that loads again (a reload, in development) is a new page in
 		// the same web contents: its old document's clients go with it, and
@@ -199,7 +180,6 @@ export function registerTerminalService(
 				noteMainActivity(`terminal attach ${request.surfaceKey}`);
 				const label = viewLabel(event);
 				watch(event.sender);
-				const sender = event.sender;
 				const receipt = await surfaces.attach({
 					target,
 					surfaceKey: request.surfaceKey,
@@ -210,21 +190,7 @@ export function registerTerminalService(
 						pixelWidth: request.pixelWidth,
 						pixelHeight: request.pixelHeight,
 					},
-					// Frames of a client in this process; one in the pty host
-					// sends them to the page's port to it instead.
-					sink: (frame) => {
-						if (sender.isDestroyed()) return false;
-						sender.send(
-							TERMINAL_CHANNELS.frame,
-							id,
-							encodeTerminalFrame(frame),
-						);
-						return true;
-					},
-					...(ptyHost?.available === true
-						? { route: { page: sender, channelId: id } }
-						: {}),
-					...(request.mode === "control" ? { control: true } : {}),
+					route: { page: event.sender, channelId: id },
 				});
 				const hosted = attachments.hostedGeneration(receipt.attachmentId);
 				return {
@@ -233,56 +199,6 @@ export function registerTerminalService(
 				};
 			} catch (failure: unknown) {
 				return { result: refuse(terminalFailureFromPort(failure)) };
-			}
-		},
-	);
-
-	ipcMain.handle(
-		TERMINAL_CHANNELS.input,
-		(event, channelId: unknown, payload: unknown): TerminalResult<void> => {
-			try {
-				channel(channelId);
-				const request = validateInputRequest(payload);
-				surfaces.input(
-					identityOf(event, request),
-					request.inputSequence,
-					request.bytes,
-				);
-				return ok(undefined);
-			} catch (failure: unknown) {
-				return refuse(failure);
-			}
-		},
-	);
-
-	ipcMain.handle(
-		TERMINAL_CHANNELS.resize,
-		async (
-			event,
-			channelId: unknown,
-			payload: unknown,
-		): Promise<TerminalResult<void>> => {
-			try {
-				channel(channelId);
-				const request = validateResizeRequest(payload);
-				await surfaces.resize(identityOf(event, request), request.size);
-				return ok(undefined);
-			} catch (failure: unknown) {
-				return refuse(terminalFailureFromPort(failure));
-			}
-		},
-	);
-
-	ipcMain.handle(
-		TERMINAL_CHANNELS.acknowledge,
-		(event, channelId: unknown, payload: unknown): TerminalResult<void> => {
-			try {
-				channel(channelId);
-				const request = validateAckRequest(payload);
-				surfaces.acknowledge(identityOf(event, request), request.sequence);
-				return ok(undefined);
-			} catch (failure: unknown) {
-				return refuse(failure);
 			}
 		},
 	);
@@ -301,6 +217,17 @@ export function registerTerminalService(
 		},
 	);
 
+	const restart = () => {
+		noteMainActivity("terminal restart");
+		ptyHost.restart();
+		for (const page of webContents.getAllWebContents()) {
+			if (!page.isDestroyed()) page.send(TERMINAL_CHANNELS.revived);
+		}
+	};
+	ipcMain.handle(TERMINAL_CHANNELS.restart, () => {
+		restart();
+	});
+
 	// Quit detaches every client. The tmux sessions stay: that is the whole
 	// point of the runtime, and they are what the next launch attaches to.
 	const onQuit = () => surfaces.detachAll();
@@ -308,19 +235,18 @@ export function registerTerminalService(
 
 	return {
 		surfaces,
+		restart,
 		get attachmentCount() {
 			return surfaces.attachmentCount;
 		},
 		dispose() {
 			surfaces.detachAll();
-			stopHearing?.();
+			stopHearing();
 			app.removeListener("will-quit", onQuit);
 			for (const name of [
 				TERMINAL_CHANNELS.attach,
-				TERMINAL_CHANNELS.input,
-				TERMINAL_CHANNELS.resize,
-				TERMINAL_CHANNELS.acknowledge,
 				TERMINAL_CHANNELS.detach,
+				TERMINAL_CHANNELS.restart,
 			]) {
 				ipcMain.removeHandler(name);
 			}

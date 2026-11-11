@@ -17,8 +17,8 @@
  * This is the same shape of problem the terminal pane had, and it gets the
  * same shape of answer: a surface that cannot answer one of the Mac's chords
  * has it answered for it, by the layer in front of every surface (see
- * `../../shell/surfaces/keys.ts`, which does this for Cmd+Left in a pane, and
- * `keyboard.ts`, which is that layer). Keys stay with the surfaces; the menu
+ * `../../shell/terminal/control/controlKeys.ts`, which does this for Cmd+Left
+ * in a pane, and `keyboard.ts`, which is that layer). Keys stay with the surfaces; the menu
  * stays keyless; and nothing is taken from the workbench, because the answer
  * is given per web contents rather than to the whole application.
  *

@@ -255,7 +255,7 @@ drawn again are searched again — and the current match stays where it was.
 The keys reach the page untouched: main's chord layer claims only its prefix
 (Cmd+Q) and the chords after it, the editing keys on DevHub's own chrome and
 the Agent panes' zoom, none of which is Cmd+F or F3. In a terminal Agent's
-pane the keys stay as they were: Cmd+F does nothing (xterm sends nothing for a
+pane the keys stay as they were: Cmd+F does nothing (the terminal sends nothing for a
 Command key and DevHub adds no search there), and F3 goes to the program in
 the terminal as its escape sequence.
 

@@ -19,8 +19,6 @@ Shipped application components
   `licenses/Electron-MIT.txt`. Electron embeds Chromium and Node.js, whose
   notices are the ones Electron ships.
 * React 19.1.1 and React DOM 19.1.1 — MIT; see `licenses/React-MIT.txt`.
-* `@xterm/xterm` 6.0.0, `@xterm/addon-fit` 0.11.0, `@xterm/addon-webgl` 0.19.0
-  and `@xterm/addon-clipboard` 0.2.0 — MIT; see `licenses/Xterm-MIT.txt`.
 * libghostty-vt 1.0.0, Ghostty's terminal core, compiled to WebAssembly from
   the `vt-1.0.0` tag (`scripts/build_libghostty_vt.py`) — MIT; see
   `licenses/Ghostty-MIT.txt`.
@@ -29,8 +27,6 @@ Shipped application components
   the shell Claude Agents run in — GPL-3.0-or-later; its licence text ships
   beside it, `Resources/app/out/bash/licenses/bash.txt`, and its source is
   the pinned GNU release `scripts/build_bash.py` names.
-* js-base64 3.9.3 — BSD 3-Clause; see `licenses/js-base64-BSD-3-Clause.txt`.
-  `@xterm/addon-clipboard` depends on it, and the App Shell bundle carries it.
 * minimist 1.2.8, toml-eslint-parser 1.0.3 and eslint-visitor-keys 5.0.1 — MIT.
   The main process imports these three at runtime.
 * react-markdown 10.1.0 and remark-gfm 4.0.1 — MIT, with the unified, remark,
@@ -131,7 +127,6 @@ Upstream source references
 * https://github.com/microsoft/vscode
 * https://github.com/electron/electron
 * https://github.com/facebook/react
-* https://github.com/xtermjs/xterm.js
 * https://github.com/remarkjs/react-markdown
 * https://github.com/remarkjs/remark-gfm
 * https://github.com/shikijs/shiki

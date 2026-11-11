@@ -175,8 +175,6 @@ export interface SettingsConfigWire {
 	 */
 	readonly terminal: {
 		readonly macOptionIsMeta: boolean | "left";
-		/** `tmux_control_mode`: no control in Settings, carried so a save keeps it. */
-		readonly tmuxControlMode: boolean;
 	};
 	readonly keybindings: SettingsKeybindingsWire;
 	readonly workspaceSources: readonly SettingsWorkspaceSourceWire[];

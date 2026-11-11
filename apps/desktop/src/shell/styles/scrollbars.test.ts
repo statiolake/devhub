@@ -3,8 +3,7 @@
  *
  * The thin thumb is written once, in `styles/tokens.css`, which every page
  * imports; no other stylesheet draws a scrollbar of its own, so a new panel
- * that scrolls gets the same one without asking. xterm's own is left to
- * xterm.
+ * that scrolls gets the same one without asking.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -45,12 +44,12 @@ describe("scrollbars", () => {
     }
   });
 
-  it("are a thin thumb with no track, wider under the pointer, xterm's left alone", () => {
+  it("are a thin thumb with no track, wider under the pointer", () => {
     const tokens = read("shell/styles/tokens.css");
     const rule = (selector: string) =>
-      new RegExp(
-        `\\n:not\\(\\.xterm, \\.xterm \\*\\)${selector.replaceAll(":", "\\:")} \\{([^}]*)\\}`,
-      ).exec(tokens)?.[1] ?? "";
+      new RegExp(`\\n${selector.replaceAll(":", "\\:")} \\{([^}]*)\\}`).exec(
+        tokens,
+      )?.[1] ?? "";
     expect(rule("::-webkit-scrollbar")).toMatch(/width:\s*10px/);
     expect(rule("::-webkit-scrollbar-thumb")).toMatch(
       /border:\s*3px solid transparent/,
