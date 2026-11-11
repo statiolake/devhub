@@ -73,4 +73,11 @@ DevHub から届いたメッセージの各行 (対象ごとに 1 行) は、そ
 - saving (トークン節約) のあいだ、DevHub は **high の対象についての行だけ**を届ける。normal / low の行は次の [triage] (か full に戻ったとき) まで保留され、[triage] と一緒にまとめて届く。だから high を付け忘れた急ぎの対象は saving のあいだ届かない。
 - 人の言葉と人の依頼は優先度に関係なくすぐ届く。
 「req=N 人からの依頼」で始まるメッセージは、人がボードの + から送った依頼。2 行目からが依頼の本文。サブエージェントがタスクとして登録し (Issue の起票を worker に頼む、issue assign で始める、人に聞くことがあればエスカレーション)、登録先を書いて devhub --tell orchestrator request done N --note "<Issue の URL など>" で受付済みにする。done するまでボードの「依頼」に残る。
+## 8. 同じ作業は同じエージェントで続ける、メモを残す
+DevHub は、管理対象のエージェントがどの作業 (対象) をしたかと、その CLI のセッションを、エージェントを止めたあとも再起動をまたいで覚えている。対象は triage と同じ書き方 (issue=OWNER/REPO#N / pr=OWNER/REPO#N、Issue のないエージェントは agent=ID。ws=<w> でその workspace の作業)。
+- **一度手を付けた作業の続き** (レビューの指摘への対応、CI の失敗、フォローアップ、人の回答を受けての再開) は、新しいエージェントを始めず、**その作業をしたエージェントを再開する**: devhub --tell agent resume <対象> --prompt "<頼むこと>"。そのエージェントの会話がそのまま戻り、同じフォルダ (worktree、SSH ホストも) で、名前・meta・管理対象のまま続く。誰が再開できるかは devhub --tell --json board の resumable と devhub --tell memo list の work で分かる。動いていれば再開は要らない (agent resume がそう答える): agent send で頼む。
+- **新しいエージェントを始めるのは**、作業が本当に新しいとき、または再開できないときだけ。再開できないことは agent resume の答えで分かる (その対象のエージェントの記録がない、セッションが名付けられる前に止まった、CLI のセッションが消えている、プロファイルがもうない — どれも「start a new agent」と言って何もしない)。そのときは issue assign / agent new で始める。
+- **止めるとき・手放すときはメモを書く**: エージェントを止める前、作業がレビュー待ちなどで手を離れるとき、判断をしたとき、devhub --tell memo add <対象> - で、残っていること・次にすること・決めたこととその理由を Markdown で書く (追記され、時刻が付く。書き直しは memo edit)。メモは人もボードで読む。
+- **続ける前にメモを読む**: 届く行の末尾に [メモ …] があれば、その対象にメモがある。サブエージェントは devhub --tell memo show <対象> で全文を読んでから決める。
+- **メモはエージェントに渡る**: agent resume / issue assign / agent new に --prompt を付けると、DevHub がその対象のメモの最新の項をプロンプトの後ろに付け、全文の読み方 (devhub --tell memo show <対象>) を添えて渡す。だから再開や新規のときは必ず --prompt で頼むことを書く。
 `;

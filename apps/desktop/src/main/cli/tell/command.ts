@@ -281,9 +281,15 @@ export type TellCommand =
 			readonly value?: string;
 	  }
 	| {
-			/** One of them, gone on with in a new GUI Agent. */
+			/**
+			 * One of them, gone on with in a new GUI Agent — or the recorded
+			 * agent of a subject (`issue=…`, `pr=…`, a URL, `ws=…`) or by its
+			 * id or name (`orchestrator/work.ts`), on its latest session.
+			 */
 			readonly verb: "agent-resume";
 			readonly session: string;
+			/** Sent as its first message once it is back (`-`: stdin). */
+			readonly prompt?: string;
 			readonly workspace?: string;
 			/** The folder it is looked up (and resumed) in, open or not. */
 			readonly folder?: string;
@@ -447,6 +453,18 @@ export type TellCommand =
 	  }
 	| { readonly verb: "orchestrator-priority-clear"; readonly subject: string }
 	| { readonly verb: "orchestrator-priority-list" }
+	/**
+	 * The memos (`orchestrator/memos.ts`): per subject, as the triage names
+	 * it (`issue=`, `pr=`, `agent=`, `esc=`, `req=`, an item's URL, `ws=`).
+	 */
+	| {
+			readonly verb: "memo-add" | "memo-edit";
+			readonly subject: string;
+			readonly text: string;
+	  }
+	| { readonly verb: "memo-show"; readonly subject: string }
+	| { readonly verb: "memo-clear"; readonly subject: string }
+	| { readonly verb: "memo-list" }
 	/** The person's requests (the board's +): listed, or marked filed. */
 	| { readonly verb: "orchestrator-request-list" }
 	| {
@@ -689,9 +707,21 @@ agents
                                    Kept for the 500 most recently changed
                                    sessions, 180 days each
   agent resume <session> [--workspace <w> | --folder <path>] [--profile <p>]
-               [--name <n>]
-                                   go on with one in a new GUI agent, as the
-                                   picker does. Where it opens is the
+               [--name <n>] [--prompt <text>|-]
+  agent resume <subject|agent> [--prompt <text>|-]
+                                   bring back the agent that worked on a
+                                   subject (issue=OWNER/REPO#N, pr=…, the
+                                   item's URL, ws=<w>, agent=ID) or a stopped
+                                   agent by its id or name, on its latest
+                                   session, in its folder (an SSH host's
+                                   too), with its name, metadata and
+                                   management; --prompt is its first message,
+                                   with the subject's latest memo after it.
+                                   Refused, saying so, when DevHub has no
+                                   such record or the session cannot be
+                                   resumed (start a new agent then).
+                                   The session form: go on with one in a new
+                                   GUI agent, as the picker does. Where it opens is the
                                    session's own: its folder, or its
                                    worktree (opened, or checked out again);
                                    a folder that is not open is opened as a
@@ -913,6 +943,18 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    saving only lines about high ones go
   orchestrator priority [list] | clear <subject>
                                    the priorities, the last and next triage
+  memo add <subject> <text>|-      append a timestamped Markdown note to a
+                                   subject's memo (issue=OWNER/REPO#N, pr=…,
+                                   the item's URL, agent=ID, esc=N, req=N,
+                                   ws=<w>): what remains, what is next, what
+                                   was decided. An agent whose work is an
+                                   item's writes to the item's memo
+  memo show <subject>              the whole memo (--json: its entries)
+  memo list                        every memo, newest first, with its latest
+                                   line; and the recorded work: each
+                                   subject's agents, live or resumable
+  memo edit <subject> <text>|-     replace the memo with this one entry
+  memo clear <subject>             take the memo away
   orchestrator request list | done <id> [--note <where>]
                                    the person's requests (the board's +):
                                    done says where it was filed as a task
@@ -1370,6 +1412,8 @@ function parseVerb(args: readonly string[]): TellCommand {
 		}
 		case "orchestrator":
 			return parseOrchestrator(sub, rest);
+		case "memo":
+			return parseMemo(sub, rest);
 		case "notify": {
 			const words = args.slice(1);
 			if (words.length === 0) throw new Refusal("missing <text>.");
@@ -1714,6 +1758,35 @@ function parseEscalation(
 	}
 }
 
+function parseMemo(
+	sub: string | undefined,
+	rest: readonly string[],
+): TellCommand {
+	switch (sub) {
+		case "add":
+		case "edit": {
+			const [subject, ...words] = readFlags(rest, NO_FLAGS).positional;
+			if (subject === undefined) throw new Refusal("missing <subject>.");
+			if (words.length === 0)
+				throw new Refusal("missing <text> (or - for stdin).");
+			const text = words.join(" ");
+			if (text.trim().length === 0) throw new Refusal("the memo is empty.");
+			return { verb: `memo-${sub}`, subject, text };
+		}
+		case "show":
+		case "clear": {
+			const [subject] = positionals(readFlags(rest, NO_FLAGS), ["<subject>"]);
+			return { verb: `memo-${sub}`, subject: subject! };
+		}
+		case "list":
+		case undefined:
+			positionals(readFlags(rest, NO_FLAGS), []);
+			return { verb: "memo-list" };
+		default:
+			throw new Refusal("memo takes: add, show, list, edit, clear.");
+	}
+}
+
 function parseOrchestrator(
 	sub: string | undefined,
 	rest: readonly string[],
@@ -2033,10 +2106,10 @@ function parseAgent(
 		}
 		case "resume": {
 			const flags = readFlags(rest, {
-				values: ["--workspace", "--folder", "--profile", "--name"],
+				values: ["--workspace", "--folder", "--profile", "--name", "--prompt"],
 				switches: [],
 			});
-			const [session] = positionals(flags, ["<session>"]);
+			const [session] = positionals(flags, ["<session|agent|subject>"]);
 			return {
 				verb: "agent-resume",
 				session: session!,
@@ -2044,6 +2117,7 @@ function parseAgent(
 					...oneWhere(flags, false),
 					profile: one(flags, "--profile"),
 					name: one(flags, "--name"),
+					prompt: one(flags, "--prompt"),
 				}),
 			};
 		}

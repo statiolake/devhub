@@ -256,7 +256,19 @@ function WorkspaceRow({
   // and as the lines the tooltip page draws behind the row's own marks. Two
   // compositions of the same facts is how a row comes to name its Issue to one
   // reader and not the other, with neither able to tell.
-  const facts = workspaceRowFacts(workspace, repository);
+  // A managed Workspace whose agent is stopped (完了): the agent that did
+  // its work, which can be brought back with its conversation, and the
+  // memo of that work — said in the tooltip, and as a quiet mark.
+  const resumeBoard =
+    (useSidebar() as Partial<SidebarValue>).board ?? EMPTY_BOARD;
+  const resumable =
+    underOrchestrator && rowAgents.length === 0
+      ? resumableWorkAt(resumeBoard, workspace.id)
+      : undefined;
+  const facts = [
+    ...workspaceRowFacts(workspace, repository),
+    ...(resumable === undefined ? [] : resumable.facts),
+  ];
   const issue = repository?.issue;
   const description = describe(facts);
   const collapsed = snapshot.sidebar.collapsed;
@@ -412,6 +424,11 @@ function WorkspaceRow({
                 unread={terminals.unread}
                 subject="Terminal"
               />
+            </span>
+          )}
+          {collapsed || resumable === undefined ? null : (
+            <span className="row-resumable" aria-hidden="true">
+              再開可
             </span>
           )}
           {collapsed ? null : <WorkspaceMarks repository={repository} />}
@@ -2330,4 +2347,36 @@ export function Sidebar({ snapshot }: SidebarProps) {
       <RowTooltip generation={overlay.generation} />
     </aside>
   );
+}
+
+/**
+ * The stopped agent whose work was done in `workspaceId` and can be resumed
+ * (`OrchestratorWorkWire`), as the Workspace row's tooltip says it, with
+ * the memo's latest line. Undefined: none.
+ */
+function resumableWorkAt(
+  board: SidebarValue["board"],
+  workspaceId: string,
+): { readonly facts: readonly { readonly text: string }[] } | undefined {
+  for (const work of board.work ?? []) {
+    const last = work.agents.at(-1);
+    if (last?.workspaceId !== workspaceId || !last.resumable) continue;
+    const memo = board.memos?.find((one) => one.subject === work.subject);
+    const latest = memo?.entries.at(-1)?.text.replace(/\s+/gu, " ").trim();
+    return {
+      facts: [
+        {
+          text: `Resumable: ${last.name} (devhub --tell agent resume ${work.token})`,
+        },
+        ...(latest === undefined
+          ? []
+          : [
+              {
+                text: `Memo: ${latest.length <= 120 ? latest : `${latest.slice(0, 119)}…`}`,
+              },
+            ]),
+      ],
+    };
+  }
+  return undefined;
 }

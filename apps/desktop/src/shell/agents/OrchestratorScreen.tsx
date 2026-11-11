@@ -46,6 +46,12 @@ import { focusIsOurs, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { listenForLightboxes } from "../conversation/lightboxLayer";
 import { FilesPage } from "./OrchestratorFiles";
+import {
+  EscalationMemos,
+  escalationMemos,
+  WorkCard,
+  workItems,
+} from "./OrchestratorWork";
 import { ModeControl } from "./OrchestratorDelivery";
 import { RequestButton, RequestCard } from "./OrchestratorRequest";
 import { GitHubPill } from "./OrchestratorGitHub";
@@ -383,13 +389,14 @@ function BoardPage({
   const now = useNow();
   const lanes = useRef<HTMLDivElement>(null);
   const [folded, setFolded] = useState(() => memory.folded);
-  const fold = useCallback((lane: "waiting" | "closed") => {
+  const fold = useCallback((lane: "waiting" | "work" | "closed") => {
     setFolded((value) => {
       const next = { ...value, [lane]: !value[lane] };
       memory.folded = next;
       return next;
     });
   }, []);
+  const work = useMemo(() => workItems(board), [board]);
   const all = useMemo(
     () => [
       ...board.needsAnswer,
@@ -637,6 +644,32 @@ function BoardPage({
             />
           ))}
         </Lane>
+        {/* The work its agents did: each subject with a memo, or whose agent
+            is stopped and can be brought back; no heading when there is none. */}
+        {work.length === 0 ? null : (
+          <Lane
+            title="作業"
+            hint="The orchestrator's memos, and work whose agent is stopped and can be resumed (devhub --tell agent resume <subject>). Click one to read its memo."
+            tone="work"
+            count={work.length}
+            empty="作業はありません。"
+            folded={folded.work}
+            onFold={() => {
+              fold("work");
+            }}
+          >
+            {work.map((item) => (
+              <WorkCard
+                key={item.subject}
+                item={item}
+                now={now}
+                span={span}
+                agentId={board.orchestratorAgentId}
+                cwd={board.start.root}
+              />
+            ))}
+          </Lane>
+        )}
         <Lane
           title="完了"
           hint="Closed escalations, most recent first."
@@ -708,7 +741,7 @@ function Lane({
 }: {
   readonly title: string;
   readonly hint: string;
-  readonly tone: "request" | "ask" | "progress" | "waiting" | "closed";
+  readonly tone: "request" | "ask" | "progress" | "waiting" | "work" | "closed";
   readonly count: number;
   readonly empty: string;
   readonly folded?: boolean;
@@ -897,6 +930,11 @@ function EscalationView({
   readonly onFocusWorkspace: (workspaceId: string) => void;
 }) {
   const pathsOn = escalation.agents[0]?.agentId ?? orchestratorAgentId;
+  const { board } = useAgents();
+  const memos = useMemo(
+    () => escalationMemos(escalation, board),
+    [escalation, board],
+  );
   const root = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const jumps = escalationWorkspaces(escalation, workspaces);
@@ -1096,6 +1134,13 @@ function EscalationView({
             </article>
           ),
         )}
+        <EscalationMemos
+          memos={memos}
+          agentId={pathsOn}
+          cwd={base}
+          now={now}
+          span={span}
+        />
         {escalation.closed === undefined ? null : (
           <div className="orchestrator-closed-note">
             Closed {span(now - escalation.closed.at)} ago

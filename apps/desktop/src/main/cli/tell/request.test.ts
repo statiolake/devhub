@@ -214,3 +214,29 @@ describe("devhub --tell's words, as the app reads them", () => {
 		});
 	});
 });
+
+describe("memo and agent resume text from stdin", () => {
+	it("puts what is piped in where - stood", () => {
+		expect(
+			tellFromWords(["memo", "add", "pr=a/b#1", "-"], "/w", "/h", undefined),
+		).toEqual({
+			kind: "needs-stdin",
+		});
+		expect(
+			tellFromWords(
+				["memo", "add", "pr=a/b#1", "-"],
+				"/w",
+				"/h",
+				"## 残り\n- 1\n",
+			),
+		).toMatchObject({ command: { verb: "memo-add", text: "## 残り\n- 1" } });
+		expect(
+			tellFromWords(
+				["agent", "resume", "pr=a/b#1", "--prompt", "-"],
+				"/w",
+				"/h",
+				"続けて\n",
+			),
+		).toMatchObject({ command: { verb: "agent-resume", prompt: "続けて" } });
+	});
+});

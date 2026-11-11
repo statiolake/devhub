@@ -433,6 +433,10 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     devhub --tell --json sessions --workspace W --meta parent=ORCH
     devhub --tell session meta ID set state done
     devhub --tell agent resume ID --name "123 login fix"
+    devhub --tell agent resume issue=OWNER/REPO#123 --prompt "レビューの指摘 2 件に対応して"
+    devhub --tell memo add issue=OWNER/REPO#123 "残り: レビュー指摘 2 件。次: 修正して push"
+    devhub --tell memo show issue=OWNER/REPO#123
+    devhub --tell memo list
     devhub --tell --json sessions --all --meta parent=ORCH
     devhub --tell profiles
     devhub --tell issue actions

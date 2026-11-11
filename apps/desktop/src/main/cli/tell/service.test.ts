@@ -282,6 +282,17 @@ class FakePorts implements TellPorts {
 	};
 	readonly orchestrator: TellPorts["orchestrator"] = {
 		board: () => this.service.wire(),
+		resolveSubject: (text, workspace) =>
+			this.service.resolveSubject(text, workspace),
+		subjectToken: (key) => this.service.subjectTokenOf(key),
+		memo: (key) => this.service.memo(key),
+		memos: () => this.service.memos(),
+		addMemo: (key, text, by) => this.service.addMemo(key, text, by),
+		editMemo: (key, text, by) => this.service.editMemo(key, text, by),
+		clearMemo: (key) => this.service.clearMemo(key),
+		workRecords: () => this.service.workRecords(),
+		resumeTarget: (text, workspace) =>
+			this.service.resumeTarget(text, workspace),
 		escalations: () => this.service.allWires(),
 		raise: (request) => {
 			this.attached.push(request.attachments ?? []);
@@ -4761,12 +4772,15 @@ describe("the Orchestrator row from the command line", () => {
 		expect(Object.keys(ports.orchestrator).sort()).toEqual(
 			[
 				"acknowledge",
+				"addMemo",
 				"ask",
 				"board",
+				"clearMemo",
 				"clearPriority",
 				"clearTimer",
 				"close",
 				"configuredRoot",
+				"editMemo",
 				"emit",
 				"escalations",
 				"events",
@@ -4775,23 +4789,29 @@ describe("the Orchestrator row from the command line", () => {
 				"hold",
 				"keep",
 				"link",
+				"memo",
+				"memos",
 				"mode",
 				"pause",
 				"priorities",
 				"raise",
 				"rank",
 				"requests",
+				"resolveSubject",
 				"resume",
+				"resumeTarget",
 				"resumeWait",
 				"setMode",
 				"setPriority",
 				"setTimer",
 				"standing",
-				"status",
 				"start",
+				"status",
+				"subjectToken",
 				"timers",
 				"unkeep",
 				"wait",
+				"workRecords",
 			].sort(),
 		);
 		// Nothing a tell command can carry reaches a human entry.
@@ -5525,5 +5545,206 @@ describe("the orchestrator's workspace, by name", () => {
 			viaSocket(service, ["workspace", "close", "orchestrator"], undefined),
 		).rejects.toThrow(/orchestrator's workspace cannot be closed/u);
 		expect(ports.calls.some((call) => call.startsWith("close"))).toBe(false);
+	});
+});
+
+describe("memos and resuming the agent that did the work", () => {
+	const ISSUE = "https://github.com/acme/app/issues/128";
+	const live = {
+		agentId: "dddd4444-0000",
+		name: "128 login fix",
+		named: true,
+		profileId: "claude",
+		kind: "claude",
+		presentation: "gui" as const,
+		machine: "local",
+		folder: "/src/app_128",
+		branch: "128-fix",
+		issue: ISSUE,
+		session: "c1aa-0001",
+	};
+
+	it("adds, shows, lists, edits and clears a subject's memo, by any of its names", async () => {
+		const { service } = setup();
+		await viaSocket(
+			service,
+			["memo", "add", "issue=acme/app#128", "残り: 指摘 2 件"],
+			self,
+		);
+		await viaSocket(
+			service,
+			["memo", "add", ISSUE, "決めたこと: 再試行で直す"],
+			self,
+		);
+		const shown = await viaSocket(
+			service,
+			["--json", "memo", "show", "acme/app#128"],
+			self,
+		);
+		expect(shown.message).toContain("# memo issue=acme/app#128");
+		expect(shown.message).toContain("残り: 指摘 2 件");
+		expect(shown.data).toMatchObject({
+			subject: "issue=acme/app#128",
+			key: "item acme/app#128",
+			entries: [
+				{ text: "残り: 指摘 2 件", by: "Claude 1" },
+				{ text: "決めたこと: 再試行で直す", by: "Claude 1" },
+			],
+		});
+		const listed = await viaSocket(service, ["memo", "list"], self);
+		expect(listed.message).toMatch(
+			/issue=acme\/app#128 .* \(2\) {2}決めたこと: 再試行で直す/u,
+		);
+		await viaSocket(
+			service,
+			["memo", "edit", "issue=acme/app#128", "一つだけ"],
+			self,
+		);
+		expect(
+			(
+				(
+					await viaSocket(
+						service,
+						["--json", "memo", "show", "issue=acme/app#128"],
+						self,
+					)
+				).data as { entries: unknown[] }
+			).entries,
+		).toHaveLength(1);
+		expect(
+			(await viaSocket(service, ["memo", "clear", "issue=acme/app#128"], self))
+				.message,
+		).toBe("issue=acme/app#128: its memo is cleared.");
+		await expect(
+			viaSocket(service, ["memo", "show", "esc=99"], self),
+		).rejects.toThrow(/no escalation #99/);
+		await expect(
+			viaSocket(service, ["memo", "show", "nonsense"], self),
+		).rejects.toThrow(/a subject is/);
+	});
+
+	it("writes an agent's memo under the item its work is linked to", async () => {
+		const { service, ports } = setup();
+		withAgent(ports, "aaaa1111-0000", { meta: { issue: ISSUE } });
+		const answer = await viaSocket(
+			service,
+			["memo", "add", "agent=aaaa1111", "x"],
+			self,
+		);
+		expect(answer.message).toMatch(/^issue=acme\/app#128:/u);
+	});
+
+	it("says each line's memo in the delivery, and the board carries memos and resumable work", async () => {
+		const { service, ports } = setup();
+		ports.service.observeWork([live]);
+		ports.service.observeWork([]);
+		await viaSocket(
+			service,
+			["memo", "add", "issue=acme/app#128", "残り: 指摘 2 件"],
+			self,
+		);
+		expect(ports.service.memoNote("item acme/app#128")).toMatch(
+			/^\[メモ \d+\/\d+ \d\d:\d\d: 残り: 指摘 2 件 — 全文: devhub --tell memo show issue=acme\/app#128\]$/u,
+		);
+		// An agent's line carries its item's memo.
+		withAgent(ports, "aaaa1111-0000", { meta: { issue: ISSUE } });
+		expect(ports.service.memoNote("agent aaaa1111-0000")).toContain("残り");
+		const board = await viaSocket(service, ["--json", "board"], self);
+		expect(board.data).toMatchObject({
+			memos: [{ subject: "issue=acme/app#128", latest: "残り: 指摘 2 件" }],
+			resumable: [{ subject: "issue=acme/app#128", agentId: "dddd4444-0000" }],
+		});
+	});
+
+	it("resumes a subject's agent on its latest session, in its folder, with the memo after the prompt", async () => {
+		const { service, ports } = setup();
+		ports.service.observeWork([live]);
+		ports.service.observeWork([]);
+		ports.service.addMemo("item acme/app#128", "残り: 指摘 2 件", "orch");
+		ports.paths.set("/src/app_128", "directory");
+		ports.pastIn.set("here /src/app_128 claude", [
+			{ ...PAST.claude![0]!, cwd: "/src/app_128" },
+		]);
+		const answer = await viaSocket(
+			service,
+			[
+				"--json",
+				"agent",
+				"resume",
+				"issue=acme/app#128",
+				"--prompt",
+				"指摘に対応して",
+			],
+			self,
+		);
+		expect(ports.calls).toContain(
+			"resume-in local:/src/app_128 claude c1aa-0001",
+		);
+		expect(answer.data).toMatchObject({
+			agentId: "resumed-agent",
+			subject: "issue=acme/app#128",
+			was: "dddd4444-0000",
+			memo: 1,
+		});
+		const [to, text] = ports.queued.at(-1)!;
+		expect(to).toBe("resumed-agent");
+		expect(text).toMatch(
+			/^指摘に対応して\n\n---\nDevHub より: この作業 \(issue=acme\/app#128\)/u,
+		);
+		expect(text).toContain("残り: 指摘 2 件");
+		expect(text).toContain("全文: devhub --tell memo show issue=acme/app#128");
+	});
+
+	it("names the agent by its id or name too, and says when there is nothing to resume", async () => {
+		const { service, ports } = setup();
+		ports.service.observeWork([{ ...live, agentId: "aaaa1111-0000" }]);
+		// Open now: nothing to resume.
+		const open = await viaSocket(
+			service,
+			["agent", "resume", "issue=acme/app#128"],
+			self,
+		);
+		expect(open.message).toMatch(/is open now: nothing to resume/u);
+		ports.service.observeWork([live]);
+		ports.service.observeWork([]);
+		ports.paths.set("/src/app_128", "directory");
+		// The session gone from the CLI: refused, with what to do instead.
+		await expect(
+			viaSocket(service, ["agent", "resume", "128 login fix"], self),
+		).rejects.toThrow(/no longer has it there .* Start a new agent/su);
+		await expect(
+			viaSocket(service, ["agent", "resume", "issue=acme/app#999"], self),
+		).rejects.toThrow(
+			/no record of an agent that worked on issue=acme\/app#999: start a new one/u,
+		);
+		expect(ports.calls.filter((call) => call.startsWith("resume"))).toEqual([]);
+	});
+
+	it("gives a new agent for a subject its memo with the prompt", async () => {
+		const { service, ports } = setup();
+		ports.service.addMemo(
+			"item acme/app#128",
+			"前回: 再試行で直すと決めた",
+			"orch",
+		);
+		await viaSocket(
+			service,
+			[
+				"agent",
+				"new",
+				"--workspace",
+				"w1",
+				"--profile",
+				"claude",
+				"--gui",
+				"--managed",
+				"--meta",
+				`issue=${ISSUE}`,
+				"--prompt",
+				"始めて",
+			],
+			self,
+		);
+		expect(ports.queued.at(-1)![1]).toContain("前回: 再試行で直すと決めた");
 	});
 });

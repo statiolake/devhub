@@ -97,6 +97,14 @@ Both may be asked for in turn: the command answers each once.
 reading it whenever a `-` appears means the command never blocks on a pipe
 nobody writes to when `-` was a value and not the text.
 
+Which `-` is text is the app's to say (`readsStdin` in `tell/request.ts`):
+`agent send`, `orchestrator emit`, `memo add` and `memo edit` take their text
+there; `agent new`, `issue assign`, `agent resume` and `orchestrator start`
+their `--prompt`; `escalation new` and `ask` their `--body`. So
+`devhub --tell memo add issue=acme/app#12 - < notes.md` and
+`devhub --tell agent resume issue=acme/app#12 --prompt - <<<'…'` need nothing
+new in the Go command: a verb that reads stdin is a line in the app's parser.
+
 **Compatibility.** The command and the app are one build: the launcher on
 this Mac execs the binary inside the app it was installed from, and a host
 is given the binary of the DevHub that connects to it, keyed by the

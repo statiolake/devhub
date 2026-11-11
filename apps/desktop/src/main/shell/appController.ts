@@ -324,6 +324,8 @@ import {
 	type SubjectRef,
 } from "../orchestrator/triage.js";
 import { MAX_REQUEST_LENGTH, RequestFile } from "../orchestrator/requests.js";
+import { MemoFile } from "../orchestrator/memos.js";
+import { WorkFile, type LiveWorkAgent } from "../orchestrator/work.js";
 import { inProgressCount } from "../../ipc/orchestratorLanes.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
@@ -3392,6 +3394,15 @@ export class AppController {
 		}
 		// And its metadata, for 'sessions --meta' and whoever goes on with it.
 		this.sessionMeta.closed(agent, session);
+		// And the work it did, with the session to bring it back on.
+		const closing = this.liveWorkAgents().find(
+			(one) => one.agentId === agentId,
+		);
+		if (closing !== undefined)
+			this.orchestrator?.workClosed({
+				...closing,
+				...(session === undefined ? {} : { session }),
+			});
 		return {
 			profile_id: agent.profile.id,
 			profile_kind: agent.profile.kind,
@@ -5407,6 +5418,8 @@ export class AppController {
 		this.state = applySnapshot(this.state, this.coordinator.snapshot());
 		this.sweepSessionNames();
 		this.sessionMeta.sweep();
+		// Who works on what, under which session: kept past the agent.
+		this.orchestrator?.observeWork(this.liveWorkAgents());
 		await this.saveState();
 	}
 
@@ -7675,11 +7688,28 @@ export class AppController {
 			join(userDataPath, "devhub", "orchestrator-requests.json"),
 			(line) => console.error(line),
 		);
+		// The memos, and who worked on what (and on which session), across restarts.
+		const memos = new MemoFile(
+			join(userDataPath, "devhub", "orchestrator-memos.json"),
+			(line) => console.error(line),
+		);
+		const work = new WorkFile(
+			join(userDataPath, "devhub", "orchestrator-work.json"),
+			(line) => console.error(line),
+		);
 		this.orchestrator = new OrchestratorService({
 			store,
 			kept,
 			priorities,
 			requests,
+			memos,
+			work,
+			workspaceAt: (machine, folder) =>
+				this.tellWorkspaces().find(
+					(one) =>
+						one.machine === machine &&
+						one.root.replace(/\/+$/u, "") === folder.replace(/\/+$/u, ""),
+				)?.id,
 			agents: () => this.liveAgents(),
 			settings: () => this.config.orchestrator,
 			startProblem: () => this.orchestratorStartProblem(),
@@ -7802,7 +7832,12 @@ export class AppController {
 			},
 		});
 		this.orchestrator.observeUsage(this.usageLimits.wire());
-		for (const refused of [priorities.refused, requests.refused])
+		for (const refused of [
+			priorities.refused,
+			requests.refused,
+			memos.refused,
+			work.refused,
+		])
 			if (refused !== undefined) {
 				console.error(`[devhub] ${refused}`);
 				this.publishError(errorWire(new Error(refused)));
@@ -7842,6 +7877,43 @@ export class AppController {
 		if (this.orchestrator === undefined)
 			throw new Error("DevHub has not finished starting.");
 		return this.orchestrator;
+	}
+
+	/**
+	 * The managed agents of Claude and Codex open now, as the work record
+	 * reads them (`orchestrator/work.ts`): where they run, and the session
+	 * the session-meta keeper knows each runs.
+	 */
+	private liveWorkAgents(): readonly LiveWorkAgent[] {
+		const orchestrator = this.orchestrator?.orchestratorAgentId;
+		return this.coordinator.model.workspaces.flatMap((workspace) => {
+			const branch = this.lastRepositoryStatus.workspaces.find(
+				(one) => one.workspaceId === workspace.id,
+			)?.branch;
+			const location = workspace.location;
+			return workspace.agents.flatMap((agent): LiveWorkAgent[] => {
+				if (agent.managed !== true || agent.id === orchestrator) return [];
+				const kind = agent.profile.kind;
+				if (kind !== "claude" && kind !== "codex") return [];
+				const session = this.sessionMeta.sessionKnown(agent.id);
+				const issue = agent.meta?.[ISSUE_LINK_KEY];
+				return [
+					{
+						agentId: agent.id,
+						name: agent.displayName,
+						named: agent.named,
+						profileId: agent.profile.id,
+						kind,
+						presentation: agent.presentation === "gui" ? "gui" : "tui",
+						machine: location.kind === "ssh" ? `ssh:${location.host}` : "local",
+						folder: location.path,
+						...(branch === undefined ? {} : { branch }),
+						...(issue === undefined ? {} : { issue }),
+						...(session === undefined ? {} : { session }),
+					},
+				];
+			});
+		});
 	}
 
 	/** Every agent, as the board reads it. */
@@ -8141,6 +8213,17 @@ export class AppController {
 				status: (target) => orchestrator().status(target),
 				keep: (agentId, note) => orchestrator().keep(agentId, note),
 				unkeep: (agentId) => orchestrator().unkeep(agentId),
+				resolveSubject: (text, workspace) =>
+					orchestrator().resolveSubject(text, workspace),
+				subjectToken: (key) => orchestrator().subjectTokenOf(key),
+				memo: (key) => orchestrator().memo(key),
+				memos: () => orchestrator().memos(),
+				addMemo: (key, text, by) => orchestrator().addMemo(key, text, by),
+				editMemo: (key, text, by) => orchestrator().editMemo(key, text, by),
+				clearMemo: (key) => orchestrator().clearMemo(key),
+				workRecords: () => orchestrator().workRecords(),
+				resumeTarget: (text, workspace) =>
+					orchestrator().resumeTarget(text, workspace),
 				escalations: () => orchestrator().allWires(),
 				acknowledge: (id, entries) => {
 					orchestrator().acknowledge(id, entries);

@@ -242,7 +242,10 @@ export function withStdinText(
 	switch (command.verb) {
 		case "agent-send":
 		case "orchestrator-emit":
+		case "memo-add":
+		case "memo-edit":
 			return command.text === STDIN_TEXT ? { ...command, text } : command;
+		case "agent-resume":
 		case "agent-new":
 		case "issue-assign":
 		case "orchestrator-start":
@@ -261,7 +264,10 @@ function readsStdin(command: TellCommand): boolean {
 	switch (command.verb) {
 		case "agent-send":
 		case "orchestrator-emit":
+		case "memo-add":
+		case "memo-edit":
 			return command.text === STDIN_TEXT;
+		case "agent-resume":
 		case "agent-new":
 		case "issue-assign":
 		case "orchestrator-start":

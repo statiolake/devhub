@@ -677,6 +677,47 @@ export type OrchestratorModeWire = "full" | "saving" | "off";
  * The Orchestrator screen's board: the three lanes, the orchestrator, and
  * whether its events are paused. Pushed whenever any of it moves.
  */
+/** One subject's memo, as the board shows it. */
+export interface OrchestratorMemoWire {
+	/** The key: `item OWNER/REPO#N`, `agent <id>`, `esc N`, `req N`. */
+	readonly subject: string;
+	/** As the command line names it: `issue=acme/app#12`, `agent=…`. */
+	readonly token: string;
+	readonly updatedAt: number;
+	/** Oldest first; Markdown. */
+	readonly entries: readonly {
+		readonly at: number;
+		readonly text: string;
+		readonly by?: string;
+	}[];
+}
+
+/** One subject's work: the agents that did it, as the board shows them. */
+export interface OrchestratorWorkWire {
+	readonly subject: string;
+	readonly token: string;
+	readonly url?: string;
+	/** Oldest first; the last is the one `agent resume <subject>` brings back. */
+	readonly agents: readonly {
+		readonly agentId: string;
+		readonly name: string;
+		readonly profileId: string;
+		readonly kind: string;
+		readonly machine: string;
+		readonly folder: string;
+		readonly branch?: string;
+		/** The CLI session it last ran. */
+		readonly session?: string;
+		/** Open in the window now. */
+		readonly live: boolean;
+		/** Stopped, with a Claude or Codex session to go on with. */
+		readonly resumable: boolean;
+		readonly stoppedAt?: number;
+		/** The open Workspace at its folder, if one is. */
+		readonly workspaceId?: string;
+	}[];
+}
+
 export interface OrchestratorBoardWire {
 	readonly revision: number;
 	/** The orchestrator agent, while one is assigned. */
@@ -718,6 +759,16 @@ export interface OrchestratorBoardWire {
 	readonly agentPriorities?: Readonly<
 		Record<string, "high" | "normal" | "low">
 	>;
+	/**
+	 * The orchestrator's memos, per subject (`main/orchestrator/memos.ts`),
+	 * most recently written first: read-only on the board.
+	 */
+	readonly memos?: readonly OrchestratorMemoWire[];
+	/**
+	 * Who worked on what (`main/orchestrator/work.ts`), most recently seen
+	 * first: each subject's agents, live or stopped and resumable.
+	 */
+	readonly work?: readonly OrchestratorWorkWire[];
 	/** When the last triage went to the orchestrator, and when the next is due. */
 	readonly triage?: { readonly lastAt?: number; readonly nextAt?: number };
 	/**

@@ -167,6 +167,11 @@ export class SessionMetaKeeper {
 		return { meta: record.meta, managed };
 	}
 
+	/** The CLI session an open Agent is known to run, if it is. */
+	sessionKnown(agentId: string): string | undefined {
+		return this.#sessions.get(agentId)?.session;
+	}
+
 	/** The sessions of `kind` whose pairs or Agent are known. */
 	known(kind: SessionNameKind): Map<string, KnownSession> {
 		const known = new Map<string, KnownSession>();

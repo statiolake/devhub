@@ -112,7 +112,34 @@ import {
 	type PersonRequest,
 	type RequestStorage,
 } from "./requests.js";
-import type { UsageLimitsWire } from "../../ipc/contract.js";
+import type {
+	OrchestratorMemoWire,
+	OrchestratorWorkWire,
+	UsageLimitsWire,
+} from "../../ipc/contract.js";
+import {
+	MemoBook,
+	memoClock,
+	memoExcerpt,
+	memoUpdatedAt,
+	type Memo,
+	type MemoStorage,
+} from "./memos.js";
+import {
+	WorkBook,
+	workSubjectOf,
+	type LiveWorkAgent,
+	type WorkAgent,
+	type WorkRecord,
+	type WorkStorage,
+} from "./work.js";
+import {
+	itemKey,
+	itemOfUrl,
+	normalSubject,
+	readSubject,
+	subjectToken,
+} from "./subjects.js";
 import {
 	usageThresholdRelevant,
 	type UsageWindowNow,
@@ -207,6 +234,15 @@ export interface OrchestratorServicePorts {
 	readonly priorities?: PriorityStorage;
 	/** Where the person's requests are kept across restarts; absent: memory. */
 	readonly requests?: RequestStorage;
+	/** Where the memos are kept across restarts (`memos.ts`); absent: memory. */
+	readonly memos?: MemoStorage;
+	/** Where who-worked-on-what is kept across restarts (`work.ts`); absent: memory. */
+	readonly work?: WorkStorage;
+	/** The open Workspace at `folder` on `machine`, for the board's work rows. */
+	readonly workspaceAt?: (
+		machine: string,
+		folder: string,
+	) => string | undefined;
 	/** Where `agent keep`'s keepings are kept across restarts; absent: memory. */
 	readonly kept?: KeptStore;
 	readonly now?: () => number;
@@ -372,6 +408,10 @@ export class OrchestratorService {
 	readonly #priorities: PriorityBook;
 	/** The person's requests (`requests.ts`). */
 	readonly #requests: RequestBook;
+	/** The memos, per subject (`memos.ts`). */
+	readonly #memos: MemoBook;
+	/** Who worked on what, and their sessions (`work.ts`). */
+	readonly #work: WorkBook;
 	/** The requests handed to the dispatcher this run (held or delivered). */
 	readonly #queuedRequests = new Set<number>();
 	/** What the next triage is counted from: the last, or the mode going on. */
@@ -383,7 +423,10 @@ export class OrchestratorService {
 		this.#mode = new OrchestratorModeControl(ports.mode ?? LAUNCH_MODE);
 		this.#priorities = new PriorityBook(ports.priorities);
 		this.#requests = new RequestBook(ports.requests);
+		this.#memos = new MemoBook(ports.memos);
+		this.#work = new WorkBook(ports.work);
 		this.events = new EventDispatcher({
+			memo: (subject) => this.memoNote(subject),
 			high: (subject) => this.#isHigh(subject),
 			mode: this.#mode.mode,
 			inProgress: () => this.ports.inProgress?.(this.#laneBoard()) ?? 0,
@@ -601,6 +644,410 @@ export class OrchestratorService {
 		if (due === undefined || due > now) return;
 		this.#triageAnchor = now;
 		this.events.dispatch({ type: "triage" });
+	}
+
+	// --- memos and the work agents did -------------------------------------------
+
+	/**
+	 * A subject as the command line names it, made a key: `issue=` / `pr=`
+	 * / a URL / `OWNER/REPO#N` (an item), `esc=N` and `req=N` (which must
+	 * exist), `agent=ID` (a unique prefix of an agent open now or recorded;
+	 * an agent whose work is an item's is that item), or `ws=W` (the work of
+	 * that Workspace: `workspace`, resolved by the caller).
+	 */
+	resolveSubject(
+		text: string,
+		workspace?: {
+			readonly machine: string;
+			readonly folder: string;
+			readonly agentIds: readonly string[];
+		},
+	): { readonly key: string; readonly token: string } {
+		const typed = readSubject(text);
+		if (typed === undefined)
+			throw new Error(
+				`a subject is issue=OWNER/REPO#N, pr=OWNER/REPO#N (or the item's URL), agent=ID, esc=N, req=N or ws=W, as the event lines name it; not ${JSON.stringify(text)}.`,
+			);
+		const made = (key: string) => ({ key, token: this.subjectTokenOf(key) });
+		switch (typed.kind) {
+			case "item":
+				return {
+					key: typed.key,
+					token: subjectToken(
+						typed.key,
+						typed.itemKind ?? this.#itemKindOf(typed.key),
+					),
+				};
+			case "esc": {
+				const id = Number(typed.key.slice(4));
+				if (!this.ports.store.all().some((one) => one.id === id))
+					throw new Error(
+						`there is no escalation #${String(id)}. Run 'devhub --tell escalation list'.`,
+					);
+				return made(typed.key);
+			}
+			case "req": {
+				const id = Number(typed.key.slice(4));
+				if (this.#requests.get(id) === undefined)
+					throw new Error(
+						`there is no request #${String(id)}. Run 'devhub --tell orchestrator request list'.`,
+					);
+				return made(typed.key);
+			}
+			case "agent":
+				return made(this.#agentWorkKey(this.#agentIdOf(typed.id)));
+			case "ws": {
+				if (workspace === undefined)
+					throw new Error(`ws=${typed.workspace}: no such workspace.`);
+				for (const agentId of workspace.agentIds) {
+					const key = this.#agentWorkKey(agentId);
+					if (this.#work.get(key) !== undefined || this.#memos.get(key))
+						return made(key);
+				}
+				const recorded = this.#work
+					.all()
+					.find((record) =>
+						record.agents.some(
+							(agent) =>
+								agent.machine === workspace.machine &&
+								stripSlash(agent.folder) === stripSlash(workspace.folder),
+						),
+					);
+				if (recorded !== undefined) return made(recorded.subject);
+				const first = workspace.agentIds[0];
+				if (first !== undefined) return made(this.#agentWorkKey(first));
+				throw new Error(
+					`ws=${typed.workspace} has no agent and no recorded work: name the subject (issue=…, agent=…).`,
+				);
+			}
+		}
+	}
+
+	/** `issue=…` or `pr=…` for an item key, as far as DevHub knows which. */
+	subjectTokenOf(key: string): string {
+		return subjectToken(key, this.#itemKindOf(key));
+	}
+
+	#itemKindOf(key: string): "issue" | "pr" | undefined {
+		if (!key.startsWith("item ")) return undefined;
+		const recorded = this.#work.get(key)?.itemKind;
+		if (recorded !== undefined) return recorded;
+		const ref = key.slice(5);
+		const facts = this.ports
+			.invariant?.()
+			.items?.find(
+				(one) =>
+					`${one.item.repo}#${String(one.item.number)}`.toLowerCase() === ref,
+			);
+		return facts?.kind;
+	}
+
+	/** An agent's full id, from an id or a unique prefix, open now or recorded. */
+	#agentIdOf(text: string): string {
+		const ids = new Set<string>();
+		for (const agent of this.ports.agents())
+			if (agent.id === text || agent.id.startsWith(text)) ids.add(agent.id);
+		for (const record of this.#work.all())
+			for (const agent of record.agents)
+				if (agent.agentId === text || agent.agentId.startsWith(text))
+					ids.add(agent.agentId);
+		for (const memo of this.#memos.all())
+			if (memo.subject.startsWith("agent ")) {
+				const id = memo.subject.slice(6);
+				if (id === text || id.startsWith(text)) ids.add(id);
+			}
+		if (ids.has(text)) return text;
+		if (ids.size === 1 && text.length >= 4) return [...ids][0]!;
+		throw new Error(
+			ids.size === 0
+				? `no agent is ${text}, open or recorded. Run 'devhub --tell agents' or 'devhub --tell memo list'.`
+				: ids.size > 1
+					? `${text} names ${String(ids.size)} agents: give more of the id.`
+					: `give at least 4 characters of the agent's id, not ${JSON.stringify(text)}.`,
+		);
+	}
+
+	/** The subject an agent's work is kept under: its item, else itself. */
+	#agentWorkKey(agentId: string): string {
+		const live = this.#invariantSource()?.agents.find(
+			(one) => one.id === agentId,
+		);
+		if (live !== undefined)
+			return normalSubject(
+				workSubjectOf({
+					agentId,
+					...(live.issue === undefined ? {} : { issue: live.issue }),
+				}).subject,
+			);
+		return normalSubject(
+			this.#work.byAgent(agentId)?.record.subject ?? `agent ${agentId}`,
+		);
+	}
+
+	#invariantSource() {
+		return this.ports.invariant?.();
+	}
+
+	memo(key: string): Memo | undefined {
+		return this.#memos.get(key);
+	}
+
+	memos(): readonly Memo[] {
+		return this.#memos.all();
+	}
+
+	addMemo(key: string, text: string, by: string | undefined): Memo {
+		const memo = this.#memos.add(key, {
+			at: this.#now(),
+			text,
+			...(by === undefined ? {} : { by }),
+		});
+		this.publish();
+		return memo;
+	}
+
+	editMemo(key: string, text: string, by: string | undefined): Memo {
+		const memo = this.#memos.replace(key, {
+			at: this.#now(),
+			text,
+			...(by === undefined ? {} : { by }),
+		});
+		this.publish();
+		return memo;
+	}
+
+	clearMemo(key: string): boolean {
+		const had = this.#memos.clear(key);
+		if (had) this.publish();
+		return had;
+	}
+
+	/**
+	 * The note a delivered line about `subject` carries of its memo: the
+	 * latest entry's time and its start, `[メモ 11/11 10:02: …]`. An agent's
+	 * line carries its work's (its item's) memo; an escalation's, its own or
+	 * that of the first item it links. Undefined: there is none.
+	 */
+	memoNote(subject: string): string | undefined {
+		const memo = this.#memoAbout(subject);
+		if (memo === undefined) return undefined;
+		return `[メモ ${memoClock(memoUpdatedAt(memo))}: ${memoExcerpt(memo, 80)} — 全文: devhub --tell memo show ${this.subjectTokenOf(memo.subject)}]`;
+	}
+
+	#memoAbout(subject: string): Memo | undefined {
+		const key = normalSubject(subject);
+		const own = this.#memos.get(key);
+		if (own !== undefined) return own;
+		if (key.startsWith("agent "))
+			return this.#memos.get(this.#agentWorkKey(key.slice(6)));
+		const esc = /^esc (\d+)$/u.exec(key);
+		if (esc !== null) {
+			const one = this.ports.store.all().find((e) => e.id === Number(esc[1]));
+			for (const link of one?.links ?? []) {
+				const item = itemOfUrl(link);
+				const memo =
+					item === undefined ? undefined : this.#memos.get(itemKey(item.ref));
+				if (memo !== undefined) return memo;
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * The managed agents open now (every save of the state): recorded under
+	 * their work's subject; the memos follow a subject that moved; both
+	 * stores pruned.
+	 */
+	observeWork(live: readonly LiveWorkAgent[]): void {
+		const now = this.#now();
+		const moves = this.#work.observe(live, now);
+		this.#afterWork(moves, now);
+	}
+
+	/** An agent closed, with the session it was asked for at its close. */
+	workClosed(agent: LiveWorkAgent): void {
+		const now = this.#now();
+		this.#afterWork(this.#work.closed(agent, now), now);
+	}
+
+	#afterWork(
+		moves: readonly { from: string; to: string }[],
+		now: number,
+	): void {
+		for (const move of moves) this.#memos.rename(move.from, move.to);
+		this.#pruneStores(now);
+		this.publish();
+	}
+
+	#pruneStores(now: number): void {
+		const items = this.#invariantSource()?.items;
+		const itemDone = (key: string): number | undefined => {
+			if (items === undefined) return undefined;
+			const facts = items.find(
+				(one) =>
+					`item ${one.item.repo}#${String(one.item.number)}`.toLowerCase() ===
+					key,
+			);
+			return facts !== undefined && facts.state !== "open" ? now : undefined;
+		};
+		this.#work.prune(itemDone, now);
+		const liveIds = new Set(this.ports.agents().map((one) => one.id));
+		this.#memos.prune(
+			{
+				doneAt: (key) => {
+					const esc = /^esc (\d+)$/u.exec(key);
+					if (esc !== null)
+						return this.ports.store
+							.all()
+							.find((one) => one.id === Number(esc[1]))?.closed?.at;
+					const req = /^req (\d+)$/u.exec(key);
+					if (req !== null)
+						return this.#requests.get(Number(req[1]))?.filed?.at;
+					return itemDone(key);
+				},
+				gone: (key) => {
+					const esc = /^esc (\d+)$/u.exec(key);
+					if (esc !== null)
+						return !this.ports.store
+							.all()
+							.some((one) => one.id === Number(esc[1]));
+					const req = /^req (\d+)$/u.exec(key);
+					return (
+						req !== null && this.#requests.get(Number(req[1])) === undefined
+					);
+				},
+				agentKnown: (key) => {
+					const id = key.slice(6);
+					return (
+						liveIds.has(id) ||
+						this.#work.get(key) !== undefined ||
+						this.#work.byAgent(id) !== undefined
+					);
+				},
+			},
+			now,
+		);
+	}
+
+	/** Every work record, most recently seen first. */
+	workRecords(): readonly WorkRecord[] {
+		return this.#work.all();
+	}
+
+	/**
+	 * The agent `agent resume <subject|agent>` brings back: the latest of
+	 * the subject's recorded agents (`text` a subject), or the recorded agent
+	 * `text` names (its id, a 4+ prefix, or its name). Undefined: `text`
+	 * names neither (it may be a session id). `live` is the agent running
+	 * that conversation now, when one is.
+	 */
+	resumeTarget(
+		text: string,
+		workspace?: {
+			readonly machine: string;
+			readonly folder: string;
+			readonly agentIds: readonly string[];
+		},
+	):
+		| {
+				readonly key: string;
+				readonly token: string;
+				readonly record: WorkRecord;
+				readonly agent: WorkAgent;
+				readonly live?: string;
+		  }
+		| undefined {
+		const liveIds = new Set(this.ports.agents().map((one) => one.id));
+		const answer = (record: WorkRecord, agent: WorkAgent) => ({
+			key: normalSubject(record.subject),
+			token: this.subjectTokenOf(normalSubject(record.subject)),
+			record,
+			agent,
+			...(liveIds.has(agent.agentId) ? { live: agent.agentId } : {}),
+		});
+		const typed = readSubject(text);
+		if (typed !== undefined && typed.kind !== "agent") {
+			if (typed.kind === "esc" || typed.kind === "req") return undefined;
+			const { key } = this.resolveSubject(text, workspace);
+			const record = this.#work.get(key);
+			const agent = record?.agents.at(-1);
+			if (record === undefined || agent === undefined)
+				throw new Error(
+					`DevHub has no record of an agent that worked on ${this.subjectTokenOf(key)}: start a new one (issue assign / agent new), or resume a session by its id ('devhub --tell sessions --all').`,
+				);
+			return answer(record, agent);
+		}
+		const id = typed?.kind === "agent" ? typed.id : text;
+		const matches: { record: WorkRecord; agent: WorkAgent }[] = [];
+		for (const record of this.#work.all())
+			for (const agent of record.agents)
+				if (
+					agent.agentId === id ||
+					(id.length >= 4 && agent.agentId.startsWith(id)) ||
+					agent.name === id
+				)
+					matches.push({ record, agent });
+		if (matches.length === 0) {
+			if (typed?.kind === "agent")
+				throw new Error(
+					`DevHub has no record of agent ${id}'s work. Run 'devhub --tell memo list' (its WORK lines) or 'devhub --tell sessions --all'.`,
+				);
+			return undefined;
+		}
+		if (new Set(matches.map((one) => one.agent.agentId)).size > 1)
+			throw new Error(
+				`${JSON.stringify(id)} names more than one recorded agent: ${matches.map((one) => `${one.agent.agentId} (${one.agent.name})`).join(", ")}.`,
+			);
+		return answer(matches[0]!.record, matches[0]!.agent);
+	}
+
+	#memoWires(): readonly OrchestratorMemoWire[] {
+		return this.#memos.all().map((memo) => ({
+			subject: memo.subject,
+			token: this.subjectTokenOf(memo.subject),
+			updatedAt: memoUpdatedAt(memo),
+			entries: memo.entries.map((entry) => ({
+				at: entry.at,
+				text: entry.text,
+				...(entry.by === undefined ? {} : { by: entry.by }),
+			})),
+		}));
+	}
+
+	#workWires(): readonly OrchestratorWorkWire[] {
+		const liveIds = new Set(this.ports.agents().map((one) => one.id));
+		return this.#work.all().map((record) => ({
+			subject: record.subject,
+			token: this.subjectTokenOf(normalSubject(record.subject)),
+			...(record.url === undefined ? {} : { url: record.url }),
+			agents: record.agents.map((agent) => {
+				const workspaceId = this.ports.workspaceAt?.(
+					agent.machine,
+					agent.folder,
+				);
+				return {
+					agentId: agent.agentId,
+					name: agent.name,
+					profileId: agent.profileId,
+					kind: agent.kind,
+					machine: agent.machine,
+					folder: agent.folder,
+					...(agent.branch === undefined ? {} : { branch: agent.branch }),
+					...(agent.sessions.at(-1) === undefined
+						? {}
+						: { session: agent.sessions.at(-1)! }),
+					live: liveIds.has(agent.agentId),
+					resumable:
+						!liveIds.has(agent.agentId) &&
+						agent.sessions.length > 0 &&
+						(agent.kind === "claude" || agent.kind === "codex"),
+					...(agent.stoppedAt === undefined
+						? {}
+						: { stoppedAt: agent.stoppedAt }),
+					...(workspaceId === undefined ? {} : { workspaceId }),
+				};
+			}),
+		}));
 	}
 
 	// --- the person's requests ---------------------------------------------------
@@ -1414,6 +1861,8 @@ export class OrchestratorService {
 					: { nextAt: this.nextTriageAt }),
 			},
 			agentStates: this.#agentStates(),
+			memos: this.#memoWires(),
+			work: this.#workWires(),
 			needsAnswer: lanes.needsAnswer.map(escalation),
 			inProgress: lanes.inProgress.map(escalation),
 			waiting: lanes.waiting.map(escalation),
@@ -1484,4 +1933,8 @@ export class OrchestratorService {
 		this.events.dispose();
 		this.timers.stop();
 	}
+}
+
+function stripSlash(path: string): string {
+	return path.length > 1 ? path.replace(/\/+$/u, "") : path;
 }

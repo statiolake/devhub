@@ -463,7 +463,7 @@ describe("devhub --tell's orchestration commands", () => {
 			workspace: "w1",
 			name: "API",
 		});
-		expect(refusal("agent", "resume")).toMatch(/<session>/);
+		expect(refusal("agent", "resume")).toMatch(/<session\|agent\|subject>/);
 		expect(refusal("sessions", "--limit", "0")).toMatch(/from 1/);
 	});
 
@@ -561,5 +561,47 @@ describe("devhub --tell escalation link", () => {
 		expect(refusal("escalation", "link", "12")).toContain(
 			"--agent <a>, one or more --link <url>, or both",
 		);
+	});
+});
+
+describe("devhub --tell memo, and agent resume by subject", () => {
+	it("reads the memo verbs", () => {
+		expect(told("memo", "add", "issue=acme/app#1", "残り", "2", "件")).toEqual({
+			verb: "memo-add",
+			subject: "issue=acme/app#1",
+			text: "残り 2 件",
+		});
+		expect(told("memo", "edit", "agent=ab12", "-")).toEqual({
+			verb: "memo-edit",
+			subject: "agent=ab12",
+			text: "-",
+		});
+		expect(told("memo", "show", "esc=3")).toEqual({
+			verb: "memo-show",
+			subject: "esc=3",
+		});
+		expect(told("memo", "clear", "req=2")).toEqual({
+			verb: "memo-clear",
+			subject: "req=2",
+		});
+		expect(told("memo")).toEqual({ verb: "memo-list" });
+		expect(told("memo", "list")).toEqual({ verb: "memo-list" });
+		expect(refusal("memo", "add", "issue=acme/app#1")).toMatch(
+			/missing <text>/,
+		);
+		expect(refusal("memo", "show")).toMatch(/<subject>/);
+		expect(refusal("memo", "drop")).toMatch(
+			/memo takes: add, show, list, edit, clear/,
+		);
+	});
+
+	it("takes a subject and a prompt on agent resume", () => {
+		expect(
+			told("agent", "resume", "issue=acme/app#1", "--prompt", "指摘に対応して"),
+		).toEqual({
+			verb: "agent-resume",
+			session: "issue=acme/app#1",
+			prompt: "指摘に対応して",
+		});
 	});
 });

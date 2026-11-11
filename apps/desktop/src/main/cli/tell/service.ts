@@ -50,6 +50,15 @@ import {
 	type StoredAttachment,
 } from "../../orchestrator/attachments.js";
 import type { TellAttachment } from "./command.js";
+import type { Memo } from "../../orchestrator/memos.js";
+import {
+	memoClock,
+	memoExcerpt,
+	memoMarkdown,
+	memoUpdatedAt,
+} from "../../orchestrator/memos.js";
+import type { WorkAgent, WorkRecord } from "../../orchestrator/work.js";
+import { itemKey, itemOfUrl } from "../../orchestrator/subjects.js";
 import { pollTimes } from "../../../model/orchestratorSettings.js";
 import {
 	TELL_USAGE,
@@ -767,6 +776,48 @@ export interface TellOrchestratorPorts {
 	): { readonly note: string; readonly at: number };
 	/** `agent keep A --clear`: whether it was being kept. */
 	unkeep(agentId: string): boolean;
+	/**
+	 * A subject as typed (`issue=…`, `agent=…`, `esc=…`, a URL, …) made the
+	 * stores' key (`orchestrator/subjects.ts`); `ws=` arrives resolved to its
+	 * workspace. Absent: no memos here.
+	 */
+	resolveSubject?(text: string, workspace?: TellSubjectPlace): TellSubject;
+	/** A key as the command line names it: `issue=…` / `pr=…`, `agent=…`. */
+	subjectToken?(key: string): string;
+	memo?(key: string): Memo | undefined;
+	memos?(): readonly Memo[];
+	addMemo?(key: string, text: string, by: string | undefined): Memo;
+	editMemo?(key: string, text: string, by: string | undefined): Memo;
+	clearMemo?(key: string): boolean;
+	/** Who worked on what, most recently seen first (`orchestrator/work.ts`). */
+	workRecords?(): readonly WorkRecord[];
+	/**
+	 * The recorded agent `agent resume <subject|agent>` names; undefined
+	 * when the text names no subject and no recorded agent (a session id).
+	 */
+	resumeTarget?(
+		text: string,
+		workspace?: TellSubjectPlace,
+	): TellResumeTarget | undefined;
+}
+
+/** A Workspace a `ws=` subject names: where its work is looked up. */
+export interface TellSubjectPlace {
+	readonly machine: string;
+	readonly folder: string;
+	readonly agentIds: readonly string[];
+}
+
+export interface TellSubject {
+	readonly key: string;
+	readonly token: string;
+}
+
+export interface TellResumeTarget extends TellSubject {
+	readonly record: WorkRecord;
+	readonly agent: WorkAgent;
+	/** The agent running that conversation now. */
+	readonly live?: string;
 }
 
 /** An agent's standing against the invariant, as `agent status` reads it. */
@@ -1236,7 +1287,16 @@ export class TellService {
 			case "sessions":
 				return this.sessions(command);
 			case "agent-resume":
-				return this.resume(command);
+				return this.resumeAny(command);
+			case "memo-add":
+			case "memo-edit":
+				return this.writeMemo(command);
+			case "memo-show":
+				return this.showMemo(command.subject);
+			case "memo-clear":
+				return this.clearMemo(command.subject);
+			case "memo-list":
+				return this.listMemos();
 			case "session-meta":
 				return this.sessionMeta(command);
 			case "commands":
@@ -1494,6 +1554,38 @@ export class TellService {
 	private board(): TellAnswer {
 		const board = this.ports.orchestrator.board();
 		const now = this.clock.now();
+		// The triage's context, short: each memo's latest line, and the work
+		// whose agent is stopped and can be brought back.
+		const memos = (board.memos ?? []).map((memo) => {
+			const latest = memo.entries.at(-1);
+			const text = (latest?.text ?? "")
+				.replace(/^#+\s*/gmu, "")
+				.replace(/\s+/gu, " ")
+				.trim();
+			return {
+				subject: memo.token,
+				at: new Date(memo.updatedAt).toISOString(),
+				entries: memo.entries.length,
+				latest: text.length <= 160 ? text : `${text.slice(0, 159)}…`,
+			};
+		});
+		const resumable = (board.work ?? []).flatMap((work) => {
+			const last = work.agents.at(-1);
+			return last === undefined || !last.resumable
+				? []
+				: [
+						{
+							subject: work.token,
+							agentId: last.agentId,
+							name: last.name,
+							machine: last.machine,
+							folder: last.folder,
+							...(last.stoppedAt === undefined
+								? {}
+								: { stoppedAt: new Date(last.stoppedAt).toISOString() }),
+						},
+					];
+		});
 		const lines = [
 			`orchestrator: ${board.orchestratorAgentId ?? "none"}  (mode ${board.mode ?? "off"}${board.held > 0 ? `, ${String(board.held)} held` : ""})`,
 			`needs answer (${String(board.needsAnswer.length)}, priority then effort then age):`,
@@ -1512,6 +1604,21 @@ export class TellService {
 				return `  #${String(one.id)}  ${one.title}  waiting on: ${wait?.markdown ?? ""}${wait?.dueAt === undefined ? "" : `  [${new Date(wait.dueAt).toISOString()}, ${dueWords(wait.dueAt, now)}]`}`;
 			}),
 			...needsActionLines(board, now),
+			...(memos.length === 0
+				? []
+				: [
+						`memos (${String(memos.length)}, newest first; devhub --tell memo show <subject> for the whole):`,
+						...memos.map((one) => `  ${one.subject}  ${one.at}  ${one.latest}`),
+					]),
+			...(resumable.length === 0
+				? []
+				: [
+						`resumable (${String(resumable.length)}: stopped agents whose work can go on, devhub --tell agent resume <subject>):`,
+						...resumable.map(
+							(one) =>
+								`  ${one.subject}  ${one.name} (${one.agentId.slice(0, 8)}${one.machine === "local" ? "" : `, ${one.machine}`})`,
+						),
+					]),
 		];
 		return {
 			message: lines.join("\n"),
@@ -1525,6 +1632,8 @@ export class TellService {
 				waiting: board.waiting,
 				graceMs: board.graceMs,
 				needsAction: board.needsAction,
+				memos,
+				resumable,
 			},
 		};
 	}
@@ -2641,8 +2750,20 @@ export class TellService {
 		if (command.managed === true)
 			await this.ports.setAgentManaged(agentId, true);
 		await this.tag(agentId, command.meta);
-		if (command.prompt !== undefined)
-			this.ports.queueText(agentId, command.prompt);
+		if (command.prompt !== undefined) {
+			// A new agent for work that has a memo is given it with its prompt.
+			const url = command.meta?.find(
+				(pair) => pair.key === ISSUE_LINK_KEY,
+			)?.value;
+			const item = url === undefined ? undefined : itemOfUrl(url);
+			this.ports.queueText(
+				agentId,
+				this.withMemo(
+					command.prompt,
+					item === undefined ? undefined : itemKey(item.ref),
+				),
+			);
+		}
 		return {
 			message: `Agent ${agentId} (${profile!.id}, ${command.presentation!.toUpperCase()}) is starting in ${workspace.root}${command.prompt === undefined ? "" : "; it is told the prompt once it is ready"}.`,
 			data: {
@@ -2724,8 +2845,16 @@ export class TellService {
 			await this.ports.setAgentManaged(assigned.agentId, true);
 		if (assigned.agentId !== undefined)
 			await this.tag(assigned.agentId, command.meta);
-		if (command.prompt !== undefined && assigned.agentId !== undefined)
-			this.ports.queueText(assigned.agentId, command.prompt);
+		if (command.prompt !== undefined && assigned.agentId !== undefined) {
+			const item = itemOfUrl(command.url);
+			this.ports.queueText(
+				assigned.agentId,
+				this.withMemo(
+					command.prompt,
+					item === undefined ? undefined : itemKey(item.ref),
+				),
+			);
+		}
 		const workspace = this.ports
 			.workspaces()
 			.find((each) => each.id === assigned.workspaceId);
@@ -3610,6 +3739,16 @@ export class TellService {
 		command: Extract<TellCommand, { verb: "agent-resume" }>,
 	): Promise<TellAnswer> {
 		const { where, profile, session } = await this.sessionToResume(command);
+		return this.resumeFound(command, where, profile, session);
+	}
+
+	/** Go on with `session`, listed `where`, as `profile`: the new agent's answer. */
+	private async resumeFound(
+		command: Extract<TellCommand, { verb: "agent-resume" }>,
+		where: SessionsWhere,
+		profile: string,
+		session: TellPastSession,
+	): Promise<TellAnswer> {
 		// Two profiles of one kind both list the session (the listing shows it
 		// once, under the first): which one goes on with it is the caller's.
 		if (command.profile === undefined) {
@@ -3808,6 +3947,277 @@ export class TellService {
 			}
 		}
 		return [...found].map(([root, worktree]) => ({ root, worktree }));
+	}
+
+	// --- memos and resuming the agent that did the work ---------------------------
+
+	/** The memo and work ports, or why this DevHub has none. */
+	private memoPorts(): Required<
+		Pick<
+			TellOrchestratorPorts,
+			| "resolveSubject"
+			| "subjectToken"
+			| "memo"
+			| "memos"
+			| "addMemo"
+			| "editMemo"
+			| "clearMemo"
+			| "workRecords"
+			| "resumeTarget"
+		>
+	> {
+		const o = this.ports.orchestrator;
+		if (
+			o.resolveSubject === undefined ||
+			o.subjectToken === undefined ||
+			o.memo === undefined ||
+			o.memos === undefined ||
+			o.addMemo === undefined ||
+			o.editMemo === undefined ||
+			o.clearMemo === undefined ||
+			o.workRecords === undefined ||
+			o.resumeTarget === undefined
+		)
+			throw new Error("this DevHub keeps no memos.");
+		return o as never;
+	}
+
+	/** `ws=W`'s workspace, for the subject's lookup; undefined for any other text. */
+	private subjectPlace(text: string): TellSubjectPlace | undefined {
+		const match = /^ws=(.+)$/u.exec(text.trim());
+		if (match === null) return undefined;
+		const workspace = this.workspace(match[1]!);
+		return {
+			machine: workspace.machine,
+			folder: workspace.root,
+			agentIds: workspace.agents.map((agent) => agent.id),
+		};
+	}
+
+	private subject(text: string): TellSubject {
+		return this.memoPorts().resolveSubject(text, this.subjectPlace(text));
+	}
+
+	/** Who is writing: the asking agent's name, or an outside caller's label. */
+	private writer(): string | undefined {
+		if (this.caller === undefined) return undefined;
+		if (this.caller.paneless === true)
+			return this.caller.label ?? OUTSIDE_LABEL;
+		const id = this.caller.agentId;
+		if (id === undefined) return undefined;
+		return (
+			this.ports
+				.workspaces()
+				.flatMap((workspace) => workspace.agents)
+				.find((agent) => agent.id === id)?.name ?? id
+		);
+	}
+
+	private writeMemo(
+		command: Extract<TellCommand, { verb: "memo-add" | "memo-edit" }>,
+	): TellAnswer {
+		const ports = this.memoPorts();
+		const subject = this.subject(command.subject);
+		const memo =
+			command.verb === "memo-add"
+				? ports.addMemo(subject.key, command.text, this.writer())
+				: ports.editMemo(subject.key, command.text, this.writer());
+		return {
+			message: `${subject.token}: ${command.verb === "memo-add" ? "added to its memo" : "its memo is now this one entry"} (${String(memo.entries.length)} ${memo.entries.length === 1 ? "entry" : "entries"}).`,
+			data: memoJson(subject.token, memo),
+		};
+	}
+
+	private showMemo(text: string): TellAnswer {
+		const ports = this.memoPorts();
+		const subject = this.subject(text);
+		const memo = ports.memo(subject.key);
+		if (memo === undefined)
+			return {
+				message: `${subject.token} has no memo.`,
+				data: { subject: subject.token, key: subject.key, entries: [] },
+			};
+		return {
+			message: `# memo ${subject.token}\n\n${memoMarkdown(memo)}`,
+			data: memoJson(subject.token, memo),
+		};
+	}
+
+	private clearMemo(text: string): TellAnswer {
+		const subject = this.subject(text);
+		const had = this.memoPorts().clearMemo(subject.key);
+		return {
+			message: had
+				? `${subject.token}: its memo is cleared.`
+				: `${subject.token} had no memo.`,
+			data: { subject: subject.token, cleared: had },
+		};
+	}
+
+	private listMemos(): TellAnswer {
+		const ports = this.memoPorts();
+		const memos = ports.memos();
+		const work = ports.workRecords();
+		const token = (key: string) => ports.subjectToken(key);
+		const live = new Set(
+			this.ports
+				.workspaces()
+				.flatMap((workspace) => workspace.agents)
+				.map((agent) => agent.id),
+		);
+		return {
+			message: [
+				`memos (${String(memos.length)}, newest first):`,
+				...memos.map(
+					(memo) =>
+						`  ${token(memo.subject)}  ${memoClock(memoUpdatedAt(memo))}  (${String(memo.entries.length)})  ${memoExcerpt(memo, 100)}`,
+				),
+				`work (${String(work.length)}, the agent resume <subject> brings back is the last):`,
+				...work.map(
+					(record) =>
+						`  ${token(record.subject)}  ${record.agents
+							.map(
+								(agent) =>
+									`${agent.name} ${agent.agentId.slice(0, 8)} ${live.has(agent.agentId) ? "live" : agent.sessions.length === 0 ? "stopped, no session" : `stopped${agent.stoppedAt === undefined ? "" : ` ${memoClock(agent.stoppedAt)}`}, resumable`}${agent.machine === "local" ? "" : ` on ${agent.machine}`}`,
+							)
+							.join("; ")}`,
+				),
+			].join("\n"),
+			data: {
+				memos: memos.map((memo) => memoJson(token(memo.subject), memo)),
+				work: work.map((record) => ({
+					subject: token(record.subject),
+					key: record.subject,
+					url: record.url ?? null,
+					agents: record.agents.map((agent) => ({
+						...agent,
+						live: live.has(agent.agentId),
+					})),
+				})),
+			},
+		};
+	}
+
+	/**
+	 * `prompt` with the subject's memo after it, when it has one: its latest
+	 * entry in full and where the rest is, so the agent picking the work up
+	 * reads what was left before it goes on.
+	 */
+	private withMemo(prompt: string, key: string | undefined): string {
+		if (key === undefined) return prompt;
+		const o = this.ports.orchestrator;
+		const memo = o.memo?.(key);
+		const latest = memo?.entries.at(-1);
+		if (memo === undefined || latest === undefined) return prompt;
+		const token = o.subjectToken?.(key) ?? key;
+		const text =
+			latest.text.length <= MEMO_IN_PROMPT
+				? latest.text
+				: `${latest.text.slice(0, MEMO_IN_PROMPT)}…`;
+		return `${prompt}\n\n---\nDevHub より: この作業 (${token}) にはオーケストレーターのメモがあります (${String(memo.entries.length)} 件)。続ける前に読んでください。最新 (${memoClock(latest.at)}${latest.by === undefined ? "" : `、${latest.by}`}):\n\n${text}\n\n全文: devhub --tell memo show ${token}`;
+	}
+
+	/**
+	 * `agent resume`: the recorded agent of a subject, or a recorded agent
+	 * by id or name, on its latest session in its own folder; else a
+	 * session by its id, as before.
+	 */
+	private async resumeAny(
+		command: Extract<TellCommand, { verb: "agent-resume" }>,
+	): Promise<TellAnswer> {
+		const o = this.ports.orchestrator;
+		const place =
+			command.workspace === undefined && command.folder === undefined
+				? this.subjectPlace(command.session)
+				: undefined;
+		const target =
+			command.workspace === undefined && command.folder === undefined
+				? o.resumeTarget?.(command.session, place)
+				: undefined;
+		if (target === undefined) {
+			const answer = await this.resume(command);
+			const data = answer.data as {
+				agentId: string;
+				meta: Record<string, string>;
+			};
+			if (command.prompt !== undefined) {
+				const url = data.meta[ISSUE_LINK_KEY];
+				const item = url === undefined ? undefined : itemOfUrl(url);
+				this.ports.queueText(
+					data.agentId,
+					this.withMemo(
+						command.prompt,
+						item === undefined ? undefined : itemKey(item.ref),
+					),
+				);
+			}
+			return answer;
+		}
+		if (target.live !== undefined)
+			return {
+				message: `${target.token}'s agent ${target.agent.name} (${target.live}) is open now: nothing to resume — talk to it with 'devhub --tell agent send ${target.live.slice(0, 8)} …'.`,
+				data: {
+					agentId: target.live,
+					subject: target.token,
+					alreadyRunning: true,
+				},
+			};
+		const agent = target.agent;
+		const session = agent.sessions.at(-1);
+		if (session === undefined)
+			throw new Error(
+				`${target.token}'s agent ${agent.name} (${agent.agentId}) stopped before its CLI named a session, so there is no conversation to go on with: start a new agent for it.`,
+			);
+		if (agent.kind !== "claude" && agent.kind !== "codex")
+			throw new Error(
+				`${target.token}'s agent ${agent.name} ran ${agent.kind}, whose sessions DevHub cannot resume: start a new agent for it.`,
+			);
+		if (!this.ports.profiles().some((one) => one.id === agent.profileId))
+			throw new Error(
+				`${target.token}'s agent ${agent.name} ran the profile '${agent.profileId}', which is no longer configured: start a new agent for it, or resume session ${session} with --profile.`,
+			);
+		const where = await this.workPlace(agent);
+		const { sessions } = await this.pastSessions(where, agent.profileId);
+		const listed = sessions.find((one) => one.session.id === session);
+		if (listed === undefined)
+			throw new Error(
+				`${target.token}'s agent ${agent.name} ran session ${session} in ${agent.folder}${agent.machine === "local" ? "" : ` on ${agent.machine}`}, and its CLI no longer has it there (deleted, or pruned): there is no conversation to go on with. Start a new agent for it.`,
+			);
+		const answer = await this.resumeFound(
+			{ ...command, session, profile: agent.profileId },
+			where,
+			agent.profileId,
+			listed.session,
+		);
+		const data = answer.data as { agentId: string };
+		if (command.name === undefined && agent.named === true)
+			await this.ports.renameAgent(data.agentId, agent.name);
+		if (command.prompt !== undefined)
+			this.ports.queueText(
+				data.agentId,
+				this.withMemo(command.prompt, target.key),
+			);
+		const memo = o.memo?.(target.key);
+		return {
+			message: `${answer.message}\nIt is ${target.token}'s agent ${agent.name} (was ${agent.agentId}), back on its conversation.${command.prompt === undefined ? "" : memo === undefined ? " It is told the prompt once it is ready." : " It is told the prompt, with the memo's latest entry, once it is ready."}`,
+			data: {
+				...(answer.data as object),
+				subject: target.token,
+				was: agent.agentId,
+				memo: memo === undefined ? null : memo.entries.length,
+			},
+		};
+	}
+
+	/** Where a recorded agent's folder is to be resumed in: open, there, or gone. */
+	private async workPlace(agent: WorkAgent): Promise<SessionsWhere> {
+		const open = this.openAt(agent.folder, agent.machine);
+		if (open !== undefined) return { kind: "workspace", workspace: open };
+		return {
+			kind: "folder",
+			root: stripSlashes(agent.folder),
+			machine: agent.machine,
+		};
 	}
 
 	/** `session meta`: a session's pairs, kept past its agent; set or unset one. */
@@ -5267,4 +5677,20 @@ function attachedWords(files: readonly AttachmentFile[]): string {
 
 function posixBasename(path: string): string {
 	return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** How much of a memo's latest entry goes in the prompt it is passed with. */
+const MEMO_IN_PROMPT = 4000;
+
+function memoJson(token: string, memo: Memo): Record<string, unknown> {
+	return {
+		subject: token,
+		key: memo.subject,
+		updatedAt: new Date(memoUpdatedAt(memo)).toISOString(),
+		entries: memo.entries.map((entry) => ({
+			at: new Date(entry.at).toISOString(),
+			text: entry.text,
+			by: entry.by ?? null,
+		})),
+	};
 }

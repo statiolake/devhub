@@ -637,6 +637,12 @@ export interface EventDelivery {
 	 * While there are any, a delivery is made every `delivery_interval`.
 	 */
 	readonly standing?: () => readonly OrchestratorEvent[];
+	/**
+	 * The memo of a line's subject (`subjectOf`), as a short note to put on
+	 * its line (`memos.ts`: the latest entry's time and excerpt); undefined
+	 * for none. Absent: no memo is said.
+	 */
+	readonly memo?: (subject: string) => string | undefined;
 	/** These events have just gone out (queued for the orchestrator). */
 	readonly delivered?: (events: readonly OrchestratorEvent[]) => void;
 	/** The pause, or what is pending, changed. */
@@ -956,6 +962,7 @@ export class EventDispatcher {
 			lines.map((line) => line.entry.event),
 			this.delivery.settings(),
 			now,
+			this.delivery.memo,
 		);
 		const sent = lines.slice(0, plan.events.length);
 		const over = lines.slice(plan.events.length);
@@ -1038,6 +1045,7 @@ export class EventDispatcher {
 			],
 			this.delivery.settings(),
 			now,
+			this.delivery.memo,
 		);
 		const agentId = this.delivery.orchestrator();
 		if (agentId === undefined) return { ...plan, when: { kind: "nobody" } };
@@ -1139,6 +1147,7 @@ export function composeDelivery(
 		readonly init_prompt: string | undefined;
 	},
 	now: number,
+	memo?: (subject: string) => string | undefined,
 ): DeliveryPlan {
 	const events = lines.slice(0, MAX_DELIVERY_LINES);
 	const more = lines.length - events.length;
@@ -1148,7 +1157,12 @@ export function composeDelivery(
 		more,
 		...(events.length === 0
 			? {}
-			: { batch: eventsMessage(events, prompts, now, { more }) }),
+			: {
+					batch: eventsMessage(events, prompts, now, {
+						more,
+						...(memo === undefined ? {} : { memo }),
+					}),
+				}),
 	};
 }
 
@@ -1164,7 +1178,11 @@ export function eventsMessage(
 		readonly init_prompt: string | undefined;
 	},
 	now: number,
-	options: { readonly more?: number } = {},
+	options: {
+		readonly more?: number;
+		/** A subject's memo note, put at the end of its line (`memoNote`). */
+		readonly memo?: (subject: string) => string | undefined;
+	} = {},
 ): string {
 	const template =
 		prompts.init_prompt !== undefined &&
@@ -1173,7 +1191,15 @@ export function eventsMessage(
 			: prompts.event_prompt;
 	const more = options.more ?? 0;
 	const text = [
-		...events.map((event) => eventLine(event, now)),
+		...events.map((event) => {
+			const memo =
+				event.type === "init" || event.type === "triage"
+					? undefined
+					: options.memo?.(subjectOf(event));
+			return memo === undefined
+				? eventLine(event, now)
+				: `${eventLine(event, now)} ${memo}`;
+		}),
 		...(more > 0 ? [overflowLine(more)] : []),
 	].join("\n");
 	const json = template.includes(EVENT_JSON_PLACEHOLDER)

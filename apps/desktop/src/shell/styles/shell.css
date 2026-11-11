@@ -580,6 +580,17 @@
    They are `flex: none` — they do not shrink, they are simply carried past the
    edge of the column and faded, which is the one truncation rule this row
    has. */
+/* A managed Workspace whose stopped agent can be resumed (完了): quiet,
+   like the branch; the tooltip says which agent and how. */
+.row-resumable {
+  flex: none;
+  margin-right: 4px;
+  color: var(--tertiary);
+  font-size: 10.5px;
+  position: relative;
+  pointer-events: none;
+}
+
 .row-branch,
 .row-name,
 .row-note {
