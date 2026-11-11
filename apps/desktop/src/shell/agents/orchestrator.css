@@ -1343,6 +1343,26 @@
   color: var(--secondary);
 }
 
+/* May be stale (`staleness.ts`): as quiet as 停滞, the reasons beside it. */
+.orchestrator-chip.is-stale {
+  background: color-mix(in srgb, var(--tertiary) 14%, transparent);
+  color: var(--secondary);
+}
+
+.orchestrator-reading-stale {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  margin: 4px 0 0;
+  color: var(--secondary);
+  font-size: 12px;
+}
+
+.orchestrator-reading-stale-note {
+  color: var(--tertiary);
+}
+
 /* Why it is ranked so, in a quiet line under the card. */
 .orchestrator-card-why {
   overflow: hidden;

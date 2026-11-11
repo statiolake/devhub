@@ -236,12 +236,28 @@ export function inProgressAgentIds(
 	board: LaneBoard,
 ): ReadonlySet<string> {
 	const ids = new Set<string>();
+	for (const [id, lane] of agentLaneIds(snapshot, board))
+		if (lane === "progress") ids.add(id);
+	return ids;
+}
+
+/**
+ * Each agent under the Orchestrator row (a helper; a managed Workspace's,
+ * the orchestrator left out) and the lane of its item: an escalation's
+ * agent in another lane than the escalation may make it stale
+ * (`main/orchestrator/staleness.ts`).
+ */
+export function agentLaneIds(
+	snapshot: Parameters<typeof orchestratorItems>[0],
+	board: LaneBoard,
+): ReadonlyMap<string, LaneId> {
+	const lanes = new Map<string, LaneId>();
 	for (const item of orchestratorItems(snapshot, board)) {
-		if (item.lane !== "progress") continue;
-		if (item.kind === "helper") ids.add(item.agent.id);
+		if (item.kind === "helper") lanes.set(item.agent.id, item.lane);
 		else
 			for (const agent of item.workspace.agents)
-				if (agent.id !== snapshot.orchestratorAgentId) ids.add(agent.id);
+				if (agent.id !== snapshot.orchestratorAgentId)
+					lanes.set(agent.id, item.lane);
 	}
-	return ids;
+	return lanes;
 }

@@ -198,9 +198,15 @@ export type OrchestratorEvent =
 	/**
 	 * Time to rank the open work again (`triage.ts`): every escalation, item,
 	 * managed agent and request, each `high`, `normal` or `low`, recorded
-	 * with `orchestrator priority set`.
+	 * with `orchestrator priority set` — and to re-check every open
+	 * escalation (`escalations`), the ones DevHub marks as maybe stale with
+	 * why (`staleness.ts`).
 	 */
-	| { readonly type: "triage" }
+	| {
+			readonly type: "triage";
+			/** The open escalations as the triage was asked; absent: none. */
+			readonly escalations?: readonly TriageEscalation[];
+	  }
 	/**
 	 * The person's request, from the Orchestrator screen's +: their words,
 	 * delivered at once as their own message (`isHumanInput`). The
@@ -214,6 +220,37 @@ export type OrchestratorEvent =
 	| { readonly type: `custom.${string}`; readonly text: string };
 
 export type OrchestratorEventType = OrchestratorEvent["type"];
+
+/** An open escalation, as a `triage` lists it for the re-check. */
+export interface TriageEscalation {
+	readonly id: number;
+	readonly title: string;
+	readonly state: "needs_answer" | "in_progress" | "waiting";
+	/** Why it may be stale (`staleWords`); absent: nothing seen. */
+	readonly stale?: readonly string[];
+	/**
+	 * Marked stale already when the last triage went: to be resolved in this
+	 * one (updated, closed, or kept with a reason).
+	 */
+	readonly overdue?: boolean;
+}
+
+const TRIAGE_STATE_WORDS: Record<TriageEscalation["state"], string> = {
+	needs_answer: "要回答",
+	in_progress: "対応中",
+	waiting: "待機中",
+};
+
+/** A triage's re-check list: one indented line per open escalation. */
+function triageLines(event: Extract<OrchestratorEvent, { type: "triage" }>) {
+	return (event.escalations ?? []).map((one) => {
+		const stale =
+			one.stale === undefined || one.stale.length === 0
+				? ""
+				: ` — 古いかも: ${one.stale.join("; ")}${one.overdue === true ? " (前回の triage から: この triage で解決する)" : ""}`;
+		return `  esc=${String(one.id)}${title(one.title)} ${TRIAGE_STATE_WORDS[one.state]}${stale}`;
+	});
+}
 
 /**
  * The invariant's clause a subject fails (`invariant.ts`), as a short code:
@@ -362,7 +399,14 @@ export function eventLine(event: OrchestratorEvent, now: number): string {
 		...(parts.url === undefined ? [] : [parts.url]),
 	]
 		.filter((part) => part.length > 0)
-		.join(" ");
+		.join(" ")
+		.concat(
+			event.type === "triage"
+				? triageLines(event)
+						.map((line) => `\n${line}`)
+						.join("")
+				: "",
+		);
 }
 
 function needsActionParts(
@@ -435,7 +479,9 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 			return {
 				head: [],
 				summary:
-					"優先度の見直し: devhub --tell --json board で開いている仕事 (エスカレーション、要対応のアイテムとエージェント、依頼) を見て、それぞれ devhub --tell orchestrator priority set <対象> high|normal|low",
+					(event.escalations ?? []).length === 0
+						? "優先度の見直し: devhub --tell --json board で開いている仕事 (エスカレーション、要対応のアイテムとエージェント、依頼) を見て、それぞれ devhub --tell orchestrator priority set <対象> high|normal|low"
+						: "優先度の見直し: devhub --tell --json board で開いている仕事 (エスカレーション、要対応のアイテムとエージェント、依頼) を見て、それぞれ devhub --tell orchestrator priority set <対象> high|normal|low。あわせて下の開いているエスカレーションがまだ成り立つか確かめ、それぞれ今の状態に更新する (escalation ask / link)、メモを付けて閉じる (escalation close --note)、そのままにする、のどれかにする",
 			};
 		case "request":
 			return {

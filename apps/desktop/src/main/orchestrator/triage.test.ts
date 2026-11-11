@@ -234,6 +234,44 @@ describe("the triage schedule", () => {
 		expect(triages()).toHaveLength(1);
 	});
 
+	it("lists the open escalations for the re-check, the maybe-stale ones with why, and says which must be resolved now", () => {
+		const { run, later, triages } = service("full");
+		const old = run.raise({
+			title: "決済のタイムアウト",
+			markdown: "?",
+			links: ["https://github.com/acme/pay/pull/12"],
+		});
+		run.raise({ title: "別件", markdown: "?" });
+		const newer = run.raise({
+			title: "決済のタイムアウト (続き)",
+			markdown: "?",
+			links: ["https://github.com/acme/pay/pull/12"],
+		});
+		later(30 * MINUTE);
+		expect(triages()).toHaveLength(1);
+		const lines = triages()[0]!.split("\n");
+		expect(lines[0]).toContain("escalation close --note");
+		expect(lines.slice(1)).toEqual([
+			`  esc=${String(old.id)}「決済のタイムアウト」 要回答 — 古いかも: 同じ対象の新しいエスカレーション #${String(newer.id)} がある`,
+			"  esc=2「別件」 要回答",
+			`  esc=${String(newer.id)}「決済のタイムアウト (続き)」 要回答`,
+		]);
+		// The board and the CLI carry the mark too.
+		expect(
+			run.wire().needsAnswer.find((one) => one.id === old.id)?.mayBeStale
+				?.reasons,
+		).toEqual([`同じ対象の新しいエスカレーション #${String(newer.id)} がある`]);
+		// Still marked at the next triage: it was already when the last went.
+		later(30 * MINUTE);
+		expect(triages()[1]!.split("\n")[1]).toContain(
+			"(前回の triage から: この triage で解決する)",
+		);
+		// Resolved: closed, it is off the list and the mark goes.
+		run.close(old.id, "#3 で続ける");
+		later(30 * MINUTE);
+		expect(triages()[2]).not.toContain(`esc=${String(old.id)}「`);
+	});
+
 	it("keeps priorities, an escalation's as its rank, and shows them on the board", () => {
 		const { run } = service("full");
 		const esc = run.raise({

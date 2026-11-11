@@ -327,6 +327,7 @@ import { MAX_REQUEST_LENGTH, RequestFile } from "../orchestrator/requests.js";
 import { MemoFile } from "../orchestrator/memos.js";
 import { WorkFile, type LiveWorkAgent } from "../orchestrator/work.js";
 import {
+	agentLaneIds,
 	inProgressAgentIds,
 	inProgressCount,
 } from "../../ipc/orchestratorLanes.js";
@@ -7722,6 +7723,7 @@ export class AppController {
 			// Saving's gate: the Sidebar's 対応中, read by the Sidebar's rule.
 			inProgress: (board) => inProgressCount(this.snapshot(), board),
 			inProgressAgents: (board) => inProgressAgentIds(this.snapshot(), board),
+			agentLanes: (board) => agentLaneIds(this.snapshot(), board),
 			// An automatic switch says why, quietly: a notice that hides by
 			// itself and stays in the notice center, taken down when saving
 			// ends or the person chooses.
@@ -7989,10 +7991,14 @@ export class AppController {
 		settings: () => this.config.orchestrator.github,
 		// Read by URL when the search does not give them: why such an agent's
 		// item is outside the population.
-		linked: () =>
-			this.invariantAgents().flatMap((agent) =>
+		linked: () => [
+			...this.invariantAgents().flatMap((agent) =>
 				agent.managed && agent.issue !== undefined ? [agent.issue] : [],
 			),
+			// The open escalations' Issues and pull requests: a merged or
+			// closed one marks the escalation as maybe stale.
+			...(this.orchestrator?.escalationItemLinks() ?? []),
+		],
 		token: async () => {
 			const credentials = await readGitHubToken(this.launchEnvironment);
 			return credentials.kind === "token"

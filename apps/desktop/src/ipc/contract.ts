@@ -628,6 +628,16 @@ export interface EscalationWire {
 	 * than the grace (marked on the board). Absent otherwise.
 	 */
 	readonly stalledSince?: number;
+	/**
+	 * May no longer match reality, as DevHub sees it (`staleness.ts`): a
+	 * linked pull request merged or closed, a linked Issue closed, an agent
+	 * gone or in another lane, a newer escalation about the same subject.
+	 * Since when, and why, in words. Open ones only; absent otherwise.
+	 */
+	readonly mayBeStale?: {
+		readonly since: number;
+		readonly reasons: readonly string[];
+	};
 }
 
 /**

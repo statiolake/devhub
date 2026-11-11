@@ -608,6 +608,31 @@ describe("停滞", () => {
   });
 });
 
+describe("may be stale", () => {
+  it("marks the card quietly with DevHub's reasons, and leaves the others alone", () => {
+    mount({
+      ...BOARD,
+      inProgress: [
+        {
+          ...BOARD.inProgress[0]!,
+          mayBeStale: {
+            since: NOW - 60_000,
+            reasons: ["PR acme/pay#12 はマージ済み"],
+          },
+        },
+        { ...BOARD.inProgress[0]!, id: 3, title: "まだ有効" },
+      ],
+    });
+    const progress = screen.getByRole("region", { name: "対応中" });
+    const [stale, fresh] = [
+      ...progress.querySelectorAll<HTMLElement>(".orchestrator-card"),
+    ];
+    expect(within(stale!).getByText("古いかも")).toBeVisible();
+    expect(stale).toHaveTextContent("古いかも: PR acme/pay#12 はマージ済み");
+    expect(within(fresh!).queryByText("古いかも")).toBeNull();
+  });
+});
+
 describe("opening an escalation and going back", () => {
   it("keeps the left pane's width: nothing about the pane changes", () => {
     motion(true);

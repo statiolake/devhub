@@ -82,6 +82,7 @@ import {
 	type PullFacts,
 	type ItemFacts,
 	findItem,
+	issueUrlKey,
 	itemToken,
 	type ItemStanding,
 	type KeptAgent,
@@ -97,7 +98,14 @@ import {
 	type OrchestratorMode,
 	type UsageOver,
 } from "./mode.js";
-import type { LaneBoard } from "../../ipc/orchestratorLanes.js";
+import type { LaneBoard, LaneId } from "../../ipc/orchestratorLanes.js";
+import {
+	staleReasons,
+	staleWords,
+	type StaleItem,
+	type StaleReason,
+} from "./staleness.js";
+import type { TriageEscalation } from "./events.js";
 import {
 	PriorityBook,
 	nextTriageAt,
@@ -224,6 +232,12 @@ export interface OrchestratorServicePorts {
 	 * progress is never held". Absent: none.
 	 */
 	readonly inProgressAgents?: (board: LaneBoard) => ReadonlySet<string>;
+	/**
+	 * Each agent under the Orchestrator row and the lane its item is in
+	 * (`agentLaneIds`): an escalation's agent in another lane may make it
+	 * stale (`staleness.ts`). Absent: none is there.
+	 */
+	readonly agentLanes?: (board: LaneBoard) => ReadonlyMap<string, LaneId>;
 	/** The mode moved: by the person, or by the usage readout. */
 	readonly modeChanged?: (
 		change: ModeChange,
@@ -417,6 +431,11 @@ export class OrchestratorService {
 	#triageAnchor: number | undefined;
 	/** When the last `triage` went out to the orchestrator. */
 	#triagedAt: number | undefined;
+	/** The open escalations that may be stale, since when, and why. */
+	#stale = new Map<
+		number,
+		{ readonly since: number; readonly reasons: readonly StaleReason[] }
+	>();
 
 	constructor(private readonly ports: OrchestratorServicePorts) {
 		this.#mode = new OrchestratorModeControl(ports.mode ?? LAUNCH_MODE);
@@ -671,7 +690,31 @@ export class OrchestratorService {
 		const due = this.nextTriageAt;
 		if (due === undefined || due > now) return;
 		this.#triageAnchor = now;
-		this.events.dispatch({ type: "triage" });
+		this.#observeStale();
+		const previous = this.#triagedAt;
+		const escalations: TriageEscalation[] = this.ports.store
+			.all()
+			.filter(isOpen)
+			.map((one) => {
+				const stale = this.#stale.get(one.id);
+				return {
+					id: one.id,
+					title: one.title,
+					state: escalationState(one) as TriageEscalation["state"],
+					...(stale === undefined
+						? {}
+						: {
+								stale: stale.reasons.map(staleWords),
+								...(previous !== undefined && stale.since <= previous
+									? { overdue: true }
+									: {}),
+							}),
+				};
+			});
+		this.events.dispatch({
+			type: "triage",
+			...(escalations.length === 0 ? {} : { escalations }),
+		});
 	}
 
 	// --- memos and the work agents did -------------------------------------------
@@ -1586,6 +1629,106 @@ export class OrchestratorService {
 				})),
 		});
 		this.#invariant.observe(reading, this.orchestratorAgentId !== undefined);
+		this.#observeStale();
+	}
+
+	// --- may be stale ---------------------------------------------------------------
+
+	/**
+	 * Mark the open escalations that may no longer match reality
+	 * (`staleness.ts`), from what DevHub already reads: the items of the last
+	 * GitHub reading and the agents' Workspace pull requests, the agents and
+	 * their lanes, the other open escalations. Keeps since when each has been
+	 * marked; one no longer marked is forgotten.
+	 */
+	#observeStale(): void {
+		const reading = this.#invariant.reading;
+		const items = new Map<string, StaleItem>();
+		for (const agent of this.#invariantAgents) {
+			const pull = agent.pull;
+			if (pull?.url === undefined) continue;
+			const repo = /github\.com\/([^/]+\/[^/]+)\/pull\//u.exec(pull.url)?.[1];
+			items.set(issueUrlKey(pull.url), {
+				kind: "pr",
+				state:
+					pull.state === "merged" || pull.state === "closed"
+						? pull.state
+						: "open",
+				ref: `${repo ?? ""}#${String(pull.number)}`,
+			});
+		}
+		for (const [key, one] of reading.items)
+			items.set(key, {
+				kind: one.facts.kind,
+				state: one.facts.state,
+				ref: `${one.facts.item.repo}#${String(one.facts.item.number)}`,
+			});
+		const live = new Map(this.ports.agents().map((one) => [one.id, one]));
+		const issues = new Map(
+			this.#invariantAgents.map((one) => [one.id, one.issue]),
+		);
+		const lanes =
+			this.ports.agentLanes?.(this.#laneBoard()) ?? new Map<string, LaneId>();
+		const open = this.ports.store
+			.all()
+			.filter(isOpen)
+			.map((one) => ({
+				id: one.id,
+				state: escalationState(one) as Exclude<
+					ReturnType<typeof escalationState>,
+					"closed"
+				>,
+				links: one.links,
+				agents: one.agents,
+			}));
+		const now = this.#now();
+		const next = new Map<
+			number,
+			{ readonly since: number; readonly reasons: readonly StaleReason[] }
+		>();
+		for (const one of open) {
+			const reasons = staleReasons(one, {
+				item: (key) => items.get(key),
+				agent: (id) => {
+					const agent = live.get(id);
+					if (agent === undefined) return undefined;
+					const issue = issues.get(id);
+					const lane = lanes.get(id);
+					return {
+						name: agent.name,
+						...(issue === undefined ? {} : { issue }),
+						...(lane === undefined ? {} : { lane }),
+					};
+				},
+				open,
+			});
+			if (reasons.length === 0) continue;
+			next.set(one.id, {
+				since: this.#stale.get(one.id)?.since ?? now,
+				reasons,
+			});
+		}
+		this.#stale = next;
+	}
+
+	/**
+	 * The item URLs the open escalations link (Issues and pull requests on
+	 * GitHub): read by URL with the items agents are linked to, so a merged
+	 * or closed one is seen (`staleness.ts`).
+	 */
+	escalationItemLinks(): readonly string[] {
+		return this.ports.store
+			.all()
+			.filter(isOpen)
+			.flatMap((one) =>
+				one.links.flatMap((link) => {
+					const item =
+						/^https:\/\/github\.com\/[^/]+\/[^/]+\/(?:issues|pull)\/\d+/u.exec(
+							link.trim(),
+						);
+					return item === null ? [] : [item[0]];
+				}),
+			);
 	}
 
 	/**
@@ -1740,6 +1883,7 @@ export class OrchestratorService {
 	/** One escalation as the board and `--tell` carry it. */
 	toWire(one: Escalation): EscalationWire {
 		const stalled = this.#stalledSince(one, this.#agents());
+		const maybeStale = this.#stale.get(one.id);
 		const agents = new Map(
 			this.ports.agents().map((agent) => [agent.id, agent]),
 		);
@@ -1782,6 +1926,14 @@ export class OrchestratorService {
 			...(stalled === undefined || this.#now() - stalled < this.#graceMs
 				? {}
 				: { stalledSince: stalled }),
+			...(maybeStale === undefined || !isOpen(one)
+				? {}
+				: {
+						mayBeStale: {
+							since: maybeStale.since,
+							reasons: maybeStale.reasons.map(staleWords),
+						},
+					}),
 		};
 	}
 

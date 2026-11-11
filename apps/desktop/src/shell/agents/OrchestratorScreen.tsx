@@ -874,6 +874,14 @@ function EscalationCard({
           escalation.stalledSince !== undefined ? (
             <span className="orchestrator-chip is-stalled">停滞</span>
           ) : null}
+          {open && escalation.mayBeStale !== undefined ? (
+            <span
+              className="orchestrator-chip is-stale"
+              title={`May be stale: ${escalation.mayBeStale.reasons.join("; ")}`}
+            >
+              古いかも
+            </span>
+          ) : null}
           {question?.options !== undefined &&
           escalation.state === "needs_answer" ? (
             <span className="orchestrator-chip">
@@ -888,6 +896,11 @@ function EscalationCard({
         </span>
         {open && escalation.rankNote !== undefined ? (
           <span className="orchestrator-card-why">{escalation.rankNote}</span>
+        ) : null}
+        {open && escalation.mayBeStale !== undefined ? (
+          <span className="orchestrator-card-why is-stale">
+            古いかも: {escalation.mayBeStale.reasons.join("; ")}
+          </span>
         ) : null}
       </button>
     </li>
@@ -1007,6 +1020,18 @@ function EscalationView({
             {STATE_LABEL[escalation.state]}
           </span>
         </div>
+        {escalation.state !== "closed" &&
+        escalation.mayBeStale !== undefined ? (
+          <p className="orchestrator-reading-stale">
+            <span className="orchestrator-chip is-stale">古いかも</span>
+            {escalation.mayBeStale.reasons.join("; ")}
+            <span className="orchestrator-reading-stale-note">
+              {" "}
+              — DevHub が見たところ。次の triage
+              でオーケストレーターが確かめます
+            </span>
+          </p>
+        ) : null}
         {escalation.agents.length > 0 ||
         escalation.links.length > 0 ||
         jumps.length > 0 ? (

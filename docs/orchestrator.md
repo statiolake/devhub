@@ -651,6 +651,41 @@ It is a mark for the person only — a quiet 停滞 chip on the card,
 board` — and no event: its idle managed agents are `needs_action` (below), which
 is what the orchestrator hears.
 
+### May be stale: DevHub's own re-check
+
+Nothing used to check whether an open escalation still matches reality —
+only the dispatcher's `dropped-stale` for a pending line. Now DevHub marks
+an open escalation **may be stale** by itself, with no tokens, from what it
+already reads (`main/orchestrator/staleness.ts`, worked out on every reading
+of the invariant and before each triage):
+
+| reason                                 | read off                                                                                                                                                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| a linked pull request merged or closed | a link of it (or the item one of its agents is linked to) is a pull request DevHub has read — GitHub's items, or an agent's Workspace pull request — and it is merged or closed                           |
+| a linked Issue closed                  | the same, for an Issue                                                                                                                                                                                    |
+| a linked agent gone                    | one of its agents no longer exists                                                                                                                                                                        |
+| a linked agent in another lane         | one of its agents is, in the Sidebar's lanes (`agentLaneIds`), somewhere other than the escalation (要回答, 対応中, 待機中): stopped with nothing settling it (要対応), done (完了), asked something else |
+| superseded                             | a newer open escalation is about the same subject: a link to the same Issue or pull request, an agent linked to the same item, or — with no item — the same agent                                         |
+
+- **Where the items come from.** The GitHub poll reads by URL the items
+  managed agents are linked to; the open escalations' Issue and pull request
+  links are read the same way now (`escalationItemLinks`, in the same
+  request), so a merged one is seen within a poll.
+- **Shown quietly.** A `古いかも` chip on the board card, with the reasons in
+  a quiet line under it and in the chip's tooltip; the reasons under the
+  title in the escalation's own view; `mayBeStale` (since when, the reasons)
+  on its `EscalationWire`; `may be stale: …` under it in `devhub --tell
+board` and in `escalation show`. It only marks: the escalation is not
+  changed, and no event is sent for it.
+- **Every triage re-checks.** The `triage` line is followed by one indented
+  line per open escalation — `esc=12「…」 対応中 — 古いかも: PR acme/pay#12
+はマージ済み` — and asks the orchestrator to confirm each still holds and
+  to update it (`escalation ask` / `link`), close it with a note, or keep it
+  (charter section 7). **Rule of thumb:** one already marked when the last
+  triage went says `(前回の triage から: この triage で解決する)` and is to
+  be resolved in that triage — updated or closed, or kept with the reason
+  written down (`memo set esc=N`).
+
 ## Managed agents
 
 Every agent carries one flag: **managed by the orchestrator** or not
@@ -916,7 +951,7 @@ work, with its own tools (`gh`), not by the orchestrator.
 | `needs_action`            | an item of the population, or a managed agent, breaks the invariant: on every delivery while it does (every `delivery_interval`), unless it is kept (`agent keep`, until its state changes) | `[needs_action] issue=acme/web#123 ws=web — no_agent`, `[needs_action] agent=ab12cd34 (API fix) ws=web — idle_no_escalation`, `[needs_action] agent=… — outside_population (closed)` |
 | `waiting.changed`         | a 待機中 escalation may be ready: what it is about changed (`subjects_changed`), or its `--at` came (`due`, once per wait)                                                                  | `[waiting.changed] esc=12 — subjects_changed`, `[waiting.changed] esc=15 — due`                                                                                                      |
 | `usage.threshold`         | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                                                      | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                                          |
-| `triage`                  | time to rank the open work again: every 30 minutes in full, every hour in saving (see "Triage")                                                                                             | `[triage] — 優先度の見直し: …`                                                                                                                                                       |
+| `triage`                  | time to rank the open work again, and re-check the open escalations (listed under it, the maybe-stale ones with why): every 30 minutes in full, every hour in saving (see "Triage")         | `[triage] — 優先度の見直し: …` and, on the lines under it, `  esc=12「…」 対応中 — 古いかも: PR acme/pay#12 はマージ済み`                                                            |
 | `request`                 | the person sent a request from the board's +. Sent at once, as its own message: the person's words                                                                                          | `req=3 人からの依頼 (…):` and, on the next line, what they wrote                                                                                                                     |
 | `timer.elapsed`           | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                                                     | `[timer.elapsed] sweep`                                                                                                                                                              |
 | `custom.*`                | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                                               | `[custom.deploy] — staging に deploy 完了`                                                                                                                                           |
@@ -1202,6 +1237,10 @@ and keeps the ranking where DevHub reads it (`main/orchestrator/triage.ts`).
   CI) changes. In saving it is also how long a line that is not high may
   wait, and an hour is a fifth of the 5-hour window. `orchestrator priority`
   says when the last went and the next is due.
+- **The re-check.** Under the `triage` line, one line per open escalation,
+  the ones DevHub marks as maybe stale with why: the orchestrator confirms
+  each, and updates, closes or keeps it (see "May be stale: DevHub's own
+  re-check").
 - **The ranking** is `high`, `normal` or `low` per subject, recorded with
   `devhub --tell orchestrator priority set SUBJECT LEVEL [--note WHY]`, the
   subject named as its event line names it: `esc=12`, `issue=OWNER/REPO#N`,

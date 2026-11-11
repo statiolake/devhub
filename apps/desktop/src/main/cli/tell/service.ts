@@ -1606,16 +1606,23 @@ export class TellService {
 						},
 					];
 		});
+		// DevHub's own reading that an escalation may no longer hold.
+		const staleUnder = (one: EscalationWire): string[] =>
+			one.mayBeStale === undefined
+				? []
+				: [`    may be stale: ${one.mayBeStale.reasons.join("; ")}`];
 		const lines = [
 			`orchestrator: ${board.orchestratorAgentId ?? "none"}  (mode ${board.mode ?? "off"}${board.held > 0 ? `, ${String(board.held)} held` : ""})`,
 			`needs answer (${String(board.needsAnswer.length)}, priority then effort then age):`,
 			...board.needsAnswer.flatMap((one) => [
 				`  #${String(one.id)}  ${one.title}  waiting ${span(now - one.stateSince)}  [${rankText(one)}]${agentsText(one)}`,
+				...staleUnder(one),
 				...noteUnder(`esc ${String(one.id)}`),
 			]),
 			`in progress (${String(board.inProgress.length)}):`,
 			...board.inProgress.flatMap((one) => [
 				`  #${String(one.id)}  ${one.title}  answered ${span(now - one.stateSince)} ago${agentsText(one)}${one.stalledSince === undefined ? "" : `  [停滞 ${span(now - one.stalledSince)}: no agent is working on it]`}`,
+				...staleUnder(one),
 				...noteUnder(`esc ${String(one.id)}`),
 			]),
 			`waiting (${String(board.waiting.length)}, soonest first):`,
@@ -1623,6 +1630,7 @@ export class TellService {
 				const wait = one.entries.at(-1);
 				return [
 					`  #${String(one.id)}  ${one.title}  waiting on: ${wait?.markdown ?? ""}${wait?.dueAt === undefined ? "" : `  [${new Date(wait.dueAt).toISOString()}, ${dueWords(wait.dueAt, now)}]`}`,
+					...staleUnder(one),
 					...noteUnder(`esc ${String(one.id)}`),
 				];
 			}),
@@ -1824,6 +1832,11 @@ export class TellService {
 						`agents: ${one.agents.map((agent) => `${agent.name ?? "(gone)"} (${agent.agentId})`).join(", ")}`,
 					]),
 			...(one.links.length === 0 ? [] : [`links: ${one.links.join(" ")}`]),
+			...(one.mayBeStale === undefined
+				? []
+				: [
+						`may be stale (DevHub's reading, since ${new Date(one.mayBeStale.since).toISOString()}): ${one.mayBeStale.reasons.join("; ")} — update it (escalation ask / link), close it with a note, or keep it`,
+					]),
 			...(memo === undefined ? [] : [this.memoText(memo)]),
 			...one.entries.flatMap((entry) =>
 				entry.kind !== undefined
