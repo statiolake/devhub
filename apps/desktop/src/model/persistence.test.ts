@@ -224,19 +224,54 @@ describe("projection", () => {
     ).toBe(true);
   });
 
-  it("round-trips that the orchestrator opened a Workspace, absent as the person's", () => {
+  it("round-trips whether the orchestrator manages a Workspace, absent as not", () => {
     const model = populatedModel();
-    expect(
-      "opened_by" in stateFromSnapshot(model.snapshot()).workspaces[1],
-    ).toBe(false);
-    model.workspaces[1]!.setOpenedBy("orchestrator");
+    expect("managed" in stateFromSnapshot(model.snapshot()).workspaces[1]).toBe(
+      false,
+    );
+    model.setWorkspaceManaged(WS_B, true);
     const state = stateFromSnapshot(model.snapshot());
-    expect(state.workspaces[1].opened_by).toBe("orchestrator");
+    expect(state.workspaces[1].managed).toBe(true);
     expect(
       hydrateModel(state, [codex], today())
         .snapshot()
-        .workspaces.map((workspace) => workspace.openedBy),
-    ).toEqual([undefined, "orchestrator"]);
+        .workspaces.map((workspace) => workspace.managed),
+    ).toEqual([false, true]);
+  });
+
+  it("reads a Workspace holding a managed Agent as managed, from a file written before Workspaces had the flag", () => {
+    const model = populatedModel();
+    model.addAgent(WS_B, AG_B, codex, "tui");
+    const state = stateFromSnapshot(model.snapshot());
+    // As a DevHub before the Workspace flag wrote it: the Agent's flag only.
+    state.workspaces[1].agents[0].managed = true;
+    expect("managed" in state.workspaces[1]).toBe(false);
+    const restored = hydrateModel(state, [codex], today()).snapshot();
+    expect(restored.workspaces.map((workspace) => workspace.managed)).toEqual([
+      false,
+      true,
+    ]);
+  });
+
+  it("drops the provenance key an earlier DevHub wrote", async () => {
+    const directory = makeScratchDir("state");
+    const path = join(directory, "state.json");
+    const store = new JsonStateStore(path);
+    await store.saveState(stateFromSnapshot(populatedModel().snapshot()));
+    const document = JSON.parse(await readFile(path, "utf8")) as {
+      workspaces: Record<string, unknown>[];
+    };
+    document.workspaces[1]!["opened_by"] = "orchestrator";
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+    const load = await store.loadState();
+    expect(load.metadata.origin).toBe("primary");
+    expect("opened_by" in load.state.workspaces[1]!).toBe(false);
+    expect(
+      hydrateModel(load.state, [codex], today())
+        .snapshot()
+        .workspaces.map((workspace) => workspace.managed),
+    ).toEqual([false, false]);
+    removeScratchDir(directory);
   });
 
   it("writes an Agent DevHub labelled as not named, and loads it so", () => {

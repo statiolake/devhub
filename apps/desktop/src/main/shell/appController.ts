@@ -124,7 +124,6 @@ import {
 	type CloseInspectionInputs,
 	type Workspace,
 	type WorkspaceId,
-	type WorkspaceOpener,
 	type WorkspaceLocation,
 } from "../../model/domain.js";
 import { readSshHosts } from "./sshHosts.js";
@@ -1892,6 +1891,16 @@ export class AppController {
 				// door: a chord is another way to raise a command DevHub has.
 				this.dispatchOwn(
 					intentFromWire({ type: "mark_agent_unread", agentId }),
+				);
+			},
+			setWorkspaceManaged: (workspaceId, managed) => {
+				// The row menu's Manage with Orchestrator / Stop Managing.
+				this.dispatchOwn(
+					intentFromWire({
+						type: "set_workspace_managed",
+						workspaceId,
+						managed,
+					}),
 				);
 			},
 			focusSidebar: () => {
@@ -6565,8 +6574,8 @@ export class AppController {
 	private async openFolderUnfocused(
 		location: RequestedWorkspaceLocation,
 		placement: WorkspacePlacement = "automatic",
-		/** The orchestrator's side asked: see `Workspace.openedBy`. */
-		openedBy?: WorkspaceOpener,
+		/** The orchestrator's side asked: see `Workspace.managed`. */
+		managed?: true,
 	): Promise<WorkspaceId> {
 		const anchor =
 			placement === "below-selection" ? this.placementAnchor() : undefined;
@@ -6577,7 +6586,7 @@ export class AppController {
 			type: "open_folder",
 			location,
 			focus: "none",
-			...(openedBy === undefined ? {} : { openedBy }),
+			...(managed === undefined ? {} : { managed }),
 		});
 		const sameMachine = (workspace: Workspace): boolean =>
 			workspace.location.kind === location.kind &&
@@ -8169,7 +8178,7 @@ export class AppController {
 						label: action.display_name,
 						template: action.template,
 					})),
-			openWorkspace: async (path, machine, worktree, openedBy) => {
+			openWorkspace: async (path, machine, worktree, managed) => {
 				const place: WorkspacePlaceWire = machine.startsWith("ssh:")
 					? { kind: "ssh", host: machine.slice("ssh:".length), path }
 					: { kind: "local", path };
@@ -8194,11 +8203,11 @@ export class AppController {
 				}
 				// An Agent asking (`devhub --tell workspace open`), not a person: in
 				// the Sidebar, and nothing selected, shown or focused — under the
-				// Orchestrator row when the orchestrator's side asked.
+				// Orchestrator row (managed) when the orchestrator's side asked.
 				return this.openFolderUnfocused(
 					requestedLocation(target),
 					"automatic",
-					openedBy,
+					managed,
 				);
 			},
 			createAgent: async (workspaceId, profileId, presentation) => {
@@ -8236,6 +8245,13 @@ export class AppController {
 				await this.dispatchAwaiting({
 					type: "set_agent_managed",
 					agentId: parseAgentId(agentId),
+					managed,
+				});
+			},
+			setWorkspaceManaged: async (workspaceId, managed) => {
+				await this.dispatchAwaiting({
+					type: "set_workspace_managed",
+					workspaceId: this.workspaceIdOf(workspaceId),
 					managed,
 				});
 			},
@@ -8707,6 +8723,7 @@ export class AppController {
 						: "local",
 				scratch: workspace.id === snapshot.scratchWorkspaceId,
 				orchestrator: workspace.id === snapshot.orchestratorWorkspaceId,
+				managed: workspace.managed,
 				selected: workspace.id === selected,
 				branch: repository?.branch,
 				worktreeOf:
@@ -8786,7 +8803,7 @@ export class AppController {
 				workspaceId: await this.openFolderUnfocused(
 					requestedLocation(folder),
 					"automatic",
-					request.openedBy,
+					request.managed,
 				),
 				agentId: undefined,
 				origin,
@@ -8826,9 +8843,7 @@ export class AppController {
 			{
 				review: false,
 				focus: "none",
-				...(request.openedBy === undefined
-					? {}
-					: { openedBy: request.openedBy }),
+				...(request.managed === undefined ? {} : { managed: request.managed }),
 			},
 		);
 		const agent = this.coordinator.model.workspaces
@@ -8840,7 +8855,7 @@ export class AppController {
 				(await this.openFolderUnfocused(
 					requestedLocation(folder),
 					"automatic",
-					request.openedBy,
+					request.managed,
 				)),
 			agentId: agent?.id,
 			origin,
@@ -9175,7 +9190,7 @@ export class AppController {
 			workspaceId = await this.openFolderUnfocused(
 				opening,
 				"automatic",
-				how.openedBy,
+				how.managed,
 			);
 		} else {
 			await this.openFolder(opening, undefined, "automatic", "for-agent");
@@ -10257,8 +10272,8 @@ interface IssuePromptHow {
 	readonly review?: boolean;
 	/** `"none"` from `devhub --tell`: nothing is selected, shown or focused. */
 	readonly focus?: IntentFocus;
-	/** The orchestrator's side asked: a folder it opens is its (`openedBy`). */
-	readonly openedBy?: WorkspaceOpener;
+	/** The orchestrator's side asked: a folder it opens is managed. */
+	readonly managed?: true;
 }
 
 let current: AppController | undefined;

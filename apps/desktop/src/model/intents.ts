@@ -24,7 +24,6 @@ import type {
   CloseInspectionProjection,
   DiagnosticCode,
   DisplayPath,
-  WorkspaceOpener,
   NavigationContext,
   SurfacePresentation,
   RuntimeHealth,
@@ -357,11 +356,11 @@ export type UserIntent =
       /** `"none"`: open it without selecting it (`IntentFocus`). */
       readonly focus?: IntentFocus;
       /**
-       * `"orchestrator"`: the orchestrator's side asked (`Workspace.openedBy`).
-       * Recorded only on a Workspace this open adds; one that was open already
-       * is the person's and stays so.
+       * The orchestrator's side asked: the Workspace this open adds is
+       * managed (`Workspace.managed`). One that was open already is left as
+       * it is.
        */
-      readonly openedBy?: WorkspaceOpener;
+      readonly managed?: true;
       /**
        * `"explicit"`: the Workspace it selects is a place for Back and
        * Forward at once (`NavigationReason`). Meaningless with `focus: "none"`,
@@ -495,6 +494,12 @@ export type UserIntent =
   | {
       readonly type: "set_agent_managed";
       readonly agentId: AgentId;
+      readonly managed: boolean;
+    }
+  /** Under the orchestrator's management, or not (`Workspace.managed`). */
+  | {
+      readonly type: "set_workspace_managed";
+      readonly workspaceId: WorkspaceId;
       readonly managed: boolean;
     }
   /** Tick or untick an action as automatic for an Agent (`automaticActions.ts`). */

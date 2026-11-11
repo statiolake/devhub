@@ -8,11 +8,12 @@
  *
  * - the helpers: the Agents in the Orchestrator row's own Workspace but the
  *   orchestrator agent itself (they were under the row before lanes, too);
- * - the Workspaces the orchestrator's side opened (`openedBy`, recorded on the
- *   Workspace when it was opened and kept in `state.json`) — whoever's Agents
- *   are in them now, and with none. A Workspace the person opened is never
- *   here, whatever its Agents are; its managed Agents keep their wash where
- *   they are.
+ * - the Workspaces the orchestrator manages (`managed`: the same flag as an
+ *   Agent's, kept in `state.json`) — set when its side opened the folder,
+ *   when one of its Agents was put under management, or by `workspace
+ *   manage` and the row's Manage with Orchestrator — whoever's Agents are in
+ *   them now, and with none. Only Scratch's managed Agents stay where they
+ *   are, with their wash: Scratch is a row of its own.
  *
  * **Which lane.** The board's lanes, in the board's order, plus 要対応 (the
  * invariant's "needs action", which the board lists above its lanes). An item

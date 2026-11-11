@@ -193,8 +193,8 @@ Conversations page needs nothing of the kind: no view is laid over it.
 Scratch's row is Scratch's Workspace's: the orchestrator's folder is not
 drawn as an ordinary row (`sidebarWorkspaces` hands it out as `orchestrator`,
 apart from `scratch` and `rows`), and its Agents other than the orchestrator
-are the row's children, with the Workspaces the orchestrator opened
-(`managed`, by `Workspace.openedBy`), grouped by lane
+are the row's children, with the Workspaces the orchestrator manages
+(`managed`, by `Workspace.managed`), grouped by lane
 (`docs/orchestrator.md`, "The orchestrator's work in the Sidebar"). A child selected is an ordinary Agent selection — its pane, full
 or beside the root's editor. The root's editor itself is that Workspace
 selected, and the content area is its editor as for Scratch; the

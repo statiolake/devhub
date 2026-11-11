@@ -120,7 +120,7 @@ orchestrator's folder.
    › ● 待機中           1
  Scratch
  dotfiles  main
-   └ ◌ Claude                   (the person's: a managed agent here keeps its wash)
+   └ ◌ Claude                   (the person's)
  notes  main
 ```
 
@@ -132,28 +132,47 @@ the Sidebar is the person's places, as before.
 
 - **its helpers**: the agents in the orchestrator's own folder, the
   orchestrator agent itself apart (it is the row);
-- **the Workspaces the orchestrator opened** — by provenance, not by who is
-  in them. When the orchestrator's side opens a folder that was not open —
-  `devhub --tell workspace open` (a worktree included, `issue=pending` work
-  included) or `issue assign`, asked by the orchestrator agent or by an agent
-  it manages — the Workspace records it (`Workspace.openedBy`,
-  `"orchestrator"`; the `open_folder` intent's `openedBy`, set by
-  `tell/service.ts` `openedBy()` and applied by the coordinator only to a
-  Workspace that open adds). It is kept with the Workspace in `state.json`
-  (`opened_by`; an older DevHub ignores the key) and never taken away.
+- **the managed Workspaces.** *Managed* is one flag, said of agents and of
+  Workspaces alike (`Agent.managed`, `Workspace.managed`): the
+  orchestrator's work is in it. There is no second notion — "opened by the
+  orchestrator" is the same thing, and is how most Workspaces come to be
+  managed. A Workspace is managed
+  - when the orchestrator's side opens a folder that was not open —
+    `devhub --tell workspace open` (a worktree included, `issue=pending`
+    work included) or `issue assign`, asked by the orchestrator agent or by
+    an agent it manages (the `open_folder` intent's `managed`, applied by
+    the coordinator only to a Workspace that open adds);
+  - when an agent in it is put under management — `agent new --managed`,
+    `issue assign --managed`, `agent manage`, a managed session resumed
+    there (`AppModel.setAgentManaged`);
+  - by `workspace manage W`, or the row's **Manage with Orchestrator**
+    (right-click, or `Cmd+Q Shift+M` with the row or one of its agents
+    selected; also in the palette, `Cmd+Q :`).
+
+  `workspace unmanage W` and **Stop Managing** (the same right-click and
+  key on a managed Workspace) take it out, **and its agents with it**: a
+  Workspace holding a managed agent is managed, so leaving them managed would
+  leave it where it was. Scratch and the Orchestrator row's own Workspace are
+  rows of their own and never managed. The flag is kept with the Workspace in
+  `state.json` (`managed`; an older DevHub ignores the key). A file written
+  before Workspaces had the flag needs no migration: a Workspace in it
+  holding a managed agent is read as managed (`hydrateModel`), so the
+  orchestrator's existing worktrees are under the row at once. The
+  `opened_by` key a short-lived DevHub wrote is dropped on load.
 
 What that means:
 
-- **A Workspace the person opened is never moved**, whatever its agents are:
-  opening a folder that is already open does not record anything, and a
-  managed agent in the person's Workspace stays there with its wash
+- **A Workspace nobody put under management stays where it is**, among the
+  person's rows: opening a folder that is already open marks nothing. Only
+  Scratch's managed agents stay outside the group, with their wash
   (`.agent-row.is-managed`, "Managed agents" below).
-- **A Workspace the orchestrator opened stays under the Orchestrator row
-  while it is open** — when its last agent closes, and when the person starts
-  an agent of their own in it. It is the orchestrator's piece of work, which
-  the person has stepped into; it leaves when it is closed (the
-  orchestrator's `workspace close`, or the person's). With no agents left it
-  is in 完了 (below).
+- **A managed Workspace stays under the Orchestrator row while it is open**
+  — when its last managed agent closes or is taken out of management
+  (`agent unmanage` leaves the Workspace as it is), and when the person
+  starts an agent of their own in it. It is the orchestrator's piece of work,
+  which the person has stepped into; it leaves when it is closed (the
+  orchestrator's `workspace close`, or the person's) or when it is
+  unmanaged. With no agents left it is in 完了 (below).
 
 **Which lane.** The board's lanes in the board's order, with 要対応 — the
 invariant's needs action, which the board lists above its lanes — after
@@ -623,13 +642,20 @@ agent itself never is. The flag is set where the agent starts:
 - What a person starts in the window — New Agent (`Cmd+Q c`), the Assign
   Issue sheet — is not managed.
 
+The same flag is said of Workspaces (`workspace manage W` / `workspace
+unmanage W`, the row's Manage with Orchestrator / Stop Managing): an agent
+put under management puts its Workspace there too, and that is what draws
+the Workspace under the Orchestrator row ("The orchestrator's work in the
+Sidebar", above). `workspaces` says `managed`.
+
 It is kept with the agent in `state.json`, and under its CLI session in
 `session-meta.json` with its metadata, so a restart, `agent resume`, Reopen
 Closed and `/resume` keep it. `agents` and `sessions` say `managed`,
 `agent status` (and `--json` `managed`) too.
 
-**In the Sidebar**, a managed Agent's row in a Workspace the person opened
-wears a pale wash of the accent —
+**In the Sidebar**, a managed Agent's row outside the Orchestrator row's
+group — in Scratch, which is never managed itself — wears a pale wash of the
+accent —
 the orchestrator's colour — over its whole width (`.agent-row.is-managed`,
 `--managed-tint`, light and dark), so the agents the person started
 themselves are the plain rows at a glance; hover still shows through it and a
@@ -1090,6 +1116,7 @@ setting.
 devhub --tell board [--json]                         # 要回答, 対応中 (停滞 marked), 待機中, and what needs action now, as data
 devhub --tell [--json] status ITEM|A                 # one subject's whole state: an item (owner/repo#N or URL) or an agent
 devhub --tell agent manage A | agent unmanage A     # under the orchestrator's management, or not
+devhub --tell workspace manage W | workspace unmanage W   # a workspace, the same flag (unmanage: its agents too)
 devhub --tell agent keep A --note TEXT | --clear    # leave a managed agent that needs action as it is, for a reason, until its state changes
 devhub --tell --json agent status A                 # managed, invariant (settled or the clause, 待機中 escalation, kept)
 devhub --tell --json workspace status W             # branch, Issue (state, lanes), PR (state, draft, review decision), conversations, checks

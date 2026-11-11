@@ -1441,7 +1441,7 @@ function LaneHeading({
 }
 
 /**
- * A Workspace the orchestrator opened, in its lane.
+ * A Workspace the orchestrator manages, in its lane.
  *
  * With one Agent it is one row — that Agent's, with what the Workspace is
  * about (`#128`, `PR #517`) quiet after its words, and the Workspace's own
@@ -1478,6 +1478,7 @@ function ManagedWorkspaceItem({
   readonly reorder: Reorder;
 }) {
   const selectRow = useSelectRow();
+  const dispatch = useSidebarDispatch();
   const identity = rowIdentity(workspace, snapshot.scratchWorkspaceId);
   const closing = workspace.close.kind === "running";
   const agents = workspace.agents.filter(
@@ -1550,6 +1551,7 @@ function ManagedWorkspaceItem({
             close: onCloseWorkspace,
             deletesWorktree,
             fixed: false,
+            dispatch,
           }),
         ],
       }}
@@ -1865,12 +1867,13 @@ export function Sidebar({ snapshot }: SidebarProps) {
       openRowMenu(
         workspaceMenuItems(workspace, {
           close: closeWorkspaceRow,
+          dispatch: dispatchIntent,
           ...menu,
         }),
         at,
       );
     },
-    [closeWorkspaceRow],
+    [closeWorkspaceRow, dispatchIntent],
   );
 
   const resize = useCallback(

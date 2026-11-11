@@ -452,12 +452,19 @@ class FakePorts implements TellPorts {
 		path: string,
 		machine: string,
 		worktree?: string,
-		openedBy?: "orchestrator",
+		managed?: true,
 	) {
 		this.calls.push(
-			`open ${path} ${machine} ${worktree ?? "-"}${openedBy === undefined ? "" : ` by ${openedBy}`}`,
+			`open ${path} ${machine} ${worktree ?? "-"}${managed === true ? " managed" : ""}`,
 		);
 		return Promise.resolve("w1");
+	}
+	setWorkspaceManaged(workspaceId: string, managed: boolean) {
+		this.calls.push(`workspace-managed ${workspaceId} ${String(managed)}`);
+		this.spaces = this.spaces.map((space) =>
+			space.id === workspaceId ? { ...space, managed } : space,
+		);
+		return Promise.resolve();
 	}
 	createAgent(workspaceId: string, profileId: string, presentation?: string) {
 		this.calls.push(
@@ -917,7 +924,7 @@ describe("devhub --tell, in the app", () => {
 		expect(answer.data).toEqual({ workspaceId: "w1", root: "/src/app" });
 	});
 
-	it("opens a workspace as the orchestrator's when its side asks, the person's otherwise", async () => {
+	it("opens a workspace managed when the orchestrator's side asks, unmanaged otherwise", async () => {
 		const { service, ports } = setup();
 		const helper = "local\tscratch\tbbbb2222-0000";
 		await service.run(
@@ -933,8 +940,36 @@ describe("devhub --tell, in the app", () => {
 		expect(ports.calls).toEqual([
 			"open /src/a local -",
 			"managed bbbb2222-0000 true",
-			"open /src/b local - by orchestrator",
+			"open /src/b local - managed",
 			"open /src/c local -",
+		]);
+	});
+
+	it("puts a workspace under the orchestrator's management and takes it out, never Scratch", async () => {
+		const { service, ports } = setup();
+		const managed = await service.run(
+			{ verb: "workspace-manage", workspace: "w1", managed: true },
+			undefined,
+		);
+		expect(managed.message).toBe(
+			"app (w1) is under the orchestrator's management.",
+		);
+		expect(managed.data).toEqual({ workspaceId: "w1", managed: true });
+		const listed = await service.run({ verb: "workspaces" }, undefined);
+		expect(listed.message).toContain("managed");
+		await service.run(
+			{ verb: "workspace-manage", workspace: "w1", managed: false },
+			undefined,
+		);
+		await expect(
+			service.run(
+				{ verb: "workspace-manage", workspace: "scratch-id", managed: true },
+				undefined,
+			),
+		).rejects.toThrow("Scratch is a row of its own");
+		expect(ports.calls).toEqual([
+			"workspace-managed w1 true",
+			"workspace-managed w1 false",
 		]);
 	});
 

@@ -496,9 +496,7 @@ export function snapshotWire(
     ...(workspace.lastAgentId === undefined
       ? {}
       : { lastAgentId: workspace.lastAgentId }),
-    ...(workspace.openedBy === undefined
-      ? {}
-      : { openedBy: workspace.openedBy }),
+    ...(workspace.managed ? { managed: true as const } : {}),
     ...(workspace.terminals.status === "idle" &&
     workspace.terminals.unread === undefined
       ? {}
@@ -1239,6 +1237,13 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         ...(value === undefined ? {} : { value }),
       };
     }
+    case "set_workspace_managed":
+      if (typeof wire.managed !== "boolean") invalid();
+      return {
+        type: "set_workspace_managed",
+        workspaceId: tryParse(() => parseWorkspaceId(wire.workspaceId)),
+        managed: wire.managed,
+      };
     case "set_automatic_action": {
       const actionId = wire.actionId;
       if (

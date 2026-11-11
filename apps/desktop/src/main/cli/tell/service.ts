@@ -112,6 +112,8 @@ export interface TellWorkspace {
 	readonly scratch: boolean;
 	/** The Orchestrator row's Workspace (addressed as "orchestrator"). */
 	readonly orchestrator?: boolean;
+	/** Under the orchestrator's management (`Workspace.managed`). */
+	readonly managed?: boolean;
 	readonly selected: boolean;
 	readonly branch: string | undefined;
 	/** The main checkout, when this workspace is a worktree of one. */
@@ -313,10 +315,10 @@ export interface IssueAssignRequest {
 	 */
 	readonly offline: boolean;
 	/**
-	 * The orchestrator's side asked (`TellService.openedBy`): a folder this
-	 * opens is drawn under the Orchestrator row (`Workspace.openedBy`).
+	 * The orchestrator's side asked (`TellService.callerIsOrchestratorSide`):
+	 * a folder this opens is managed (`Workspace.managed`).
 	 */
-	readonly openedBy?: "orchestrator";
+	readonly managed?: true;
 }
 
 /**
@@ -439,15 +441,15 @@ export interface TellPorts {
 	/** The enabled Issue actions, in Assign Issue's order. */
 	issueActions(): readonly TellIssueAction[];
 	/**
-	 * Open (or select) the folder; answers the workspace's id. `openedBy`:
-	 * the orchestrator's side asked, so a folder this adds is its
-	 * (`Workspace.openedBy`); one open already is left as it is.
+	 * Open (or select) the folder; answers the workspace's id. `managed`:
+	 * the orchestrator's side asked, so a folder this adds is managed
+	 * (`Workspace.managed`); one open already is left as it is.
 	 */
 	openWorkspace(
 		path: string,
 		machine: string,
 		worktree?: string,
-		openedBy?: "orchestrator",
+		managed?: true,
 	): Promise<string>;
 	/** Start an Agent; answers its id. */
 	createAgent(
@@ -458,8 +460,16 @@ export interface TellPorts {
 	renameAgent(agentId: string, name: string): Promise<void>;
 	/** Back to the label DevHub gives it (`reset_agent_name`). */
 	resetAgentName(agentId: string): Promise<void>;
-	/** Put an agent under the orchestrator's management, or take it out. */
+	/**
+	 * Put an agent under the orchestrator's management, or take it out. Put
+	 * under it, its workspace is too (`AppModel.setAgentManaged`).
+	 */
 	setAgentManaged(agentId: string, managed: boolean): Promise<void>;
+	/**
+	 * Put a workspace under the orchestrator's management, or take it out
+	 * (and its agents with it: `AppModel.setWorkspaceManaged`).
+	 */
+	setWorkspaceManaged(workspaceId: string, managed: boolean): Promise<void>;
 	/** Set (or, with undefined, remove) one of an agent's own pairs. */
 	setAgentMeta(
 		agentId: string,
@@ -1128,6 +1138,8 @@ export class TellService {
 				return this.closeWorkspace(command);
 			case "workspace-status":
 				return this.workspaceStatus(command.workspace);
+			case "workspace-manage":
+				return this.manageWorkspace(command.workspace, command.managed);
 			case "agents":
 				return this.listAgents(command.workspace, command.meta);
 			case "profiles":
@@ -1322,20 +1334,20 @@ export class TellService {
 	}
 
 	/**
-	 * Who a folder this command opens is opened by (`Workspace.openedBy`):
-	 * the orchestrator, when the caller is the orchestrator agent or an agent
-	 * it manages (a helper it started, `--managed`) — its side of the work;
-	 * nobody in particular (the person) for any other caller.
+	 * Whether the caller is the orchestrator's side: the orchestrator agent,
+	 * or an agent it manages (a helper it started, `--managed`). A folder it
+	 * opens for its work is managed (`Workspace.managed`); any other caller's
+	 * is not.
 	 */
-	private openedBy(): "orchestrator" | undefined {
-		if (this.callerIsOrchestrator()) return "orchestrator";
+	private callerIsOrchestratorSide(): boolean {
+		if (this.callerIsOrchestrator()) return true;
 		const id = this.caller?.agentId;
-		if (id === undefined || this.caller?.paneless === true) return undefined;
+		if (id === undefined || this.caller?.paneless === true) return false;
 		const agent = this.ports
 			.workspaces()
 			.flatMap((workspace) => workspace.agents)
 			.find((one) => one.id === id);
-		return agent?.managed === true ? "orchestrator" : undefined;
+		return agent?.managed === true;
 	}
 
 	/** Whether the caller is the orchestrator agent itself. */
@@ -2058,6 +2070,11 @@ export class TellService {
 					? undefined
 					: `worktree of ${workspace.worktreeOf}`,
 				...reviewFacts(workspace),
+				// The Orchestrator row's own folder is a row of its own: its
+				// helpers may have marked it, and it is not under itself.
+				workspace.managed === true && workspace.orchestrator !== true
+					? "managed"
+					: undefined,
 				`${String(workspace.agents.length)} agent${workspace.agents.length === 1 ? "" : "s"}`,
 			].filter((fact) => fact !== undefined);
 			return `${workspace.selected ? "*" : " "} ${workspace.id}  ${workspace.scratch ? "Scratch" : workspace.name}  ${workspace.root}  (${facts.join(", ")})`;
@@ -2066,6 +2083,29 @@ export class TellService {
 			message:
 				lines.length === 0 ? "No workspaces are open." : lines.join("\n"),
 			data: { workspaces: workspaces.map(workspaceRow) },
+		};
+	}
+
+	/**
+	 * `workspace manage` / `workspace unmanage`: the same flag as `agent
+	 * manage`, said of a folder. Unmanaging takes its agents out too. Never
+	 * Scratch or the Orchestrator row's own: they are rows of their own.
+	 */
+	private async manageWorkspace(
+		name: string,
+		managed: boolean,
+	): Promise<TellAnswer> {
+		const workspace = this.workspace(name);
+		if (workspace.scratch || workspace.orchestrator === true)
+			throw new Error(
+				`${workspace.scratch ? "Scratch" : "the orchestrator's own workspace"} is a row of its own, never under the orchestrator's management.`,
+			);
+		await this.ports.setWorkspaceManaged(workspace.id, managed);
+		return {
+			message: managed
+				? `${workspace.name} (${workspace.id}) is under the orchestrator's management.`
+				: `${workspace.name} (${workspace.id}) and its agents are no longer under the orchestrator's management.`,
+			data: { workspaceId: workspace.id, managed },
 		};
 	}
 
@@ -2193,7 +2233,7 @@ export class TellService {
 			path,
 			machine,
 			worktree,
-			this.openedBy(),
+			this.callerIsOrchestratorSide() ? true : undefined,
 		);
 		const workspace = this.ports.workspaces().find((each) => each.id === id);
 		return {
@@ -2553,7 +2593,7 @@ export class TellService {
 			presentation: command.presentation,
 			...(command.name === undefined ? {} : { name: command.name.trim() }),
 			offline: command.offline === true,
-			...(this.openedBy() === undefined ? {} : { openedBy: "orchestrator" }),
+			...(this.callerIsOrchestratorSide() ? { managed: true as const } : {}),
 		});
 		if (assigned.agentId !== undefined && command.managed === true)
 			await this.ports.setAgentManaged(assigned.agentId, true);

@@ -502,7 +502,7 @@ export class AppCoordinator {
    * selected (`IntentFocus`). Cleared when the operation ends either way.
    */
   private readonly unfocused = new Set<OperationId>();
-  /** Opens the orchestrator's side asked for (`open_folder`'s `openedBy`). */
+  /** Opens the orchestrator's side asked for (`open_folder`'s `managed`). */
   private readonly orchestratorOpens = new Set<OperationId>();
   /**
    * The folder opens asked for with `reason: "explicit"`: the Workspace each
@@ -734,7 +734,7 @@ export class AppCoordinator {
       case "open_folder":
         if (intent.focus === "none") this.unfocused.add(id);
         else if (intent.reason === "explicit") this.explicitOpens.add(id);
-        if (intent.openedBy === "orchestrator") this.orchestratorOpens.add(id);
+        if (intent.managed === true) this.orchestratorOpens.add(id);
         return this.beginWorkspaceResolution(intent.location, id);
       case "new_window": {
         if (intent.path !== undefined) {
@@ -801,6 +801,9 @@ export class AppCoordinator {
         return this.transitionOutcome(beforeRevision, id);
       case "set_agent_managed":
         this.model.setAgentManaged(intent.agentId, intent.managed);
+        return this.transitionOutcome(beforeRevision, id);
+      case "set_workspace_managed":
+        this.model.setWorkspaceManaged(intent.workspaceId, intent.managed);
         return this.transitionOutcome(beforeRevision, id);
       case "set_automatic_action":
         this.model.setAgentAutomaticAction(
@@ -1645,11 +1648,9 @@ export class AppCoordinator {
       (workspace) =>
         workspace.state.kind === "available" && workspace.key === key,
     );
-    // Only a Workspace this open adds is the orchestrator's: one that was open
-    // already is the person's, and stays where they had it.
-    const openedBy = this.orchestratorOpens.delete(token.operationId)
-      ? ("orchestrator" as const)
-      : undefined;
+    // Only a Workspace this open adds is managed: one that was open already
+    // stays as it was.
+    const managed = this.orchestratorOpens.delete(token.operationId);
     if (existing) {
       const beforeRevision = this.model.snapshot().revision;
       const reason = this.openReason(token.operationId);
@@ -1677,7 +1678,7 @@ export class AppCoordinator {
       undefined,
       AVAILABLE,
     );
-    added.setOpenedBy(openedBy);
+    added.setManaged(managed);
     this.model.addWorkspace(added);
     // Opening a folder is choosing it, new or not — the branch above says the
     // same of one that was open already. Nothing else selects it: a workbench

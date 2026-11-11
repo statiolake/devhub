@@ -53,8 +53,10 @@ export function openRowMenu(
 
 /**
  * What a right-click on a Workspace offers: on every Workspace but Scratch,
- * which is today's folder and is never closed, the close the row's own button
- * is. Empty for Scratch.
+ * which is today's folder and is never closed, Manage with Orchestrator (or
+ * Stop Managing, on a managed one: `Workspace.managed`, which `Cmd+Q
+ * Shift+M` toggles too) and the close the row's own button is. Empty for
+ * Scratch.
  */
 export function workspaceMenuItems(
   workspace: WorkspaceSnapshot,
@@ -64,10 +66,24 @@ export function workspaceMenuItems(
     /** Closing deletes the folder (`closingDeletesWorktree`), and says so. */
     readonly deletesWorktree: boolean;
     readonly fixed: boolean;
+    /** Raise an intent: `set_workspace_managed`, as the chord does. */
+    readonly dispatch: (intent: AppIntent) => void;
   },
 ): RowMenuItem[] {
   const items: RowMenuItem[] = [];
   if (!actions.fixed) {
+    const managed = workspace.managed === true;
+    items.push({
+      id: "manage",
+      label: managed ? "Stop Managing" : "Manage with Orchestrator",
+      run: () => {
+        actions.dispatch({
+          type: "set_workspace_managed",
+          workspaceId: workspace.id,
+          managed: !managed,
+        });
+      },
+    });
     items.push({
       // The ellipsis is the row button's promise: a question may follow.
       id: "close-workspace",

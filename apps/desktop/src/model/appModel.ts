@@ -23,7 +23,6 @@ import {
   rootParentComponents,
   sameContext,
   Workspace,
-  type WorkspaceOpener,
   type AgentControlState,
   type AgentFailure,
   type AgentId,
@@ -242,8 +241,8 @@ export interface WorkspaceSnapshot {
   readonly lastAgentId: AgentId | undefined;
   /** What its own terminals are doing. See `terminalActivity.ts`. */
   readonly terminals: TerminalActivity;
-  /** Who opened it, when not the person. See `Workspace.openedBy`. */
-  readonly openedBy: WorkspaceOpener | undefined;
+  /** Whether the orchestrator manages it. See `Workspace.managed`. */
+  readonly managed: boolean;
 }
 
 /**
@@ -1144,11 +1143,44 @@ export class AppModel {
     }
   }
 
-  /** Put an Agent under the orchestrator's management, or take it out. */
+  /**
+   * Put an Agent under the orchestrator's management, or take it out.
+   *
+   * Managed is one flag, said of Agents and Workspaces alike: an Agent put
+   * under management puts its Workspace there too (`Workspace.managed`), so
+   * the Workspace stays under the Orchestrator row when that Agent has gone.
+   * Taking the Agent out leaves its Workspace as it is — `workspace
+   * unmanage` is the Workspace's own word. Scratch is a row of its own
+   * and is never marked.
+   */
   setAgentManaged(id: AgentId, managed: boolean): void {
-    if (this.requireAgent(id).setManaged(managed)) {
-      this.bumpRevision();
+    const agent = this.requireAgent(id);
+    let changed = agent.setManaged(managed);
+    if (managed && agent.workspaceId !== this.scratchId) {
+      changed =
+        this.requireWorkspace(agent.workspaceId).setManaged(true) || changed;
     }
+    if (changed) this.bumpRevision();
+  }
+
+  /**
+   * Put a Workspace under the orchestrator's management, or take it out
+   * (`workspace manage` / `workspace unmanage`, the Sidebar's Manage with
+   * Orchestrator / Stop Managing). Taking it out takes its Agents out too:
+   * a Workspace holding a managed Agent is a managed Workspace
+   * (`setAgentManaged`), so leaving them managed would leave it there.
+   * Putting it under management leaves its Agents as they are: which of
+   * them the orchestrator is held to watch is said of each Agent.
+   */
+  setWorkspaceManaged(id: WorkspaceId, managed: boolean): void {
+    const workspace = this.requireWorkspace(id);
+    let changed = workspace.setManaged(managed);
+    if (!managed) {
+      for (const agent of workspace.agents) {
+        changed = agent.setManaged(false) || changed;
+      }
+    }
+    if (changed) this.bumpRevision();
   }
 
   /**
@@ -2321,7 +2353,7 @@ export class AppModel {
       canCreateAgent: workspace.canCreateAgent,
       lastAgentId: this.lastAgentIn(workspace.id),
       terminals: workspace.terminals.activity,
-      openedBy: workspace.openedBy,
+      managed: workspace.managed,
       agents: workspace.agents.map((agent) => ({
         id: agent.id,
         workspaceId: agent.workspaceId,

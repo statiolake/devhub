@@ -135,6 +135,8 @@ export interface ChordHost {
 	renameAgent(agentId: string): void;
 	/** Owe this Agent a look again — the row menu's Mark as Unread. */
 	markAgentUnread(agentId: string): void;
+	/** Manage with Orchestrator / Stop Managing (`set_workspace_managed`). */
+	setWorkspaceManaged(workspaceId: string, managed: boolean): void;
 	/** Put away whichever failure the window in front is showing. */
 	dismissAlert(): void;
 	/** Open or close the notice center, with the keyboard in it. */
@@ -312,6 +314,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "close-workspace":
 			host.closeWorkspace(effect.workspaceId);
+			return;
+		case "set-workspace-managed":
+			host.setWorkspaceManaged(effect.workspaceId, effect.managed);
 			return;
 		case "reopen-closed":
 			host.reopenClosed();

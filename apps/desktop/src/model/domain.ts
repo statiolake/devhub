@@ -1659,12 +1659,6 @@ function sameWorkspaceState(
  * `issueNumberFromBranch`, which is now the only way a workspace is linked to
  * an Issue.
  */
-/**
- * Who opened a Workspace, when it was not the person: only the orchestrator,
- * so far. See `Workspace.openedBy`.
- */
-export type WorkspaceOpener = "orchestrator";
-
 export class Workspace {
   private readonly agentList: Agent[] = [];
   /** Its own terminals' panes. In memory only — see `terminalActivity.ts`. */
@@ -1682,18 +1676,19 @@ export class Workspace {
   private closeValue: WorkspaceClose = CLOSE_IDLE;
 
   /**
-   * Who opened it, when that was the orchestrator: its provenance, written
-   * once — when the orchestrator's side (`devhub --tell workspace open`,
-   * `issue assign`, from the orchestrator agent or an agent it manages)
-   * opens a folder that was not open — and kept with the Workspace in
-   * `state.json` (`opened_by`). The Sidebar draws such a Workspace under the
-   * Orchestrator row, in its lane, for as long as it is open: whoever's
-   * agents are in it later (`docs/orchestrator.md`, "The orchestrator's
-   * work in the Sidebar"). A folder the person opened never carries it, and
-   * nothing takes it away: a Workspace's provenance is a fact about how it
-   * came, not a state.
+   * Whether the orchestrator manages this Workspace: the same flag as
+   * `Agent.managed`, said of a folder — the orchestrator's work is in it.
+   * Set when the orchestrator's side opens a folder that was not open
+   * (`devhub --tell workspace open`, worktrees included, and `issue assign`,
+   * from the orchestrator agent or an agent it manages), when one of its
+   * Agents is put under management (`--managed`, `agent manage`:
+   * `AppModel.setAgentManaged`), and by `workspace manage`; cleared by
+   * `workspace unmanage`. Kept in `state.json` (`managed`). The Sidebar
+   * draws a managed Workspace under the Orchestrator row, in its lane, and
+   * it stays there when its last managed Agent has gone
+   * (`docs/orchestrator.md`, "The orchestrator's work in the Sidebar").
    */
-  private openedByValue: WorkspaceOpener | undefined = undefined;
+  private managedValue = false;
 
   clone(): Workspace {
     const copy = new Workspace(
@@ -1704,7 +1699,7 @@ export class Workspace {
       this.stateValue,
     );
     copy.closeValue = this.closeValue;
-    copy.openedByValue = this.openedByValue;
+    copy.managedValue = this.managedValue;
     copy.terminalPanes = this.terminalPanes.clone();
     for (const agent of this.agentList) {
       copy.agentList.push(agent.clone());
@@ -1755,15 +1750,15 @@ export class Workspace {
     return this.closeValue;
   }
 
-  /** See `openedByValue`. */
-  get openedBy(): WorkspaceOpener | undefined {
-    return this.openedByValue;
+  /** Whether the orchestrator manages it. See `managedValue`. */
+  get managed(): boolean {
+    return this.managedValue;
   }
 
-  /** Record who opened it. True when that changed anything. */
-  setOpenedBy(opener: WorkspaceOpener | undefined): boolean {
-    if (this.openedByValue === opener) return false;
-    this.openedByValue = opener;
+  /** Put it under the orchestrator's management, or take it out; whether anything changed. */
+  setManaged(managed: boolean): boolean {
+    if (this.managedValue === managed) return false;
+    this.managedValue = managed;
     return true;
   }
 

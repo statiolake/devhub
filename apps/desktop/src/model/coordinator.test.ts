@@ -308,19 +308,19 @@ describe("dispatch", () => {
 });
 
 describe("opening a folder", () => {
-  it("records that the orchestrator opened a folder it added, and only then", () => {
+  it("marks a folder the orchestrator's side added as managed, and only then", () => {
     const driver = new Driver();
     const ids = [
       "550e8400-e29b-41d4-a716-4466554400a1",
       "550e8400-e29b-41d4-a716-4466554400a2",
       "550e8400-e29b-41d4-a716-4466554400a3",
     ];
-    const open = (path: string, openedBy?: "orchestrator") => {
+    const open = (path: string, managed?: true) => {
       driver.dispatch({
         type: "open_folder",
         location: requestedLocation({ kind: "local", path }),
         focus: "none",
-        ...(openedBy === undefined ? {} : { openedBy }),
+        ...(managed === undefined ? {} : { managed }),
       });
       for (let round = 0; round < 16; round += 1) {
         const effects = driver.drainEffects();
@@ -336,18 +336,18 @@ describe("opening a folder", () => {
       }
     };
     open("/dev/mine");
-    open("/dev/theirs", "orchestrator");
-    // A folder the person had open already stays theirs.
-    open("/dev/mine", "orchestrator");
+    open("/dev/theirs", true);
+    // A folder that was open already stays as it was.
+    open("/dev/mine", true);
     const byRoot = Object.fromEntries(
       driver.coordinator
         .snapshot()
-        .workspaces.map((workspace) => [workspace.root, workspace.openedBy]),
+        .workspaces.map((workspace) => [workspace.root, workspace.managed]),
     );
     expect(byRoot).toEqual({
-      [SCRATCH_PATH]: undefined,
-      "/dev/mine": undefined,
-      "/dev/theirs": "orchestrator",
+      [SCRATCH_PATH]: false,
+      "/dev/mine": false,
+      "/dev/theirs": true,
     });
   });
 

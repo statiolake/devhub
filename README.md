@@ -340,13 +340,17 @@ is a field of the agent, kept in `state.json` and under its CLI session in
 wears a pale wash of the orchestrator's accent (its tooltip says "Managed by
 the orchestrator").
 
-**The orchestrator's work in the Sidebar.** A folder the orchestrator (or an
-agent it manages) opens with `workspace open` or `issue assign` is recorded
-as the orchestrator's (`opened_by` in `state.json`) and drawn under the
+**The orchestrator's work in the Sidebar.** Managed is one flag, for agents
+and Workspaces alike. A Workspace is managed when the orchestrator (or an
+agent it manages) opens it with `workspace open` or `issue assign`, when an
+agent in it is put under management (`--managed`, `agent manage`), or by
+`workspace manage` / the row's **Manage with Orchestrator** (`Cmd+Q
+Shift+M`, also in the palette); `workspace unmanage` / **Stop Managing**
+takes it and its agents out. A managed Workspace is drawn under the
 Orchestrator row with its helpers, grouped by the board's lanes — 要回答,
-要対応, 対応中, 待機中, 完了 — rather than among your own rows; it stays
-there until it is closed. A folder you opened never moves
-(`docs/orchestrator.md`, "The orchestrator's work in the Sidebar").
+要対応, 対応中, 待機中, 完了 — rather than among your own rows, and stays
+there when its last managed agent has gone (`docs/orchestrator.md`, "The
+orchestrator's work in the Sidebar").
 
 **Metadata.** `agent meta`, and `--meta KEY=VALUE` on `agent new` and
 `issue assign`, keep an agent's own pairs — `role=reviewer`, `ticket=123`,

@@ -107,6 +107,12 @@ export type TellCommand =
 	  }
 	/** One Workspace with its Issue, pull request, review and CI facts. */
 	| { readonly verb: "workspace-status"; readonly workspace: string }
+	/** `workspace manage` / `workspace unmanage`: the orchestrator's managed flag. */
+	| {
+			readonly verb: "workspace-manage";
+			readonly workspace: string;
+			readonly managed: boolean;
+	  }
 	| {
 			readonly verb: "agents";
 			readonly workspace?: string;
@@ -511,6 +517,12 @@ workspaces
                                    with no Issue yet) in <repo>_<branch>.
                                    Without it, <path> itself: nothing here
                                    reads a setting
+  workspace manage <w>             put a workspace under the orchestrator's
+  workspace unmanage <w>           management (the Sidebar draws it under the
+                                   Orchestrator row), or take it and its
+                                   agents out. A folder the orchestrator opens
+                                   for its work, and one an agent is put under
+                                   management in, is managed already
   workspace close <w> [--worktree keep|remove] [--agents stop]
                       [--terminals close] [--discard-unsaved]
                                    Close Workspace, as the window does. Each
@@ -1144,8 +1156,18 @@ function parseVerb(args: readonly string[]): TellCommand {
 				return { verb: "workspace-status", workspace: workspace! };
 			}
 			if (sub === "close") return parseWorkspaceClose(rest);
+			if (sub === "manage" || sub === "unmanage") {
+				const [workspace] = positionals(readFlags(rest, NO_FLAGS), ["<w>"]);
+				return {
+					verb: "workspace-manage",
+					workspace: workspace!,
+					managed: sub === "manage",
+				};
+			}
 			if (sub !== "open")
-				throw new Refusal("workspace takes: open, close, status.");
+				throw new Refusal(
+					"workspace takes: open, close, status, manage, unmanage.",
+				);
 			const flags = readFlags(rest, { values: ["--worktree"], switches: [] });
 			const [path] = positionals(flags, ["<path>"]);
 			const worktree = one(flags, "--worktree");

@@ -3,7 +3,7 @@
 /**
  * The orchestrator's work under the Orchestrator row, by lane
  * (`orchestratorLanes.ts`, `docs/orchestrator.md`, "The orchestrator's work
- * in the Sidebar"): which items are there (by provenance), in which lane,
+ * in the Sidebar"): which items are there (by the managed flag), in which lane,
  * folded how, walked by which keys, and what holds still.
  */
 
@@ -87,25 +87,20 @@ function agent(
   };
 }
 
-function workspace(
-  id: string,
-  agents: readonly unknown[],
-  openedBy?: "orchestrator",
-) {
+function workspace(id: string, agents: readonly unknown[], managed = false) {
   return scratchWorkspace({
     id,
     label: id,
     root: `/src/${id}`,
     key: `/src/${id}`,
     agents: agents as never,
-    ...(openedBy === undefined ? {} : { openedBy }),
+    ...(managed ? { managed: true } : {}),
   });
 }
 
 /**
- * The mock's fixture: a helper and five Workspaces the orchestrator opened,
- * across the lanes, and two the person opened — one of them holding a
- * managed agent.
+ * The mock's fixture: a helper and five Workspaces the orchestrator manages,
+ * across the lanes, two it does not, and a managed agent in Scratch.
  */
 function snapshot(
   options: {
@@ -116,19 +111,19 @@ function snapshot(
   const managed = options.empty
     ? []
     : [
-        workspace("rounding", [agent("r1", "rounding")], "orchestrator"),
+        workspace("rounding", [agent("r1", "rounding")], true),
         workspace(
           "investigate",
           [agent("i1", "investigate", "working", { managed: true })],
-          "orchestrator",
+          true,
         ),
-        workspace("invoice", [agent("v1", "invoice")], "orchestrator"),
+        workspace("invoice", [agent("v1", "invoice")], true),
         workspace(
           "review",
           [agent("p1", "review", "working", { managed: true })],
-          "orchestrator",
+          true,
         ),
-        workspace("finished", [], "orchestrator"),
+        workspace("finished", [], true),
       ];
   return {
     schemaVersion: 1,
@@ -144,15 +139,17 @@ function snapshot(
     orchestratorAgentId: "orch",
     orchestratorWorkspaceId: ROOT_ID,
     workspaces: [
-      scratchWorkspace({}),
+      scratchWorkspace({
+        agents: [
+          agent("s1", SCRATCH_ID, "working", { managed: true }),
+        ] as never,
+      }),
       workspace(ROOT_ID, [
         agent("orch", ROOT_ID, "working"),
         ...(options.empty ? [] : [agent("research", ROOT_ID)]),
       ]),
       ...managed,
-      workspace("dotfiles", [
-        agent("d1", "dotfiles", "working", { managed: true }),
-      ]),
+      workspace("dotfiles", [agent("d1", "dotfiles", "working")]),
       workspace("notes", []),
     ],
   } as unknown as AppSnapshot;
@@ -297,7 +294,7 @@ describe("which lane an item is in", () => {
     expect(laneOf([], "gone", value)).toBe("closed");
   });
 
-  it("takes the helpers and the Workspaces the orchestrator opened, never the person's", () => {
+  it("takes the helpers and the managed Workspaces, never the others", () => {
     const items = orchestratorItems(snapshot(), board());
     expect(items.map((item) => [item.key, item.lane])).toEqual([
       ["agent:research", "action"],
@@ -331,9 +328,9 @@ describe("the Orchestrator row's group", () => {
       "dotfiles",
       "notes",
     ]);
-    // A managed agent in a Workspace the person opened keeps its wash there;
+    // A managed agent in Scratch, a row of its own, keeps its wash there;
     // under the Orchestrator row the place says it.
-    expect(button("agent:d1")!.closest(".agent-row")).toHaveClass("is-managed");
+    expect(button("agent:s1")!.closest(".agent-row")).toHaveClass("is-managed");
     expect(button("agent:i1")!.closest(".agent-row")).not.toHaveClass(
       "is-managed",
     );
@@ -352,7 +349,7 @@ describe("the Orchestrator row's group", () => {
     expect(button("workspace:investigate")).toBeNull();
   });
 
-  it("keeps a Workspace the orchestrator opened under it when the person starts an Agent there", () => {
+  it("keeps a managed Workspace under it when the person starts an Agent there", () => {
     const value = snapshot();
     const mixed = {
       ...value,
@@ -592,11 +589,7 @@ describe("a lane change under the pointer", () => {
         ...value,
         workspaces: [
           ...value.workspaces.filter((one) => one.id !== "rounding"),
-          workspace(
-            "arrived",
-            [agent("n1", "arrived", "working")],
-            "orchestrator",
-          ),
+          workspace("arrived", [agent("n1", "arrived", "working")], true),
         ],
       } as unknown as AppSnapshot,
       board(),

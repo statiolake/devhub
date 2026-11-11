@@ -55,7 +55,7 @@ describe("devhub --tell's arguments", () => {
 			told("workspace", "open", ".", "--worktree", "12-fix-login"),
 		).toEqual({ verb: "workspace-open", path: ".", worktree: "12-fix-login" });
 		expect(refusal("workspace", "remove", ".")).toBe(
-			"workspace takes: open, close, status.",
+			"workspace takes: open, close, status, manage, unmanage.",
 		);
 		expect(refusal("workspace", "open")).toContain("<path>");
 	});
@@ -90,6 +90,17 @@ describe("devhub --tell's arguments", () => {
 			workspace: "w1",
 		});
 		expect(refusal("workspace", "status")).toBe("missing <w>.");
+		expect(told("workspace", "manage", "w1")).toEqual({
+			verb: "workspace-manage",
+			workspace: "w1",
+			managed: true,
+		});
+		expect(told("workspace", "unmanage", "w1")).toEqual({
+			verb: "workspace-manage",
+			workspace: "w1",
+			managed: false,
+		});
+		expect(refusal("workspace", "manage")).toBe("missing <w>.");
 	});
 
 	it("reads agent new without a workspace, for the asking pane's", () => {

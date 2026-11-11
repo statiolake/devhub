@@ -741,6 +741,15 @@ export type AppIntentWire =
 			readonly value?: string;
 			readonly type: "set_agent_meta";
 	  }
+	/**
+	 * Under the orchestrator's management, or not (`WorkspaceWire.managed`):
+	 * the Sidebar's Manage with Orchestrator and Stop Managing.
+	 */
+	| {
+			readonly workspaceId: string;
+			readonly managed: boolean;
+			readonly type: "set_workspace_managed";
+	  }
 	| {
 			readonly agentId: string;
 			readonly actionId: string;
@@ -1186,11 +1195,11 @@ export interface WorkspaceWire {
 	 */
 	readonly lastAgentId?: string;
 	/**
-	 * `"orchestrator"`: the orchestrator's side opened it (`Workspace.openedBy`),
-	 * so the Sidebar draws it under the Orchestrator row, in its lane, and it
-	 * takes no digit. Absent for a folder the person opened.
+	 * Under the orchestrator's management (`Workspace.managed`, the same flag
+	 * as `AgentWire.managed`), so the Sidebar draws it under the Orchestrator
+	 * row, in its lane, and it takes no digit. Absent is not.
 	 */
-	readonly openedBy?: "orchestrator";
+	readonly managed?: true;
 	/**
 	 * What the Workspace's own terminals are doing, in an Agent's terms:
 	 * `working` while a command runs in any of its tmux panes, and `unread`
@@ -1277,7 +1286,7 @@ export function workspaceById(
  * Workspaces is a broken snapshot, and it throws.
  */
 export function sidebarWorkspaces<
-	W extends { readonly id: string; readonly openedBy?: string | undefined },
+	W extends { readonly id: string; readonly managed?: boolean | undefined },
 >(snapshot: {
 	readonly workspaces: readonly W[];
 	readonly scratchWorkspaceId: string;
@@ -1287,7 +1296,7 @@ export function sidebarWorkspaces<
 	/** The Orchestrator row's Workspace, drawn as that row, above Scratch. */
 	readonly orchestrator: W | undefined;
 	/**
-	 * The Workspaces the orchestrator's side opened (`openedBy`), in the
+	 * The Workspaces the orchestrator manages (`managed`), in the
 	 * order they arrive in: drawn under the Orchestrator row, in their lanes
 	 * (`orchestratorLanes.ts`), never among `rows`.
 	 */
@@ -1317,8 +1326,8 @@ export function sidebarWorkspaces<
 	return {
 		scratch,
 		orchestrator,
-		managed: rest.filter((workspace) => workspace.openedBy === "orchestrator"),
-		rows: rest.filter((workspace) => workspace.openedBy !== "orchestrator"),
+		managed: rest.filter((workspace) => workspace.managed === true),
+		rows: rest.filter((workspace) => workspace.managed !== true),
 	};
 }
 

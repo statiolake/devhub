@@ -788,6 +788,39 @@ describe("the commands that act on what is selected", () => {
 	});
 });
 
+describe("Manage with Orchestrator, by the keyboard and the palette", () => {
+	it("sets the managed flag on the selected workspace, clears it on a managed one, and does nothing on Scratch or the Orchestrator's own", () => {
+		const onTwo = snapshotOf({
+			workspaces: [one, two],
+			context: { kind: "agent", agentId: "b1" },
+		});
+		expect(run("toggle_workspace_managed", onTwo)).toEqual({
+			kind: "set-workspace-managed",
+			workspaceId: "two",
+			managed: true,
+		});
+		const managed = snapshotOf({
+			workspaces: [one, { ...two, managed: true }],
+			context: { kind: "workspace", workspaceId: "two" },
+		});
+		expect(run("toggle_workspace_managed", managed)).toEqual({
+			kind: "set-workspace-managed",
+			workspaceId: "two",
+			managed: false,
+		});
+		expect(run("toggle_workspace_managed", snapshotOf())).toBeUndefined();
+		expect(
+			run("toggle_workspace_managed", {
+				...snapshotOf({
+					workspaces: [one],
+					context: { kind: "workspace", workspaceId: "one" },
+				}),
+				orchestratorWorkspaceId: "one",
+			}),
+		).toBeUndefined();
+	});
+});
+
 describe("the commands that need nothing at all", () => {
 	it("opens the pickers, the settings and the help", () => {
 		const nothing = snapshotOf();
@@ -898,7 +931,9 @@ describe("the default table", () => {
 		expect(press("u", "KeyU")).toBe("mark_agent_unread");
 		expect(press("d", "KeyD")).toBe("dismiss_alert");
 		expect(press("m", "KeyM")).toBe("show_notifications");
-		expect(press("M", "KeyM", { shift: true })).toBeUndefined();
+		expect(press("M", "KeyM", { shift: true })).toBe(
+			"toggle_workspace_managed",
+		);
 	});
 
 	it("keeps the case rule: lower acts inside, upper reaches further", () => {

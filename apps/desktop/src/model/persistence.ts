@@ -564,12 +564,12 @@ export interface WorkspaceStateRecord {
    */
   last_agent_id?: string;
   /**
-   * Who opened it, when not the person: `"orchestrator"` for a folder the
-   * orchestrator's side opened (`Workspace.openedBy`); absent for every
-   * other. An older DevHub ignores the key, and its file has none: every
-   * Workspace it wrote is the person's, which is what it was.
+   * Under the orchestrator's management (`Workspace.managed`); absent is
+   * not. An older DevHub ignores the key. A file without it still has its
+   * managed Agents, and a Workspace holding one is managed when it is read
+   * (`hydrateModel`), so nothing needs migrating.
    */
-  opened_by?: "orchestrator";
+  managed?: boolean;
   lifecycle: WorkspaceLifecycleRecord;
   agents: AgentStateRecord[];
   /**
@@ -1404,7 +1404,7 @@ export function hydrateModel(
           AVAILABLE,
         ),
     );
-    workspace.setOpenedBy(record.opened_by);
+    workspace.setManaged(record.managed === true);
     return { record, where, workspace };
   });
   const scratch =
@@ -1452,6 +1452,17 @@ export function hydrateModel(
           controlState: controlStateFrom(agentRecord.control_state),
         });
       });
+    }
+
+    // Managed is one flag: a Workspace holding a managed Agent is managed
+    // (`AppModel.setAgentManaged`), whatever a file written before
+    // Workspaces had the flag says. Scratch never is.
+    if (
+      workspace === scratch
+        ? workspace.managed
+        : record.agents.some((agent) => agent.managed === true)
+    ) {
+      workspace.setManaged(workspace !== scratch);
     }
 
     if (record.last_agent_id !== undefined) {
@@ -1602,9 +1613,7 @@ export function stateFromSnapshot(
       location: locationRecord(workspace.location),
       repository_id: workspace.repositoryId,
       last_agent_id: workspace.lastAgentId,
-      ...(workspace.openedBy === undefined
-        ? {}
-        : { opened_by: workspace.openedBy }),
+      ...(workspace.managed ? { managed: true } : {}),
       lifecycle: lifecycleFrom(workspace.state),
       agents: workspace.agents.map((agent) => ({
         agent_id: agent.id,
@@ -2193,13 +2202,9 @@ function decodeWorkspaceRecord(
     last_agent_id: decodeOptional(object["last_agent_id"], (entry) =>
       decodeString(at("last_agent_id"), entry),
     ),
-    ...(object["opened_by"] === undefined
+    ...(object["managed"] === undefined
       ? {}
-      : {
-          opened_by: decodeMember(at("opened_by"), object["opened_by"], [
-            "orchestrator",
-          ] as const),
-        }),
+      : { managed: decodeBoolean(at("managed"), object["managed"]) }),
     lifecycle: decodeLifecycle(at("lifecycle"), object["lifecycle"]),
     agents: decodeArray(at("agents"), object["agents"]).map((entry, index) =>
       decodeAgentRecord(`${at("agents")}[${index}]`, entry),

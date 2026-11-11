@@ -190,6 +190,12 @@ export type ChordEffect =
 	| { readonly kind: "restart-agent"; readonly agentId: string }
 	/** Close it, and delete the worktree if that is what it is. */
 	| { readonly kind: "close-workspace"; readonly workspaceId: string }
+	/** Put it under the orchestrator's management, or take it out. */
+	| {
+			readonly kind: "set-workspace-managed";
+			readonly workspaceId: string;
+			readonly managed: boolean;
+	  }
 	/**
 	 * Stop this Workspace's VS Code (`Cmd+Q Shift+E`): closed as a long frozen
 	 * one is discarded, back to the placeholder Enter starts it from.
@@ -460,6 +466,21 @@ export function resolveChord(
 
 		case "close_workspace":
 			return closeWorkspace(snapshot, workspace);
+
+		case "toggle_workspace_managed":
+			// The rule the row menu reads (`workspaceMenuItems`): Scratch and
+			// the Orchestrator row's own are rows of their own.
+			if (
+				!workspace ||
+				workspace.id === snapshot.scratchWorkspaceId ||
+				workspace.id === snapshot.orchestratorWorkspaceId
+			)
+				return undefined;
+			return {
+				kind: "set-workspace-managed",
+				workspaceId: workspace.id,
+				managed: workspace.managed !== true,
+			};
 
 		case "reopen_closed":
 		case "open_recently_closed":

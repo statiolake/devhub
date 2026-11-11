@@ -64,6 +64,7 @@
  * | `Cmd+Q X`                   | `close_selection`         |
  * | `Cmd+Q Shift+R`             | `restart_agent`           |
  * | `Cmd+Q Shift+W`             | `close_workspace`         |
+ * | `Cmd+Q Shift+M`             | `toggle_workspace_managed` |
  * | `Cmd+Q Shift+T`             | `reopen_closed`           |
  * | (palette only)              | `open_recently_closed`    |
  * | `Cmd+Q R`                   | `refresh_repositories`    |
@@ -419,6 +420,7 @@ export type CommandId =
   | "close_selection"
   | "restart_agent"
   | "close_workspace"
+  | "toggle_workspace_managed"
   | "reopen_closed"
   | "open_recently_closed"
   | "open_issue_picker"
@@ -748,6 +750,16 @@ export const COMMANDS: readonly CommandDefinition[] = [
     needs: "workspace",
     category: "Workspace",
     defaultKeys: ["W"],
+  },
+  {
+    // The row menu's Manage with Orchestrator / Stop Managing: the managed
+    // flag (`Workspace.managed`), set or cleared. Never Scratch or the
+    // Orchestrator row's own Workspace.
+    id: "toggle_workspace_managed",
+    label: "Manage this workspace with the Orchestrator, or stop managing it",
+    needs: "workspace",
+    category: "Workspace",
+    defaultKeys: ["M"],
   },
   {
     // The browser's Cmd+Shift+T: the newest entry of what was closed, and the

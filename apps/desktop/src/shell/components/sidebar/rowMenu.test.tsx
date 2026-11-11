@@ -255,19 +255,49 @@ describe("what a right-click on an Agent offers", () => {
 describe("what a right-click on a Workspace offers", () => {
   const actions = (over: Record<string, unknown> = {}) => ({
     close: vi.fn(),
+    dispatch: vi.fn(),
     deletesWorktree: false,
     fixed: false,
     ...over,
   });
 
-  it("offers only the close on an ordinary Workspace, and says Worktree where closing deletes the folder", () => {
+  it("offers Manage with Orchestrator and the close on an ordinary Workspace, and says Worktree where closing deletes the folder", () => {
     const local = workspace();
     expect(labels(workspaceMenuItems(local, actions()))).toEqual([
+      "Manage with Orchestrator",
       "Close Workspace…",
     ]);
     expect(
       labels(workspaceMenuItems(local, actions({ deletesWorktree: true }))),
-    ).toEqual(["Close Worktree…"]);
+    ).toEqual(["Manage with Orchestrator", "Close Worktree…"]);
+  });
+
+  it("sets the managed flag from the menu, and clears it on a managed Workspace", () => {
+    const given = actions();
+    const local = workspace();
+    workspaceMenuItems(local, given)
+      .find((item) => item.id === "manage")
+      ?.run();
+    const managed = { ...local, managed: true as const };
+    const items = workspaceMenuItems(managed, given);
+    expect(labels(items)[0]).toBe("Stop Managing");
+    items.find((item) => item.id === "manage")?.run();
+    expect(given.dispatch.mock.calls).toEqual([
+      [
+        {
+          type: "set_workspace_managed",
+          workspaceId: local.id,
+          managed: true,
+        },
+      ],
+      [
+        {
+          type: "set_workspace_managed",
+          workspaceId: local.id,
+          managed: false,
+        },
+      ],
+    ]);
   });
 
   it("offers Scratch no close", () => {

@@ -1312,3 +1312,45 @@ describe("Back and Forward", () => {
     expect(history(model)).toEqual({ canGoBack: false, canGoForward: false });
   });
 });
+
+describe("managed: one flag, for Agents and Workspaces", () => {
+  it("puts an Agent's Workspace under management with it, and keeps it there when the Agent leaves", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex, "tui");
+    expect(model.workspace(WS_A)?.managed).toBe(false);
+    model.setAgentManaged(AG_A, true);
+    expect(model.workspace(WS_A)?.managed).toBe(true);
+    // Taking the Agent out, or its going, leaves the Workspace as it is.
+    model.setAgentManaged(AG_A, false);
+    expect(model.workspace(WS_A)?.managed).toBe(true);
+  });
+
+  it("never marks Scratch for a managed Agent in it", () => {
+    const model = modelWith();
+    model.addAgent(model.scratchWorkspaceId, AG_A, codex, "tui");
+    model.setAgentManaged(AG_A, true);
+    expect(model.workspace(model.scratchWorkspaceId)?.managed).toBe(false);
+    expect(model.snapshot().workspaces[0]?.agents[0]?.managed).toBe(true);
+  });
+
+  it("takes a Workspace's Agents out with it, and leaves them as they are when it is put under management", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex, "tui");
+    model.addAgent(WS_A, AG_B, codex, "tui");
+    const revision = model.snapshot().revision;
+    model.setWorkspaceManaged(WS_A, true);
+    expect(model.snapshot().revision).toBeGreaterThan(revision);
+    expect(model.workspace(WS_A)?.agents.map((agent) => agent.managed)).toEqual(
+      [false, false],
+    );
+    model.setAgentManaged(AG_B, true);
+    model.setWorkspaceManaged(WS_A, false);
+    expect(model.workspace(WS_A)?.managed).toBe(false);
+    expect(model.workspace(WS_A)?.agents.map((agent) => agent.managed)).toEqual(
+      [false, false],
+    );
+    const after = model.snapshot().revision;
+    model.setWorkspaceManaged(WS_A, false);
+    expect(model.snapshot().revision).toBe(after);
+  });
+});
