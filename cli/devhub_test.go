@@ -273,3 +273,63 @@ func TestDevNullIsNotATerminal(t *testing.T) {
 		t.Error("/dev/null was taken for a terminal")
 	}
 }
+
+// `--attach`: the app names the files, the command reads them where it runs
+// (on the host, for a command run on one) and asks again with their bytes.
+func TestTellSendsTheFilesItIsAskedFor(t *testing.T) {
+	socket := shortSocket(t)
+	shot := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(shot, []byte("\x89PNG\r\n\x1a\nbytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requests := fakeDevhub(t, socket, func(request map[string]any) map[string]any {
+		if _, piped := request["stdin"]; !piped {
+			return map[string]any{"ok": false, "stdin": true, "message": "send stdin"}
+		}
+		if _, sent := request["files"]; !sent {
+			return map[string]any{"ok": false, "files": []string{shot}, "message": "send the files"}
+		}
+		return map[string]any{"ok": true, "message": "Raised #1."}
+	})
+	env := localEnv(socket)
+	env["DEVHUB_MACHINE"] = "ssh:box"
+	words := []string{"--tell", "escalation", "new", "--title", "t", "--body", "-", "--attach", shot}
+	code, stdout, stderr := run(t, words, env, "body\n", false)
+	if code != 0 || stdout != "Raised #1.\n" {
+		t.Fatalf("code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+	sent := requests()
+	if len(sent) != 3 {
+		t.Fatalf("sent %d requests: %v", len(sent), sent)
+	}
+	files, _ := sent[2]["files"].(map[string]any)
+	if sent[2]["stdin"] != "body\n" || files[shot] != "iVBORw0KGgpieXRlcw==" {
+		t.Errorf("last request %v", sent[2])
+	}
+}
+
+func TestTellRefusesFilesItCannotSend(t *testing.T) {
+	socket := shortSocket(t)
+	directory := t.TempDir()
+	big := filepath.Join(directory, "big.png")
+	if err := os.WriteFile(big, make([]byte, MaxAttachment+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ path, says string }{
+		{filepath.Join(directory, "gone.png"), "is not there"},
+		{directory, "is not a file"},
+		{big, "a file is at most 10 MB"},
+	} {
+		requests := fakeDevhub(t, socket, func(map[string]any) map[string]any {
+			return map[string]any{"ok": false, "files": []string{c.path}, "message": "send the files"}
+		})
+		code, _, stderr := run(t, []string{"--tell", "attachment", "add", c.path}, localEnv(socket), "", true)
+		if code != 1 || !strings.Contains(stderr, "devhub: --attach: ") || !strings.Contains(stderr, c.says) {
+			t.Errorf("%s: code %d stderr %q", c.path, code, stderr)
+		}
+		if sent := requests(); len(sent) != 1 {
+			t.Errorf("%s: sent %v", c.path, sent)
+		}
+		os.Remove(socket)
+	}
+}

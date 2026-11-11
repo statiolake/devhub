@@ -160,19 +160,34 @@ func send(command Command, socketPath string, launcher Launcher, caller Caller, 
 	if err != nil {
 		return 1, err
 	}
-	// The app read the words and a `-` in them is text: what is piped in is
-	// read now, and only now, and the request goes again with it.
-	if command.Kind == KindTell && !response.OK && response.Stdin {
-		if io_.StdinTerminal {
-			fmt.Fprintln(io_.Stderr, "devhub: '-' reads the text from what is piped in, and nothing is.")
-			return 2, nil
+	// The app read the words. A `-` in them is text, or they name files
+	// (`--attach`): what is piped in, and those files, are read now, here —
+	// on the host, for a command run on one — and only now, and the request
+	// goes again with them. Each is asked for at most once.
+	for asked := 0; command.Kind == KindTell && !response.OK && asked < 2; asked++ {
+		switch {
+		case response.Stdin && request.Stdin == nil:
+			if io_.StdinTerminal {
+				fmt.Fprintln(io_.Stderr, "devhub: '-' reads the text from what is piped in, and nothing is.")
+				return 2, nil
+			}
+			text, err := io.ReadAll(io_.Stdin)
+			if err != nil {
+				return 1, err
+			}
+			piped := string(text)
+			request.Stdin = &piped
+		case len(response.Files) > 0 && request.Files == nil:
+			files, err := ReadAttachments(response.Files)
+			if err != nil {
+				fmt.Fprintf(io_.Stderr, "devhub: --attach: %s\n", err)
+				return 1, nil
+			}
+			request.Files = files
+		default:
+			asked = 2
+			continue
 		}
-		text, err := io.ReadAll(io_.Stdin)
-		if err != nil {
-			return 1, err
-		}
-		piped := string(text)
-		request.Stdin = &piped
 		if response, err = Ask(socketPath, request); err != nil {
 			return 1, err
 		}

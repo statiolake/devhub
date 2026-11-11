@@ -51,8 +51,10 @@ import { EventsSwitch } from "./OrchestratorDelivery";
 import { GitHubPill } from "./OrchestratorGitHub";
 import { dueText, EscalationNote, inProgressBefore } from "./EscalationNote";
 import { dueWords } from "../../model/escalations";
+import { decisionOf } from "../../model/escalationBrief";
 import { useEscalationRequests } from "./escalationRequests";
 import { DevhubLink } from "../conversation/DevhubLink";
+import { base64Of } from "../conversation/FileEmbed";
 import { isDevhubLink } from "../../model/devhubLink";
 import {
   memory,
@@ -734,14 +736,16 @@ function EscalationCard({
   const followUp =
     escalation.state === "needs_answer" &&
     escalation.entries.some((entry) => entry.role === "human");
+  const picture = firstPicture(escalation);
   return (
     <li>
       <button
         type="button"
-        className="orchestrator-card"
+        className={`orchestrator-card${picture === undefined ? "" : " has-picture"}`}
         data-escalation-id={escalation.id}
         onClick={onOpen}
       >
+        {picture === undefined ? null : <CardPicture path={picture} />}
         <span className="orchestrator-card-head">
           <span className="orchestrator-card-id">#{escalation.id}</span>
           <span className="orchestrator-card-title">{escalation.title}</span>
@@ -764,7 +768,7 @@ function EscalationCard({
           last?.role === "human" &&
           last.kind === undefined
             ? `↳ ${preview(last.markdown)}`
-            : preview(question?.markdown ?? "")}
+            : decisionText(question?.markdown ?? "")}
         </span>
         <span className="orchestrator-card-meta">
           {open && escalation.priority === "high" ? (
@@ -979,7 +983,16 @@ function EscalationView({
                     void devhub().openExternalUrl(link);
                   }}
                 >
-                  {linkLabel(link)}
+                  {escalation.linkLabels?.[link] === undefined ? (
+                    linkLabel(link)
+                  ) : (
+                    <>
+                      {escalation.linkLabels[link]}
+                      <span className="orchestrator-chip-sub">
+                        {linkLabel(link)}
+                      </span>
+                    </>
+                  )}
                 </button>
               ),
             )}
@@ -1095,6 +1108,64 @@ function WorkspaceButton({
       <FolderGlyph />
       {jump.label}
     </button>
+  );
+}
+
+/**
+ * What the card says of the question: the decision it asks for
+ * (`## 決めてほしいこと`, `model/escalationBrief.ts`), else its first line.
+ */
+function decisionText(markdown: string): string {
+  return decisionOf(markdown) ?? preview(markdown);
+}
+
+/**
+ * The first picture kept with the escalation — an `--attach`, or an image
+ * its body named, both copied into its own folder when it was raised — in
+ * its latest question first: the card's thumbnail.
+ */
+export function firstPicture(escalation: EscalationWire): string | undefined {
+  const questions = escalation.entries
+    .filter(
+      (entry) => entry.role === "orchestrator" && entry.kind === undefined,
+    )
+    .reverse();
+  for (const entry of questions) {
+    for (const match of entry.markdown.matchAll(
+      /!\[[^\]\n]*\]\(\s*<([^>\n]+)>/gu,
+    )) {
+      const path = match[1]!;
+      if (/\/devhub\/escalations\/\d+\/[^/]+$/u.test(path)) return path;
+    }
+  }
+  return undefined;
+}
+
+/** A picture's bytes, read on this Mac, as a URL an <img> takes. */
+function CardPicture({ path }: { readonly path: string }) {
+  const [url, setUrl] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    let gone = false;
+    void devhub()
+      .readEscalationEmbed(path)
+      .then((file) => {
+        if (gone || file === null) return;
+        const type = file.mediaType.startsWith("image/")
+          ? file.mediaType
+          : path.toLowerCase().endsWith(".svg")
+            ? "image/svg+xml"
+            : "image/png";
+        setUrl(`data:${type};base64,${base64Of(file.bytes)}`);
+      })
+      .catch(() => undefined);
+    return () => {
+      gone = true;
+    };
+  }, [path]);
+  return (
+    <span className="orchestrator-card-picture" aria-hidden="true">
+      {url === undefined ? null : <img src={url} alt="" />}
+    </span>
   );
 }
 

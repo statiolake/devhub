@@ -172,7 +172,9 @@ export function importEscalationFiles(
 			);
 		const real = realOrUndefined(absolute);
 		if (real === undefined)
-			throw new EscalationFileError(`${path} is not there (${absolute}).`);
+			throw new EscalationFileError(
+				`${path} is not there (${absolute}) on this Mac. A file on an SSH host or in a container goes with --attach ${path} instead: the devhub command reads it where it runs.`,
+			);
 		// Already one of an escalation's own: nothing to take.
 		if (inside(real, storeRoot)) continue;
 		if (!roots.some((root) => inside(real, root)))

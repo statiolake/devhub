@@ -72,7 +72,7 @@ type State =
       readonly file: EmbedFileWire;
     };
 
-function base64Of(bytes: Uint8Array): string {
+export function base64Of(bytes: Uint8Array): string {
   let text = "";
   for (let at = 0; at < bytes.length; at += 0x8000) {
     text += String.fromCharCode(...bytes.subarray(at, at + 0x8000));

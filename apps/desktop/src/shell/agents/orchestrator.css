@@ -765,6 +765,31 @@
   background: var(--wash);
 }
 
+/* The first picture kept with it, at the card's right: what to look at. */
+.orchestrator-card.has-picture {
+  padding-right: calc(var(--space-2) + 64px);
+}
+
+.orchestrator-card-picture {
+  position: absolute;
+  top: 7px;
+  right: var(--space-2);
+  overflow: hidden;
+  width: 56px;
+  height: 38px;
+  border-radius: 4px;
+  background: var(--wash);
+  box-shadow: inset 0 0 0 0.5px var(--line-strong);
+}
+
+.orchestrator-card-picture img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top left;
+}
+
 .orchestrator-card:focus-visible {
   box-shadow: var(--focus-ring);
   outline: none;

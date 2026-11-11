@@ -173,6 +173,11 @@ export interface Escalation {
   readonly workspaceId?: string;
   /** Issues, pull requests, documents: `https://` URLs. */
   readonly links: readonly string[];
+  /**
+   * What a link is, in a line (`--link URL=LABEL`), by the link as stored:
+   * drawn on its chip. A link without one shows its short form.
+   */
+  readonly linkLabels?: Readonly<Record<string, string>>;
   readonly createdAt: number;
   readonly updatedAt: number;
   /** Closed: when, and the orchestrator's last word on it. */
@@ -193,6 +198,7 @@ export const LINKS_MAX = 16;
 export const AGENTS_MAX = 32;
 export const ENTRIES_MAX = 200;
 export const RANK_NOTE_LIMIT = 160;
+export const LINK_LABEL_LIMIT = 120;
 
 export class EscalationError extends Error {
   override readonly name = "EscalationError";
@@ -385,6 +391,37 @@ export function checkLink(link: string): string {
   return url.toString();
 }
 
+export function checkLinkLabel(label: string): string {
+  const trimmed = label.trim();
+  if (trimmed === "") refuse("a link's label is empty.");
+  if ([...trimmed].length > LINK_LABEL_LIMIT)
+    refuse(`a link's label is at most ${String(LINK_LABEL_LIMIT)} characters.`);
+  // eslint-disable-next-line no-control-regex -- control characters are the point
+  if (/[\u0000-\u001f\u007f]/u.test(trimmed))
+    refuse("a link's label is one line of text.");
+  return trimmed;
+}
+
+/**
+ * `labels` over `before`, keyed by the stored spelling of each link; only
+ * labels of links the escalation has are kept.
+ */
+function withLabels(
+  escalation: Escalation,
+  labels: Readonly<Record<string, string>> | undefined,
+): Escalation {
+  if (labels === undefined || Object.keys(labels).length === 0)
+    return escalation;
+  const next: Record<string, string> = { ...escalation.linkLabels };
+  for (const [link, label] of Object.entries(labels)) {
+    const stored = checkLink(link);
+    if (!escalation.links.includes(stored))
+      refuse(`${JSON.stringify(link)} is labelled and not one of its links.`);
+    next[stored] = checkLinkLabel(label);
+  }
+  return { ...escalation, linkLabels: next };
+}
+
 function union(
   before: readonly string[],
   added: readonly string[],
@@ -435,6 +472,8 @@ export interface NewEscalation {
   readonly agents?: readonly string[];
   readonly workspaceId?: string;
   readonly links?: readonly string[];
+  /** What each link is (`--link URL=LABEL`), by the link as given. */
+  readonly linkLabels?: Readonly<Record<string, string>>;
   readonly rank?: EscalationRank;
   /**
    * Born waiting (`escalation new --wait`): nothing is asked of the person
@@ -485,7 +524,7 @@ export function createEscalation(
     LINKS_MAX,
     "links",
   );
-  return withRank(
+  const made = withRank(
     {
       id,
       title: checkTitle(request.title),
@@ -503,6 +542,7 @@ export function createEscalation(
     },
     request.rank ?? {},
   );
+  return withLabels(made, request.linkLabels);
 }
 
 /**
@@ -533,16 +573,20 @@ export function askAgain(
   now: number,
   /** More links it is about (`escalation ask --link`), kept once each. */
   links: readonly string[] = [],
+  linkLabels?: Readonly<Record<string, string>>,
 ): Escalation {
   const asked = appended(
     escalation,
     entry("orchestrator", markdown, now, options),
   );
-  if (links.length === 0) return asked;
-  return {
-    ...asked,
-    links: union(escalation.links, links.map(checkLink), LINKS_MAX, "links"),
-  };
+  if (links.length === 0) return withLabels(asked, linkLabels);
+  return withLabels(
+    {
+      ...asked,
+      links: union(escalation.links, links.map(checkLink), LINKS_MAX, "links"),
+    },
+    linkLabels,
+  );
 }
 
 /**
@@ -682,15 +726,20 @@ export function closeEscalation(
  */
 export function linkEscalation(
   escalation: Escalation,
-  more: { readonly agentId?: string; readonly links?: readonly string[] },
+  more: {
+    readonly agentId?: string;
+    readonly links?: readonly string[];
+    readonly linkLabels?: Readonly<Record<string, string>>;
+  },
   now: number,
 ): Escalation {
   const links = (more.links ?? []).map(checkLink);
   const newAgent =
     more.agentId !== undefined && !escalation.agents.includes(more.agentId);
   const newLinks = links.filter((one) => !escalation.links.includes(one));
-  if (!newAgent && newLinks.length === 0) return escalation;
-  return {
+  const relabels = Object.keys(more.linkLabels ?? {}).length > 0;
+  if (!newAgent && newLinks.length === 0 && !relabels) return escalation;
+  const linked = {
     ...escalation,
     agents: newAgent
       ? union(escalation.agents, [more.agentId!], AGENTS_MAX, "agents")
@@ -698,6 +747,7 @@ export function linkEscalation(
     links: union(escalation.links, newLinks, LINKS_MAX, "links"),
     updatedAt: now,
   };
+  return withLabels(linked, more.linkLabels);
 }
 
 // --- the board ----------------------------------------------------------------
@@ -898,6 +948,19 @@ function escalationFrom(value: unknown, at: number): Escalation {
       : checkPriority(value["priority"]);
   const effort =
     value["effort"] === undefined ? undefined : checkEffort(value["effort"]);
+  const labels = value["linkLabels"];
+  if (labels !== undefined && !isRecord(labels))
+    refuse(`${where}'s link labels are not a record.`);
+  const linkLabels =
+    labels === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(labels).map(([link, label]) => {
+            if (typeof label !== "string")
+              refuse(`${where}'s label of ${link} is not text.`);
+            return [checkLink(link), checkLinkLabel(label)];
+          }),
+        );
   return {
     id,
     title: checkTitle(value["title"]),
@@ -905,6 +968,9 @@ function escalationFrom(value: unknown, at: number): Escalation {
     agents: strings(value["agents"], `${where}'s agents`),
     ...(workspaceId === undefined ? {} : { workspaceId }),
     links: strings(value["links"], `${where}'s links`).map(checkLink),
+    ...(linkLabels === undefined || Object.keys(linkLabels).length === 0
+      ? {}
+      : { linkLabels }),
     createdAt: finiteTime(value["createdAt"], `${where}'s creation`),
     updatedAt: finiteTime(value["updatedAt"], `${where}'s update`),
     ...(closed === undefined

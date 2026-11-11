@@ -172,9 +172,10 @@ export class EscalationStore {
 		options: readonly string[] | undefined,
 		now: number,
 		links: readonly string[] = [],
+		linkLabels?: Readonly<Record<string, string>>,
 	): Escalation {
 		return this.#replace(
-			askAgain(this.require(id), markdown, options, now, links),
+			askAgain(this.require(id), markdown, options, now, links, linkLabels),
 		);
 	}
 
@@ -218,7 +219,11 @@ export class EscalationStore {
 
 	link(
 		id: number,
-		more: { readonly agentId?: string; readonly links?: readonly string[] },
+		more: {
+			readonly agentId?: string;
+			readonly links?: readonly string[];
+			readonly linkLabels?: Readonly<Record<string, string>>;
+		},
 		now: number,
 	): Escalation {
 		return this.#replace(linkEscalation(this.require(id), more, now));

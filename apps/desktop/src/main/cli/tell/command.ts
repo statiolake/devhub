@@ -58,6 +58,22 @@ export interface AgentMetaPair {
 	readonly value: string;
 }
 
+/**
+ * One `--attach PATH[=CAPTION]` or `--attach att-ID[=CAPTION]`: a picture
+ * on the machine the command runs on, made absolute where it was typed and
+ * read there (`path`, until the command sends it: `file`), or one a worker
+ * put in the shared store (`stored`, `attachment add`).
+ */
+export type TellAttachment =
+	| { readonly kind: "path"; readonly path: string; readonly caption?: string }
+	| {
+			readonly kind: "file";
+			readonly path: string;
+			readonly base64: string;
+			readonly caption?: string;
+	  }
+	| { readonly kind: "stored"; readonly id: string; readonly caption?: string };
+
 export type TellCommand =
 	| { readonly verb: "help" }
 	/**
@@ -316,6 +332,10 @@ export type TellCommand =
 			readonly body: string;
 			readonly agents: readonly string[];
 			readonly links: readonly string[];
+			/** `--link URL=LABEL`: what each link is, in a line, by its URL as given. */
+			readonly linkLabels?: Readonly<Record<string, string>>;
+			/** `--attach`: pictures drawn under the body (`## 添付`). */
+			readonly attachments?: readonly TellAttachment[];
 			readonly options: readonly string[];
 			readonly workspace?: string;
 			/** The orchestrator's ranking (`docs/orchestrator.md`). */
@@ -335,8 +355,18 @@ export type TellCommand =
 			readonly options: readonly string[];
 			/** More links it is about (`--link`); absent: none. */
 			readonly links?: readonly string[];
+			readonly linkLabels?: Readonly<Record<string, string>>;
+			readonly attachments?: readonly TellAttachment[];
 	  }
 	| { readonly verb: "escalation-show"; readonly id: number }
+	| {
+			/**
+			 * A worker hands pictures over: kept in the shared store, each
+			 * under an id it passes on (`--attach att-…`).
+			 */
+			readonly verb: "attachment-add";
+			readonly attachments: readonly TellAttachment[];
+	  }
 	| {
 			readonly verb: "escalation-list";
 			readonly state?: "needs_answer" | "in_progress" | "waiting" | "closed";
@@ -373,6 +403,7 @@ export type TellCommand =
 			readonly agent?: string;
 			/** More links it is about (`--link`, repeatable). */
 			readonly links?: readonly string[];
+			readonly linkLabels?: Readonly<Record<string, string>>;
 	  }
 	| {
 			/** Ranked again, as things change: only what is given moves. */
@@ -765,21 +796,37 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    Sidebar's tooltip has them, its 待機中
                                    escalation and agent keep's note
   escalation new --title <t> --body <text>|- [--agent <a>]...
-                 [--link <url>]... [--option <text>]... [--workspace <w>]
+                 [--link <url>[=<label>]]... [--attach <file>|<att-id>[=<caption>]]...
+                 [--option <text>]... [--workspace <w>]
                  [--priority high|normal|low] [--effort quick|normal|deep]
                  [--rank-note <text>] [--wait <trigger> [--at <datetime>]]
-                                   raise one for the person (Markdown: code,
-                                   math, mermaid, svg - as the chat renders);
-                                   needs_answer is sorted by priority, then
-                                   effort (quick first), then age. A --link
-                                   is an http(s) URL or a devhub: link
-                                   ('link' makes one); a devhub: link, there
-                                   or in the body, must name what is open.
-                                   With --wait it starts in waiting: nothing
-                                   is asked of the person yet
-  escalation ask <id> --body <text>|- [--option <text>]... [--link <url>]...
+                                   raise one for the person, who reads it
+                                   cold (Markdown: code, math, mermaid, svg -
+                                   as the chat renders). The body needs a
+                                   '## 決めてほしいこと' and a '## 人に聞く理由'
+                                   section, and no PR/Issue by number alone;
+                                   the title says the decision in words, no
+                                   numbers. needs_answer is sorted by
+                                   priority, then effort (quick first), then
+                                   age. A --link is an http(s) URL or a
+                                   devhub: link ('link' makes one), with what
+                                   it is after '=' (or a space, when the URL
+                                   has a '?'); a devhub: link must name what
+                                   is open. --attach: a PNG, JPEG, GIF, WebP
+                                   or SVG on the machine you run this on, or
+                                   an id from 'attachment add'; drawn under
+                                   the body. With --wait it starts in
+                                   waiting: nothing is asked of the person yet
+  escalation ask <id> --body <text>|- [--option <text>]...
+                 [--link <url>[=<label>]]... [--attach <file>|<att-id>[=<caption>]]...
                                    a follow-up question on the same ticket;
-                                   back to needs_answer
+                                   back to needs_answer (the body needs its
+                                   '## 決めてほしいこと')
+  attachment add <file>[=<caption>]...
+                                   hand pictures (screenshots) to the
+                                   orchestrator: kept 14 days, each under an
+                                   id (att-1a2b3c4d) to put in your report;
+                                   it attaches them with --attach <id>
   escalation show <id>             the thread, the person's answers included
                                    (this is what acknowledges an answer for
                                    'agent wait --any')
@@ -803,7 +850,7 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                  [--effort quick|normal|deep] [--rank-note <text>]
                                    rank it again as things change (a
                                    --rank-note of "" takes the note away)
-  escalation link <id> [--agent <a>] [--link <url>]...
+  escalation link <id> [--agent <a>] [--link <url>[=<label>]]...
                                    more it is about, after it was raised:
                                    another agent, and links (https: or
                                    devhub:, as escalation new --link)
@@ -1245,6 +1292,21 @@ function parseVerb(args: readonly string[]): TellCommand {
 		}
 		case "escalation":
 			return parseEscalation(sub, rest);
+		case "attachment": {
+			if (sub !== "add")
+				throw new Refusal("attachment takes: add <file>[=<caption>]...");
+			const files = readFlags(rest, NO_FLAGS).positional;
+			if (files.length === 0)
+				throw new Refusal(
+					"missing <file>: attachment add shot.png[=caption]...",
+				);
+			const attachments = files.map(attachmentOf);
+			if (attachments.some((one) => one.kind === "stored"))
+				throw new Refusal(
+					"attachment add takes files; an att- id is already in the store: pass it on as it is.",
+				);
+			return { verb: "attachment-add", attachments };
+		}
 		case "orchestrator":
 			return parseOrchestrator(sub, rest);
 		case "notify": {
@@ -1345,6 +1407,72 @@ function escalationId(text: string | undefined): number {
 	return id;
 }
 
+/**
+ * `--link URL`, `--link URL=LABEL` and `--link 'URL LABEL'`: a URL has no
+ * space in it, so a space always starts the label; an `=` does when no `?`
+ * comes before it (a query's `=` is the URL's own: label such a URL with a
+ * space).
+ */
+export function splitLink(value: string): {
+	readonly url: string;
+	readonly label?: string;
+} {
+	const trimmed = value.trim();
+	const space = trimmed.search(/\s/u);
+	const query = trimmed.indexOf("?");
+	const equals = trimmed.indexOf("=");
+	const at =
+		space >= 0
+			? space
+			: equals > 0 && (query < 0 || equals < query)
+				? equals
+				: -1;
+	if (at < 0) return { url: trimmed };
+	const label = trimmed
+		.slice(at + 1)
+		.trim()
+		.replace(/^=\s*/u, "");
+	return label === ""
+		? { url: trimmed.slice(0, at) }
+		: { url: trimmed.slice(0, at), label };
+}
+
+function linkFlags(flags: Flags): {
+	readonly links: readonly string[];
+	readonly linkLabels?: Readonly<Record<string, string>>;
+} {
+	const links: string[] = [];
+	const labels: Record<string, string> = {};
+	for (const value of flags.values.get("--link") ?? []) {
+		const { url, label } = splitLink(value);
+		links.push(url);
+		if (label !== undefined) labels[url] = label;
+	}
+	return Object.keys(labels).length === 0
+		? { links }
+		: { links, linkLabels: labels };
+}
+
+/** `PATH[=CAPTION]` or `att-ID[=CAPTION]`, as typed (paths made absolute later). */
+export function attachmentOf(value: string): TellAttachment {
+	const equals = value.indexOf("=");
+	const target = equals < 0 ? value : value.slice(0, equals);
+	const caption = equals < 0 ? undefined : value.slice(equals + 1).trim();
+	if (target.trim() === "")
+		throw new Refusal("--attach needs a file: --attach shot.png[=caption].");
+	const extra = caption === undefined || caption === "" ? {} : { caption };
+	return /^att-[0-9a-f]{8}$/u.test(target)
+		? { kind: "stored", id: target, ...extra }
+		: { kind: "path", path: target, ...extra };
+}
+
+function attachFlags(flags: Flags): {
+	readonly attachments?: readonly TellAttachment[];
+} {
+	const all = (flags.values.get("--attach") ?? []).map(attachmentOf);
+	return all.length === 0 ? {} : { attachments: all };
+}
+
 function parseEscalation(
 	sub: string | undefined,
 	rest: readonly string[],
@@ -1364,6 +1492,7 @@ function parseEscalation(
 					"--rank-note",
 					"--wait",
 					"--at",
+					"--attach",
 				],
 				switches: [],
 			});
@@ -1385,8 +1514,9 @@ function parseEscalation(
 				title,
 				body,
 				agents: flags.values.get("--agent") ?? [],
-				links: flags.values.get("--link") ?? [],
+				...linkFlags(flags),
 				options: flags.values.get("--option") ?? [],
+				...attachFlags(flags),
 				...defined({ workspace: one(flags, "--workspace") }),
 				...rankFlags(flags),
 				...defined({ wait, at: atFlag(flags) }),
@@ -1434,20 +1564,22 @@ function parseEscalation(
 		}
 		case "ask": {
 			const flags = readFlags(rest, {
-				values: ["--body", "--option", "--link"],
+				values: ["--body", "--option", "--link", "--attach"],
 				switches: [],
 			});
 			const [id] = positionals(flags, ["<id>"]);
 			const body = one(flags, "--body");
 			if (body === undefined)
 				throw new Refusal("--body is required (Markdown, or - for stdin).");
-			const links = flags.values.get("--link") ?? [];
+			const { links, linkLabels } = linkFlags(flags);
 			return {
 				verb: "escalation-ask",
 				id: escalationId(id),
 				body,
 				options: flags.values.get("--option") ?? [],
 				...(links.length === 0 ? {} : { links }),
+				...(linkLabels === undefined ? {} : { linkLabels }),
+				...attachFlags(flags),
 			};
 		}
 		case "show": {
@@ -1494,7 +1626,7 @@ function parseEscalation(
 			});
 			const [id] = positionals(flags, ["<id>"]);
 			const agent = one(flags, "--agent");
-			const links = flags.values.get("--link") ?? [];
+			const { links, linkLabels } = linkFlags(flags);
 			if (agent === undefined && links.length === 0)
 				throw new Refusal(
 					"escalation link takes --agent <a>, one or more --link <url>, or both.",
@@ -1504,6 +1636,7 @@ function parseEscalation(
 				id: escalationId(id),
 				...(agent === undefined ? {} : { agent }),
 				...(links.length === 0 ? {} : { links }),
+				...(linkLabels === undefined ? {} : { linkLabels }),
 			};
 		}
 		case "answer":

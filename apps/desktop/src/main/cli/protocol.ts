@@ -187,6 +187,13 @@ export type ControlRequest =
 			 * said a `-` in the words stands for text.
 			 */
 			readonly stdin?: string;
+			/**
+			 * The files the words attach (`--attach PATH`), read where the
+			 * command runs — on the host, for a command run on one — and sent
+			 * only after an answer with `files` named them: base64, by the
+			 * absolute path that answer gave.
+			 */
+			readonly files?: Readonly<Record<string, string>>;
 			readonly origin?: string;
 			/**
 			 * Which computer the asking `devhub` runs on (`DEVHUB_MACHINE`, set
@@ -236,6 +243,11 @@ export interface ControlResponse {
 	 * what is piped in and sends the request again with `stdin`.
 	 */
 	readonly stdin?: true;
+	/**
+	 * A `tell` whose words attach files: the command reads these (absolute
+	 * paths on its machine) and sends the request again with `files`.
+	 */
+	readonly files?: readonly string[];
 }
 
 /** Reject anything that is not a request this server understands. */
@@ -294,6 +306,9 @@ export function parseControlRequest(line: string): ControlRequest {
 				...(record["stdin"] === undefined
 					? {}
 					: { stdin: requireText(record["stdin"], "stdin") }),
+				...(record["files"] === undefined
+					? {}
+					: { files: requireFiles(record["files"]) }),
 				...(record["origin"] === undefined
 					? {}
 					: { origin: requireString(record["origin"], "origin") }),
@@ -324,6 +339,20 @@ function requireString(value: unknown, field: string): string {
 function requireText(value: unknown, field: string): string {
 	if (typeof value !== "string") throw new Error(`${field} must be a string`);
 	return value;
+}
+
+/** `files`: absolute paths to base64, nothing else. */
+function requireFiles(value: unknown): Readonly<Record<string, string>> {
+	if (typeof value !== "object" || value === null || Array.isArray(value))
+		throw new Error("files must be an object of paths to base64");
+	const files: Record<string, string> = {};
+	for (const [path, bytes] of Object.entries(value)) {
+		requireAbsolute(path, "a file's path");
+		if (typeof bytes !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/u.test(bytes))
+			throw new Error(`files[${JSON.stringify(path)}] must be base64`);
+		files[path] = bytes;
+	}
+	return files;
 }
 
 function requireAbsolute(value: unknown, field: string): string {

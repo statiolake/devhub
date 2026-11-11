@@ -270,6 +270,12 @@ import {
 } from "../orchestrator/root.js";
 import { importEscalationFiles } from "../orchestrator/escalationFiles.js";
 import {
+	AttachmentStore,
+	withAttachmentsSection,
+	writeEscalationAttachments,
+	type AttachmentFile,
+} from "../orchestrator/attachments.js";
+import {
 	insideRoot,
 	listFolder,
 	OrchestratorFileError,
@@ -7451,19 +7457,27 @@ export class AppController {
 		id: number,
 		workspaceId: string | undefined,
 		agents: readonly string[],
+		attachments: readonly AttachmentFile[] = [],
 	): string {
 		if (this.userDataPath === undefined) return markdown;
 		const roots = this.coordinator.model.workspaces
 			.filter((one) => one.location.kind === "local")
 			.map((one) => one.root as string);
 		const orchestratorRoot = this.orchestratorFilesRoot();
-		return importEscalationFiles(markdown, {
-			storeRoot: join(this.userDataPath, "devhub", "escalations"),
+		const storeRoot = join(this.userDataPath, "devhub", "escalations");
+		const imported = importEscalationFiles(markdown, {
+			storeRoot,
 			id,
 			baseDir: this.escalationBase(workspaceId, agents),
 			allowedRoots:
 				orchestratorRoot === undefined ? roots : [...roots, orchestratorRoot],
 		}).markdown;
+		// `--attach`: the bytes the command sent, from whichever machine it
+		// ran on, under the body (`orchestrator/attachments.ts`).
+		return withAttachmentsSection(
+			imported,
+			writeEscalationAttachments(join(storeRoot, String(id)), attachments),
+		);
 	}
 
 	/** The watch on the Files tab's folder: one, on the root last listed. */
@@ -8002,6 +8016,20 @@ export class AppController {
 			workspaces: () => this.tellWorkspaces(),
 			// No answer here, on purpose: the person answers in the window
 			// (`CHANNELS.answerEscalation`), and only there.
+			...(this.userDataPath === undefined
+				? {}
+				: {
+						attachments: (() => {
+							const store = new AttachmentStore(
+								join(this.userDataPath, "devhub", "attachments"),
+							);
+							return {
+								add: (files: readonly AttachmentFile[]) =>
+									store.add(files, Date.now()),
+								read: (id: string) => store.read(id),
+							};
+						})(),
+					}),
 			orchestrator: {
 				board: () => orchestrator().wire(),
 				standing: (agentId) => orchestrator().standing(agentId),
@@ -8021,10 +8049,14 @@ export class AppController {
 								orchestrator().nextEscalationId(),
 								request.workspaceId,
 								request.agents,
+								request.attachments,
 							),
 							options: request.options,
 							agents: request.agents,
 							links: request.links,
+							...(request.linkLabels === undefined
+								? {}
+								: { linkLabels: request.linkLabels }),
 							...(request.workspaceId === undefined
 								? {}
 								: { workspaceId: request.workspaceId }),
@@ -8032,7 +8064,7 @@ export class AppController {
 							...(request.wait === undefined ? {} : { wait: request.wait }),
 						}),
 					),
-				ask: (id, markdown, options, links) => {
+				ask: (id, markdown, options, links, more) => {
 					const one = orchestrator()
 						.allWires()
 						.find((escalation) => escalation.id === id);
@@ -8046,9 +8078,11 @@ export class AppController {
 										id,
 										one.workspaceId,
 										one.agents.map((agent) => agent.agentId),
+										more?.attachments,
 									),
 							options,
-							...(links === undefined ? [] : [links]),
+							links ?? [],
+							more?.linkLabels,
 						),
 					);
 				},

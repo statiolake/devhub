@@ -43,6 +43,9 @@ func TestRequestFixture(t *testing.T) {
 	tell, _ := RequestFor(Command{Kind: KindTell, Args: []string{"agent", "send", "A1", "-"}}, "/srv/app", "/home/u", "", caller)
 	tell.Stdin = &piped
 	add(tell)
+	attach, _ := RequestFor(Command{Kind: KindTell, Args: []string{"attachment", "add", "shot.png"}}, "/srv/app", "/home/u", "", caller)
+	attach.Files = map[string]string{"/srv/app/shot.png": "iVBORw0KGgo="}
+	add(attach)
 	add(Request{Kind: "wait-ended", WaitMarkerPath: "/tmp/devhub-wait-0a/marker"})
 	add(Request{Kind: "ping"})
 	got := bytes.Join(lines, nil)

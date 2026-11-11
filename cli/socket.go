@@ -27,6 +27,9 @@ type Request struct {
 	Args  *[]string `json:"args,omitempty"`
 	Argv  []string  `json:"argv,omitempty"`
 	Stdin *string   `json:"stdin,omitempty"`
+	// tell only: the files the app asked for (an answer's `files`), read
+	// on this machine, each by the absolute path it named, base64.
+	Files map[string]string `json:"files,omitempty"`
 }
 
 // Response is protocol.ts's ControlResponse.
@@ -39,6 +42,9 @@ type Response struct {
 	JSON  bool `json:"json,omitempty"`
 	Usage bool `json:"usage,omitempty"`
 	Stdin bool `json:"stdin,omitempty"`
+	// tell only: the words name files (`--attach`) to be read here, where
+	// the command runs, and sent with the request again.
+	Files []string `json:"files,omitempty"`
 }
 
 // ErrNotRunning is a socket with nobody behind it.

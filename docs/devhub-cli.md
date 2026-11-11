@@ -82,6 +82,16 @@ and its answer says how the command should print it:
 | `{"ok":false,"message","json":…}` | as before; exit 1 |
 | `{"ok":false,"message","usage":true}` | `devhub: --tell: <message>` and the hint; exit 2 |
 | `{"ok":false,"message","stdin":true}` | the words name `-` and no `stdin` was sent: read the pipe (refuse a terminal, exit 2) and ask again with `stdin` |
+| `{"ok":false,"message","files":[paths]}` | the words attach files (`--attach`, `attachment add`): read each, here, and ask again with `"files":{path: base64}` (one that is not there, not a regular file, over 10 MB, or 25 MB in all: `devhub: --attach: …`, exit 1) |
+
+**Files are read where the command runs.** `--attach shot.png` on an SSH
+host names a file on the host, which the app cannot read; the app makes the
+path absolute against the words' `cwd` and `home` (strings, as for every
+path) and asks for it, and the command (`cli/attach.go`) sends the bytes.
+Asked for, as stdin is, so a command that attaches nothing sends nothing
+extra, and the app's parser stays the one place that knows which words are
+files. A request may then be up to 36 MB (`MAX_REQUEST_BYTES`; it was 64 KB).
+Both may be asked for in turn: the command answers each once.
 
 `--tell help` is answered with the usage text. Asking for stdin rather than
 reading it whenever a `-` appears means the command never blocks on a pipe
@@ -165,7 +175,8 @@ plain terminal does not spend.
 - `cli/*_test.go` (`pnpm run test:cli`, the `cli` stage of
   `scripts/test-local.sh`, CI's `checks` job): the argument table and every
   refusal, `--goto`, path expansion, the request per command, `--tell`'s
-  printing and its `stdin` round trip, `--wait` against a fake DevHub that
+  printing and its `stdin` and `files` round trips (and the files it refuses
+  to send), `--wait` against a fake DevHub that
   removes the marker or goes away, start-when-not-running with a fake
   launcher, and the request fixture.
 - vitest: the app's half of `tell` (`tell/request.ts`: argv to command,

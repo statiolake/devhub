@@ -603,6 +603,8 @@ export interface EscalationWire {
 	readonly agents: readonly BoardAgentRefWire[];
 	readonly workspaceId?: string;
 	readonly links: readonly string[];
+	/** What a link is, in a line (`--link URL=LABEL`), by the link. */
+	readonly linkLabels?: Readonly<Record<string, string>>;
 	readonly createdAt: number;
 	readonly updatedAt: number;
 	/** Since when it has been in `state`: the last entry, or the close. */

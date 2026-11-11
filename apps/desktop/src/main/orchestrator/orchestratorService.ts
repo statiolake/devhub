@@ -463,8 +463,16 @@ export class OrchestratorService {
 		markdown: string,
 		options: readonly string[] | undefined,
 		links: readonly string[] = [],
+		linkLabels?: Readonly<Record<string, string>>,
 	): Escalation {
-		return this.ports.store.ask(id, markdown, options, this.#now(), links);
+		return this.ports.store.ask(
+			id,
+			markdown,
+			options,
+			this.#now(),
+			links,
+			linkLabels,
+		);
 	}
 
 	close(id: number, note: string | undefined): Escalation {
@@ -497,7 +505,11 @@ export class OrchestratorService {
 
 	link(
 		id: number,
-		more: { readonly agentId?: string; readonly links?: readonly string[] },
+		more: {
+			readonly agentId?: string;
+			readonly links?: readonly string[];
+			readonly linkLabels?: Readonly<Record<string, string>>;
+		},
 	): Escalation {
 		return this.ports.store.link(id, more, this.#now());
 	}
@@ -1016,6 +1028,7 @@ export class OrchestratorService {
 				? {}
 				: { workspaceId: one.workspaceId }),
 			links: one.links,
+			...(one.linkLabels === undefined ? {} : { linkLabels: one.linkLabels }),
 			createdAt: one.createdAt,
 			updatedAt: one.updatedAt,
 			stateSince: stateSince(one),

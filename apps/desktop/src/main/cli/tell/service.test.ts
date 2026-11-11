@@ -44,6 +44,16 @@ import type { UsageReport } from "../../shell/usageLimits.js";
 import { OrchestratorService } from "../../orchestrator/orchestratorService.js";
 import { issueLinkOf, type ItemFacts } from "../../orchestrator/invariant.js";
 import { DEFAULT_ORCHESTRATOR } from "../../../model/orchestratorSettings.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+	AttachmentStore,
+	type AttachmentFile,
+} from "../../orchestrator/attachments.js";
+
+/** A body that stands on its own as far as the command line checks. */
+const BRIEF = "## 決めてほしいこと\n?\n\n## 人に聞く理由\n?";
 
 function agent(overrides: Partial<TellAgent> = {}): TellAgent {
 	return {
@@ -258,20 +268,35 @@ class FakePorts implements TellPorts {
 		now: () => this.clock.now,
 	});
 	focusedOrchestrator = false;
+	/** What each raise and ask attached, as the ports were handed it. */
+	readonly attached: (readonly AttachmentFile[])[] = [];
+	readonly attachmentStore = new AttachmentStore(
+		mkdtempSync(join(tmpdir(), "devhub-attachments-")),
+	);
+	readonly attachments: NonNullable<TellPorts["attachments"]> = {
+		add: (files) => this.attachmentStore.add(files, this.clock.now),
+		read: (id) => this.attachmentStore.read(id),
+	};
 	readonly orchestrator: TellPorts["orchestrator"] = {
 		board: () => this.service.wire(),
 		escalations: () => this.service.allWires(),
-		raise: (request) =>
-			this.service.toWire(
+		raise: (request) => {
+			this.attached.push(request.attachments ?? []);
+			return this.service.toWire(
 				this.service.raise({
 					...request,
 					...(request.workspaceId === undefined
 						? {}
 						: { workspaceId: request.workspaceId }),
 				}),
-			),
-		ask: (id, markdown, options, links) =>
-			this.service.toWire(this.service.ask(id, markdown, options, links)),
+			);
+		},
+		ask: (id, markdown, options, links, more) => {
+			this.attached.push(more?.attachments ?? []);
+			return this.service.toWire(
+				this.service.ask(id, markdown, options, links, more?.linkLabels),
+			);
+		},
 		close: (id, note) => this.service.toWire(this.service.close(id, note)),
 		hold: (id, note) => this.service.toWire(this.service.hold(id, note)),
 		wait: (id, trigger, dueAt) =>
@@ -4250,7 +4275,7 @@ describe("the Orchestrator row from the command line", () => {
 				"--title",
 				"本番DBのマイグレーション",
 				"--body",
-				"実行してよいですか?",
+				`${BRIEF}\n実行してよいですか?`,
 				"--agent",
 				"Claude 1",
 				"--option",
@@ -4269,7 +4294,7 @@ describe("the Orchestrator row from the command line", () => {
 		ports.service.answer(1, "実行してよい");
 		const again = await viaSocket(
 			service,
-			["escalation", "ask", "#1", "--body", "staging も?"],
+			["escalation", "ask", "#1", "--body", "## 決めてほしいこと\nstaging も?"],
 			coordinator,
 		);
 		expect(again.data).toMatchObject({ state: "needs_answer" });
@@ -4302,11 +4327,135 @@ describe("the Orchestrator row from the command line", () => {
 		).toMatchObject({ escalations: [{ id: 1, state: "closed" }] });
 	});
 
+	it("refuses an escalation that does not stand on its own, saying every problem and how to fix it", async () => {
+		const { service, ports } = orchestrated();
+		const raise = (title: string, body: string, ...more: string[]) =>
+			viaSocket(
+				service,
+				["escalation", "new", "--title", title, "--body", body, ...more],
+				coordinator,
+			);
+		await expect(
+			raise("PR 1234 をマージしてよいか", "いいですか?"),
+		).rejects.toThrow(
+			/stand on its own[\s\S]*title refers to PR 1234 by number[\s\S]*no '## 決めてほしいこと'[\s\S]*no '## 人に聞く理由'[\s\S]*## 背景/u,
+		);
+		await expect(
+			raise("決済リトライの延長", `${BRIEF}\n#1234 の修正です`),
+		).rejects.toThrow(/refers to #1234 by number alone/u);
+		// The URL, in --link or in the body, makes the number a full reference.
+		await raise(
+			"決済リトライの延長",
+			`${BRIEF}\n#1234 の修正です`,
+			"--link",
+			"https://github.com/acme/app/pull/1234=決済リトライの延長",
+		);
+		await raise(
+			"決済リトライの延長",
+			`${BRIEF}\n[PR 1234](https://github.com/acme/app/pull/1234) の修正`,
+		);
+		// A wait asks nothing yet: no decision is required of it.
+		await raise(
+			"staging の deploy 待ち",
+			"deploy の後に確認する",
+			"--wait",
+			"deploy 後",
+		);
+		// A follow-up needs its decision, not the reason again.
+		await expect(
+			viaSocket(
+				service,
+				["escalation", "ask", "1", "--body", "どう?"],
+				coordinator,
+			),
+		).rejects.toThrow(/no '## 決めてほしいこと'/u);
+		expect(ports.service.escalations()).toHaveLength(3);
+		expect(ports.service.escalations()[0]!.linkLabels).toEqual({
+			"https://github.com/acme/app/pull/1234": "決済リトライの延長",
+		});
+	});
+
+	it("attaches pictures the command sent and ones a worker put in the store, and refuses what is not one", async () => {
+		const { service, ports } = orchestrated();
+		const png = Buffer.from([
+			0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1,
+		]);
+		const send = (argv: readonly string[], files: Record<string, string>) => {
+			const words = tellFromWords(
+				argv,
+				"/srv/app",
+				"/home/d",
+				undefined,
+				files,
+			);
+			if (words.kind !== "tell") throw new Error(JSON.stringify(words));
+			return service.run(words.command, coordinator);
+		};
+		// A worker on a host hands one over: it gets an id.
+		const added = await send(
+			["attachment", "add", "out/shot.png=修正後のログイン画面"],
+			{
+				"/srv/app/out/shot.png": png.toString("base64"),
+			},
+		);
+		const id = (added.data as { attachments: { id: string }[] }).attachments[0]!
+			.id;
+		expect(id).toMatch(/^att-[0-9a-f]{8}$/u);
+		expect(added.message).toContain(`--attach ${id}`);
+		// The orchestrator attaches it, and a file of its own.
+		const made = await send(
+			[
+				"escalation",
+				"new",
+				"--title",
+				"ログイン画面の新デザインを出してよいか",
+				"--body",
+				BRIEF,
+				"--attach",
+				id,
+				"--attach",
+				"before.png=修正前",
+			],
+			{ "/srv/app/before.png": png.toString("base64") },
+		);
+		expect(made.message).toContain("2 pictures attached");
+		expect(
+			ports.attached
+				.at(-1)!
+				.map((one) => [one.name, one.caption, one.bytes.length]),
+		).toEqual([
+			["shot.png", "修正後のログイン画面", png.length],
+			["before.png", "修正前", png.length],
+		]);
+		await expect(
+			send(["attachment", "add", "notes.txt"], {
+				"/srv/app/notes.txt": "aGk=",
+			}),
+		).rejects.toThrow(/notes.txt is not a picture/u);
+		await expect(
+			send(["attachment", "add", "fake.png"], { "/srv/app/fake.png": "aGk=" }),
+		).rejects.toThrow(/its bytes are not one/u);
+		await expect(
+			send(
+				[
+					"escalation",
+					"ask",
+					"1",
+					"--body",
+					"## 決めてほしいこと\nx",
+					"--attach",
+					"att-00000000",
+				],
+				{},
+			),
+		).rejects.toThrow(/there is no attachment att-00000000/u);
+	});
+
 	it("waits on a condition: the trigger is required, --at is a time, resume and the board", async () => {
 		const { service, ports } = orchestrated();
 		await viaSocket(
 			service,
-			["escalation", "new", "--title", "返事待ち", "--body", "?"],
+			["escalation", "new", "--title", "返事待ち", "--body", BRIEF],
 			coordinator,
 		);
 		expect(() =>
@@ -4351,7 +4500,7 @@ describe("the Orchestrator row from the command line", () => {
 		expect(() =>
 			viaSocket(
 				service,
-				["escalation", "new", "--title", "t", "--body", "b", "--at", at],
+				["escalation", "new", "--title", "t", "--body", BRIEF, "--at", at],
 				coordinator,
 			),
 		).toThrow(/--at goes with --wait/u);
@@ -4399,7 +4548,7 @@ describe("the Orchestrator row from the command line", () => {
 		const { service, ports } = orchestrated();
 		await viaSocket(
 			service,
-			["escalation", "new", "--title", "調査", "--body", "?"],
+			["escalation", "new", "--title", "調査", "--body", BRIEF],
 			coordinator,
 		);
 		const held = await viaSocket(
@@ -4439,7 +4588,7 @@ describe("the Orchestrator row from the command line", () => {
 		).toMatchObject({ state: "in_progress" });
 		await viaSocket(
 			service,
-			["escalation", "ask", "1", "--body", "結論は?"],
+			["escalation", "ask", "1", "--body", "## 決めてほしいこと\n結論は?"],
 			coordinator,
 		);
 		expect(ports.service.escalations()[0]!.entries.at(-1)?.role).toBe(
@@ -4455,7 +4604,7 @@ describe("the Orchestrator row from the command line", () => {
 		const raise = (title: string, ...rank: string[]) =>
 			viaSocket(
 				service,
-				["escalation", "new", "--title", title, "--body", "?", ...rank],
+				["escalation", "new", "--title", title, "--body", BRIEF, ...rank],
 				coordinator,
 			);
 		const first = await raise("ふつう");
@@ -5092,7 +5241,7 @@ describe("devhub: links from the command line", () => {
 		const { service } = orchestrated();
 		await viaSocket(
 			service,
-			["escalation", "new", "--title", "t", "--body", "b"],
+			["escalation", "new", "--title", "t", "--body", BRIEF],
 			coordinator,
 		);
 		const link = async (...argv: string[]) =>
@@ -5134,7 +5283,7 @@ describe("devhub: links from the command line", () => {
 				"--title",
 				"t",
 				"--body",
-				"See [the file](devhub:file/src/app/src/main.ts:4).",
+				`${BRIEF}\nSee [the file](devhub:file/src/app/src/main.ts:4).`,
 				"--link",
 				"devhub:agent/aaaa",
 				"--link",
@@ -5155,7 +5304,7 @@ describe("devhub: links from the command line", () => {
 				"ask",
 				"1",
 				"--body",
-				"b",
+				"## 決めてほしいこと\nb",
 				"--link",
 				"devhub:workspace/app",
 			],
@@ -5167,7 +5316,7 @@ describe("devhub: links from the command line", () => {
 		const refused = (argv: string[]) =>
 			viaSocket(
 				service,
-				["escalation", "new", "--title", "x", "--body", "b", ...argv],
+				["escalation", "new", "--title", "x", "--body", BRIEF, ...argv],
 				coordinator,
 			);
 		// An invalid scheme: the valid forms are listed.
@@ -5187,7 +5336,7 @@ describe("devhub: links from the command line", () => {
 					"--title",
 					"x",
 					"--body",
-					"[gone](devhub:escalation/42)",
+					`${BRIEF}\n[gone](devhub:escalation/42)`,
 				],
 				coordinator,
 			),
@@ -5200,7 +5349,7 @@ describe("devhub: links from the command line", () => {
 					"ask",
 					"1",
 					"--body",
-					"b",
+					"## 決めてほしいこと\nb",
 					"--link",
 					"devhub:file/etc/x",
 				],

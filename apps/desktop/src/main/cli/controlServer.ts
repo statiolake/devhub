@@ -24,8 +24,12 @@ import {
 import type { TellCommand } from "./tell/command.js";
 import { tellFromWords } from "./tell/request.js";
 
-/** Longer than any request DevHub sends; short enough that nothing accumulates. */
-const MAX_REQUEST_BYTES = 64 * 1024;
+/**
+ * Longer than any request DevHub sends — a `tell` carrying its `--attach`
+ * files (25 MB at most, as base64) the longest; short enough that nothing
+ * accumulates.
+ */
+const MAX_REQUEST_BYTES = 36 * 1024 * 1024;
 
 export interface ControlHandlers {
 	/**
@@ -237,6 +241,7 @@ async function answerTell(
 		request.cwd,
 		request.home,
 		request.stdin,
+		request.files,
 	);
 	switch (words.kind) {
 		case "invalid":
@@ -248,6 +253,12 @@ async function answerTell(
 				ok: false,
 				message: "'-' reads the text from what is piped in.",
 				stdin: true,
+			};
+		case "needs-files":
+			return {
+				ok: false,
+				message: "--attach reads the files where the command runs.",
+				files: words.paths,
 			};
 		case "tell":
 			try {

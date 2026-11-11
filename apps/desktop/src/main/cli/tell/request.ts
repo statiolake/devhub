@@ -20,6 +20,7 @@ import {
 	parseTellArguments,
 	STDIN_TEXT,
 	TELL_USAGE,
+	type TellAttachment,
 	type TellCommand,
 } from "./command.js";
 
@@ -40,13 +41,19 @@ export type TellWords =
 	 * appears, so a `devhub` whose stdin is a pipe nobody writes to never
 	 * blocks on it for a `-` that was not text.
 	 */
-	| { readonly kind: "needs-stdin" };
+	| { readonly kind: "needs-stdin" }
+	/**
+	 * The words attach files (`--attach PATH`, `attachment add PATH`): the
+	 * command is to read these, on its machine, and ask again with `files`.
+	 */
+	| { readonly kind: "needs-files"; readonly paths: readonly string[] };
 
 export function tellFromWords(
 	argv: readonly string[],
 	cwd: string,
 	home: string,
 	stdin: string | undefined,
+	files?: Readonly<Record<string, string>>,
 ): TellWords {
 	const parsed = parseTellArguments(argv);
 	if (parsed.kind === "invalid") return parsed;
@@ -58,12 +65,76 @@ export function tellFromWords(
 		if (stdin === undefined) return { kind: "needs-stdin" };
 		command = withStdinText(command, stdin);
 	}
+	command = expandTellPaths(command, cwd, home);
+	const wanted = attachedPaths(command);
+	if (wanted.length > 0) {
+		const missing = wanted.filter((path) => files?.[path] === undefined);
+		if (missing.length > 0) return { kind: "needs-files", paths: wanted };
+		command = withAttachedFiles(command, files!);
+	}
 	return {
 		kind: "tell",
-		command: expandTellPaths(command, cwd, home),
+		command,
 		json: parsed.json,
 		...(parsed.as === undefined ? {} : { as: parsed.as }),
 	};
+}
+
+function attachmentsOf(command: TellCommand): readonly TellAttachment[] {
+	switch (command.verb) {
+		case "escalation-new":
+		case "escalation-ask":
+		case "attachment-add":
+			return command.attachments ?? [];
+		default:
+			return [];
+	}
+}
+
+/** The files the command attaches, by absolute path, each once. */
+function attachedPaths(command: TellCommand): readonly string[] {
+	return [
+		...new Set(
+			attachmentsOf(command).flatMap((one) =>
+				one.kind === "path" ? [one.path] : [],
+			),
+		),
+	];
+}
+
+/** Each attached path, with the bytes the command read of it. */
+function withAttachedFiles(
+	command: TellCommand,
+	files: Readonly<Record<string, string>>,
+): TellCommand {
+	const filled = (all: readonly TellAttachment[] | undefined) =>
+		all?.map(
+			(one): TellAttachment =>
+				one.kind === "path"
+					? { ...one, kind: "file", base64: files[one.path]! }
+					: one,
+		);
+	switch (command.verb) {
+		case "escalation-new":
+		case "escalation-ask":
+			return { ...command, attachments: filled(command.attachments)! };
+		case "attachment-add":
+			return { ...command, attachments: filled(command.attachments)! };
+		default:
+			return command;
+	}
+}
+
+function expandAttachments(
+	all: readonly TellAttachment[] | undefined,
+	cwd: string,
+	home: string,
+): readonly TellAttachment[] | undefined {
+	return all?.map((one) =>
+		one.kind === "path"
+			? { ...one, path: posix.normalize(expandPath(one.path, cwd, home)) }
+			: one,
+	);
 }
 
 /** The paths a `--tell` names, made absolute where the command was typed. */
@@ -88,12 +159,29 @@ function expandTellPaths(
 				? { ...command, target: expandPath(command.target, cwd, home) }
 				: command;
 		case "escalation-new":
-			return command.workspace === undefined
+			return {
+				...command,
+				...(command.attachments === undefined
+					? {}
+					: {
+							attachments: expandAttachments(command.attachments, cwd, home)!,
+						}),
+				...(command.workspace === undefined
+					? {}
+					: { workspace: expandWorkspacePath(command.workspace, cwd, home) }),
+			};
+		case "escalation-ask":
+			return command.attachments === undefined
 				? command
 				: {
 						...command,
-						workspace: expandWorkspacePath(command.workspace, cwd, home),
+						attachments: expandAttachments(command.attachments, cwd, home)!,
 					};
+		case "attachment-add":
+			return {
+				...command,
+				attachments: expandAttachments(command.attachments, cwd, home)!,
+			};
 		case "sessions":
 		case "agent-resume":
 			return {

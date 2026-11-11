@@ -47,8 +47,13 @@ describe("what the devhub command sends", () => {
 			const request = parseControlRequest(line);
 			if (request.kind !== "tell") continue;
 			expect(
-				tellFromWords(request.argv, request.cwd, request.home, request.stdin)
-					.kind,
+				tellFromWords(
+					request.argv,
+					request.cwd,
+					request.home,
+					request.stdin,
+					request.files,
+				).kind,
 			).toBe("tell");
 		}
 	});

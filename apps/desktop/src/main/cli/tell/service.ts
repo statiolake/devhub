@@ -42,6 +42,14 @@ import {
 	type DevhubLink,
 } from "../../../model/devhubLink.js";
 import { dueWords } from "../../../model/escalations.js";
+import { briefProblems } from "../../../model/escalationBrief.js";
+import {
+	AttachmentError,
+	checkAttachments,
+	type AttachmentFile,
+	type StoredAttachment,
+} from "../../orchestrator/attachments.js";
+import type { TellAttachment } from "./command.js";
 import { pollTimes } from "../../../model/orchestratorSettings.js";
 import {
 	TELL_USAGE,
@@ -402,6 +410,14 @@ export interface TellPorts {
 	workspaces(): readonly TellWorkspace[];
 	/** The Orchestrator row: board, escalations, events. */
 	readonly orchestrator: TellOrchestratorPorts;
+	/**
+	 * The shared store of pictures a worker hands over (`attachment add`),
+	 * by id (`orchestrator/attachments.ts`). Absent: nothing keeps them.
+	 */
+	readonly attachments?: {
+		add(files: readonly AttachmentFile[]): readonly StoredAttachment[];
+		read(id: string): AttachmentFile;
+	};
 	/** The agent profiles, in the agent picker's order: the first is the default. */
 	profiles(): readonly TellProfile[];
 	/**
@@ -598,6 +614,10 @@ export interface TellNewEscalation {
 	readonly options: readonly string[];
 	readonly agents: readonly string[];
 	readonly links: readonly string[];
+	/** What each link is, by the link as checked. */
+	readonly linkLabels?: Readonly<Record<string, string>>;
+	/** `--attach`: drawn under the body, in its `## 添付`. */
+	readonly attachments?: readonly AttachmentFile[];
 	readonly workspaceId: string | undefined;
 	readonly rank: TellEscalationRank;
 	/** Born waiting (`--wait`, `--at`). */
@@ -631,6 +651,10 @@ export interface TellOrchestratorPorts {
 		markdown: string,
 		options: readonly string[],
 		links?: readonly string[],
+		more?: {
+			readonly linkLabels?: Readonly<Record<string, string>>;
+			readonly attachments?: readonly AttachmentFile[];
+		},
 	): EscalationWire;
 	close(id: number, note: string | undefined): EscalationWire;
 	/**
@@ -645,7 +669,11 @@ export interface TellOrchestratorPorts {
 	/** More it is about (`escalation link`): an agent, links. */
 	link(
 		id: number,
-		more: { readonly agentId?: string; readonly links?: readonly string[] },
+		more: {
+			readonly agentId?: string;
+			readonly links?: readonly string[];
+			readonly linkLabels?: Readonly<Record<string, string>>;
+		},
 	): EscalationWire;
 	/** Ranked again by the orchestrator. Not an answer: it writes no entry. */
 	rank(id: number, rank: TellEscalationRank): EscalationWire;
@@ -1192,6 +1220,8 @@ export class TellService {
 				return this.askAgain(command);
 			case "escalation-show":
 				return this.showEscalation(command.id);
+			case "attachment-add":
+				return this.addAttachments(command.attachments);
 			case "escalation-list":
 				return this.listEscalations(command.state);
 			case "escalation-close":
@@ -1368,18 +1398,28 @@ export class TellService {
 	private async raise(
 		command: Extract<TellCommand, { verb: "escalation-new" }>,
 	): Promise<TellAnswer> {
+		refuseBrief({
+			title: command.title,
+			body: command.body,
+			links: command.links,
+			asks: command.wait === undefined,
+			first: command.wait === undefined,
+		});
 		const agents = command.agents.map((name) => this.agent(name).id);
 		const workspaceId =
 			command.workspace === undefined
 				? undefined
 				: this.workspace(command.workspace).id;
 		const links = await this.checkedLinks(command.links, command.body);
+		const attachments = this.attachedFiles(command.attachments);
 		const made = this.ports.orchestrator.raise({
 			title: command.title,
 			markdown: command.body,
 			options: command.options,
 			agents,
 			links,
+			...labelsFor(command.links, links, command.linkLabels),
+			...(attachments.length === 0 ? {} : { attachments }),
 			workspaceId,
 			rank: rankOf(command),
 			...(command.wait === undefined
@@ -1398,9 +1438,10 @@ export class TellService {
 		);
 		return {
 			message:
-				made.state === "waiting"
+				(made.state === "waiting"
 					? `Raised #${String(made.id)} 「${made.title}」 in waiting: nothing is asked of the person yet.`
-					: `Raised #${String(made.id)} 「${made.title}」: it waits for the person's answer (needs_answer).`,
+					: `Raised #${String(made.id)} 「${made.title}」: it waits for the person's answer (needs_answer).`) +
+				attachedWords(attachments),
 			data: made,
 		};
 	}
@@ -1408,15 +1449,27 @@ export class TellService {
 	private async askAgain(
 		command: Extract<TellCommand, { verb: "escalation-ask" }>,
 	): Promise<TellAnswer> {
+		refuseBrief({
+			body: command.body,
+			links: [...(command.links ?? []), ...this.escalation(command.id).links],
+			asks: true,
+			first: false,
+		});
 		const links = await this.checkedLinks(command.links ?? [], command.body);
+		const attachments = this.attachedFiles(command.attachments);
+		const more = {
+			...labelsFor(command.links ?? [], links, command.linkLabels),
+			...(attachments.length === 0 ? {} : { attachments }),
+		};
 		const asked =
-			links.length === 0
+			links.length === 0 && Object.keys(more).length === 0
 				? this.ports.orchestrator.ask(command.id, command.body, command.options)
 				: this.ports.orchestrator.ask(
 						command.id,
 						command.body,
 						command.options,
 						links,
+						more,
 					);
 		this.memory.markEscalation(
 			callerKey(this.caller),
@@ -1424,8 +1477,64 @@ export class TellService {
 			asked.entries.length,
 		);
 		return {
-			message: `Asked again on #${String(asked.id)}: it waits for the person's answer (needs_answer).`,
+			message:
+				`Asked again on #${String(asked.id)}: it waits for the person's answer (needs_answer).` +
+				attachedWords(attachments),
 			data: asked,
+		};
+	}
+
+	/**
+	 * `--attach`'s pictures, bytes in hand: those the command sent, and those
+	 * a worker put in the shared store, by id. Checked here, so a refusal
+	 * comes before anything is written.
+	 */
+	private attachedFiles(
+		all: readonly TellAttachment[] | undefined,
+	): readonly AttachmentFile[] {
+		const files = (all ?? []).map((one): AttachmentFile => {
+			switch (one.kind) {
+				case "file":
+					return {
+						name: posixBasename(one.path),
+						bytes: Buffer.from(one.base64, "base64"),
+						...(one.caption === undefined ? {} : { caption: one.caption }),
+					};
+				case "stored": {
+					const store = this.ports.attachments;
+					if (store === undefined)
+						throw new AttachmentError("this DevHub keeps no attachments.");
+					const kept = store.read(one.id);
+					const caption = one.caption ?? kept.caption;
+					return {
+						name: kept.name,
+						bytes: kept.bytes,
+						...(caption === undefined ? {} : { caption }),
+					};
+				}
+				case "path":
+					// The command sends the bytes before the words get here.
+					throw new AttachmentError(`${one.path} was not sent.`);
+			}
+		});
+		checkAttachments(files);
+		return files;
+	}
+
+	private addAttachments(all: readonly TellAttachment[]): TellAnswer {
+		const store = this.ports.attachments;
+		if (store === undefined)
+			throw new AttachmentError("this DevHub keeps no attachments.");
+		const kept = store.add(this.attachedFiles(all));
+		return {
+			message: [
+				...kept.map(
+					(one) =>
+						`${one.id}  ${one.name}${one.caption === undefined ? "" : `  「${one.caption}」`}`,
+				),
+				`Kept 14 days. Put the id${kept.length === 1 ? "" : "s"} in your report: the orchestrator attaches ${kept.length === 1 ? "it" : "them"} to an escalation with --attach ${kept[0]!.id}.`,
+			].join("\n"),
+			data: { attachments: kept },
 		};
 	}
 
@@ -1527,6 +1636,7 @@ export class TellService {
 		const linked = this.ports.orchestrator.link(command.id, {
 			...(agent === undefined ? {} : { agentId: agent.id }),
 			...(links.length === 0 ? {} : { links }),
+			...labelsFor(links, links, command.linkLabels),
 		});
 		const what = [
 			...(agent === undefined ? [] : [`${agent.name} (${agent.id})`]),
@@ -4933,4 +5043,46 @@ function noteLine(entry: EscalationWire["entries"][number]): string {
 		default:
 			return `--- held in in_progress by the orchestrator, ${at}${note}`;
 	}
+}
+
+/**
+ * Refuse an escalation that does not stand on its own for the person, who
+ * reads it with no context (`model/escalationBrief.ts`): every problem at
+ * once, each with how to fix it, and the template.
+ */
+function refuseBrief(request: Parameters<typeof briefProblems>[0]): void {
+	const problems = briefProblems(request);
+	if (problems.length === 0) return;
+	throw new Error(
+		[
+			"the person reads escalations, not your chat, and sees this one cold: it must stand on its own.",
+			...problems.map((one) => `  - ${one}`),
+			"A body that does: '## 背景' (what this is, for a newcomer) / '## やったこと' / '## 決めてほしいこと' (the question, its options) / '## 人に聞く理由' / '## 推奨' / '## 確認方法' (a URL to try, screenshots with --attach, PR and Issue URLs).",
+		].join("\n"),
+	);
+}
+
+/** The labels given, keyed by each link as it was checked. */
+function labelsFor(
+	given: readonly string[],
+	checked: readonly string[],
+	labels: Readonly<Record<string, string>> | undefined,
+): { readonly linkLabels?: Readonly<Record<string, string>> } {
+	if (labels === undefined) return {};
+	const out: Record<string, string> = {};
+	given.forEach((link, index) => {
+		const label = labels[link];
+		if (label !== undefined) out[checked[index] ?? link] = label;
+	});
+	return Object.keys(out).length === 0 ? {} : { linkLabels: out };
+}
+
+function attachedWords(files: readonly AttachmentFile[]): string {
+	return files.length === 0
+		? ""
+		: ` ${String(files.length)} picture${files.length === 1 ? "" : "s"} attached (## 添付).`;
+}
+
+function posixBasename(path: string): string {
+	return path.slice(path.lastIndexOf("/") + 1);
 }

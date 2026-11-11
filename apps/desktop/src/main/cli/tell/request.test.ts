@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TELL_USAGE } from "./command.js";
+import { splitLink, TELL_USAGE } from "./command.js";
 import {
 	expandWorkspacePath,
 	tellFromWords,
@@ -108,5 +108,99 @@ describe("devhub --tell's words, as the app reads them", () => {
 		expect(
 			withStdinText({ verb: "agent-send", agent: "a", text: "hi" }, "ignored"),
 		).toEqual({ verb: "agent-send", agent: "a", text: "hi" });
+	});
+
+	it("asks for the files --attach names, made absolute where it was typed, then carries their bytes", () => {
+		const argv = [
+			"escalation",
+			"new",
+			"--title",
+			"t",
+			"--body",
+			"b",
+			"--attach",
+			"out/shot.png=修正後",
+			"--attach",
+			"att-1a2b3c4d",
+			"--attach",
+			"~/b.png",
+		];
+		expect(tellFromWords(argv, "/srv/app", "/home/d", undefined)).toEqual({
+			kind: "needs-files",
+			paths: ["/srv/app/out/shot.png", "/home/d/b.png"],
+		});
+		const words = tellFromWords(argv, "/srv/app", "/home/d", undefined, {
+			"/srv/app/out/shot.png": "AAAA",
+			"/home/d/b.png": "BBBB",
+		});
+		expect(words).toMatchObject({
+			kind: "tell",
+			command: {
+				verb: "escalation-new",
+				attachments: [
+					{
+						kind: "file",
+						path: "/srv/app/out/shot.png",
+						base64: "AAAA",
+						caption: "修正後",
+					},
+					{ kind: "stored", id: "att-1a2b3c4d" },
+					{ kind: "file", path: "/home/d/b.png", base64: "BBBB" },
+				],
+			},
+		});
+		// Nothing asked for when only stored ones are named.
+		expect(
+			tellFromWords(
+				["escalation", "ask", "1", "--body", "b", "--attach", "att-1a2b3c4d"],
+				"/w",
+				"/h",
+				undefined,
+			).kind,
+		).toBe("tell");
+		expect(
+			tellFromWords(
+				["attachment", "add", "att-1a2b3c4d"],
+				"/w",
+				"/h",
+				undefined,
+			),
+		).toMatchObject({ kind: "invalid", message: /already in the store/u });
+		expect(
+			tellFromWords(["attachment", "add"], "/w", "/h", undefined),
+		).toMatchObject({
+			kind: "invalid",
+		});
+	});
+
+	it("reads a link's label after '=' or a space, and leaves a query's '=' to the URL", () => {
+		expect(splitLink("https://github.com/a/b/pull/12=決済の修正")).toEqual({
+			url: "https://github.com/a/b/pull/12",
+			label: "決済の修正",
+		});
+		expect(splitLink("https://x.test/?a=b")).toEqual({
+			url: "https://x.test/?a=b",
+		});
+		expect(splitLink("https://x.test/?a=b 検索結果")).toEqual({
+			url: "https://x.test/?a=b",
+			label: "検索結果",
+		});
+		expect(splitLink("devhub:agent/aaaa")).toEqual({
+			url: "devhub:agent/aaaa",
+		});
+		expect(
+			command([
+				"escalation",
+				"link",
+				"1",
+				"--link",
+				"https://github.com/a/b/issues/3=ログインの不具合",
+			]).command,
+		).toEqual({
+			verb: "escalation-link",
+			id: 1,
+			links: ["https://github.com/a/b/issues/3"],
+			linkLabels: { "https://github.com/a/b/issues/3": "ログインの不具合" },
+		});
 	});
 });

@@ -27,6 +27,7 @@ import {
   escalationBase,
   NAV_MS,
   OrchestratorBoard,
+  firstPicture,
   preview,
   span,
 } from "./OrchestratorScreen";
@@ -486,6 +487,56 @@ describe("the orchestrator's ranking on the board", () => {
     const progress = screen.getByRole("region", { name: "対応中" });
     expect(within(progress).queryByText("優先")).toBeNull();
     expect(within(progress).queryByText("低")).toBeNull();
+  });
+});
+
+describe("an escalation that stands on its own", () => {
+  const SHOT = "/u/devhub/escalations/5/a1-shot.png";
+  const ONE = {
+    ...BOARD.needsAnswer[0]!,
+    id: 5,
+    title: "決済リトライのタイムアウト延長をマージしてよいか",
+    entries: [
+      {
+        role: "orchestrator" as const,
+        markdown: `## 背景\n\n決済が二重に失敗している。\n\n## 決めてほしいこと\n\n**マージしてよいか**\n\n## 人に聞く理由\n\n本番の挙動が変わる。\n\n## 添付\n\n**staging** — *shot.png*\n\n![staging](<${SHOT}>)`,
+        at: NOW - 60_000,
+      },
+    ],
+    links: ["https://github.com/acme/pay/pull/1234"],
+    linkLabels: {
+      "https://github.com/acme/pay/pull/1234": "タイムアウト延長の PR",
+    },
+  };
+
+  it("shows the decision on the card, and its first picture beside it", async () => {
+    FILES[SHOT] = new Uint8Array([137, 80, 78, 71]);
+    expect(firstPicture(ONE)).toBe(SHOT);
+    mount({ ...BOARD, needsAnswer: [ONE] });
+    const card = document.querySelector<HTMLElement>(
+      '[data-escalation-id="5"]',
+    )!;
+    expect(within(card).getByText("マージしてよいか")).toBeVisible();
+    expect(card).toHaveClass("has-picture");
+    await waitFor(() => {
+      expect(
+        card.querySelector(".orchestrator-card-picture img"),
+      ).not.toBeNull();
+    });
+    expect(readEscalationEmbed).toHaveBeenCalledWith(SHOT);
+  });
+
+  it("names a link by its label, with its short form beside it", () => {
+    mount({ ...BOARD, needsAnswer: [ONE] });
+    fireEvent.click(
+      document.querySelector<HTMLElement>('[data-escalation-id="5"]')!,
+    );
+    const chip = screen.getByTitle("https://github.com/acme/pay/pull/1234");
+    expect(chip).toHaveTextContent("タイムアウト延長の PRPR pay#1234");
+  });
+
+  it("has no picture for a body that names only files outside its folder", () => {
+    expect(firstPicture(BOARD.needsAnswer[0]!)).toBeUndefined();
   });
 });
 
