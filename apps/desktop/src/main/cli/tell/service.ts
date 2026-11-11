@@ -718,6 +718,25 @@ export interface TellOrchestratorPorts {
 	};
 	/** The person chooses a mode. How many held lines went out. */
 	setMode(mode: "full" | "saving" | "off"): number;
+	/** Triage: a subject's priority (`esc=12`, `agent=ab12`, …); its key. */
+	setPriority(
+		subject: string,
+		priority: "high" | "normal" | "low",
+		note: string | undefined,
+	): string;
+	clearPriority(subject: string): boolean;
+	/** Every priority set, newest first, and the triage's times. */
+	priorities(): {
+		readonly entries: readonly {
+			readonly subject: string;
+			readonly priority: "high" | "normal" | "low";
+			readonly at: number;
+			readonly note?: string;
+		}[];
+		readonly triagedAt?: number;
+		readonly nextTriageAt?: number;
+	};
+
 	/** The last `last` events, oldest first, each with what came of it. */
 	events(last: number): readonly TellEventEntry[];
 	/** A `custom.*` event, as any source dispatches one. */
@@ -1294,6 +1313,41 @@ export class TellService {
 						"The orchestrator is off: its events are held (one line per subject), GitHub polling is suspended, and 'orchestrator mode full' (or saving, or resume) delivers them at once, as one message.",
 					data: { paused: true, mode: "off" },
 				};
+			case "orchestrator-priority-set": {
+				const key = this.ports.orchestrator.setPriority(
+					command.subject,
+					command.priority,
+					command.note,
+				);
+				return {
+					message: `${command.subject}: ${command.priority}${command.note === undefined ? "" : ` (${command.note})`}`,
+					data: { subject: key, priority: command.priority },
+				};
+			}
+			case "orchestrator-priority-clear": {
+				const had = this.ports.orchestrator.clearPriority(command.subject);
+				return {
+					message: had
+						? `${command.subject}: no priority now`
+						: `${command.subject} had no priority`,
+					data: { cleared: had },
+				};
+			}
+			case "orchestrator-priority-list": {
+				const list = this.ports.orchestrator.priorities();
+				const clock = (at: number | undefined) =>
+					at === undefined ? "never" : new Date(at).toISOString();
+				return {
+					message: [
+						`last triage: ${clock(list.triagedAt)}; next: ${list.nextTriageAt === undefined ? "none (off, or no orchestrator)" : clock(list.nextTriageAt)}`,
+						...list.entries.map(
+							(one) =>
+								`  ${one.priority.padEnd(6)} ${one.subject}${one.note === undefined ? "" : `  ${one.note}`}`,
+						),
+					].join("\n"),
+					data: list,
+				};
+			}
 			case "orchestrator-mode": {
 				if (command.mode === undefined) {
 					const now = this.ports.orchestrator.mode();

@@ -41,6 +41,7 @@ import {
 } from "./service.js";
 import { EscalationStore } from "../../orchestrator/escalationStore.js";
 import type { UsageReport } from "../../shell/usageLimits.js";
+import { parseSubject } from "../../orchestrator/triage.js";
 import { OrchestratorService } from "../../orchestrator/orchestratorService.js";
 import { issueLinkOf, type ItemFacts } from "../../orchestrator/invariant.js";
 import { DEFAULT_ORCHESTRATOR } from "../../../model/orchestratorSettings.js";
@@ -332,6 +333,18 @@ class FakePorts implements TellPorts {
 				: { auto: this.service.autoSaving }),
 		}),
 		setMode: (mode) => this.service.setMode(mode),
+		setPriority: (subject, priority, note) => {
+			const ref = parseSubject(subject);
+			if (ref === undefined) throw new Error(`not a subject: ${subject}`);
+			return this.service.setPriority(ref, priority, note);
+		},
+		clearPriority: (subject) => {
+			const ref = parseSubject(subject);
+			if (ref === undefined || ref.kind === "esc")
+				throw new Error(`not a subject: ${subject}`);
+			return this.service.clearPriority(ref);
+		},
+		priorities: () => ({ entries: this.service.priorities() }),
 		events: (last) => this.service.eventLog(last),
 		emit: (type, text) => this.service.emit(type, text),
 		timers: () => this.service.timers.list(),
@@ -4748,6 +4761,7 @@ describe("the Orchestrator row from the command line", () => {
 				"acknowledge",
 				"ask",
 				"board",
+				"clearPriority",
 				"clearTimer",
 				"close",
 				"configuredRoot",
@@ -4760,11 +4774,13 @@ describe("the Orchestrator row from the command line", () => {
 				"link",
 				"mode",
 				"pause",
+				"priorities",
 				"raise",
 				"rank",
 				"resume",
 				"resumeWait",
 				"setMode",
+				"setPriority",
 				"setTimer",
 				"standing",
 				"status",

@@ -397,13 +397,13 @@ keeps it in a shared store, `<userData>/devhub/attachments/<id>/`, and
 prints an id (`att-1a2b3c4d`, kept 14 days); the worker puts the id in its
 report, and the orchestrator attaches it with `--attach att-1a2b3c4d` (a
 caption given there replaces the stored one)
-(`main/orchestrator/attachments.ts`). *Why a store by id, not workers
-attaching to escalations*: the worker usually takes the screenshot before
+(`main/orchestrator/attachments.ts`). _Why a store by id, not workers
+attaching to escalations_: the worker usually takes the screenshot before
 the escalation exists, and the orchestrator is the one writing it, so a
 handle that outlives the worker's turn (and its worktree) and that any
 `--tell` can name is the simplest thing that works in both orders; the
-escalation stays one author's, written whole. *Why the bytes go over the
-socket*: a worker on a host has its file on the host; the command is the
+escalation stays one author's, written whole. _Why the bytes go over the
+socket_: a worker on a host has its file on the host; the command is the
 one thing that runs there and can read it. The `/devhub` skill tells every
 agent how.
 
@@ -461,14 +461,14 @@ to judge it from it alone. "Can I merge PR 1234?" assumes every bit of
 context it leaves out. So the body has named sections
 (`model/escalationBrief.ts`):
 
-| section              | what                                                                 | required        |
-| -------------------- | -------------------------------------------------------------------- | --------------- |
-| `## 背景`            | what this is about, for a newcomer                                   |                 |
-| `## やったこと`      | what was done and found                                              |                 |
-| `## 決めてほしいこと` | the one decision or confirmation, as a question, with its options   | `new` and `ask` |
-| `## 人に聞く理由`    | why the orchestrator holds it instead of deciding it                 | `new`           |
-| `## 推奨`            | the recommended choice, and why                                      |                 |
-| `## 確認方法`        | a URL to try, screenshots (`--attach`), PR and Issue URLs, a diff summary |            |
+| section               | what                                                                      | required        |
+| --------------------- | ------------------------------------------------------------------------- | --------------- |
+| `## 背景`             | what this is about, for a newcomer                                        |                 |
+| `## やったこと`       | what was done and found                                                   |                 |
+| `## 決めてほしいこと` | the one decision or confirmation, as a question, with its options         | `new` and `ask` |
+| `## 人に聞く理由`     | why the orchestrator holds it instead of deciding it                      | `new`           |
+| `## 推奨`             | the recommended choice, and why                                           |                 |
+| `## 確認方法`         | a URL to try, screenshots (`--attach`), PR and Issue URLs, a diff summary |                 |
 
 **It is enforced, not only stated.** `escalation new` (not `--wait`, which
 asks nothing yet) and `escalation ask` refuse, with every problem at once
@@ -892,6 +892,7 @@ work, with its own tools (`gh`), not by the orchestrator.
 | `needs_action`            | an item of the population, or a managed agent, breaks the invariant: on every delivery while it does (every `delivery_interval`), unless it is kept (`agent keep`, until its state changes) | `[needs_action] issue=acme/web#123 ws=web — no_agent`, `[needs_action] agent=ab12cd34 (API fix) ws=web — idle_no_escalation`, `[needs_action] agent=… — outside_population (closed)` |
 | `waiting.changed`         | a 待機中 escalation may be ready: what it is about changed (`subjects_changed`), or its `--at` came (`due`, once per wait)                                                                  | `[waiting.changed] esc=12 — subjects_changed`, `[waiting.changed] esc=15 — due`                                                                                                      |
 | `usage.threshold`         | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                                                      | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                                          |
+| `triage`                  | time to rank the open work again: every 30 minutes in full, every hour in saving (see "Triage")                                                                                             | `[triage] — 優先度の見直し: …`                                                                                                                                                       |
 | `timer.elapsed`           | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                                                     | `[timer.elapsed] sweep`                                                                                                                                                              |
 | `custom.*`                | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                                               | `[custom.deploy] — staging に deploy 完了`                                                                                                                                           |
 
@@ -1078,6 +1079,49 @@ stays in the notice center, taken down when that saving ends.
   Orchestrator, validated with every other setting; left unset it is 80
   and not written. `100` switches only on a full window.
 
+### Triage: priorities
+
+DevHub asks the orchestrator, on a schedule, to rank its open work again,
+and keeps the ranking where DevHub reads it (`main/orchestrator/triage.ts`).
+
+- **The ask** is a `triage` event: `[triage] — 優先度の見直し: …`, every
+  **30 minutes in full** and **every hour in saving**, counted from the last
+  one — or from when the mode went on, or the orchestrator started (its
+  `init` already has it read the board). Never while off. A triage is the
+  heaviest turn the orchestrator takes (it reads the board and ranks
+  everything), so it is a few times rarer than the nag; twice an hour keeps
+  the ranking about as fresh as the work it ranks (agents' turns, reviews,
+  CI) changes. In saving it is also how long a line that is not high may
+  wait, and an hour is a fifth of the 5-hour window. `orchestrator priority`
+  says when the last went and the next is due.
+- **The ranking** is `high`, `normal` or `low` per subject, recorded with
+  `devhub --tell orchestrator priority set SUBJECT LEVEL [--note WHY]`, the
+  subject named as its event line names it: `esc=12`, `issue=OWNER/REPO#N`,
+  `pr=OWNER/REPO#N`, `agent=ID` (a unique prefix will do). An
+  escalation's priority **is** its rank (`escalation rank --priority`, the
+  board's 優先 chip and the 要回答 order), so it has one place; every
+  other subject's is kept in `orchestrator-priorities.json` (per profile,
+  across restarts, the newest 500). `priority list` (or `--json`) gives them
+  all, `priority clear` takes one back. The board shows them calmly: an
+  escalation's 優先 chip and order as before, an
+  agent's in its Sidebar tooltip (`priority: high`), and each `needsAction`
+  subject's in `board --json`.
+- **In saving, only high goes.** A batch carries only the lines about a
+  subject ranked **high** — an escalation, an item or an agent
+  whose priority is `high`. Every other line — a subject ranked normal or
+  low, one not ranked yet, and lines about no subject (timers, the usage
+  readout, `custom.*`) — stays pending, one line per subject as always, and
+  goes with the next batch that carries `triage` (a triage takes everything
+  pending and every standing `needs_action` line with it, so the
+  orchestrator ranks with the whole picture), or as soon as the mode is
+  full. **High** is the level, not a count: the charter asks the
+  orchestrator to keep it for what makes the person or other work wait (a
+  person waiting on an answer, a deadline, production, an item blocking
+  others), and to keep it to about three. The person's words,
+  `init` and `triage` are never held by it. Saving's other rules stand: no
+  batch at all while two or more tasks are in progress, a triage's
+  included.
+
 ### The sources
 
 - **The board** (`orchestratorService.ts`): the answers, the person's direct
@@ -1220,6 +1264,8 @@ devhub --tell orchestrator start --root PATH --profile P --gui|--tui [--prompt -
 devhub --tell orchestrator status [--json]          # its agent, state, lane counts, mode, GitHub polling
 devhub --tell orchestrator stop | restart           # Stop Agent / Restart Session on it
 devhub --tell orchestrator mode [full|saving|off]   # the mode, or choose one (off at every launch; see "Modes")
+devhub --tell orchestrator priority set SUBJECT high|normal|low [--note WHY]   # triage: esc=N, issue=/pr=OWNER/REPO#N, agent=ID
+devhub --tell orchestrator priority [list] | clear SUBJECT   # the ranking, the last and next triage
 devhub --tell orchestrator pause | resume          # mode off (GitHub polling suspended) / mode full (delivers at once, as one message)
 devhub --tell orchestrator events [--last N] [--json]   # recent events and what came of them
 devhub --tell orchestrator emit --type custom.NAME --text TEXT|-

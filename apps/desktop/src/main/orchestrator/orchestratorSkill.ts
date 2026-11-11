@@ -283,6 +283,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | \`needs_action\` | 不変条件 (下記) を満たしていないアイテム (Issue / PR) か管理対象エージェントと、満たしていない条項のコード。解消しないうちは配信のたび (\`[orchestrator] delivery_interval\`、既定 5m ごと) に毎回。\`agent keep\` した対象は、状態が変わる (keep が解ける) まで載らない | issue / pr / agent, ws, コード |
 | \`waiting.changed\` | 待機中のエスカレーションの条件が満たされたかもしれない: 対象のアイテム (Issue / PR) やエージェントの状態が変わった (\`subjects_changed\`) か、\`--at\` の時刻が来た (\`due\`、待機 1 回につき 1 回)。行はどのエスカレーションかと、そのどちらかだけ | esc, 理由 |
 | \`usage.threshold\` | CLI のプラン枠の使用率が \`[orchestrator] usage_thresholds\` (既定 80, 95) を上向きに超えた | cli, window, pct, resets |
+| \`triage\` | 優先度を見直す時刻 (full で 30 分ごと、saving で 1 時間ごと)。開いている仕事それぞれに \`orchestrator priority set\`。saving では high の対象の行だけが届き、残りは次の triage と一緒に届く | なし |
 | \`timer.elapsed\` | \`[[orchestrator.timers]]\` か \`orchestrator timer set\` のタイマー | 名前 |
 | \`custom.*\` | \`orchestrator emit\` でスクリプトや他ツールが送るもの | 本文 |
 
@@ -442,6 +443,8 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     devhub --tell --json board
     devhub --tell --json orchestrator status
     devhub --tell orchestrator mode            # full / saving / off (起動直後は off)
+    devhub --tell orchestrator priority set issue=OWNER/REPO#12 high --note "本番障害"
+    devhub --tell orchestrator priority list
     devhub --tell orchestrator pause
     devhub --tell orchestrator resume
     devhub --tell orchestrator events --last 20

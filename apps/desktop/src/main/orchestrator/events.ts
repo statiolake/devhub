@@ -179,6 +179,12 @@ export type OrchestratorEvent =
 			/** Epoch ms; absent when the CLI does not say. */
 			readonly resetsAt?: number;
 	  }
+	/**
+	 * Time to rank the open work again (`triage.ts`): every escalation, item
+	 * and managed agent, each `high`, `normal` or `low`, recorded
+	 * with `orchestrator priority set`.
+	 */
+	| { readonly type: "triage" }
 	| { readonly type: `custom.${string}`; readonly text: string };
 
 export type OrchestratorEventType = OrchestratorEvent["type"];
@@ -227,6 +233,7 @@ export const EVENT_TYPES = [
 	"waiting.changed",
 	"timer.elapsed",
 	"usage.threshold",
+	"triage",
 	"custom.*",
 ] as const;
 
@@ -396,6 +403,12 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 			};
 		case "timer.elapsed":
 			return { head: [event.name] };
+		case "triage":
+			return {
+				head: [],
+				summary:
+					"優先度の見直し: devhub --tell --json board で開いている仕事 (エスカレーション、要対応のアイテムとエージェント、依頼) を見て、それぞれ devhub --tell orchestrator priority set <対象> high|normal|low",
+			};
 		case "usage.threshold":
 			return {
 				head: [
@@ -442,12 +455,7 @@ export function humanMessage(
 }
 
 /** The messages one human event goes as: one per piece of their words. */
-export function humanMessages(
-	event: Extract<
-		OrchestratorEvent,
-		{ type: "escalation_answered" | "escalation.human_direct" }
-	>,
-): string[] {
+export function humanMessages(event: HumanInputEvent): string[] {
 	const pieces =
 		event.type === "escalation_answered"
 			? (event.answers ?? [])
@@ -475,6 +483,8 @@ export function subjectOf(event: OrchestratorEvent): string {
 		case "escalation.human_direct":
 		case "waiting.changed":
 			return `esc ${String(event.escalationId)}`;
+		case "triage":
+			return "triage";
 		case "needs_action":
 			return event.subject.kind !== "agent"
 				? `item ${prKey(event.subject.item)}`
@@ -590,6 +600,12 @@ export interface EventDelivery {
 	 * none.
 	 */
 	readonly inProgress?: () => number;
+	/**
+	 * Whether a line's subject (`subjectOf`) is ranked high now
+	 * (`triage.ts`): in saving only those go, until a batch carries
+	 * `triage`. Absent: every subject is (no gate).
+	 */
+	readonly high?: (subject: string, event: OrchestratorEvent) => boolean;
 	/** The mode it starts in. Absent: `full` (tests); main starts `off`. */
 	readonly mode?: OrchestratorMode;
 	/**
@@ -801,6 +817,27 @@ export class EventDispatcher {
 	}
 
 	/**
+	 * Saving's priority gate: which lines go now, by their subject — none of
+	 * it outside saving, or in a batch carrying `init` or `triage` (which
+	 * takes everything with it).
+	 */
+	#priorityGate():
+		| ((subject: string, event: OrchestratorEvent) => boolean)
+		| undefined {
+		const high = this.delivery.high;
+		if (this.#mode !== "saving" || high === undefined) return undefined;
+		if (
+			this.#lines.some(
+				(line) =>
+					line.entry.event.type === "init" ||
+					line.entry.event.type === "triage",
+			)
+		)
+			return undefined;
+		return high;
+	}
+
+	/**
 	 * Saving's gate: how many tasks are in progress, when that holds the
 	 * batch now — never for one carrying `init` (a start is not a nudge).
 	 */
@@ -873,13 +910,22 @@ export class EventDispatcher {
 			return 0;
 		}
 		this.#dropStale(now);
-		const standing = this.#standing();
-		if (this.#lines.length === 0 && standing.length === 0) {
+		// Saving: only what is about a subject ranked high goes; the rest
+		// waits for the next triage (or full), one line per subject.
+		const goes = this.#priorityGate();
+		const standing = this.#standing().filter(
+			(event) => goes === undefined || goes(subjectOf(event), event),
+		);
+		const going = this.#lines.filter(
+			(line) => goes === undefined || goes(line.subject, line.entry.event),
+		);
+		if (going.length === 0 && standing.length === 0) {
 			this.delivery.changed?.();
 			return 0;
 		}
+		for (const line of going) this.#lines.splice(this.#lines.indexOf(line), 1);
 		const lines = [
-			...this.#lines.splice(0),
+			...going,
 			...standing.map((event) => this.#logged(event, now)),
 		];
 		const plan = composeDelivery(
@@ -950,6 +996,7 @@ export class EventDispatcher {
 	preview(): DeliveryPreview {
 		const now = this.#now();
 		const stale = new Set(this.#stale());
+		const goes = this.#priorityGate();
 		const plan = composeDelivery(
 			this.#human.flatMap((entry) =>
 				isHumanInput(entry.event) ? [entry.event] : [],
@@ -957,8 +1004,14 @@ export class EventDispatcher {
 			[
 				...this.#lines
 					.filter((line) => !stale.has(line))
+					.filter(
+						(line) =>
+							goes === undefined || goes(line.subject, line.entry.event),
+					)
 					.map((line) => line.entry.event),
-				...this.#standing(),
+				...this.#standing().filter(
+					(event) => goes === undefined || goes(subjectOf(event), event),
+				),
 			],
 			this.delivery.settings(),
 			now,

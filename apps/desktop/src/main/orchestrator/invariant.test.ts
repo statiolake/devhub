@@ -325,6 +325,7 @@ describe("the watch", () => {
 		expect(said).toEqual([]);
 		expect(made.needsAction()[0]).toEqual({
 			key: expect.any(String),
+			subject: "item acme/app#123",
 			kind: "issue",
 			line: "issue=acme/app#123 ws=api — idle_no_escalation",
 			clause: "idle_no_escalation",

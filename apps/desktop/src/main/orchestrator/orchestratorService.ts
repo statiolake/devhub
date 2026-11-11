@@ -98,6 +98,15 @@ import {
 	type UsageOver,
 } from "./mode.js";
 import type { LaneBoard } from "../../ipc/orchestratorLanes.js";
+import {
+	PriorityBook,
+	nextTriageAt,
+	subjectKey,
+	type Priority,
+	type PriorityEntry,
+	type PriorityStorage,
+	type SubjectRef,
+} from "./triage.js";
 import type { UsageLimitsWire } from "../../ipc/contract.js";
 import {
 	usageThresholdRelevant,
@@ -189,6 +198,8 @@ export interface OrchestratorServicePorts {
 		change: ModeChange,
 		auto: UsageOver | undefined,
 	) => void;
+	/** Where the triage's priorities are kept across restarts; absent: memory. */
+	readonly priorities?: PriorityStorage;
 	/** Where `agent keep`'s keepings are kept across restarts; absent: memory. */
 	readonly kept?: KeptStore;
 	readonly now?: () => number;
@@ -350,10 +361,18 @@ export class OrchestratorService {
 	#usage: UsageLimitsWire = { clis: [] };
 	/** A look at the readout when the window that made saving resets. */
 	#resetTimer: { cancel(): void } | undefined;
+	/** The orchestrator's ranking of the open work (`triage.ts`). */
+	readonly #priorities: PriorityBook;
+	/** What the next triage is counted from: the last, or the mode going on. */
+	#triageAnchor: number | undefined;
+	/** When the last `triage` went out to the orchestrator. */
+	#triagedAt: number | undefined;
 
 	constructor(private readonly ports: OrchestratorServicePorts) {
 		this.#mode = new OrchestratorModeControl(ports.mode ?? LAUNCH_MODE);
+		this.#priorities = new PriorityBook(ports.priorities);
 		this.events = new EventDispatcher({
+			high: (subject) => this.#isHigh(subject),
 			mode: this.#mode.mode,
 			inProgress: () => this.ports.inProgress?.(this.#laneBoard()) ?? 0,
 			orchestrator: () => this.orchestratorAgentId,
@@ -490,6 +509,84 @@ export class OrchestratorService {
 		return this.#apply(changes);
 	}
 
+	// --- triage: priorities ------------------------------------------------------
+
+	/** A subject's priority now: an escalation's own, else the book's. */
+	priorityOf(subject: string): Priority | undefined {
+		const esc = /^esc (\d+)$/u.exec(subject);
+		if (esc !== null)
+			return this.ports.store.all().find((one) => one.id === Number(esc[1]))
+				?.priority;
+		return this.#priorities.get(subject)?.priority;
+	}
+
+	#isHigh(subject: string): boolean {
+		return this.priorityOf(subject) === "high";
+	}
+
+	/**
+	 * `orchestrator priority set`: an escalation's is its rank; every other
+	 * subject's is kept in the book. An agent is named by its full id.
+	 */
+	setPriority(ref: SubjectRef, priority: Priority, note?: string): string {
+		if (ref.kind === "esc") {
+			this.rank(ref.id, { priority });
+			this.publish();
+			return `esc ${String(ref.id)}`;
+		}
+		const key = subjectKey(ref);
+		this.#priorities.set(key, {
+			priority,
+			at: this.#now(),
+			...(note === undefined || note === "" ? {} : { note }),
+		});
+		// A line now high may go in saving.
+		this.events.flush();
+		this.publish();
+		return key;
+	}
+
+	clearPriority(ref: Exclude<SubjectRef, { kind: "esc" }>): boolean {
+		const had = this.#priorities.clear(subjectKey(ref));
+		if (had) this.publish();
+		return had;
+	}
+
+	/** Every recorded priority, the escalations' included, newest first. */
+	priorities(): readonly (PriorityEntry & { readonly subject: string })[] {
+		const escalations = this.ports.store
+			.all()
+			.filter(isOpen)
+			.map((one) => ({
+				subject: `esc ${String(one.id)}`,
+				priority: one.priority ?? "normal",
+				at: one.updatedAt,
+			}));
+		const kept = [...this.#priorities.all()].map(([subject, entry]) => ({
+			subject,
+			...entry,
+		}));
+		return [...kept.reverse(), ...escalations];
+	}
+
+	get triagedAt(): number | undefined {
+		return this.#triagedAt;
+	}
+
+	/** When the next triage is due; undefined while off or with no orchestrator. */
+	get nextTriageAt(): number | undefined {
+		if (this.orchestratorAgentId === undefined) return undefined;
+		return nextTriageAt(this.#mode.mode, this.#triageAnchor);
+	}
+
+	/** Its time came: ask the orchestrator to rank the open work again. */
+	#announceTriage(now: number): void {
+		const due = this.nextTriageAt;
+		if (due === undefined || due > now) return;
+		this.#triageAnchor = now;
+		this.events.dispatch({ type: "triage" });
+	}
+
 	/** The usage readout moved: the automatic switch follows it. */
 	observeUsage(limits: UsageLimitsWire): void {
 		this.#usage = limits;
@@ -512,12 +609,17 @@ export class OrchestratorService {
 	#apply(changes: readonly ModeChange[]): number {
 		let delivered = 0;
 		for (const change of changes) {
+			// On from off: the next triage counts from now (the turn-on's
+			// delivery has the orchestrator look at the board already).
+			if (change.from === "off") this.#triageAnchor = this.#now();
 			delivered += this.events.setMode(change.to);
 			this.ports.log?.(
 				`[devhub] orchestrator mode ${change.from} → ${change.to} (${change.by === "person" ? "chosen" : change.to === "saving" ? "usage over saving_threshold" : "usage back under"})`,
 			);
 		}
 		this.#armReset();
+		// Full and saving triage at different intervals.
+		if (changes.length > 0) this.#schedule(this.#now());
 		if (changes.length > 0) {
 			const last = changes.at(-1)!;
 			this.ports.modeChanged?.(last, this.#mode.auto);
@@ -550,6 +652,8 @@ export class OrchestratorService {
 	/** Assign the orchestrator agent, and tell it it has started. */
 	assign(agentId: string, initPrompt?: string): void {
 		this.ports.store.setOrchestrator(agentId);
+		// `init` reads the board: the first triage is an interval away.
+		this.#triageAnchor = this.#now();
 		if (initPrompt !== undefined) this.ports.deliver(agentId, initPrompt);
 		else this.events.dispatch({ type: "init" });
 	}
@@ -769,6 +873,7 @@ export class OrchestratorService {
 		this.#watchWorking(agents, now);
 		this.#watchStalled(agents, now);
 		this.#announceDue(now);
+		this.#announceTriage(now);
 		this.#watchInvariant();
 		this.#schedule(now);
 		// The orchestrator's status may have moved: what waits for it may go.
@@ -829,6 +934,11 @@ export class OrchestratorService {
 		const orchestrator = this.orchestratorAgentId;
 		let moved = false;
 		for (const event of events) {
+			if (event.type === "triage") {
+				this.#triagedAt = this.#now();
+				moved = true;
+				continue;
+			}
 			if (event.type !== "escalation_answered") continue;
 			if (event.readThrough === undefined) continue;
 			if (orchestrator !== undefined)
@@ -1091,6 +1201,7 @@ export class OrchestratorService {
 			...all
 				.map((one) => currentWait(one)?.dueAt)
 				.filter((at): at is number => at !== undefined),
+			...(this.nextTriageAt === undefined ? [] : [this.nextTriageAt]),
 		]
 			.map((at) => at - now)
 			.filter((ms) => ms > 0);
@@ -1198,7 +1309,22 @@ export class OrchestratorService {
 			held: this.events.held().length,
 			nextDelivery: this.#nextDelivery(),
 			github: this.ports.github?.() ?? { state: "idle" },
-			needsAction: this.#invariant.needsAction(),
+			needsAction: this.#invariant.needsAction().map((view) => {
+				const priority = this.priorityOf(view.subject);
+				return priority === undefined ? view : { ...view, priority };
+			}),
+			agentPriorities: Object.fromEntries(
+				this.ports.agents().flatMap((agent) => {
+					const priority = this.priorityOf(`agent ${agent.id}`);
+					return priority === undefined ? [] : [[agent.id, priority]];
+				}),
+			),
+			triage: {
+				...(this.#triagedAt === undefined ? {} : { lastAt: this.#triagedAt }),
+				...(this.nextTriageAt === undefined
+					? {}
+					: { nextAt: this.nextTriageAt }),
+			},
 			agentStates: this.#agentStates(),
 			needsAnswer: lanes.needsAnswer.map(escalation),
 			inProgress: lanes.inProgress.map(escalation),

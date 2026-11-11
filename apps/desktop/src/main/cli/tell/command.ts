@@ -438,6 +438,15 @@ export type TellCommand =
 	/** Off (pause) or full (resume): `orchestrator mode` with a name. */
 	| { readonly verb: "orchestrator-pause" }
 	| { readonly verb: "orchestrator-resume" }
+	/** Triage: a subject's priority, set, cleared or listed. */
+	| {
+			readonly verb: "orchestrator-priority-set";
+			readonly subject: string;
+			readonly priority: "high" | "normal" | "low";
+			readonly note?: string;
+	  }
+	| { readonly verb: "orchestrator-priority-clear"; readonly subject: string }
+	| { readonly verb: "orchestrator-priority-list" }
 	/** The mode (full, saving, off), or choose one. */
 	| {
 			readonly verb: "orchestrator-mode";
@@ -890,6 +899,13 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    launch starts off). Full switches to saving
                                    by itself at saving_threshold (80%) of a
                                    plan window, and back when it resets
+  orchestrator priority set <subject> high|normal|low [--note <text>]
+                                   triage: rank a subject as its event line
+                                   names it (esc=12, issue=OWNER/REPO#N,
+                                   pr=OWNER/REPO#N, agent=ID); in
+                                   saving only lines about high ones go
+  orchestrator priority [list] | clear <subject>
+                                   the priorities, the last and next triage
   orchestrator pause | resume      mode off / mode full: turning on delivers
                                    the held ones at once, the person's words
                                    each alone, then the rest as one message
@@ -1716,6 +1732,44 @@ function parseOrchestrator(
 		case "resume":
 			positionals(readFlags(rest, NO_FLAGS), []);
 			return { verb: `orchestrator-${sub}` };
+		case "priority": {
+			const [action = "list", ...more] = rest;
+			switch (action) {
+				case "list":
+					positionals(readFlags(more, NO_FLAGS), []);
+					return { verb: "orchestrator-priority-list" };
+				case "clear": {
+					const [subject] = positionals(readFlags(more, NO_FLAGS), [
+						"<subject>",
+					]);
+					return { verb: "orchestrator-priority-clear", subject: subject! };
+				}
+				case "set": {
+					const flags = readFlags(more, { values: ["--note"], switches: [] });
+					const [subject, priority] = positionals(flags, [
+						"<subject>",
+						"<priority>",
+					]);
+					if (
+						priority !== "high" &&
+						priority !== "normal" &&
+						priority !== "low"
+					)
+						throw new Refusal(
+							`a priority is high, normal or low, not ${JSON.stringify(priority)}.`,
+						);
+					const note = one(flags, "--note");
+					return {
+						verb: "orchestrator-priority-set",
+						subject: subject!,
+						priority,
+						...(note === undefined ? {} : { note }),
+					};
+				}
+				default:
+					throw new Refusal("orchestrator priority takes: list, set, clear.");
+			}
+		}
 		case "mode": {
 			const [mode, ...more] = rest;
 			positionals(readFlags(more, NO_FLAGS), []);
@@ -1788,7 +1842,7 @@ function parseOrchestrator(
 		}
 		default:
 			throw new Refusal(
-				"orchestrator takes: start, status, stop, restart, mode, pause, resume, events, emit, timer.",
+				"orchestrator takes: start, status, stop, restart, mode, priority, pause, resume, events, emit, timer.",
 			);
 	}
 }

@@ -310,7 +310,10 @@ describe("待機中 (escalation wait)", () => {
 		run.later(2000);
 		run.later(HOUR);
 		expect(run.of("waiting.changed")).toHaveLength(1);
-		expect(run.sent.at(-1)).toBe("[waiting.changed] esc=1 — due");
+		// Two hours on, the triage's half hour came too: its own line.
+		expect(run.sent.at(-1)!.split("\n")[0]).toBe(
+			"[waiting.changed] esc=1 — due",
+		);
 		const two = run.service.raise({ title: "後で", markdown: "?" });
 		run.service.events.pause();
 		run.service.wait(two.id, { trigger: "x", dueAt: run.clock.now - 1 });

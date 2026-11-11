@@ -318,6 +318,11 @@ import {
 	usageWindowOf,
 } from "../orchestrator/usageThresholds.js";
 import { isOrchestratorMode, savingNotice } from "../orchestrator/mode.js";
+import {
+	PriorityFile,
+	parseSubject,
+	type SubjectRef,
+} from "../orchestrator/triage.js";
 import { inProgressCount } from "../../ipc/orchestratorLanes.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
@@ -7637,9 +7642,15 @@ export class AppController {
 			undefined,
 			(line) => console.error(line),
 		);
+		// The triage's priorities, across restarts.
+		const priorities = new PriorityFile(
+			join(userDataPath, "devhub", "orchestrator-priorities.json"),
+			(line) => console.error(line),
+		);
 		this.orchestrator = new OrchestratorService({
 			store,
 			kept,
+			priorities,
 			agents: () => this.liveAgents(),
 			settings: () => this.config.orchestrator,
 			startProblem: () => this.orchestratorStartProblem(),
@@ -7760,11 +7771,40 @@ export class AppController {
 			},
 		});
 		this.orchestrator.observeUsage(this.usageLimits.wire());
+		for (const refused of [priorities.refused])
+			if (refused !== undefined) {
+				console.error(`[devhub] ${refused}`);
+				this.publishError(errorWire(new Error(refused)));
+			}
 		if (kept.refused !== undefined) {
 			console.error(`[devhub] ${kept.refused}`);
 			this.publishError(errorWire(new Error(kept.refused)));
 		}
 		this.syncOrchestrator();
+	}
+
+	/**
+	 * `orchestrator priority set|clear`'s subject, as an event line names it:
+	 * an agent by its full id or a unique prefix.
+	 */
+	private resolvePrioritySubject(text: string): SubjectRef {
+		const ref = parseSubject(text);
+		if (ref === undefined)
+			throw new Error(
+				`a subject is esc=ID, issue=OWNER/REPO#N, pr=OWNER/REPO#N or agent=ID, as the event lines name it; not ${JSON.stringify(text)}.`,
+			);
+		if (ref.kind !== "agent") return ref;
+		const ids = this.coordinator.model.workspaces
+			.flatMap((workspace) => workspace.agents)
+			.map((agent) => String(agent.id))
+			.filter((id) => id === ref.id || id.startsWith(ref.id));
+		if (ids.length !== 1)
+			throw new Error(
+				ids.length === 0
+					? `no agent is ${ref.id}. Run 'devhub --tell agents'.`
+					: `${ref.id} names ${String(ids.length)} agents: give more of the id.`,
+			);
+		return { kind: "agent", id: ids[0]! };
 	}
 
 	private requireOrchestrator(): OrchestratorService {
@@ -8150,6 +8190,27 @@ export class AppController {
 						: { auto: orchestrator().autoSaving! }),
 				}),
 				setMode: (mode) => orchestrator().setMode(mode),
+				setPriority: (subject, priority, note) => {
+					const ref = this.resolvePrioritySubject(subject);
+					return orchestrator().setPriority(ref, priority, note);
+				},
+				clearPriority: (subject) => {
+					const ref = this.resolvePrioritySubject(subject);
+					if (ref.kind === "esc")
+						throw new Error(
+							"an escalation's priority is its rank: 'escalation rank ID --priority normal'.",
+						);
+					return orchestrator().clearPriority(ref);
+				},
+				priorities: () => ({
+					entries: orchestrator().priorities(),
+					...(orchestrator().triagedAt === undefined
+						? {}
+						: { triagedAt: orchestrator().triagedAt! }),
+					...(orchestrator().nextTriageAt === undefined
+						? {}
+						: { nextTriageAt: orchestrator().nextTriageAt! }),
+				}),
 				events: (last) => orchestrator().eventLog(last),
 				emit: (type, text) => orchestrator().emit(type, text),
 				timers: () => orchestrator().timers.list(),

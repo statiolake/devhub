@@ -545,6 +545,10 @@ export interface NeedsActionWire {
 	readonly kind: "issue" | "pr" | "agent";
 	/** `item <url>` or `agent <id>`. */
 	readonly key: string;
+	/** The dispatcher's subject: `item owner/repo#N`, `agent <id>`. */
+	readonly subject: string;
+	/** The last triage's priority for it (`orchestrator priority set`). */
+	readonly priority?: "high" | "normal" | "low";
 	/** Its words, as `needs_action` says them (without the `[type]`). */
 	readonly line: string;
 	/** The clause it fails: `no_agent`, `outside_population (closed)`. */
@@ -694,6 +698,12 @@ export interface OrchestratorBoardWire {
 	};
 	/** The tasks in progress (the Sidebar's 対応中): saving's gate reads it. */
 	readonly inProgressTasks?: number;
+	/** The last triage's priority of each agent that has one, by agent id. */
+	readonly agentPriorities?: Readonly<
+		Record<string, "high" | "normal" | "low">
+	>;
+	/** When the last triage went to the orchestrator, and when the next is due. */
+	readonly triage?: { readonly lastAt?: number; readonly nextAt?: number };
 	/**
 	 * Events pending: held by the pause, or waiting for the orchestrator to
 	 * finish its turn (they then go out together, as one message).

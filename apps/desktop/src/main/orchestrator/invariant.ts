@@ -62,6 +62,7 @@ import {
 	breachWords,
 	needsActionWords,
 	shortId,
+	subjectOf,
 	type Breach,
 	type EventAgent,
 	type EventItem,
@@ -566,6 +567,8 @@ export interface KeptAgent {
 /** A subject that needs action now, as the board and `status` show it. */
 export interface NeedsActionView {
 	readonly key: string;
+	/** The dispatcher's subject for it (`subjectOf`): what a priority is kept under. */
+	readonly subject: string;
 	readonly kind: "issue" | "pr" | "agent";
 	/** Its words, as its `needs_action` line has them, without the `[type]`. */
 	readonly line: string;
@@ -744,6 +747,7 @@ export class InvariantWatch {
 		const event = eventOf(subject);
 		return {
 			key: subject.key,
+			subject: subjectOf(event),
 			kind: subject.kind,
 			line: event.type === "needs_action" ? needsActionWords(event) : "",
 			clause: breachWords(subject.breach),

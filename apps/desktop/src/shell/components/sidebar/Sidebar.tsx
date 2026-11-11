@@ -608,9 +608,12 @@ function AgentRowItem({
   const dispatch = useSidebarDispatch();
   const selectRow = useSelectRow();
   // What the orchestration says of each Agent (a Sidebar with no board: none).
-  const agentStates =
-    ((useSidebar() as Partial<SidebarValue>).board ?? EMPTY_BOARD)
-      .agentStates ?? {};
+  const sidebarBoard =
+    (useSidebar() as Partial<SidebarValue>).board ?? EMPTY_BOARD;
+  const agentStates = sidebarBoard.agentStates ?? {};
+  // The last triage's priority (`orchestrator priority set`), said in the
+  // tooltip only: the row stays as calm as it was.
+  const agentPriority = sidebarBoard.agentPriorities?.[agent.id];
   const selectedAgentId =
     snapshot.selection.context.kind === "agent"
       ? snapshot.selection.context.agentId
@@ -716,6 +719,9 @@ function AgentRowItem({
         // it is anchored on.
         data-tooltip-lines={JSON.stringify([
           ...tooltipLines(agentTooltipFacts(agent, agentStates[agent.id])),
+          ...(agentPriority === undefined
+            ? []
+            : tooltipLines([{ text: `priority: ${agentPriority}` }])),
           ...(merged?.tooltip ?? []),
         ])}
         // The prompt cache's line is a countdown, composed when the
