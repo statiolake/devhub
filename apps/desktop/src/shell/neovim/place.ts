@@ -67,9 +67,9 @@ export function cmdlineMenuPlace(
 
 /**
  * The command line's box, as `neovim.css` draws it: a hairline (1 px)
- * around the text, at most `BOX_PAD_Y` above and below it (less when the
- * rows kept for it are fewer: it stays inside them), `BOX_MARGIN` clear of
- * the status line or the editor's edge under it.
+ * around the text, at most `BOX_PAD_Y` above and below it, `BOX_MARGIN`
+ * clear of the status line or the editor's edge under it — less of both
+ * when the rows kept for it are fewer: it stays inside them.
  */
 export const BOX_BORDER = 1;
 export const BOX_PAD_Y = 6;
@@ -127,7 +127,10 @@ export interface CmdlineRoom {
  *
  * - With `cmdheight` > 0 the box is in the rows the person's config keeps
  *   for it, centred in them: those rows are where they read what they
- *   type, and are otherwise empty. Content taller than the rows (a prompt
+ *   type, and are otherwise empty. It is never over the status line row
+ *   above them (a footer's): where the rows are too few for its margin
+ *   and padding (`cmdheight=1`), those give way and the box is the row,
+ *   its text on the row's cells. Content taller than the rows (a prompt
  *   with its question, a wrapped line, `cmdline_block`) grows the box
  *   upward over the windows, as Neovim's own message area rises.
  * - With `cmdheight=0` there are no rows: the box sits on the lowest
@@ -150,33 +153,58 @@ export function cmdlinePlace(room: CmdlineRoom): CmdlinePlace {
   const width = Math.max(cw, Math.round((gridCols - 1) * cw));
   const cols = Math.max(1, gridCols - col - 1);
   const band = cmdheight > 0 && gridRows > 0;
-  // Inside the rows kept for it, when one line of text fits there.
+  const bandTop = band ? (gridRows - cmdheight) * ch : 0;
+  const bandHeight = cmdheight * ch;
+  const bottom = band
+    ? gridRows * ch - BOX_MARGIN
+    : Math.max(1, Math.min(room.statusRow, gridRows)) * ch - BOX_MARGIN;
+  const wanted = Math.max(1, room.rows ?? 1);
+  // Content the rows kept for it hold: the box stays inside them, never
+  // over the status line above (a footer's row, `statusline.ts`). Its
+  // margin, then its padding, give way first: with one row the box is
+  // the row and its text on the row's cells, as Neovim's.
+  if (band && wanted <= cmdheight) {
+    const content = wanted * ch;
+    const spare = bandHeight - content - 2 * BOX_BORDER;
+    const margin = Math.max(
+      0,
+      Math.min(BOX_MARGIN, Math.floor(spare / 2 - BOX_PAD_MIN)),
+    );
+    const padY = Math.min(BOX_PAD_Y, Math.floor(spare / 2 - margin));
+    const height = content + 2 * (BOX_BORDER + padY);
+    // Rounded only inside a margin: with none, it is the rows' own edge.
+    const centred = bandTop + (bandHeight - height) / 2;
+    const top = margin > 0 ? Math.round(centred) : centred;
+    return {
+      row: Math.max(0, Math.floor((top + BOX_BORDER + padY) / ch)),
+      col,
+      cols,
+      left,
+      top,
+      width,
+      height,
+      textTop: top + BOX_BORDER + padY,
+      rows: wanted,
+      padY,
+    };
+  }
+  // Grown over the windows: the padding it had in its rows, so it grows
+  // and nothing else changes.
   const padY = band
     ? Math.max(
         BOX_PAD_MIN,
         Math.min(
           BOX_PAD_Y,
-          Math.floor(
-            (cmdheight * ch - ch - 2 * BOX_BORDER - 2 * BOX_MARGIN) / 2,
-          ),
+          Math.floor((bandHeight - ch - 2 * BOX_BORDER - 2 * BOX_MARGIN) / 2),
         ),
       )
     : BOX_PAD_Y;
   const chrome = 2 * (BOX_BORDER + padY);
-  const bandTop = band ? (gridRows - cmdheight) * ch : 0;
-  const bottom = band
-    ? gridRows * ch - BOX_MARGIN
-    : Math.max(1, Math.min(room.statusRow, gridRows)) * ch - BOX_MARGIN;
   // Rows that fit under the editor's top (a cell and the margin clear).
   const fit = Math.max(1, Math.floor((bottom - ch - chrome) / ch));
-  const rows = Math.min(fit, Math.max(1, room.rows ?? 1));
+  const rows = Math.min(fit, wanted);
   const height = rows * ch + chrome;
-  const centred = bandTop + (cmdheight * ch - height) / 2;
-  const top = Math.round(
-    band && height <= cmdheight * ch - 2 * BOX_MARGIN
-      ? centred
-      : bottom - height,
-  );
+  const top = Math.round(bottom - height);
   return {
     row: Math.max(0, Math.floor(top / ch)),
     col,

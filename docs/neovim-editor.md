@@ -695,7 +695,11 @@ one layer model and pane motion.
   that opens over it — enough to tell typed text from the windows' text
   while it is up, and has no arrival.
   - With `cmdheight` > 0 it is in those rows, centred: the rows the person
-    kept are where they read what they type. Content taller than them (a
+    kept are where they read what they type. It is never over the status
+    line row above them, a footer's ("Status lines"): where the rows are
+    too few for its margin and padding (`cmdheight=1`), those give way and
+    the box is the row, its text on the row's cells. The mode and the
+    search echo (below) are in the same place. Content taller than them (a
     prompt's question, a wrapped line, `cmdline_block`) grows the box
     upward over the windows, as Neovim's message area rises; what does
     not fit the editor is cut from the top, the line being typed stays.
@@ -1267,7 +1271,7 @@ end, { events = { 'BufAdd' } })          -- nil: the rules; false: an empty foot
 
 | Choice | Meaning |
 | --- | --- |
-| In the status line row, one row tall | The row Neovim keeps for the window's footer: nothing moves |
+| In the status line row, one row tall | The row Neovim keeps for the window's footer: nothing moves, and nothing of the command line's rows is drawn over it |
 | Its ground `StatusLine` / `StatusLineNC` | What the colorscheme says a footer's ground is |
 | The UI face, a step under the editor's size | Words about the buffer, not its content (as decorations) |
 | Left: a dim path, the name, `●` when modified, a lock when read-only | Where the file is and what state it is in; the name is the main thing (`Normal`'s ink, bold), the rest `Comment`'s |
