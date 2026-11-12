@@ -56,7 +56,8 @@ import {
 } from "../../orchestrator/attachments.js";
 
 /** A body that stands on its own as far as the command line checks. */
-const BRIEF = "## 決めてほしいこと\n?\n\n## 人に聞く理由\n?";
+const BRIEF =
+	"## 決めてほしいこと\n?\n\n## 人に聞く理由\n本番のデータが変わり、取り消せない";
 
 function agent(overrides: Partial<TellAgent> = {}): TellAgent {
 	return {
@@ -4544,9 +4545,13 @@ describe("the Orchestrator row from the command line", () => {
 			"--link",
 			"https://github.com/acme/app/pull/1234=決済リトライの延長",
 		);
-		await raise(
+		const leaning = await raise(
 			"決済リトライの延長",
-			`${BRIEF}\n[PR 1234](https://github.com/acme/app/pull/1234) の修正`,
+			`${BRIEF}\n[PR 1234](https://github.com/acme/app/pull/1234) の修正、前回の続き`,
+		);
+		// What it cannot tell for sure it warns of, and raises all the same.
+		expect(leaning.message).toMatch(
+			/^Asked #2[\s\S]*\nWarning: it may not stand on its own[\s\S]*no '## 背景'[\s\S]*no '## 推奨'[\s\S]*「前回」 points outside/u,
 		);
 		// A follow-up stands on its own too: both sections.
 		await expect(raise("追加", "## 決めてほしいこと\nどう?")).rejects.toThrow(

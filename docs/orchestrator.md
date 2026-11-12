@@ -368,8 +368,11 @@ An escalation is **one question and its answer**, on one task (`model/escalation
 It is `open` until the person answers it (`answered`) or the orchestrator
 takes it back (`withdrawn`, `escalation withdraw ID [--note]`, or the task
 done). An answered or withdrawn one is never asked again: **a follow-up is a
-new escalation** on the same task, so a task's past questions read as a
-list, each with its answer. While one is open its task is 回答待ち. A task
+new escalation** on the same task. Answered and withdrawn ones are kept, in
+`orchestrator-tasks.json`, for the orchestrator (`escalation show` /
+`escalation list`, `task show`) and for what it learns from the person's
+past decisions — but the window draws only the open ones: the person is
+never shown past questions. While one is open its task is 回答待ち. A task
 may have more than one open; each is answered on its own.
 
 **The person answers in DevHub's window only.** The board's composer is the
@@ -526,29 +529,48 @@ http(s) links open in the browser as before.
 
 ### Writing an escalation: it stands on its own
 
-The person reads escalations, not the orchestrator's chat (the charter's 7),
-and reads each one cold: someone seeing it for the first time must be able
-to judge it from it alone. "Can I merge PR 1234?" assumes every bit of
-context it leaves out. So the body has named sections
+The person reads escalations, not the orchestrator's chat (the charter's 8),
+and reads each one cold and alone: they may not know the task, its history
+or where it stands, and the window shows them no past question or answer.
+So each escalation says, in itself, what is to be decided with the
+background needed for it (restated, even what an earlier question or the
+task already said), the options and what each leads to, and the
+orchestrator's recommendation — and never points outside itself as if the
+reader had been there (「前回の件」, 「先ほどの」, 「上記タスクで」). "Can I
+merge PR 1234?" assumes every bit of context it leaves out. So the body has named sections
 (`model/escalationBrief.ts`):
 
 | section               | what                                                                      | required |
 | --------------------- | ------------------------------------------------------------------------- | -------- |
-| `## 背景`             | what this is about, for a newcomer                                        |          |
+| `## 背景`             | what this is about, all a newcomer needs (warned of when absent)          |          |
 | `## やったこと`       | what was done and found                                                   |          |
-| `## 決めてほしいこと` | the one decision or confirmation, as a question, with its options         | yes      |
-| `## 人に聞く理由`     | why the orchestrator holds it instead of deciding it                      | yes      |
-| `## 推奨`             | the recommended choice, and why                                           |          |
+| `## 決めてほしいこと` | the one decision, as a question, its options and what each leads to       | yes      |
+| `## 人に聞く理由`     | why it is not the orchestrator's: what cannot be undone or reaches others | yes      |
+| `## 推奨`             | the recommended choice, and why (warned of when absent)                   |          |
 | `## 確認方法`         | a URL to try, screenshots (`--attach`), PR and Issue URLs, a diff summary |          |
 
 **It is enforced, not only stated.** `escalation new` refuses, with every problem at once
 and the template: a body without `## 決めてほしいこと` (also read as
 確認してほしいこと, 判断してほしいこと, Decision needed; any heading level,
 not inside code); a body without `## 人に聞く理由` (自分で決めない
-理由, Why I'm asking); a `#12`, `PR 1234` or `Issue 56` in the body that no
+理由, Why I'm asking), or one whose reason names nothing — empty, a few
+characters, or a stock phrase such as 念のため, 確認のため, 人の判断が必要,
+just in case (`genericReason`) — the refusal saying what a reason names:
+what cannot be undone, destroys or reaches others, or why the decision is
+the person's own, and that a choice which can be corrected later is not
+asked at all (the charter's 7); a `#12`, `PR 1234` or `Issue 56` in the body that no
 URL in it or in `--link` points at (`/pull/1234`, `/issues/56`,
 `devhub:escalation/12`, `devhub:task/12`); and a title that refers to anything by number —
-the title says the decision in words, the number is a chip. The card shows
+the title says the decision in words, the number is a chip.
+
+**And warned of, where it cannot be sure** (`briefWarnings`): the
+escalation is raised, and the command's answer ends with a `Warning:` for
+a body with no `## 背景` (Background) or no `## 推奨` (おすすめ,
+Recommendation), and for words that point outside the brief — 前回, 先ほど,
+先程, さっき, 例の件, 上記のタスク / 上記の件 / 上記の質問, 以前の質問 /
+前の回答, as discussed earlier, previous escalation (not inside code; 上記
+alone is not, since 「上記の案 A」 points inside). The orchestrator withdraws it
+and asks again in full, or leaves it. The card shows
 the decision's first line in place of the body's first line.
 
 ### The board
@@ -601,9 +623,10 @@ Workspace), what it waits for, its memo, then **each open question** in
 full — drawn by the GUI conversation's own Markdown renderer (code, tables,
 KaTeX math, Mermaid, SVG, Vega-Lite — whatever a chat answer can show) —
 each with its own composer under it: free Markdown, ⌘Return sends, and the
-question's options as quick replies. Under them, **これまでの質問と回答**,
-folded (a `<details>`): every answered or withdrawn question with its
-answer, newest first. Esc (in a composer, while it is empty), "← ボード" or the mouse's Back
+question's options as quick replies. Only the open questions are drawn:
+an answered or withdrawn one is not shown anywhere on the board, the card
+or the task (each open question stands on its own, so none needs the past
+to be read). Esc (in a composer, while it is empty), "← ボード" or the mouse's Back
 button over the board goes back to the board; Forward opens again what Back
 left. The board and a task are two pages of one stack: opening one pushes it
 in from the right and going back reverses it (220 ms, transform and opacity
@@ -1539,18 +1562,39 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
    resumed on the same agent (`agent resume task=T --prompt …`; a new agent
    only for new work or when `agent resume` says it cannot), and `task done`
    with the result.
-7. **The person reads escalations, not the chat; one question each, and
-   wait for the answer**: only what only they can decide, one escalation
+7. **What it decides itself, and what it asks** — two kinds of decision:
+   - **Reversible: decided, not asked.** Which design or implementation,
+     naming, the order of work, which agent does what, how tests or commits
+     are split, an internal value. It decides on the person's past
+     decisions (`decisions.md`, their past answers, their skill), the
+     easier one to undo when nothing says; notes what it chose and why in a
+     line or two in the task's memo (「決めたこと: … (…)」, kept when the memo
+     is rewritten; `decisions.md` too when it holds beyond the task); and
+     shows the result (below, "How the person sees what was decided").
+   - **Irreversible, destructive or outward: asked, and waited for.**
+     Deleting data or branches, force-pushes and rewritten history, merges,
+     releases, deploys or production changes that reach others, messages to
+     people, spending money, permissions or visibility, anything not easily
+     undone — and what only the person knows or may allow. What the person
+     explicitly handed over beforehand (their skill, a past answer) it may
+     do within that.
+8. **The person reads escalations, not the chat; one question each, and
+   wait for the answer**: only what the 7 says to ask, one escalation
    per question, on its task; **never proceed on something the person is
    to decide without their answer — no deadline or time is a reason to**;
    the answer arrives as their words and the task is 処理中 again; a
    follow-up is a new escalation, one that no longer stands is withdrawn.
-   Each stands on its own for a first-time reader — the sections of
+   Each is answerable alone, by someone who may not know the task, its
+   history or its progress and is shown no past question: the decision
+   with its background restated, the options and what each leads to, the
+   recommendation, and no 「前回の件」 or 「上記タスクで」 pointing outside it — the sections of
    "Writing an escalation", full URLs with a line of what each is,
    screenshots by `--attach` (a worker's by `attachment add` and its id),
    the title reviewed before raising (specific, understandable without
    context, the decision in words), and a short bad and good example.
-8. **Triage and requests** (see "Triage: priorities" and "Requests"): each
+   `## 人に聞く理由` names what cannot be undone or whom it reaches, and
+   `## やったこと` carries what was decided along the way.
+9. **Triage and requests** (see "Triage: priorities" and "Requests"): each
    open task re-checked and ranked (high only for what makes someone wait,
    about three), the maybe-stale ones resolved, tasks given to the work
    that has none; what saving still delivers and what off drops; the
@@ -1565,6 +1609,30 @@ gets it as a paragraph of `developerInstructions`
 neither (DevHub has no channel into it), nor does one DevHub did not start.
 The person's make-progress need not repeat any of it: `/devhub-orchestrator`
 leaves these to the charter and is about the team's own rules.
+
+### How the person sees what was decided
+
+There is no informational kind of escalation: an escalation stays one
+question and one answer, its open state is what makes a task 回答待ち, and
+a "look at this" that needs no answer would be a question that is not one —
+a card that blocks nothing yet sits in the lane that means "waiting for
+you". The result of reversible decisions reaches the person through what
+already exists, by where the work ends:
+
+- **A decision of the person's is still ahead** (most work: the merge, the
+  release). The escalation that asks it carries the result: `## やったこと`
+  lists what the orchestrator decided on the way, a line each with its
+  reason, and `## 確認方法` the PR, the URL to try and the screenshots
+  (`--attach`). The person reviews the outcome where they answer, and may
+  overturn a decision in the same answer.
+- **Nothing is left for the person** (internal work, or what they handed
+  over). `task done T --note "<結果>。決めたこと: …"`, with the PR or Issue
+  linked (`task link`): the board's 完了 lane lists it most recent first
+  (folded at start, its count on the heading), the card showing the note,
+  and its view the links.
+
+The memo (`task edit T --memo`) holds 「決めたこと」 while the work is under
+way, so the board shows it on the card before the work is done.
 
 ## `/devhub-orchestrator`: writing the person's make-progress skill
 
@@ -1585,7 +1653,7 @@ the orchestrator agent, and no other agent, a skill for **writing** one:
   `--check-at` for a time) and is checked on `task.changed`), the
   escalation principles and
   template below, the CLI it uses, and an interview: the team's lanes,
-  existing skills, review and "done", what it may decide alone (and where
+  existing skills, review and "done", what it may decide alone beyond the charter's 7 (and where
   decisions are recorded), events, timers, naming and meta. Then it drafts
   make-progress — a dispatcher on each line's `[type]`, a playbook per
   event, escalation rules, a reconcile on `init` — shows it, and writes it to
@@ -1615,21 +1683,25 @@ writes the skill into `root`, and tells you the settings lines.
 
 The sections are DevHub's (see "Writing an escalation"; two are required);
 the rest is a starting point for the orchestrator's own skill. Escalate
-only what needs a person's decision or permission, after the read-only
+only what cannot be undone, destroys or reaches others, or is the person's
+own (the charter's 7: what can be corrected later is decided, not asked),
+after the read-only
 investigation (code, Notion, Slack) is done; when the facts are not enough,
-send an agent to dig further instead. Write in the person's language, for an
+send an agent to dig further instead. Each is read alone: restate the
+background, say what each option leads to, never point at an earlier
+question or the task's state. Write in the person's language, for an
 engineer who does not know the system, the domain or the code: code
 snippets, formulas, diagrams (Mermaid, SVG) and tables render as they do in
 a chat answer.
 
 ```markdown
-## 背景 — what this is about, for someone new to it
+## 背景 — what this is about: all that someone new to the task, its history and progress needs
 
-## やったこと — what has been done and found
+## やったこと — what has been done and found, and what the orchestrator decided on the way (a line each, with why)
 
-## 決めてほしいこと — the one decision, stated as a question, with its options
+## 決めてほしいこと — the one decision, stated as a question, with its options and what each leads to
 
-## 人に聞く理由 — why the orchestrator does not decide it itself
+## 人に聞く理由 — what about it cannot be undone, destroys or reaches others, or why it is the person's own
 
 ## 推奨 — the recommended option, and why
 

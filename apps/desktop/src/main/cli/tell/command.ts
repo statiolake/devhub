@@ -859,9 +859,13 @@ orchestrator (the Orchestrator row: tasks, escalations, events)
                                    math, mermaid, svg - as the chat
                                    renders). The body needs a '##
                                    決めてほしいこと' and a '## 人に聞く理由'
-                                   section, and no PR/Issue by number
-                                   alone; the title says the decision in
-                                   words, no numbers. A --link is an
+                                   section (what cannot be undone or
+                                   reaches others, not 「念のため」),
+                                   and no PR/Issue by number alone; the
+                                   title says the decision in words, no
+                                   numbers. It warns of no '## 背景' or
+                                   '## 推奨', and of 前回 / 上記タスク
+                                   pointing outside it. A --link is an
                                    http(s) URL or a devhub: link ('link'
                                    makes one), with what it is after '='
                                    (or a space, when the URL has a '?').

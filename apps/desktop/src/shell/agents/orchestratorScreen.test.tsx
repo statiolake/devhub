@@ -262,18 +262,23 @@ describe("the Orchestrator board", () => {
     ).toBeNull();
   });
 
-  it("shows a task's past questions folded, each with its answer", () => {
+  it("shows only the open question: no past ones, no answers", () => {
     motion(true);
     mount();
     fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
-    const past =
-      document.querySelector<HTMLDetailsElement>(".orchestrator-past")!;
-    expect(past.open).toBe(false);
-    expect(past.querySelector("summary")).toHaveTextContent(
-      "これまでの質問と回答 (1)",
+    const view = document.querySelector(".orchestrator-reading")!;
+    // The answered question is kept (the orchestrator reads it), not drawn.
+    expect(view).not.toHaveTextContent("A or B?");
+    expect(view).not.toHaveTextContent("A で");
+    expect(view.querySelector("details")).toBeNull();
+    expect(view.querySelectorAll(".orchestrator-question")).toHaveLength(0);
+    fireEvent.keyDown(view, { key: "Escape" });
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
     );
-    expect(past).toHaveTextContent("A or B?");
-    expect(past).toHaveTextContent("A で");
+    expect(
+      document.querySelectorAll(".orchestrator-reading .orchestrator-question"),
+    ).toHaveLength(1);
   });
 
   it("shows a task's links, agents and memo, and a stopped agent as resumable", () => {

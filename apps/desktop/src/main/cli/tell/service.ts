@@ -42,7 +42,10 @@ import {
 	parseDevhubLink,
 	type DevhubLink,
 } from "../../../model/devhubLink.js";
-import { briefProblems } from "../../../model/escalationBrief.js";
+import {
+	briefProblems,
+	briefWarnings,
+} from "../../../model/escalationBrief.js";
 import {
 	AttachmentError,
 	checkAttachments,
@@ -1654,7 +1657,14 @@ export class TellService {
 		return {
 			message:
 				`Asked #${String(made.id)} 「${made.title}」 on task=${String(task.id)}: the task is 回答待ち until the person answers. Wait for the answer; never go ahead on this decision without it. A follow-up question is a new escalation.` +
-				attachedWords(attachments),
+				attachedWords(attachments) +
+				warningWords(
+					briefWarnings({
+						title: command.title,
+						body: command.body,
+						links: command.links,
+					}),
+				),
 			data: made,
 		};
 	}
@@ -5456,6 +5466,16 @@ function refuseBrief(request: Parameters<typeof briefProblems>[0]): void {
 			"A body that does: '## 背景' (what this is, for a newcomer) / '## やったこと' / '## 決めてほしいこと' (the question, its options) / '## 人に聞く理由' / '## 推奨' / '## 確認方法' (a URL to try, screenshots with --attach, PR and Issue URLs).",
 		].join("\n"),
 	);
+}
+
+/**
+ * What may keep a raised escalation from standing on its own
+ * (`briefWarnings`): said after the fact, for the next one or a withdraw.
+ */
+function warningWords(warnings: readonly string[]): string {
+	return warnings.length === 0
+		? ""
+		: `\nWarning: it may not stand on its own for the person, who reads it alone:\n${warnings.map((one) => `  - ${one}`).join("\n")}`;
 }
 
 /** The labels given, keyed by each link as it was checked. */

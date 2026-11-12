@@ -123,6 +123,20 @@ describe("the /devhub-orchestrator skill", () => {
 			"attachment add",
 			"悪い例",
 			"良い例",
+			// What it decides itself, and what it asks: the two kinds.
+			"取り消せる判断",
+			"人の過去の判断に沿って決める",
+			"決めたこと:",
+			"結果を見せるためだけのエスカレーションは起こさない",
+			"取り消せない・壊す・外に届く判断",
+			"force-push",
+			"人へのメッセージ",
+			"お金がかかること",
+			// Each one answerable alone: no pointing at what the reader never saw.
+			"1 つのエスカレーションだけで答えられる",
+			"選択肢とそれぞれを選ぶと何が起きるか",
+			"前回の件",
+			"人には過去の質問と回答は見えない",
 		])
 			expect({ word, found: ORCHESTRATOR_CHARTER.includes(word) }).toEqual({
 				word,

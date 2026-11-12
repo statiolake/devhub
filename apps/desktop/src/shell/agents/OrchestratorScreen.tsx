@@ -633,7 +633,7 @@ function BoardPage({
         )}
         <Lane
           title="完了"
-          hint="Done tasks, most recent first, with their questions and answers."
+          hint="Done tasks, most recent first, with what each came to."
           tone="closed"
           count={board.done.length}
           empty="完了したものはまだありません。"
@@ -948,7 +948,6 @@ function TaskView({
   const scroller = useRef<HTMLDivElement>(null);
   const jumps = taskWorkspaces(task, workspaces);
   const questions = openQuestions(task);
-  const past = task.escalations.filter((one) => one.state !== "open");
   const scrollKey = `task:${String(task.id)}`;
   const count = task.escalations.length;
   // Coming back to the same task, it is where it was left; a new question
@@ -1173,62 +1172,6 @@ function TaskView({
             <AnswerComposer escalation={one} onAnswered={onAnswered} />
           </article>
         ))}
-        {past.length === 0 ? null : (
-          <details className="orchestrator-past">
-            <summary>これまでの質問と回答 ({past.length})</summary>
-            {[...past].reverse().map((one) => (
-              <article
-                key={one.id}
-                className="orchestrator-entry orchestrator-past-entry"
-                data-role="orchestrator"
-                data-escalation-id={one.id}
-              >
-                <div className="orchestrator-entry-byline">
-                  <span className="orchestrator-card-id">質問 #{one.id}</span>{" "}
-                  {one.title}
-                  <span className="orchestrator-entry-time">
-                    {span(now - one.question.at)} ago
-                  </span>
-                </div>
-                <div className="orchestrator-entry-body">
-                  <RichText
-                    source={one.question.markdown}
-                    agentId={pathsOn}
-                    cwd={base}
-                  />
-                </div>
-                {one.answer === undefined ? null : (
-                  <div className="orchestrator-answer" data-role="human">
-                    <div className="orchestrator-entry-byline">
-                      You
-                      {one.answer.option === undefined
-                        ? ""
-                        : ` · 選択肢「${one.answer.option}」`}
-                      <span className="orchestrator-entry-time">
-                        {span(now - one.answer.at)} ago
-                      </span>
-                    </div>
-                    <div className="orchestrator-entry-body">
-                      <RichText
-                        source={one.answer.markdown}
-                        agentId={pathsOn}
-                        cwd={base}
-                      />
-                    </div>
-                  </div>
-                )}
-                {one.withdrawn === undefined ? null : (
-                  <div className="orchestrator-closed-note">
-                    取り下げ {span(now - one.withdrawn.at)} ago
-                    {one.withdrawn.note === undefined
-                      ? ""
-                      : ` — ${one.withdrawn.note}`}
-                  </div>
-                )}
-              </article>
-            ))}
-          </details>
-        )}
         {task.done === undefined ? null : (
           <div className="orchestrator-closed-note">
             完了 {span(now - task.done.at)} ago

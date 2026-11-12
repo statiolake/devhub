@@ -10,7 +10,18 @@
  *
  * - **決めてほしいこと** — the one decision or confirmation asked for, and
  *   its options. The board's card shows its first line.
- * - **人に聞く理由** — why the orchestrator does not decide it itself.
+ * - **人に聞く理由** — why the orchestrator does not decide it itself:
+ *   what about it cannot be undone, is destructive or reaches others, or why
+ *   it is the person's own. A choice that can be corrected later is the
+ *   orchestrator's to make (the charter's 7), so an empty or generic reason
+ *   (「念のため」, 「判断が必要」) is refused too (`genericReason`).
+ *
+ * Its reader may know nothing of the task, its history or where it stands,
+ * and answers from it alone: the background restated, the options with
+ * what each leads to, the recommendation. What the command line cannot
+ * tell for sure it warns of and lets through (`briefWarnings`): no
+ * 背景 or 推奨 section, and words that point outside the brief
+ * (前回, 先ほど, 上記のタスク, as discussed) as if the reader had been there.
  *
  * And nothing is referred to by number alone: a `#12`, `PR 1234` or
  * `Issue 56` in the body needs its URL there or in `--link`, and the title
@@ -33,6 +44,60 @@ export const REASON_HEADINGS: readonly string[] = [
   "人に聞く理由",
   "自分で決めない理由",
   "Why I'm asking",
+];
+
+/** The background's heading, and what else is read as it. */
+export const BACKGROUND_HEADINGS: readonly string[] = ["背景", "Background"];
+
+/** The recommendation's heading, and what else is read as it. */
+export const RECOMMENDATION_HEADINGS: readonly string[] = [
+  "推奨",
+  "おすすめ",
+  "Recommendation",
+];
+
+/**
+ * Words that point at something outside the brief — an earlier question,
+ * the task's state, a talk — as if its reader had been there. 上記 alone is
+ * left alone: 「上記の案 A」 points inside.
+ */
+const OUTSIDE_REFERENCES =
+  /前回|先ほど|先程|さっき|例の件|上記の?(?:タスク|件|エスカレーション|質問)|(?:以前|前|過去)の(?:質問|エスカレーション|回答)|この前の|\bas (?:discussed|mentioned) (?:before|earlier|previously)\b|\b(?:previous|earlier|last) (?:escalation|question)\b/giu;
+
+/**
+ * Reasons that name nothing: what is left of the section, its punctuation,
+ * list marks and polite endings taken off, being one of these (or almost
+ * nothing) says why the person is asked no better than no section does.
+ */
+const GENERIC_REASONS: readonly string[] = [
+  "念のため",
+  "念のため確認",
+  "確認のため",
+  "確認したい",
+  "確認してほしい",
+  "判断が必要",
+  "人の判断が必要",
+  "人に決めてほしい",
+  "決めてほしい",
+  "決められない",
+  "自分では決められない",
+  "自分で決められない",
+  "わからない",
+  "分からない",
+  "不明",
+  "迷った",
+  "迷っている",
+  "重要",
+  "大事",
+  "なし",
+  "特になし",
+  "justincase",
+  "tobesafe",
+  "important",
+  "notsure",
+  "none",
+  "na",
+  "tbd",
 ];
 
 /** The text with fences, inline code and math blanked, offsets kept. */
@@ -95,6 +160,27 @@ export function decisionOf(markdown: string): string | undefined {
   return line === undefined ? undefined : line.replace(/[*_`]/gu, "");
 }
 
+/**
+ * Whether a 人に聞く理由 says nothing about why the person is asked: empty,
+ * a few characters, or a stock phrase (`GENERIC_REASONS`).
+ */
+export function genericReason(reason: string): boolean {
+  const core = reason
+    .replace(/^\s*(?:[-*>]|\d+\.)\s+/gmu, "")
+    .replace(/[*_`~]/gu, "")
+    .replace(/[\s\p{P}\p{S}]+/gu, "")
+    .toLowerCase();
+  const plain = core.replace(
+    /(?:です|でした|ので|から|だから|します|しました|だ)+$/u,
+    "",
+  );
+  return (
+    [...plain].length < 4 ||
+    GENERIC_REASONS.includes(core) ||
+    GENERIC_REASONS.includes(plain)
+  );
+}
+
 /** A reference by number: `#12`, `PR 1234`, `PR #1234`, `Issue 56`. */
 interface NumberReference {
   readonly text: string;
@@ -150,6 +236,40 @@ export function urlsIn(markdown: string): readonly string[] {
   );
 }
 
+/** What a 人に聞く理由 must name, said in every refusal about it. */
+const REASON_HINT =
+  "name what about this cannot be undone, destroys or reaches others (deleting data or a branch, a force-push or rewritten history, a merge or release others get, a message sent to someone, money spent), or why it is the person's own (only they know it, only they may). A choice that can be corrected later (a design, an implementation, a name, the order of work) is yours: decide it on the person's past decisions, note it in the task's memo, and show the result instead of asking.";
+
+/**
+ * What may keep the escalation from standing on its own and the command
+ * line cannot tell for sure: said after it is raised, not refused.
+ */
+export function briefWarnings(request: BriefRequest): readonly string[] {
+  const warnings: string[] = [];
+  if (sectionText(request.body, BACKGROUND_HEADINGS) === undefined)
+    warnings.push(
+      "no '## 背景' section: the person may know nothing of this task, its history or where it stands. Restate what is needed to decide in the escalation itself.",
+    );
+  if (sectionText(request.body, RECOMMENDATION_HEADINGS) === undefined)
+    warnings.push(
+      "no '## 推奨' section: say which option you recommend, and why.",
+    );
+  const outside = [
+    ...new Set(
+      [
+        ...withoutCode(`${request.title ?? ""}\n${request.body}`).matchAll(
+          OUTSIDE_REFERENCES,
+        ),
+      ].map((match) => match[0]),
+    ),
+  ];
+  if (outside.length > 0)
+    warnings.push(
+      `${outside.map((one) => `「${one}」`).join(", ")} points outside this escalation: the person sees it alone, with no earlier question or task state. Say here what it was (escalation new again, or withdraw this one, to fix it).`,
+    );
+  return warnings;
+}
+
 export interface BriefRequest {
   readonly title?: string;
   readonly body: string;
@@ -173,9 +293,12 @@ export function briefProblems(request: BriefRequest): readonly string[] {
     problems.push(
       "the body has no '## 決めてほしいこと' section: the one decision or confirmation asked of the person, as a question, with its options.",
     );
-  if (sectionText(request.body, REASON_HEADINGS) === undefined)
+  const reason = sectionText(request.body, REASON_HEADINGS);
+  if (reason === undefined)
+    problems.push(`the body has no '## 人に聞く理由' section: ${REASON_HINT}`);
+  else if (genericReason(reason))
     problems.push(
-      "the body has no '## 人に聞く理由' section: why you hold this for the person instead of deciding it yourself.",
+      `the '## 人に聞く理由' section says nothing about why the person is asked (${JSON.stringify(reason.slice(0, 60))}): ${REASON_HINT}`,
     );
   const bare = bareReferences(request.body, [
     ...request.links,

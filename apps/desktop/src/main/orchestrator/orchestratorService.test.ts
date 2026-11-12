@@ -130,7 +130,8 @@ function issue(overrides: Partial<ItemFacts> = {}): ItemFacts {
 	};
 }
 
-const BODY = "## 決めてほしいこと\nどうするか\n\n## 人に聞く理由\n本番";
+const BODY =
+	"## 決めてほしいこと\nどうするか\n\n## 人に聞く理由\n本番の挙動が変わり、取り消せない";
 
 describe("a task", () => {
 	it("is born 待機, goes 処理中 when a bound agent works, and stays so when it stops: then it needs action", () => {
