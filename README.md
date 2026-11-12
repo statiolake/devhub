@@ -225,10 +225,9 @@ devhub --tell workspace close W [--worktree keep|remove] [--agents stop] [--term
 devhub --tell profiles                                # agent profiles: id, name, kind, --gui/--tui, the window's default, available (and why not)
 devhub --tell agents [--workspace W] [--meta K=V]...  # id, name, kind, status and for how long, open requests, unread, context, meta
 devhub --tell agent status A                          # one agent in detail (--json: a stable schema)
-devhub --tell agent new --workspace W --profile P --gui|--tui --managed|--unmanaged [--name N] [--prompt TEXT|-] [--meta K=V]...   # Cmd+Q c
+devhub --tell agent new --workspace W --profile P --gui|--tui --managed|--unmanaged [--name N] [--prompt TEXT|-] [--meta K=V]... [--task T]   # Cmd+Q c
 devhub --tell agent manage A | agent unmanage A       # under the orchestrator's management, or not
-devhub --tell agent keep A --note TEXT | --clear      # leave a managed agent that needs action as it is, for a reason
-devhub --tell status ITEM|A                           # one subject's whole state: an item (owner/repo#N, URL) or an agent (--json)
+devhub --tell status task=T|ITEM|A                    # one subject's whole state: a task, an item (owner/repo#N, URL) or an agent (--json)
 devhub --tell agent rename A NAME | agent rename A --clear   # the row menu's Rename… (--clear: DevHub's label again)
 devhub --tell agent meta A [set KEY VALUE | unset KEY]      # an agent's own key/value pairs
 devhub --tell issue actions                           # Issue actions: id, label, wording (and none)
@@ -331,8 +330,8 @@ Agent and Assign Issue alike.
 it was started with `--managed` (or `agent manage A` said so later; `agent
 unmanage A` takes it out). Only a managed agent's state is the
 orchestrator's to hear of and keep settled (`docs/orchestrator.md`,
-"Managed agents"); `agent keep A --note TEXT` leaves one that needs action as it
-is, for a reason, until its state changes (kept across restarts); an agent the person starts in the window — New Agent,
+"Managed agents"): it is bound to a task, and said as `no_task` when it is
+on none; an agent the person starts in the window — New Agent,
 Assign Issue — is not, and the orchestrator agent itself never is. The flag
 is a field of the agent, kept in `state.json` and under its CLI session in
 `session-meta.json` like its metadata, so a restart or a resume keeps it.
@@ -347,8 +346,9 @@ agent in it is put under management (`--managed`, `agent manage`), or by
 `workspace manage` / the row's **Manage with Orchestrator** (`Cmd+Q
 Shift+M`, also in the palette); `workspace unmanage` / **Stop Managing**
 takes it and its agents out. A managed Workspace is drawn under the
-Orchestrator row with its helpers, grouped by the board's lanes — 要回答,
-要対応, 対応中, 待機中, 完了 — rather than among your own rows, and stays
+Orchestrator row with its helpers, grouped by the status of their tasks —
+回答待ち, 処理中, 待機, 完了, with △ on what needs action — rather than among
+your own rows, and stays
 there when its last managed agent has gone (`docs/orchestrator.md`, "The
 orchestrator's work in the Sidebar").
 
@@ -386,31 +386,29 @@ in the target's transcript. An agent cannot answer its own question.
 
 **Orchestrating.** One ordinary agent can drive the others with these
 commands. The Sidebar's **Orchestrator** row (above Scratch) gives one such
-agent a screen of its own — a board of escalations the person answers, and
-events DevHub sends it — with `devhub --tell
-escalation`, `board` and `orchestrator` to drive it. The orchestrator ranks
-each escalation (`escalation new|rank --priority high|normal|low --effort
-quick|normal|deep --rank-note TEXT`), and 要回答 is sorted by priority, then
-effort, then age. An escalation is 要回答 only while a question is its last
-entry: the person's answer, the orchestrator's `escalation
-hold ID [--note TEXT]`, or one of its agents going back to work moves it to
-対応中 until `escalation ask` asks again. One waiting on something outside
-(a date, a reply) is parked in 待機中 with `escalation wait ID --trigger
-TEXT [--at DATETIME]`, its trigger always in words; the orchestrator hears of
-it again at its time or when what it is about changes. DevHub holds the
-orchestrator to one invariant — every open item assigned to you on the
-registered Projects (an Issue or a pull request card: one thing to DevHub;
-none registered, none) has a working agent, a
-要回答 or a 待機中 escalation, and every managed agent is working or on one
-of those — and says each subject that
-breaks it as a `needs_action` line — the subject and the clause it fails,
-`[needs_action] issue=acme/web#123 ws=web — no_agent`, never its state, which
+agent a screen of its own — a board of its **tasks** and the questions it
+asks the person, and events DevHub sends it — with `devhub --tell task`,
+`escalation`, `board` and `orchestrator` to drive it. A task is DevHub's
+internal ticket for one piece of work: a title, 0..n links (Issues, pull
+requests, anything), the agents bound to it with their sessions, one memo
+of what is next, a priority, and a status — 待機 (parked, with what it waits
+for), 処理中, or 回答待ち while a question on it is open — until `task done`.
+An escalation is one question to the person on a task, and their answer
+(`escalation new --task T`); a follow-up is a new one, and nothing proceeds
+on a question by a deadline. DevHub holds the orchestrator to one invariant
+— every open task is 回答待ち, 待機, or 処理中 with one of its agents at work;
+every managed agent is bound to a task; every open item assigned to you on
+the registered Projects (an Issue or a pull request card: one thing to
+DevHub; none registered, none) is linked by a task — and says each subject
+that breaks it as a `needs_action` line — the subject and the clause it
+fails, `[needs_action] task=12「…」 ws=web — idle`, never its state, which
 `devhub --tell status <subject>` gives in one call — batched at most every
 `delivery_interval` (5m); the person's answers go at once, as typed. At
 every start DevHub also gives the orchestrator its own short charter — drive
 every assigned item to closed, never do hands-on work (the worker agents
 read logs and fix), hand each delivered line to a background fork subagent
-and return, keep the invariant, and DevHub's conventions. See
+and return, keep the invariant, one task per piece of work, one question
+per escalation, and DevHub's conventions. See
 [`docs/orchestrator.md`](docs/orchestrator.md). `agent status` gives one agent's
 state in one call: kind, profile, workspace, status and since when (as DevHub
 saw it), the turn, last activity, open questions and permission prompts

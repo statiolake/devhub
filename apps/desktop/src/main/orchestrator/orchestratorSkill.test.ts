@@ -94,25 +94,32 @@ describe("the /devhub-orchestrator skill", () => {
 			'subagent_type: "fork"',
 			"通常のサブエージェント",
 			"decisions.md",
-			"母集団",
+			"タスク",
 			"devhub --tell --json status",
-			"agent keep",
+			"no_task",
 			"--managed",
-			"meta issue=",
-			"issue=pending",
+			"agent new --task T",
+			"task link",
+			"task done",
+			"task edit T --memo",
+			"agent resume task=T",
 			"parent=",
 			"決して承認しない",
 			"回答を書かない",
 			"focus は頼まれたときだけ",
 			"usage.threshold",
-			// The person reads escalations, not the chat: each stands alone.
-			"チャットを**基本的に読まない**",
+			// The person reads the board, not the chat: one question each, waited for.
+			"チャットを**読まない**",
+			"1 問 1 エスカレーション",
+			"回答なしに決して先へ進めない",
+			"期限や時刻を理由に進めない",
+			"追加の質問は新しいエスカレーション",
 			"## 決めてほしいこと",
 			"## 人に聞く理由",
 			"## 確認方法",
 			"起こす前にタイトルを見直す",
 			"--link URL=説明",
-			"--attach FILE[=説明]",
+			"--attach",
 			"attachment add",
 			"悪い例",
 			"良い例",
@@ -214,23 +221,25 @@ describe("the /devhub-orchestrator skill", () => {
 		expect(text).not.toContain("\\`");
 	});
 
-	it("covers the lanes, the event types, the interview and the settings it hands over", () => {
+	it("covers the tasks' statuses, the event types, the interview and the settings it hands over", () => {
 		const text = orchestratorSkillText(devhub.cli);
 		for (const word of [
-			"要回答",
-			"対応中",
-			"待機中",
+			"回答待ち",
+			"処理中",
+			"待機",
+			"task status T waiting --note",
+			"escalation new --task",
+			"escalation withdraw",
 			"{EVENT}",
 			"{EVENT_JSON}",
 			"init",
 			"escalation_answered",
 			"needs_action",
 			"--json status",
-			"waiting.changed",
+			"task.changed",
 			"pr=",
 			"fork",
 			"delivery_interval",
-			"agent keep",
 			"timer.elapsed",
 			"custom.",
 			"orchestrator events",
@@ -267,7 +276,9 @@ describe("the /devhub-orchestrator skill's event table", () => {
 
 	it("names no type DevHub does not send", () => {
 		const named = [
-			...text.matchAll(/`((?:github|workspace|agent|timer|usage)\.[a-z_]+)`/gu),
+			...text.matchAll(
+				/`((?:github|workspace|agent|timer|usage|task)\.[a-z_]+)`/gu,
+			),
 		].map((match) => match[1]!);
 		expect(named.length).toBeGreaterThanOrEqual(2);
 		for (const type of named)
@@ -283,20 +294,21 @@ describe("the /devhub-orchestrator skill's event table", () => {
 			{
 				type: "needs_action",
 				subject: { kind: "pr", item },
-				breach: { clause: "no_agent" },
+				breach: { clause: "no_task" },
+			},
+			{
+				type: "needs_action",
+				subject: { kind: "task", task: { id: 7, title: "ログイン修正" } },
+				ws: "login-fix",
+				breach: { clause: "idle" },
 			},
 			{
 				type: "needs_action",
 				subject: { kind: "agent", agent: { id: "c3d4e5f6", name: "調査" } },
 				ws: "docs",
-				breach: { clause: "outside_population", outside: "no_item" },
+				breach: { clause: "no_task" },
 			},
-			{
-				type: "waiting.changed",
-				escalationId: 15,
-				reasons: ["due"],
-				waitSince: 0,
-			},
+			{ type: "task.changed", taskId: 15, reasons: ["due"] },
 		] as const)
 			expect(text).toContain(eventLine(event, 0));
 	});

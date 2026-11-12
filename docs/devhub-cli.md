@@ -98,11 +98,11 @@ reading it whenever a `-` appears means the command never blocks on a pipe
 nobody writes to when `-` was a value and not the text.
 
 Which `-` is text is the app's to say (`readsStdin` in `tell/request.ts`):
-`agent send`, `orchestrator emit` and `memo set` take their text
-there; `agent new`, `issue assign`, `agent resume` and `orchestrator start`
-their `--prompt`; `escalation new` and `ask` their `--body`. So
-`devhub --tell memo set issue=acme/app#12 - < next.txt` and
-`devhub --tell agent resume issue=acme/app#12 --prompt - <<<'…'` need nothing
+`agent send` and `orchestrator emit` take their text there; `agent new`,
+`issue assign`, `agent resume` and `orchestrator start` their `--prompt`;
+`task edit` its `--memo`; `escalation new` its `--body`. So
+`devhub --tell task edit 12 --memo - < next.txt` and
+`devhub --tell agent resume task=12 --prompt - <<<'…'` need nothing
 new in the Go command: a verb that reads stdin is a line in the app's parser.
 
 **Compatibility.** The command and the app are one build: the launcher on
