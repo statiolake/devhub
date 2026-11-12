@@ -926,13 +926,14 @@
  * corner, shadow and padding are the floats', a cell inline and the
  * block padding above and below.
  *
- * A list in it (`stack{ band }`) is a menu's: its band is inset from the
- * line by the floats' band inset (`--float-band-inset`) on all four sides
- * — the first row's, the last row's and both sides alike — and rounded by
- * the rest of the corner, so the corners nest, as in the completion menu.
- * The list and a pane (`stack{ pane }`) reach out to that inset and pad
- * their content back in (`--nvc-bleed`): the band's and the pane's edges
- * line up, and the words stay a cell in, under the word typed.
+ * A list in it (`stack{ band }`) is a menu's: everything in the popup is
+ * inset from the line by the floats' band inset (`--float-band-inset`), on
+ * all four sides alike, so the band is, and rounded by the rest of the
+ * corner, so the corners nest, as in the completion menu. DevHub adds no
+ * cell inline: the content's inset past the band is each part's own `pad`,
+ * across as down (a row's, a pane's), so a menu whose parts pad as much
+ * across as down has its text as far from the line on every side. The
+ * words still start under the word typed: the anchor lines them up.
  */
 .nvim-popup {
   --popup-line: 1px;
@@ -966,16 +967,9 @@
   overflow-wrap: anywhere;
 }
 
-/* A menu's popup: the band inset above and below as at the sides. */
+/* A menu's popup: the band inset on all four sides, nothing more. */
 .nvim-popup-body:has(.nvc-banded) {
-  padding-block: var(--float-band-inset);
-}
-
-.nvim-popup .nvc-banded,
-.nvim-popup .nvc-pane {
-  --nvc-bleed: calc(var(--float-cell, 1ch) - var(--float-band-inset));
-
-  margin-inline: calc(-1 * var(--nvc-bleed));
+  padding: var(--float-band-inset);
 }
 
 .nvim-popup .nvc-band {

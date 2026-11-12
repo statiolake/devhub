@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 
 /**
- * A list in a popup (`stack{ band }`, a completion menu's): its band sits
- * the floats' band inset from the popup's line on all four sides, rounded
- * by the rest of the corner, and a pane under it lines up with it
- * (`neovim.css`, the popup). The rows' content stays where it was, so a
- * list's words still start under the word typed.
+ * A list in a popup (`stack{ band }`, a completion menu's): everything in
+ * the popup sits the floats' band inset from the popup's line on all four
+ * sides, the band rounded by the rest of the corner (`neovim.css`, the
+ * popup). DevHub adds no cell inline: each part's own pad sets how far its
+ * content is past that, across as down, so the text is as far from the
+ * line at the sides as above and below. The anchor, not a padding, puts a
+ * list's words under the word typed.
  */
 
 import { readFileSync } from "node:fs";
@@ -46,20 +48,11 @@ const theme: ComponentTheme = {
 };
 
 describe("a list in a popup", () => {
-  it("insets its band by the band inset above and below as at the sides", () => {
-    const source = css();
-    expect(rule(source, ".nvim-popup-body:has(.nvc-banded)")).toMatch(
-      /padding-block:\s*var\(--float-band-inset\);/,
-    );
-    // out from the body's cell to the band inset, a pane alike
-    const bleed = rule(
-      source,
-      ".nvim-popup .nvc-banded,\n.nvim-popup .nvc-pane",
-    );
-    expect(bleed).toMatch(
-      /--nvc-bleed:\s*calc\(var\(--float-cell, 1ch\) - var\(--float-band-inset\)\);/,
-    );
-    expect(bleed).toMatch(/margin-inline:\s*calc\(-1 \* var\(--nvc-bleed\)\);/);
+  it("insets everything by the band inset, on all four sides alike", () => {
+    const body = rule(css(), ".nvim-popup-body:has(.nvc-banded)");
+    expect(body).toMatch(/^\s*padding:\s*var\(--float-band-inset\);\s*$/);
+    // no cell of DevHub's own across, reached out of and padded back in
+    expect(css()).not.toContain("--nvc-bleed");
   });
 
   it("rounds its band by the rest of the popup's corner", () => {
@@ -68,19 +61,17 @@ describe("a list in a popup", () => {
     );
   });
 
-  it("pads its content back in by the bleed, over the rows' own pad", () => {
+  it("pads its content by its own pad alone, across as down", () => {
     const node = tree({
       type: "stack",
       band: "PmenuSel",
       selected: 1,
-      pad: [1, 4],
+      pad: [1, 2],
       children: [{ type: "text", text: "useState" }],
     });
     const { container } = render(<ComponentTree node={node} theme={theme} />);
     const list = container.querySelector<HTMLElement>(".nvc-banded");
-    expect(list?.getAttribute("style")).toContain(
-      "padding: 1px calc(4px + var(--nvc-bleed, 0px))",
-    );
+    expect(list?.style.padding).toBe("1px 2px");
   });
 
   it("puts the band on the selected row's own top and height, unrounded", () => {

@@ -694,11 +694,6 @@ function Column({
       className={`${className}${banded ? " nvc-banded" : ""}${node.pane !== undefined ? " nvc-pane" : ""}`}
       style={{
         ...style,
-        // Where it is a popup's (`.nvim-popup .nvc-banded`), it reaches out
-        // to the popup's band inset by `--nvc-bleed` on each side and pads
-        // its content back in by as much: the band and the pane's edge come
-        // out, its rows stay where they were.
-        padding: `${String(node.pad?.[0] ?? 0)}px calc(${String(node.pad?.[1] ?? 0)}px + var(--nvc-bleed, 0px))`,
         // A popup short of room takes it from its pane first
         // (`--nvim-pane-cut`, `LayerViews.tsx`), down to three lines.
         ...(node.maxHeight !== undefined

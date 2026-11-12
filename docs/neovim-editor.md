@@ -1157,16 +1157,19 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   `handle:scroll(by, 'name')` scrolls it instead of the popup (a menu's
   documentation, under a list that stays). A popup with no room for all of
   itself takes the room from its pane first (`--nvim-pane-cut`, down to
-  three lines), so the list stays whole. In a popup the list's band is
-  inset `--float-band-inset` from the line on all four sides — the first
-  row's above, the last row's below, both sides alike — and rounded by the
-  rest of the corner, as the completion menu's; the list and a pane reach
-  out to that inset and pad their content back in (`--nvc-bleed`,
-  `neovim.css`), so the band's and the pane's edges line up and the words
-  stay a cell in. `min_width` (cells) keeps the popup from narrowing when
-  a part goes. A node with `anchor = true` (the first) is lined up with the
-  anchor's column: the popup moves left by the node's offset from its edge
-  (`anchorOffset`), so a menu's words start under the word being typed.
+  three lines), so the list stays whole. A popup holding a list has
+  everything in it inset `--float-band-inset` from the line on all four
+  sides alike (`neovim.css`), so the band is — the first row's above, the
+  last row's below, both sides — rounded by the rest of the corner, as the
+  completion menu's, and the band's and a pane's edges line up. DevHub adds
+  no cell across: how far the text is past that is each part's own `pad`
+  (a row's, a pane's), across as down, so a menu that pads as much across
+  as down has its text as far from the line on every side (blink-ui.devhub
+  pads 2px: the text 4px in, at the sides as above). `min_width` (cells)
+  keeps the popup from narrowing when a part goes. A node with
+  `anchor = true` (the first) is lined up with the anchor's column: the
+  popup moves left by the node's offset from its edge (`anchorOffset`), so
+  a menu's words start under the word being typed.
   `ui.badge(text, { size = 'sm' })` is a badge as tall as a dense row's
   text.
 
