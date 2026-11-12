@@ -53,6 +53,7 @@ import { SCROLL_LUA, replied, type ScrollRequest } from "./smoothScroll";
 import { rideAnchor, rideArea, rideStyle, type BufposAnchor } from "./riders";
 import { PaintHold } from "./paintHold";
 import { LabelAsks } from "./labelAsks";
+import { ClaimAsks, nextSettleSeq } from "./claimAsks";
 
 import {
   IDLE,
@@ -99,6 +100,13 @@ function themeColors(): {
 }
 
 /** What the editor needs from the page: Neovim API calls. */
+/**
+ * How long a float not drawn yet waits for Lua to settle it (`ClaimAsks`)
+ * before it is drawn as it is: an answer is a round trip, Neovim answers
+ * once the tick that showed the float is done.
+ */
+export const SETTLE_WAIT_MS = 250;
+
 export interface NeovimPort {
   call(method: string, params: readonly unknown[]): void;
   /** A call whose answer is wanted; rejects when Neovim answers an error. */
@@ -177,6 +185,8 @@ export class NeovimEditor {
   private readonly anchorsAsked = new Map<number, BufposAnchor | false>();
   /** The labels asked for floats whose border holds text (`LabelAsks`). */
   private readonly labelAsks = new LabelAsks();
+  /** Floats not drawn until Lua has said whose they are (`ClaimAsks`). */
+  private readonly claimAsks = new ClaimAsks();
   /** A paint waits for a new float's labels: whether it was a full one. */
   private labelsPaint: { force: boolean } | undefined;
   private readonly listeners = new Set<() => void>();
@@ -471,6 +481,11 @@ export class NeovimEditor {
     return this.boxes;
   }
 
+  /** Window `win`'s float as Neovim has laid it out, drawn yet or not. */
+  laidOut(win: number): GridBox | undefined {
+    return layoutGrids(this.state).find((b) => b.float && b.win === win);
+  }
+
   /**
    * The windows a page draws the chrome of, each with the window of the
    * float its frame is round (`claimFloats`).
@@ -478,23 +493,27 @@ export class NeovimEditor {
   private claimed: ReadonlyMap<number, number> = new Map();
 
   /**
-   * Claim the floats of these windows for the page (a framed view's): the
-   * painter draws them bare, as their cells cut at the rounded frame of
-   * the float each maps to, from the next paint.
+   * The page's claims as it has taken them in (a framed view's windows:
+   * drawn bare, as their cells cut at the rounded frame of the float each
+   * maps to), with the last `settled` seq they answer (`ClaimAsks`). Called
+   * as the page commits the frames it draws, so the painter draws in the
+   * same frame: at once, not at the next animation frame — a float that
+   * waited is drawn bare with the page's frame round it, never a frame
+   * with the one and not the other.
    */
-  claimWindows(wins: ReadonlyMap<number, number>): void {
+  claimWindows(wins: ReadonlyMap<number, number>, settled = 0): void {
     const same =
       wins.size === this.claimed.size &&
       [...wins].every(([w, frame]) => this.claimed.get(w) === frame);
-    if (same) return;
-    this.claimed = new Map(wins);
-    this.pending.layout = true;
-    if (this.frame === 0) {
-      this.frame = requestAnimationFrame(() => {
-        this.frame = 0;
-        this.paint();
-      });
+    const released = this.claimAsks.settle(settled);
+    if (same && !released) return;
+    if (!same) {
+      this.claimed = new Map(wins);
+      this.pending.layout = true;
     }
+    if (this.frame !== 0) cancelAnimationFrame(this.frame);
+    this.frame = 0;
+    this.paint();
   }
 
   /** What the colorscheme says beyond the grid (`chrome.ts`). */
@@ -692,9 +711,13 @@ export class NeovimEditor {
     if (this.disposed) return;
     if (this.hold.defer(forceAll)) return;
     const laid = claimFloats(layoutGrids(this.state), this.claimed);
+    // A float not drawn yet waits for Lua to say whether a page claims it
+    // (`ClaimAsks`): drawn once, by its one owner, from its first frame.
+    const claims = this.askClaims(laid);
     // A float opening with text in its border is drawn once its labels
     // are known, its final frame from its first frame (`LabelAsks`).
-    if (this.askFloatLabels(laid)) {
+    const labels = this.askFloatLabels(laid);
+    if (claims || labels) {
       this.labelsPaint = {
         force: forceAll || this.labelsPaint?.force === true,
       };
@@ -954,6 +977,36 @@ export class NeovimEditor {
    * float among them has never had its answer (`LabelAsks`), and is drawn
    * with it, when it comes.
    */
+  /**
+   * Ask Lua to settle the floats not drawn yet (`ClaimAsks`); whether a
+   * paint waits for it. The answer comes as Lua's placements and then
+   * `settled`, through the page (`claimWindows`); with no Lua to answer,
+   * the floats are drawn as they are.
+   */
+  private askClaims(boxes: readonly GridBox[]): boolean {
+    const request = this.port.request?.bind(this.port);
+    if (!request) return false;
+    const { ask, waiting } = this.claimAsks.need(boxes);
+    if (ask.length > 0) {
+      const seq = nextSettleSeq();
+      this.claimAsks.asking(ask, seq);
+      const unanswered = () => {
+        if (this.disposed) return;
+        this.claimWindows(this.claimed, seq);
+      };
+      // A Neovim busy in the tick that showed them (a long job flushing
+      // as it goes) answers late: the floats are drawn as they are then.
+      window.setTimeout(unanswered, SETTLE_WAIT_MS);
+      request("nvim_exec_lua", [
+        "local M = package.loaded['devhub_gui']; if M and M._settle then M._settle(...) return true end return false",
+        [seq],
+      ]).then((settling) => {
+        if (settling !== true) unanswered();
+      }, unanswered);
+    }
+    return waiting;
+  }
+
   private askFloatLabels(boxes: readonly GridBox[]): boolean {
     const request = this.port.request?.bind(this.port);
     if (!request) return false;

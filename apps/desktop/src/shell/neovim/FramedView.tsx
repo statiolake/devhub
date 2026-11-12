@@ -88,7 +88,9 @@ export function GuiFrames({
     <>
       {layers.placedFrames.map((place) => {
         const view = layers.views.get(place.id);
-        const box = host.boxes.find((b) => b.win === place.win);
+        // Laid out, not drawn: the frame and the paint of its windows
+        // are one frame (`claimWindows`).
+        const box = host.laidOut(place.win);
         if (!view?.frame || !box) return null;
         const content: FrameContent = {
           ...view.frame,

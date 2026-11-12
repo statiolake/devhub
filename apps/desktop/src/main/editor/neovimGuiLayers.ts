@@ -993,6 +993,17 @@ function M._place_layers()
     frames = frames })
 end
 
+--- The page saw floats it has not drawn yet: where everything is now, then
+--- "settled" with its seq. A request runs only once Neovim is done with what
+--- it was doing, so a plugin that showed its windows (a flush of its own
+--- included) and made them a framed view in the same tick has its view by
+--- now: the page knows the claim before it draws them, and draws them bare
+--- from the first (docs/neovim-editor.md, "A framed view").
+function M._settle(seq)
+  M._place_layers()
+  event("settled", { seq = seq })
+end
+
 --- A click on the page: the cursor goes to the item (or the card's line) in
 --- that window, then the node's on_click (or the view's) runs.
 function M._layers_click(kind, id, win, line, action, clicks)

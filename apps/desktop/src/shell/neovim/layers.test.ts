@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NO_LAYERS, applyLayerEvent } from "./layers";
+import { NO_LAYERS, applyLayerEvent, frameClaims } from "./layers";
 
 describe("buffer-backed GUI layers on the page", () => {
   it("keeps a view's items by line, plain lines as their text, and its keys", () => {
@@ -300,5 +300,32 @@ describe("buffer-backed GUI layers on the page", () => {
         preview,
       },
     ]);
+  });
+
+  it("keeps the last settled seq, and the windows the frames claim", () => {
+    const placed = applyLayerEvent(NO_LAYERS, "layers", {
+      frames: [
+        {
+          id: 1,
+          win: 1006,
+          wins: [1006, 1007, 1008, 1009],
+          frame: { row: 1, col: 7, width: 54, height: 25, top: 0 },
+          list: { row: 3, col: 7, width: 30, height: 22, top: 0, cursor: 1 },
+        },
+      ],
+    });
+    expect(frameClaims(placed.placedFrames)).toEqual(
+      new Map([
+        [1006, 1006],
+        [1007, 1006],
+        [1008, 1006],
+        [1009, 1006],
+      ]),
+    );
+    const settled = applyLayerEvent(placed, "settled", { seq: 7 });
+    expect(settled.settled).toBe(7);
+    // An older answer, or none, changes nothing.
+    expect(applyLayerEvent(settled, "settled", { seq: 5 })).toBe(settled);
+    expect(applyLayerEvent(settled, "settled", {})).toBe(settled);
   });
 });

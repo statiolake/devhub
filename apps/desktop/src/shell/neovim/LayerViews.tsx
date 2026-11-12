@@ -55,6 +55,12 @@ interface Cell {
 export interface LayerHost {
   readonly cell: Cell;
   readonly boxes: readonly GridBox[];
+  /**
+   * A float's box as Neovim has laid it out now, drawn yet or not: a frame
+   * is committed with the paint that draws its windows (`claimWindows`),
+   * so it cannot wait for that paint's boxes.
+   */
+  readonly laidOut: (win: number) => GridBox | undefined;
   /** The grid's font family, for `mono` and icons. */
   readonly mono: string;
   readonly defaults: {

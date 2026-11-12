@@ -1515,6 +1515,26 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			[],
 		]);
 		await waitFor(() => frames().length === 1, "the frame placed");
+		// The page asks to settle the floats it has not drawn: Lua sends
+		// where everything is, the frame's windows claimed, then `settled`
+		// with the page's seq, in that order on the stream the redraws use.
+		const before = h.gui.events.length;
+		await h.ui.request("nvim_exec_lua", [
+			"require('devhub_gui')._settle(...)",
+			[41],
+		]);
+		await waitFor(
+			() => h.gui.events.slice(before).some((e) => e.kind === "settled"),
+			"settled",
+		);
+		const after = h.gui.events.slice(before);
+		const settledAt = after.findIndex((e) => e.kind === "settled");
+		expect(after[settledAt]?.payload).toEqual({ seq: 41 });
+		const placedBefore = after
+			.slice(0, settledAt)
+			.filter((e) => e.kind === "layers")
+			.at(-1)?.payload as { frames?: { wins: number[] }[] } | undefined;
+		expect(placedBefore?.frames?.[0]?.wins).toHaveLength(4);
 		const view = last("view") as {
 			id: number;
 			items: unknown[];

@@ -41,7 +41,14 @@
  * terminal or another Neovim.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal, flushSync } from "react-dom";
 import { Footers } from "./FooterViews";
 import { applyStatuslineEvent, NO_STATUSLINE } from "./statusline";
@@ -89,6 +96,7 @@ import {
   LAYER_EVENTS,
   NO_LAYERS,
   applyLayerEvent,
+  frameClaims,
   type Layers,
 } from "./layers";
 import {
@@ -561,16 +569,16 @@ export function NeovimSurface({
   }, [settings, appearance, release]);
 
   // A framed view's windows are drawn bare: the frame is the view's chrome,
-  // and their cells are cut at its rounded corners (`claimedShape`).
-  useEffect(() => {
+  // and their cells are cut at its rounded corners (`claimedShape`). Taken
+  // in as the frames are committed, with the `settled` they answer, and the
+  // painter draws at once: the floats that waited for it (`ClaimAsks`) are
+  // drawn in the frame the page's frame first is.
+  useLayoutEffect(() => {
     editorRef.current?.claimWindows(
-      new Map(
-        layers.placedFrames.flatMap((frame) =>
-          frame.wins.map((win) => [win, frame.win] as const),
-        ),
-      ),
+      frameClaims(layers.placedFrames),
+      layers.settled,
     );
-  }, [layers.placedFrames]);
+  }, [layers.placedFrames, layers.settled]);
 
   // An SSH drop: attach again by itself, a few times, further apart.
   const autoReconnect =
@@ -822,6 +830,7 @@ export function NeovimSurface({
       ? {
           cell,
           boxes,
+          laidOut: (win) => editor.laidOut(win),
           mono: `${ICON_FAMILY}, ${fontFamily ? `${fontFamily}, ` : ""}monospace`,
           defaults: nvim.defaults,
           lua: (fn, args) => {

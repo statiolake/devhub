@@ -189,6 +189,12 @@ export interface Layers {
   readonly placedPopups: readonly PopupPlace[];
   readonly popupScrolls: ReadonlyMap<number, PopupScroll>;
   readonly placedFrames: readonly FramePlace[];
+  /**
+   * The last `settled` seq Lua answered (`_settle`): the placements
+   * here are those of Neovim's state after the floats the page asked about
+   * were shown (`ClaimAsks`).
+   */
+  readonly settled: number;
 }
 
 export const NO_LAYERS: Layers = {
@@ -201,6 +207,7 @@ export const NO_LAYERS: Layers = {
   placedPopups: [],
   popupScrolls: new Map(),
   placedFrames: [],
+  settled: 0,
 };
 
 /** The events this reducer takes. */
@@ -215,6 +222,7 @@ export const LAYER_EVENTS: ReadonlySet<string> = new Set([
   "popup_select",
   "popup_pane",
   "layers",
+  "settled",
 ]);
 
 type Rec = Readonly<Record<string, unknown>>;
@@ -328,6 +336,20 @@ function frameRect(value: unknown): FrameRect | undefined {
   return n && n.width > 0 && n.height > 0 ? n : undefined;
 }
 
+/**
+ * The windows the placed frames claim for the page, each with the window of
+ * the float its frame is round (`claimFloats`).
+ */
+export function frameClaims(
+  frames: readonly FramePlace[],
+): ReadonlyMap<number, number> {
+  return new Map(
+    frames.flatMap((frame) =>
+      frame.wins.map((win) => [win, frame.win] as const),
+    ),
+  );
+}
+
 function framePlace(value: unknown): FramePlace[] {
   const r = rec(value);
   const n = r ? ints(r, ["id", "win"] as const) : undefined;
@@ -379,6 +401,12 @@ export function applyLayerEvent(
   if (!p) return state;
   const id = int(p, "id");
   switch (kind) {
+    case "settled": {
+      const seq = int(p, "seq");
+      return seq === undefined || seq <= state.settled
+        ? state
+        : { ...state, settled: seq };
+    }
     case "view":
       if (id === undefined) return state;
       return {

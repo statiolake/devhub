@@ -1129,7 +1129,17 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   the corners, where it bends in over the frame float's cells: the page's
   panel is as round, and the painter cuts each claimed window's cells at
   the frame float's rounded shape (`claimedShape`), or their square
-  corners would cover the line's arc there. snacks is
+  corners would cover the line's arc there. A plugin shows its windows
+  before it makes them a view (and may flush them first), so the redraw
+  that shows a float can come before any word of its view: a float the
+  page has not drawn yet waits (`ClaimAsks`) until Lua has settled it
+  (`_settle`, run once Neovim is done with that tick: the placements, then
+  `settled`, on the redraws' stream), at most `SETTLE_WAIT_MS`. A framed
+  view's floats are drawn bare from their first frame, in the same frame
+  as the page's frame round them (the claim is taken as the frame is
+  committed, and painted at once); every float has one owner from the
+  start. A plugin that declares its view in a later tick than it shows
+  its windows is drawn as it was until then. snacks is
   drawn this way by
   [snacks-ui.devhub](https://github.com/statiolake/snacks-ui.devhub),
   outside devhub.nvim (`native-picker.md`).
