@@ -44,7 +44,7 @@ import type { OverPart } from "./painter";
 import { createPortal } from "react-dom";
 import type { GridBox } from "./redraw";
 import { formatKeys } from "../../model/keyNotation";
-import { activeGuide, guideX } from "./viewTree";
+import { activeGuide, bandPart, guideX } from "./viewTree";
 
 interface Cell {
   readonly width: number;
@@ -202,6 +202,7 @@ function GuiView({
   const guide =
     indent !== undefined ? activeGuide(content.items, focused) : undefined;
   const visual = place.visual;
+  const lines = content.items.map((item) => item.line);
 
   const style: CSSProperties = {
     left: box.col * cell.width,
@@ -272,10 +273,7 @@ function GuiView({
             (item.node.type === "stack" || item.node.type === "hstack") &&
             item.node.card === true;
           const depth = indent !== undefined ? (item.depth ?? 0) : 0;
-          const selected =
-            visual !== undefined &&
-            item.line >= visual[0] &&
-            item.line <= visual[1];
+          const band = bandPart(lines, index, visual);
           const itemStyle: CSSProperties = {
             ...(indent !== undefined
               ? {
@@ -293,7 +291,9 @@ function GuiView({
                 "nvim-view-item",
                 index === focused ? "nvim-view-focused" : "",
                 isCard ? "nvim-view-card" : "",
-                selected ? "nvim-view-selected" : "",
+                band !== undefined
+                  ? `nvim-view-selected nvim-view-band-${band}`
+                  : "",
                 item.sticky === true ? "nvim-view-sticky" : "",
                 content.rowHeight !== undefined ? "nvim-view-row" : "",
               ]

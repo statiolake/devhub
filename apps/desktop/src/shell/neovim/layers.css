@@ -36,9 +36,24 @@
   justify-content: center;
 }
 
-/* Visual mode's lines: the selection's ground, under the focus. */
-.nvim-view-selected:not(.nvim-view-card) {
+/* Visual mode's lines: one band in the selection's ground, rounded only at
+   its ends, the focus's ring inside it (the cursor's row keeps the band). */
+.nvim-view-item.nvim-view-selected:not(.nvim-view-card) {
   background: var(--nvim-visual);
+}
+
+.nvim-view-band-first {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.nvim-view-band-middle {
+  border-radius: 0;
+}
+
+.nvim-view-band-last {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 /* Held at the top while the rows scroll under it, in the view's ground. */

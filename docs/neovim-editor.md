@@ -1092,8 +1092,10 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   (`on_lines`) or `view:update()` draws it again; `keys` is a hint line at
   the bottom. A view covers its window's grid, cursor included. A click's
   count goes to `on_click(lnum, clicks)` (2 for a double click). Visual
-  mode in its window draws the lines selected (`Visual`'s ground): the
-  place carries them (`visual`), for a plugin whose keys work on a range.
+  mode in its window draws the lines selected as one band in `Visual`'s
+  ground, rounded only at its ends (`bandPart`), the focus's ring inside
+  it: the place carries them (`visual`), for a plugin whose keys work on a
+  range.
 - **A tree** (`gui.view{ indent = px, row_height = px }`) — the same view,
   its items `{ node, depth }`: DevHub indents each by its depth and draws
   the guides down the rows, one hairline per level, the focused row's

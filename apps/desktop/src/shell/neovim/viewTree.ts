@@ -40,3 +40,24 @@ export function activeGuide(
 export function guideX(level: number, indent: number): number {
   return Math.round(level * indent + indent / 2);
 }
+
+/**
+ * Where an item stands in Visual mode's selection, so the selected rows
+ * are one band: its ends rounded, its joins square. None: not selected.
+ */
+export type BandPart = "only" | "first" | "middle" | "last";
+
+export function bandPart(
+  lines: readonly number[],
+  index: number,
+  visual: readonly [number, number] | undefined,
+): BandPart | undefined {
+  const line = lines[index];
+  if (visual === undefined || line === undefined) return undefined;
+  const inside = (l: number | undefined) =>
+    l !== undefined && l >= visual[0] && l <= visual[1];
+  if (!inside(line)) return undefined;
+  const above = inside(lines[index - 1]);
+  const below = inside(lines[index + 1]);
+  return above && below ? "middle" : above ? "last" : below ? "first" : "only";
+}
