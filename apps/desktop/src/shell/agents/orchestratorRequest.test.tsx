@@ -3,7 +3,7 @@
 /**
  * The header's +: a request to the orchestrator, its composer (opened by a
  * click or the keyboard command, sent with ⌘Return, closed with Esc), and
- * the board's 依頼 lane.
+ * the 待機 task it makes on the board.
  */
 
 import "@testing-library/jest-dom/vitest";
@@ -21,6 +21,7 @@ import { EMPTY_BOARD, type OrchestratorBoardWire } from "../../ipc/contract";
 import { AgentsValueProvider, type AgentsValue } from "./AgentsContext";
 import { OrchestratorBoard } from "./OrchestratorScreen";
 import { forgetOrchestratorMemory } from "./orchestratorMemory";
+import { taskWire } from "./taskFixture";
 
 const setOrchestratorMode = vi.fn(() => Promise.resolve());
 const sendOrchestratorRequest = vi.fn(() => Promise.resolve());
@@ -110,41 +111,31 @@ describe("the header's +", () => {
   });
 });
 
-describe("the 依頼 lane", () => {
-  it("is not there with no requests", () => {
-    mount({});
-    expect(screen.queryByRole("region", { name: "依頼" })).toBeNull();
-  });
-
-  it("lists each request with its state, and where a filed one went", () => {
+describe("a request on the board", () => {
+  it("is a 待機 task carrying the person's words: 送信待ち until it is delivered", () => {
     mount({
-      requests: [
-        { id: 1, text: "ログを調べる", at: Date.now(), state: "held" },
-        {
-          id: 2,
-          text: "CSV を直す",
-          at: Date.now(),
-          state: "sent",
-          priority: "high",
-        },
-        {
-          id: 3,
-          text: "README",
-          at: Date.now(),
-          state: "filed",
-          filed: { at: Date.now(), note: "acme/app#40" },
-        },
+      waiting: [
+        taskWire({
+          id: 4,
+          title: "ログを調べる",
+          status: "waiting",
+          request: { text: "ログを調べる", at: Date.now() },
+        }),
+        taskWire({
+          id: 5,
+          title: "CSV を直す",
+          status: "waiting",
+          request: { text: "CSV を直す", at: Date.now(), sentAt: Date.now() },
+        }),
       ],
     });
-    const lane = screen.getByRole("region", { name: "依頼" });
-    expect(within(lane).getByText("送信待ち")).toBeInTheDocument();
-    expect(within(lane).getByText("受付待ち")).toBeInTheDocument();
-    expect(within(lane).getByText("登録済み")).toBeInTheDocument();
-    expect(within(lane).getByText("優先")).toBeInTheDocument();
-    expect(within(lane).getByText("acme/app#40")).toBeInTheDocument();
-    // The count is what is still open.
+    const lane = screen.getByRole("region", { name: "待機" });
+    expect(within(lane).getByText("依頼 · 送信待ち")).toBeInTheDocument();
+    expect(within(lane).getByText("依頼")).toBeInTheDocument();
     expect(lane.querySelector(".orchestrator-lane-count")).toHaveTextContent(
       "2",
     );
+    // There is no lane of requests apart from the tasks.
+    expect(screen.queryByRole("region", { name: "依頼" })).toBeNull();
   });
 });

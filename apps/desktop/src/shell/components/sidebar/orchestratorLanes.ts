@@ -9,7 +9,6 @@ import type { LaneId, OrchestratorItem } from "../../../ipc/orchestratorLanes";
 export {
   LANES,
   groupByLane,
-  inProgressCount,
   laneOf,
   orchestratorItems,
   type LaneBoard,

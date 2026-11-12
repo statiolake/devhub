@@ -1,6 +1,6 @@
 /**
- * The Orchestrator screen's left half: two tabs, ボード (the board, and an
- * escalation opened on it) and ファイル (the orchestrator's folder,
+ * The Orchestrator screen's left half: two tabs, ボード (the board of tasks,
+ * and a task opened on it) and ファイル (the orchestrator's folder,
  * `OrchestratorFiles.tsx`), each a navigation stack (`navStack.ts`).
  *
  * The right half is the orchestrator agent's own pane — an ordinary Agent
@@ -9,11 +9,12 @@
  * Orchestrator row lays the Agents view over the whole content area, and the
  * page divides it (`AgentsApp`).
  *
- * The board reads `OrchestratorBoardWire` and writes one thing: the person's
- * answer (`answerEscalation`), the only door an answer has. An escalation's
- * thread is drawn with the conversation's own Markdown renderer — code,
- * math, Mermaid, SVG — so what the orchestrator wrote looks the way it would
- * in a chat answer. See `docs/orchestrator.md`.
+ * The board reads `OrchestratorBoardWire` — the tasks by status — and
+ * writes one thing: the person's answer to a task's open question
+ * (`answerEscalation`), the only door an answer has. A question is drawn with
+ * the conversation's own Markdown renderer — code, math, Mermaid, SVG — so
+ * what the orchestrator wrote looks the way it would in a chat answer. See
+ * `docs/orchestrator.md`.
  */
 
 import {
@@ -26,7 +27,11 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type { EscalationWire, OrchestratorBoardWire } from "../../ipc/contract";
+import type {
+  EscalationWire,
+  OrchestratorBoardWire,
+  TaskWire,
+} from "../../ipc/contract";
 import type { AgentStatus, AppSnapshot } from "../../ipc/appShell";
 import { pressFocusesField } from "../conversation/fieldClick";
 import { useMessageKeys, SEND_KEY } from "../conversation/messageKeys";
@@ -46,17 +51,9 @@ import { focusIsOurs, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { listenForLightboxes } from "../conversation/lightboxLayer";
 import { FilesPage } from "./OrchestratorFiles";
-import {
-  EscalationMemo,
-  escalationMemo,
-  WorkCard,
-  workItems,
-} from "./OrchestratorWork";
 import { ModeControl } from "./OrchestratorDelivery";
-import { RequestButton, RequestCard } from "./OrchestratorRequest";
+import { RequestButton } from "./OrchestratorRequest";
 import { GitHubPill } from "./OrchestratorGitHub";
-import { dueText, EscalationNote, inProgressBefore } from "./EscalationNote";
-import { dueWords } from "../../model/escalations";
 import { decisionOf } from "../../model/escalationBrief";
 import {
   initialTab,
@@ -230,8 +227,8 @@ export function OrchestratorBoard({
           </div>
           {tab === "board" ? (
             <span className="orchestrator-board-counts">
-              {board.needsAnswer.length} 要回答 · {board.inProgress.length}{" "}
-              対応中 · {board.waiting.length} 待機中
+              {board.answer.length} 回答待ち · {board.inProgress.length} 処理中
+              · {board.waiting.length} 待機
             </span>
           ) : null}
         </div>
@@ -272,68 +269,64 @@ export function OrchestratorBoard({
 
 /** What on the board glides: the leaves, never what holds them. */
 const BOARD_PARTS =
-  ".orchestrator-lane-heading, .orchestrator-lane-empty, [data-escalation-id]";
+  ".orchestrator-lane-heading, .orchestrator-lane-empty, [data-task-id], [data-untasked]";
 
 function boardPartKey(element: HTMLElement): string | undefined {
-  const card = element.dataset["escalationId"];
+  const card = element.dataset["taskId"];
   if (card !== undefined) return `card:${card}`;
+  const untasked = element.dataset["untasked"];
+  if (untasked !== undefined) return `untasked:${untasked}`;
   const lane = element.closest<HTMLElement>("[data-tone]")?.dataset["tone"];
   if (lane === undefined) return undefined;
   return `${element.className}:${lane}`;
 }
 
-/** The board tab: the lanes, and an escalation pushed over them. */
 /**
- * What an escalation's relative paths are relative to: its workspace, else
- * its first agent's, else the orchestrator's folder — as main takes its
+ * What a task's relative paths are relative to: its latest open agent's
+ * workspace, else the orchestrator's folder — as main takes an escalation's
  * pictures in (`main/orchestrator/escalationFiles.ts`).
  */
-export function escalationBase(
-  escalation: EscalationWire,
+export function taskBase(
+  task: TaskWire,
   workspaces: AppSnapshot["workspaces"],
   orchestratorRoot: string | undefined,
 ): string | undefined {
-  const named = workspaces.find((one) => one.id === escalation.workspaceId);
-  const first = escalation.agents[0]?.agentId;
-  const ofAgent =
-    first === undefined
-      ? undefined
-      : workspaces.find((one) =>
-          one.agents.some((agent) => agent.id === first),
-        );
-  return named?.root ?? ofAgent?.root ?? orchestratorRoot;
+  for (const agent of [...task.agents].reverse()) {
+    const workspace = workspaces.find((one) =>
+      one.agents.some((it) => it.id === agent.agentId),
+    );
+    if (workspace !== undefined) return workspace.root;
+  }
+  return orchestratorRoot;
 }
 
-/** The board under an escalation, as a view. */
+/** The board under a task, as a view. */
 const BOARD_UNDER = { kind: "board" } as const;
 
 /**
- * The escalation the pane was left on, if it is still there to show: the
- * model's view when the snapshot has one (Back may have put the pane back on
- * another), else the pane's own memory.
+ * The task the pane was left on, if it is still there to show: the model's
+ * view when the snapshot has one (Back may have put the pane back on
+ * another), else the pane's own memory. One done since it was left lands on
+ * the board.
  */
-function restoredEscalation(
-  all: readonly EscalationWire[],
+function restoredTask(
+  all: readonly TaskWire[],
   snapshot: AppSnapshot,
-): EscalationWire | undefined {
+): TaskWire | undefined {
   const state = modelView(snapshot);
   if (state !== undefined) {
-    if (state.view.kind !== "escalation") return undefined;
+    if (state.view.kind !== "task") return undefined;
     const id = state.view.id;
     const found = all.find((one) => one.id === id);
-    if (
-      found?.state === "closed" &&
-      memory.escalation?.id === id &&
-      !memory.escalation.closed
-    )
+    if (found?.status === "done" && memory.task?.id === id && !memory.task.done)
       return undefined;
     return found;
   }
-  const left = memory.escalation;
+  const left = memory.task;
   if (left === undefined) return undefined;
   const now = all.find((one) => one.id === left.id);
-  if (now === undefined || (now.state === "closed" && !left.closed)) {
-    memory.escalation = undefined;
+  if (now === undefined || (now.status === "done" && !left.done)) {
+    memory.task = undefined;
     return undefined;
   }
   return now;
@@ -343,25 +336,26 @@ function restoredEscalation(
 export interface WorkspaceJump {
   readonly id: string;
   readonly label: string;
-  /** The agent chip it is drawn after; absent: the escalation's own, first. */
-  readonly afterAgent?: string;
+  /** The agent chip it is drawn after. */
+  readonly afterAgent: string;
 }
 
 /**
- * The Workspaces an escalation's reading view offers to go to: its own, and
- * each related agent's, once each — found by the snapshot, which knows where
- * every agent is. One an agent is in goes after that agent's chip.
+ * The Workspaces a task's reading view offers to go to: each bound agent's,
+ * open now or (for a stopped one) the open Workspace at its folder, once
+ * each, after that agent's chip.
  */
-export function escalationWorkspaces(
-  escalation: EscalationWire,
+export function taskWorkspaces(
+  task: TaskWire,
   workspaces: AppSnapshot["workspaces"],
 ): readonly WorkspaceJump[] {
   const out: WorkspaceJump[] = [];
   const seen = new Set<string>();
-  for (const agent of escalation.agents) {
-    const workspace = workspaces.find((one) =>
-      one.agents.some((it) => it.id === agent.agentId),
-    );
+  for (const agent of task.agents) {
+    const workspace =
+      workspaces.find((one) =>
+        one.agents.some((it) => it.id === agent.agentId),
+      ) ?? workspaces.find((one) => one.id === agent.workspaceId);
     if (workspace === undefined || seen.has(workspace.id)) continue;
     seen.add(workspace.id);
     out.push({
@@ -370,10 +364,12 @@ export function escalationWorkspaces(
       afterAgent: agent.agentId,
     });
   }
-  const own = workspaces.find((one) => one.id === escalation.workspaceId);
-  if (own !== undefined && !seen.has(own.id))
-    out.unshift({ id: own.id, label: own.label });
   return out;
+}
+
+/** A task's open questions, oldest first. */
+function openQuestions(task: TaskWire): readonly EscalationWire[] {
+  return task.escalations.filter((one) => one.state === "open");
 }
 
 function BoardPage({
@@ -389,31 +385,35 @@ function BoardPage({
   const now = useNow();
   const lanes = useRef<HTMLDivElement>(null);
   const [folded, setFolded] = useState(() => memory.folded);
-  const fold = useCallback((lane: "waiting" | "work" | "closed") => {
+  const fold = useCallback((lane: "waiting" | "closed") => {
     setFolded((value) => {
       const next = { ...value, [lane]: !value[lane] };
       memory.folded = next;
       return next;
     });
   }, []);
-  const work = useMemo(() => workItems(board), [board]);
   const all = useMemo(
     () => [
-      ...board.needsAnswer,
+      ...board.answer,
       ...board.inProgress,
       ...board.waiting,
-      ...board.closed,
+      ...board.done,
     ],
     [board],
   );
-  // Where the pane was left: that escalation, again — unless it has gone
-  // from the board, or was closed since, and then the board.
-  const [initial] = useState(() => restoredEscalation(all, snapshot));
-  const stack = useNavStack<EscalationWire>(
+  // The subjects that need a task: agents and items with none.
+  const untasked = useMemo(
+    () => board.needsAction.filter((one) => one.kind !== "task"),
+    [board.needsAction],
+  );
+  // Where the pane was left: that task, again — unless it has gone from the
+  // board, or was done since, and then the board.
+  const [initial] = useState(() => restoredTask(all, snapshot));
+  const stack = useNavStack<TaskWire>(
     pane,
-    (escalation) =>
+    (task) =>
       lanes.current?.querySelector<HTMLElement>(
-        `[data-escalation-id="${String(escalation.id)}"]`,
+        `[data-task-id="${String(task.id)}"]`,
       ),
     initial,
   );
@@ -423,22 +423,20 @@ function BoardPage({
     open: openCard,
     close,
     drop,
-  } = useStackHistory<EscalationWire>({
+  } = useStackHistory<TaskWire>({
     stack,
     snapshot,
     dispatch,
-    viewOf: (escalation) => ({ kind: "escalation", id: escalation.id }),
+    viewOf: (task) => ({ kind: "task", id: task.id }),
     under: BOARD_UNDER,
     find: (view) =>
-      view.kind === "escalation"
-        ? all.find((one) => one.id === view.id)
-        : undefined,
+      view.kind === "task" ? all.find((one) => one.id === view.id) : undefined,
   });
-  // The model put the pane on an escalation that is not there to show (it
-  // was closed since, or deleted): the board, written over that entry.
+  // The model put the pane on a task that is not there to show: the
+  // board, written over that entry.
   useEffect(() => {
     const said = modelView(snapshot)?.view;
-    if (said?.kind === "escalation" && initial === undefined)
+    if (said?.kind === "task" && initial === undefined)
       void dispatch({
         type: "show_orchestrator_view",
         view: BOARD_UNDER,
@@ -449,25 +447,25 @@ function BoardPage({
   }, []);
   // The board's scroll and folded lanes, as each entry left them.
   useEntryState(snapshot.historyEntry, lanes, folded, setFolded);
-  // The escalation on the page over, as it was when it was opened; the
-  // board's own copy of it is read live. It stays through a pop, so the
-  // view slides out with what it showed.
+  // The task on the page over, as it was when it was opened; the board's
+  // own copy of it is read live. It stays through a pop, so the view
+  // slides out with what it showed.
   const live =
     shown === undefined ? undefined : all.find((one) => one.id === shown.id);
   const open = live ?? shown;
-  // An escalation that leaves the board while it is read closes, as before;
-  // the entry it was is written over with the board.
+  // A task that leaves the board while it is read closes; the entry it was
+  // is written over with the board.
   useEffect(() => {
     if (nav === "push" && shown !== undefined && live === undefined) drop();
   }, [nav, shown, live, drop]);
   // What is open is what the pane comes back to.
   const openId = nav === "push" ? open?.id : undefined;
-  const openClosed = open?.state === "closed";
+  const openDone = open?.status === "done";
   useEffect(() => {
-    memory.escalation =
-      openId === undefined ? undefined : { id: openId, closed: openClosed };
+    memory.task =
+      openId === undefined ? undefined : { id: openId, done: openDone };
     reportOrchestratorView();
-  }, [openId, openClosed]);
+  }, [openId, openDone]);
   // Jumping to an agent is a deliberate move: a place in Back and Forward
   // at once, so prefix+h comes back here (`NavigationReason`).
   const focusAgent = useCallback(
@@ -481,7 +479,7 @@ function BoardPage({
     [dispatch],
   );
   // So is going to a Workspace's editor: prefix+h comes back here, to the
-  // escalation that was open.
+  // task that was open.
   const focusWorkspace = useCallback(
     (workspaceId: string) => {
       void dispatch({
@@ -493,13 +491,12 @@ function BoardPage({
     [dispatch],
   );
   // Whatever changes place on the board glides there — a card re-ranked,
-  // moved to another lane, the lanes under one that grew or folded — and
-  // what is new rises in (`glide.ts`). One rule for all of it: a card used
-  // to glide inside 要回答 while the lanes under it jumped.
+  // moved to another status, the lanes under one that grew or folded — and
+  // what is new rises in (`glide.ts`).
   const boardDrawn = useMemo(() => ({ board, folded }), [board, folded]);
   useGlide(lanes, BOARD_PARTS, boardPartKey, boardDrawn);
   // Enter on the board, with no card focused, opens the card on top: the
-  // first of 要回答, else of the lanes after it. A focused card (a button)
+  // first of 回答待ち, else of the lanes after it. A focused card (a button)
   // opens itself, and a field or a link keeps its own Enter.
   const reading = nav === "push";
   useEffect(() => {
@@ -517,7 +514,7 @@ function BoardPage({
         ownsEnter(document.activeElement)
       )
         return;
-      const top = all.find((one) => one.state !== "closed");
+      const top = all.find((one) => one.status !== "done");
       if (top === undefined) return;
       event.preventDefault();
       openCard(top);
@@ -527,20 +524,31 @@ function BoardPage({
       document.removeEventListener("keydown", onKey);
     };
   }, [reading, all, pane, openCard]);
-  // Answered: back to the board, as Esc goes, with focus on what is next
-  // in 要回答 — the card after this one in its order, else the first left —
-  // or, with none left, on this one, now in 対応中.
+  // Answered, and the task asks nothing more: back to the board, as Esc
+  // goes, with focus on what is next in 回答待ち — the card after this one,
+  // else the first left — or, with none left, on this one, now 処理中. A
+  // task with another open question stays, on that question.
   const answered = useCallback(
-    (id: number) => {
-      const rest = board.needsAnswer.filter((one) => one.id !== id);
-      const at = board.needsAnswer.findIndex((one) => one.id === id);
+    (taskId: number) => {
+      const task = all.find((one) => one.id === taskId);
+      if (task !== undefined && openQuestions(task).length > 1) return;
+      const rest = board.answer.filter((one) => one.id !== taskId);
+      const at = board.answer.findIndex((one) => one.id === taskId);
       const next =
-        rest.length === 0
-          ? all.find((one) => one.id === id)
-          : (rest[Math.max(0, at)] ?? rest[0]);
+        rest.length === 0 ? task : (rest[Math.max(0, at)] ?? rest[0]);
       close(next);
     },
-    [board.needsAnswer, all, close],
+    [board.answer, all, close],
+  );
+  const card = (task: TaskWire) => (
+    <TaskCard
+      key={task.id}
+      task={task}
+      now={now}
+      onOpen={() => {
+        openCard(task);
+      }}
+    />
   );
   return (
     <div
@@ -559,148 +567,92 @@ function BoardPage({
         inert={reading}
         aria-hidden={reading ? true : undefined}
       >
-        {/* The person's requests (the header's +): there from the moment one
-            is sent, until the orchestrator has filed it; no heading when
-            there are none. */}
-        {(board.requests ?? []).length === 0 ? null : (
-          <Lane
-            title="依頼"
-            hint="Your requests to the orchestrator: waiting to be sent while it is off, then waiting for it to file each as a task."
-            tone="request"
-            count={
-              (board.requests ?? []).filter((one) => one.state !== "filed")
-                .length
-            }
-            empty="依頼はありません。"
-          >
-            {(board.requests ?? []).map((one) => (
-              <RequestCard
-                key={one.id}
-                request={one}
-                age={
-                  one.state === "filed" && one.filed !== undefined
-                    ? `filed ${span(now - one.filed.at)} ago`
-                    : span(now - one.at)
-                }
-              />
-            ))}
-          </Lane>
-        )}
         <Lane
-          title="要回答"
-          hint="Needs your answer: the orchestrator cannot go on without it. Oldest first."
+          title="回答待ち"
+          hint="A question to you is open on these tasks: the orchestrator waits for your answer before it goes on. Priority first, then the oldest question."
           tone="ask"
-          count={board.needsAnswer.length}
+          count={board.answer.length}
           empty="回答を待っているものはありません。"
         >
-          {board.needsAnswer.map((one) => (
-            <EscalationCard
-              key={one.id}
-              escalation={one}
-              now={now}
-              onOpen={() => {
-                openCard(one);
-              }}
-            />
-          ))}
+          {board.answer.map(card)}
         </Lane>
         <Lane
-          title="対応中"
-          hint="In progress: you answered, and the orchestrator is carrying it out."
+          title="処理中"
+          hint="In progress: the orchestrator and its agents are working on these. △ marks one nobody is moving."
           tone="progress"
           count={board.inProgress.length}
-          empty="対応中のものはありません。"
+          empty="処理中のものはありません。"
         >
-          {board.inProgress.map((one) => (
-            <EscalationCard
-              key={one.id}
-              escalation={one}
-              now={now}
-              onOpen={() => {
-                openCard(one);
-              }}
-            />
-          ))}
+          {board.inProgress.map(card)}
         </Lane>
         <Lane
-          title="待機中"
-          hint="Waiting: parked on an outside condition (a date, someone's reply), its trigger in words. Soonest first. The orchestrator is reminded of them."
+          title="待機"
+          hint="Parked by the orchestrator, with what each waits for. The soonest check-back first."
           tone="waiting"
           count={board.waiting.length}
-          empty="条件を待っているものはありません。"
+          empty="待機しているものはありません。"
           folded={folded.waiting}
           onFold={() => {
             fold("waiting");
           }}
         >
-          {board.waiting.map((one) => (
-            <EscalationCard
-              key={one.id}
-              escalation={one}
-              now={now}
-              onOpen={() => {
-                openCard(one);
-              }}
-            />
-          ))}
+          {board.waiting.map(card)}
         </Lane>
-        {/* The work its agents did: each subject with a note, or whose agent
-            is stopped and can be brought back; no heading when there is none. */}
-        {work.length === 0 ? null : (
+        {/* Work going on outside any task: agents and items the orchestrator
+            is asked to give a task. No heading when there is none. */}
+        {untasked.length === 0 ? null : (
           <Lane
-            title="作業"
-            hint="What the orchestrator means to do next with each piece of work (its memo), and work whose agent is stopped and can be resumed (devhub --tell agent resume <subject>)."
-            tone="work"
-            count={work.length}
-            empty="作業はありません。"
-            folded={folded.work}
-            onFold={() => {
-              fold("work");
-            }}
+            title="タスクなし"
+            hint="Needs a task: a managed agent bound to none, or an Issue or PR of yours no task links. The orchestrator is asked to give each one."
+            tone="action"
+            count={untasked.length}
+            empty=""
           >
-            {work.map((item) => (
-              <WorkCard
-                key={item.subject}
-                item={item}
-                now={now}
-                span={span}
-                agentId={board.orchestratorAgentId}
-                cwd={board.start.root}
-              />
+            {untasked.map((one) => (
+              <li key={one.key}>
+                <div
+                  className="orchestrator-card orchestrator-untasked"
+                  data-untasked={one.key}
+                >
+                  <span className="orchestrator-card-head">
+                    <span
+                      className="orchestrator-needs-mark"
+                      aria-hidden="true"
+                    >
+                      △
+                    </span>
+                    <span className="orchestrator-card-title">{one.line}</span>
+                    <span className="orchestrator-card-age">
+                      {span(now - one.since)}
+                    </span>
+                  </span>
+                </div>
+              </li>
             ))}
           </Lane>
         )}
         <Lane
           title="完了"
-          hint="Closed escalations, most recent first."
+          hint="Done tasks, most recent first, with their questions and answers."
           tone="closed"
-          count={board.closed.length}
+          count={board.done.length}
           empty="完了したものはまだありません。"
           folded={folded.closed}
           onFold={() => {
             fold("closed");
           }}
         >
-          {board.closed.map((one) => (
-            <EscalationCard
-              key={one.id}
-              escalation={one}
-              now={now}
-              onOpen={() => {
-                openCard(one);
-              }}
-            />
-          ))}
+          {board.done.map(card)}
         </Lane>
       </div>
       {open === undefined ? null : (
-        <EscalationView
+        <TaskView
           key={open.id}
-          escalation={open}
+          task={open}
           now={now}
           leaving={!reading}
           orchestratorAgentId={board.orchestratorAgentId}
-          base={escalationBase(open, workspaces, board.start.root)}
+          base={taskBase(open, workspaces, board.start.root)}
           workspaces={workspaces}
           onBack={() => {
             close();
@@ -741,7 +693,7 @@ function Lane({
 }: {
   readonly title: string;
   readonly hint: string;
-  readonly tone: "request" | "ask" | "progress" | "waiting" | "work" | "closed";
+  readonly tone: "ask" | "progress" | "waiting" | "action" | "closed";
   readonly count: number;
   readonly empty: string;
   readonly folded?: boolean;
@@ -792,114 +744,145 @@ function Lane({
   );
 }
 
-function EscalationCard({
-  escalation,
+/** How long the task has stood as it is, as its card says it. */
+function taskAge(task: TaskWire, now: number): string {
+  switch (task.status) {
+    case "answer": {
+      const asked = Math.min(
+        ...openQuestions(task).map((one) => one.question.at),
+      );
+      return span(now - asked);
+    }
+    case "done":
+      return `done ${span(now - (task.done?.at ?? task.updatedAt))} ago`;
+    default:
+      return span(now - task.updatedAt);
+  }
+}
+
+function TaskCard({
+  task,
   now,
   onOpen,
 }: {
-  readonly escalation: EscalationWire;
+  readonly task: TaskWire;
   readonly now: number;
   readonly onOpen: () => void;
 }) {
-  const last = escalation.entries.at(-1);
-  const question = [...escalation.entries]
-    .reverse()
-    .find((entry) => entry.role === "orchestrator" && entry.kind === undefined);
-  const age =
-    escalation.state === "needs_answer"
-      ? `${span(now - escalation.stateSince)}`
-      : escalation.state === "in_progress"
-        ? `answered ${span(now - escalation.stateSince)} ago`
-        : escalation.state === "waiting"
-          ? `waiting ${span(now - escalation.stateSince)}`
-          : `closed ${span(now - escalation.stateSince)} ago`;
-  const wait =
-    escalation.state === "waiting" && last?.kind === "wait" ? last : undefined;
-  const open = escalation.state !== "closed";
-  const followUp =
-    escalation.state === "needs_answer" &&
-    escalation.entries.some((entry) => entry.role === "human");
-  const picture = firstPicture(escalation);
+  const open = task.status !== "done";
+  const questions = openQuestions(task);
+  const picture = questions.map(firstPicture).find((one) => one !== undefined);
   return (
     <li>
       <button
         type="button"
         className={`orchestrator-card${picture === undefined ? "" : " has-picture"}`}
-        data-escalation-id={escalation.id}
+        data-task-id={task.id}
+        data-needs-action={task.needsAction === undefined ? undefined : "true"}
         onClick={onOpen}
       >
         {picture === undefined ? null : <CardPicture path={picture} />}
         <span className="orchestrator-card-head">
-          <span className="orchestrator-card-id">#{escalation.id}</span>
-          <span className="orchestrator-card-title">{escalation.title}</span>
-          <span className="orchestrator-card-age">{age}</span>
-        </span>
-        {wait === undefined ? null : (
-          <span className="orchestrator-card-trigger">
-            <span className="orchestrator-card-trigger-text">
-              {wait.markdown}
+          <span className="orchestrator-card-id">#{task.id}</span>
+          <span className="orchestrator-card-title">{task.title}</span>
+          {task.needsAction === undefined ? null : (
+            <span
+              className="orchestrator-needs-mark"
+              title={`要対応: ${task.needsAction}`}
+              aria-label={`要対応: ${task.needsAction}`}
+            >
+              △
             </span>
-            {wait.dueAt === undefined ? null : (
-              <span className="orchestrator-card-due">
-                {dueText(wait.dueAt)} · {dueWords(wait.dueAt, now)}
+          )}
+          <span className="orchestrator-card-age">{taskAge(task, now)}</span>
+        </span>
+        {/* The question waiting on the person: the card's first say. */}
+        {questions.map((one) => (
+          <span key={one.id} className="orchestrator-card-question">
+            <span
+              className="orchestrator-card-question-mark"
+              aria-hidden="true"
+            >
+              ?
+            </span>
+            <span className="orchestrator-card-question-text">
+              {decisionText(one.question.markdown) || one.title}
+            </span>
+            {one.question.options === undefined ? null : (
+              <span className="orchestrator-chip">
+                選択肢 {one.question.options.length}
               </span>
             )}
           </span>
+        ))}
+        {task.status === "waiting" &&
+        (task.waitNote !== undefined || task.checkAt !== undefined) ? (
+          <span className="orchestrator-card-trigger">
+            <span className="orchestrator-card-trigger-text">
+              {task.waitNote ?? "待機"}
+            </span>
+            {task.checkAt === undefined ? null : (
+              <span className="orchestrator-card-due">
+                {clockText(task.checkAt)} · {dueWords(task.checkAt, now)}
+              </span>
+            )}
+          </span>
+        ) : null}
+        {task.memo === undefined || !open ? null : (
+          <span className="orchestrator-card-memo">{task.memo.text}</span>
         )}
-        <span className="orchestrator-card-preview">
-          {escalation.state === "in_progress" &&
-          last?.role === "human" &&
-          last.kind === undefined
-            ? `↳ ${preview(last.markdown)}`
-            : decisionText(question?.markdown ?? "")}
-        </span>
+        {task.done?.note === undefined ? null : (
+          <span className="orchestrator-card-memo">{task.done.note}</span>
+        )}
         <span className="orchestrator-card-meta">
-          {open && escalation.priority === "high" ? (
+          {open && task.priority === "high" ? (
             <span className="orchestrator-chip is-priority" data-rank="high">
               優先
             </span>
           ) : null}
-          {open && escalation.priority === "low" ? (
+          {open && task.priority === "low" ? (
             <span className="orchestrator-chip is-priority" data-rank="low">
               低
             </span>
           ) : null}
-          {open && escalation.effort === "quick" ? (
-            <span className="orchestrator-chip is-quick">すぐ答えられる</span>
-          ) : null}
-          {followUp ? (
-            <span className="orchestrator-chip is-followup">追加の質問</span>
-          ) : null}
-          {escalation.state === "in_progress" &&
-          escalation.stalledSince !== undefined ? (
-            <span className="orchestrator-chip is-stalled">停滞</span>
-          ) : null}
-          {open && escalation.mayBeStale !== undefined ? (
+          {task.request === undefined ? null : (
+            <span
+              className="orchestrator-chip is-request"
+              title={task.request.text}
+            >
+              {task.request.sentAt === undefined ? "依頼 · 送信待ち" : "依頼"}
+            </span>
+          )}
+          {open && task.mayBeStale !== undefined ? (
             <span
               className="orchestrator-chip is-stale"
-              title={`May be stale: ${escalation.mayBeStale.reasons.join("; ")}`}
+              title={`May be stale: ${task.mayBeStale.reasons.join("; ")}`}
             >
               古いかも
             </span>
           ) : null}
-          {question?.options !== undefined &&
-          escalation.state === "needs_answer" ? (
-            <span className="orchestrator-chip">
-              選択肢 {question.options.length}
-            </span>
-          ) : null}
-          {escalation.agents.map((agent) => (
-            <span key={agent.agentId} className="orchestrator-chip is-agent">
-              {agent.name ?? agent.agentId.slice(0, 8)}
+          {task.links.map((link) => (
+            <span key={link} className="orchestrator-chip is-link-label">
+              {task.linkLabels?.[link] ?? linkLabel(link)}
             </span>
           ))}
+          {task.agents
+            .filter((agent) => agent.live || open)
+            .map((agent) => (
+              <span key={agent.agentId} className="orchestrator-chip is-agent">
+                {agent.status === undefined ? null : (
+                  <StatusMark
+                    status={agent.status as AgentStatus}
+                    unread={undefined}
+                  />
+                )}
+                {agent.name}
+              </span>
+            ))}
         </span>
-        {open && escalation.rankNote !== undefined ? (
-          <span className="orchestrator-card-why">{escalation.rankNote}</span>
-        ) : null}
-        {open && escalation.mayBeStale !== undefined ? (
+        {open && task.mayBeStale !== undefined ? (
           <span className="orchestrator-card-why is-stale">
-            古いかも: {escalation.mayBeStale.reasons.join("; ")}
+            古いかも: {task.mayBeStale.reasons.join("; ")}
           </span>
         ) : null}
       </button>
@@ -907,17 +890,35 @@ function EscalationCard({
   );
 }
 
-// --- one escalation -------------------------------------------------------------
+/** `11/12 15:00`, in this Mac's time zone. */
+function clockText(at: number): string {
+  const date = new Date(at);
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${String(date.getMonth() + 1)}/${String(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
 
-const STATE_LABEL: Record<EscalationWire["state"], string> = {
-  needs_answer: "要回答",
-  in_progress: "対応中",
-  waiting: "待機中",
-  closed: "Closed",
+/** How far off a time is: `あと 3日`, `あと 5h`, `あと 20m`, `時刻を過ぎました`. */
+export function dueWords(dueAt: number, now: number): string {
+  const ms = dueAt - now;
+  if (ms <= 0) return "時刻を過ぎました";
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes < 60) return `あと ${String(minutes)}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `あと ${String(hours)}h`;
+  return `あと ${String(Math.round(hours / 24))}日`;
+}
+
+// --- one task -------------------------------------------------------------------
+
+const STATUS_LABEL: Record<TaskWire["status"], string> = {
+  answer: "回答待ち",
+  in_progress: "処理中",
+  waiting: "待機",
+  done: "完了",
 };
 
-function EscalationView({
-  escalation,
+function TaskView({
+  task,
   now,
   leaving,
   orchestratorAgentId,
@@ -928,33 +929,30 @@ function EscalationView({
   onFocusAgent,
   onFocusWorkspace,
 }: {
-  readonly escalation: EscalationWire;
+  readonly task: TaskWire;
   readonly now: number;
   /** Going back to the board: drawn while it slides out, and not used. */
   readonly leaving: boolean;
   readonly orchestratorAgentId: string | undefined;
   readonly onBack: () => void;
-  /** What its relative paths are relative to (`escalationBase`). */
+  /** What its relative paths are relative to (`taskBase`). */
   readonly base: string | undefined;
   readonly workspaces: AppSnapshot["workspaces"];
   /** The person's answer went out. */
-  readonly onAnswered: (id: number) => void;
+  readonly onAnswered: (taskId: number) => void;
   readonly onFocusAgent: (agentId: string) => void;
   readonly onFocusWorkspace: (workspaceId: string) => void;
 }) {
-  const pathsOn = escalation.agents[0]?.agentId ?? orchestratorAgentId;
-  const { board } = useAgents();
-  const memo = useMemo(
-    () => escalationMemo(escalation, board),
-    [escalation, board],
-  );
+  const pathsOn = task.agents.at(-1)?.agentId ?? orchestratorAgentId;
   const root = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  const jumps = escalationWorkspaces(escalation, workspaces);
-  const scrollKey = `esc:${String(escalation.id)}`;
-  const entryCount = escalation.entries.length;
-  // A new entry is read from its start: the newest is at the bottom. Coming
-  // back to the same thread, it is where it was left.
+  const jumps = taskWorkspaces(task, workspaces);
+  const questions = openQuestions(task);
+  const past = task.escalations.filter((one) => one.state !== "open");
+  const scrollKey = `task:${String(task.id)}`;
+  const count = task.escalations.length;
+  // Coming back to the same task, it is where it was left; a new question
+  // since is read from the top, where the open questions are.
   const placed = useRef(false);
   useLayoutEffect(() => {
     const element = scroller.current;
@@ -962,12 +960,10 @@ function EscalationView({
     const left = placed.current ? undefined : memory.scroll.get(scrollKey);
     placed.current = true;
     element.scrollTop =
-      left !== undefined && left.entries === entryCount
-        ? left.top
-        : element.scrollHeight;
-  }, [scrollKey, entryCount]);
+      left !== undefined && left.entries === count ? left.top : 0;
+  }, [scrollKey, count]);
   // Opened: focus goes to the answer when one is asked for, else to the
-  // thread — and only from inside the board, never from elsewhere.
+  // view — and only from inside the board, never from elsewhere.
   useEffect(() => {
     const element = root.current;
     if (
@@ -975,7 +971,7 @@ function EscalationView({
     )
       return;
     const target =
-      escalation.state === "needs_answer"
+      questions.length > 0
         ? (element?.querySelector("textarea") ?? scroller.current)
         : scroller.current;
     target?.focus({ preventScroll: true });
@@ -990,7 +986,7 @@ function EscalationView({
       inert={leaving}
       aria-hidden={leaving ? true : undefined}
       onKeyDown={(event) => {
-        // Esc goes back; in the composer, only while nothing is written.
+        // Esc goes back; in a composer, only while nothing is written.
         if (
           event.key === "Escape" &&
           !(
@@ -1014,17 +1010,24 @@ function EscalationView({
           <span aria-hidden="true">←</span> ボード
         </button>
         <div className="orchestrator-reading-title">
-          <span className="orchestrator-card-id">#{escalation.id}</span>
-          <h2>{escalation.title}</h2>
-          <span className="orchestrator-state" data-state={escalation.state}>
-            {STATE_LABEL[escalation.state]}
+          <span className="orchestrator-card-id">#{task.id}</span>
+          <h2>{task.title}</h2>
+          {task.needsAction === undefined ? null : (
+            <span
+              className="orchestrator-needs-mark"
+              title={`要対応: ${task.needsAction}`}
+            >
+              △ {task.needsAction}
+            </span>
+          )}
+          <span className="orchestrator-state" data-state={task.status}>
+            {STATUS_LABEL[task.status]}
           </span>
         </div>
-        {escalation.state !== "closed" &&
-        escalation.mayBeStale !== undefined ? (
+        {task.status !== "done" && task.mayBeStale !== undefined ? (
           <p className="orchestrator-reading-stale">
             <span className="orchestrator-chip is-stale">古いかも</span>
-            {escalation.mayBeStale.reasons.join("; ")}
+            {task.mayBeStale.reasons.join("; ")}
             <span className="orchestrator-reading-stale-note">
               {" "}
               — DevHub が見たところ。次の triage
@@ -1032,29 +1035,20 @@ function EscalationView({
             </span>
           </p>
         ) : null}
-        {escalation.agents.length > 0 ||
-        escalation.links.length > 0 ||
-        jumps.length > 0 ? (
+        {task.agents.length > 0 || task.links.length > 0 ? (
           <div className="orchestrator-reading-refs">
-            {jumps
-              .filter((jump) => jump.afterAgent === undefined)
-              .map((jump) => (
-                <WorkspaceButton
-                  key={jump.id}
-                  jump={jump}
-                  onFocusWorkspace={onFocusWorkspace}
-                />
-              ))}
-            {escalation.agents.flatMap((agent) => [
+            {task.agents.flatMap((agent) => [
               <button
                 key={agent.agentId}
                 type="button"
                 className="orchestrator-chip is-agent is-link"
-                disabled={agent.name === undefined}
+                disabled={!agent.live}
                 title={
-                  agent.name === undefined
-                    ? "This agent is gone"
-                    : `Show ${agent.name} — talk to it directly`
+                  agent.live
+                    ? `Show ${agent.name} — talk to it directly`
+                    : agent.resumable
+                      ? `${agent.name} is stopped; the orchestrator can resume it (agent resume task=${String(task.id)})`
+                      : `${agent.name} is stopped`
                 }
                 onClick={() => {
                   onFocusAgent(agent.agentId);
@@ -1066,10 +1060,10 @@ function EscalationView({
                     unread={undefined}
                   />
                 )}
-                {agent.name ?? agent.agentId.slice(0, 8)}
-                {agent.workspaceLabel === undefined ? null : (
+                {agent.name}
+                {agent.live ? null : (
                   <span className="orchestrator-chip-sub">
-                    {agent.workspaceLabel}
+                    {agent.resumable ? "停止 · 再開できる" : "停止"}
                   </span>
                 )}
               </button>,
@@ -1083,32 +1077,13 @@ function EscalationView({
                   />
                 )),
             ])}
-            {escalation.links.map((link) =>
-              isDevhubLink(link) ? (
-                <DevhubLink key={link} href={link} />
-              ) : (
-                <button
-                  key={link}
-                  type="button"
-                  className="orchestrator-chip is-link"
-                  title={link}
-                  onClick={() => {
-                    void devhub().openExternalUrl(link);
-                  }}
-                >
-                  {escalation.linkLabels?.[link] === undefined ? (
-                    linkLabel(link)
-                  ) : (
-                    <>
-                      {escalation.linkLabels[link]}
-                      <span className="orchestrator-chip-sub">
-                        {linkLabel(link)}
-                      </span>
-                    </>
-                  )}
-                </button>
-              ),
-            )}
+            {task.links.map((link) => (
+              <LinkChip
+                key={link}
+                link={link}
+                label={task.linkLabels?.[link]}
+              />
+            ))}
           </div>
         ) : null}
       </div>
@@ -1119,78 +1094,186 @@ function EscalationView({
         onScroll={(event) => {
           memory.scroll.set(scrollKey, {
             top: event.currentTarget.scrollTop,
-            entries: entryCount,
+            entries: count,
           });
         }}
-        aria-label={`#${String(escalation.id)} ${escalation.title}`}
+        aria-label={`#${String(task.id)} ${task.title}`}
       >
-        {escalation.entries.map((entry, index) =>
-          entry.kind !== undefined ? (
-            <EscalationNote
-              key={`${String(entry.at)}-${String(index)}`}
-              entry={{ ...entry, kind: entry.kind }}
-              agents={escalation.agents}
-              onFocusAgent={onFocusAgent}
-              alreadyInProgress={inProgressBefore(escalation.entries, index)}
-            />
-          ) : (
-            <article
-              key={`${String(entry.at)}-${String(index)}`}
-              className="orchestrator-entry"
-              data-role={entry.role}
-            >
-              <div className="orchestrator-entry-byline">
-                {entry.role === "human"
-                  ? "You"
-                  : index === 0
-                    ? "Orchestrator"
-                    : "Orchestrator · follow-up"}
-                <span className="orchestrator-entry-time">
-                  {span(now - entry.at)} ago
-                </span>
-              </div>
-              <div className="orchestrator-entry-body">
-                <RichText
-                  source={entry.markdown}
-                  agentId={pathsOn}
-                  cwd={base}
-                />
-              </div>
-            </article>
-          ),
-        )}
-        <EscalationMemo
-          memo={memo}
-          agentId={pathsOn}
-          cwd={base}
-          now={now}
-          span={span}
-        />
-        {escalation.closed === undefined ? null : (
-          <div className="orchestrator-closed-note">
-            Closed {span(now - escalation.closed.at)} ago
-            {escalation.closed.note === undefined
+        {task.status === "waiting" &&
+        (task.waitNote !== undefined || task.checkAt !== undefined) ? (
+          <div className="orchestrator-task-wait">
+            <span className="orchestrator-task-label">待機</span>
+            {task.waitNote ?? ""}
+            {task.checkAt === undefined
               ? ""
-              : ` — ${escalation.closed.note}`}
-          </div>
-        )}
-        {escalation.state === "in_progress" ? (
-          <div className="orchestrator-closed-note">
-            Answered. The orchestrator is carrying it out; a follow-up question
-            would appear here.
+              : ` (${clockText(task.checkAt)} · ${dueWords(task.checkAt, now)} に見直す)`}
           </div>
         ) : null}
-        {escalation.state === "waiting" ? (
+        {task.memo === undefined ? null : (
+          <div className="orchestrator-memo" aria-label="Memo">
+            <span className="orchestrator-task-label">メモ</span>
+            <span className="orchestrator-entry-time">
+              {span(now - task.memo.at)} ago
+            </span>
+            <div className="orchestrator-memo-text">
+              <RichText source={task.memo.text} agentId={pathsOn} cwd={base} />
+            </div>
+          </div>
+        )}
+        {task.request === undefined ? null : (
+          <article className="orchestrator-entry" data-role="human">
+            <div className="orchestrator-entry-byline">
+              You · 依頼
+              <span className="orchestrator-entry-time">
+                {span(now - task.request.at)} ago
+                {task.request.sentAt === undefined ? " · 送信待ち" : ""}
+              </span>
+            </div>
+            <div className="orchestrator-entry-body">
+              <RichText
+                source={task.request.text}
+                agentId={pathsOn}
+                cwd={base}
+              />
+            </div>
+          </article>
+        )}
+        {questions.map((one) => (
+          <article
+            key={one.id}
+            className="orchestrator-entry orchestrator-question"
+            data-role="orchestrator"
+            data-escalation-id={one.id}
+          >
+            <div className="orchestrator-entry-byline">
+              <span className="orchestrator-card-id">質問 #{one.id}</span>{" "}
+              {one.title}
+              <span className="orchestrator-entry-time">
+                {span(now - one.question.at)} ago
+              </span>
+            </div>
+            {one.links.length === 0 ? null : (
+              <div className="orchestrator-reading-refs">
+                {one.links.map((link) => (
+                  <LinkChip
+                    key={link}
+                    link={link}
+                    label={one.linkLabels?.[link]}
+                  />
+                ))}
+              </div>
+            )}
+            <div className="orchestrator-entry-body">
+              <RichText
+                source={one.question.markdown}
+                agentId={pathsOn}
+                cwd={base}
+              />
+            </div>
+            <AnswerComposer escalation={one} onAnswered={onAnswered} />
+          </article>
+        ))}
+        {past.length === 0 ? null : (
+          <details className="orchestrator-past">
+            <summary>これまでの質問と回答 ({past.length})</summary>
+            {[...past].reverse().map((one) => (
+              <article
+                key={one.id}
+                className="orchestrator-entry orchestrator-past-entry"
+                data-role="orchestrator"
+                data-escalation-id={one.id}
+              >
+                <div className="orchestrator-entry-byline">
+                  <span className="orchestrator-card-id">質問 #{one.id}</span>{" "}
+                  {one.title}
+                  <span className="orchestrator-entry-time">
+                    {span(now - one.question.at)} ago
+                  </span>
+                </div>
+                <div className="orchestrator-entry-body">
+                  <RichText
+                    source={one.question.markdown}
+                    agentId={pathsOn}
+                    cwd={base}
+                  />
+                </div>
+                {one.answer === undefined ? null : (
+                  <div className="orchestrator-answer" data-role="human">
+                    <div className="orchestrator-entry-byline">
+                      You
+                      {one.answer.option === undefined
+                        ? ""
+                        : ` · 選択肢「${one.answer.option}」`}
+                      <span className="orchestrator-entry-time">
+                        {span(now - one.answer.at)} ago
+                      </span>
+                    </div>
+                    <div className="orchestrator-entry-body">
+                      <RichText
+                        source={one.answer.markdown}
+                        agentId={pathsOn}
+                        cwd={base}
+                      />
+                    </div>
+                  </div>
+                )}
+                {one.withdrawn === undefined ? null : (
+                  <div className="orchestrator-closed-note">
+                    取り下げ {span(now - one.withdrawn.at)} ago
+                    {one.withdrawn.note === undefined
+                      ? ""
+                      : ` — ${one.withdrawn.note}`}
+                  </div>
+                )}
+              </article>
+            ))}
+          </details>
+        )}
+        {task.done === undefined ? null : (
           <div className="orchestrator-closed-note">
-            Waiting on a condition. The orchestrator resumes it when it is met;
-            anything you write here moves it to 対応中.
+            完了 {span(now - task.done.at)} ago
+            {task.done.note === undefined ? "" : ` — ${task.done.note}`}
+          </div>
+        )}
+        {questions.length === 0 && task.status !== "done" ? (
+          <div className="orchestrator-closed-note">
+            {task.status === "waiting"
+              ? "待機しているタスクです。オーケストレーターが条件を確かめて再開します。"
+              : "処理中のタスクです。あなたに決めてほしいことがあれば、ここに質問が出ます。"}
           </div>
         ) : null}
       </div>
-      {escalation.state === "closed" ? null : (
-        <AnswerComposer escalation={escalation} onAnswered={onAnswered} />
-      )}
     </div>
+  );
+}
+
+/** A link of a task or a question: a `devhub:` chip, or a URL with its label. */
+function LinkChip({
+  link,
+  label,
+}: {
+  readonly link: string;
+  readonly label: string | undefined;
+}) {
+  if (isDevhubLink(link)) return <DevhubLink href={link} />;
+  return (
+    <button
+      type="button"
+      className="orchestrator-chip is-link"
+      title={link}
+      onClick={() => {
+        void devhub().openExternalUrl(link);
+      }}
+    >
+      {label === undefined ? (
+        linkLabel(link)
+      ) : (
+        <>
+          {label}
+          <span className="orchestrator-chip-sub">{linkLabel(link)}</span>
+        </>
+      )}
+    </button>
   );
 }
 
@@ -1240,23 +1323,16 @@ function decisionText(markdown: string): string {
 }
 
 /**
- * The first picture kept with the escalation — an `--attach`, or an image
- * its body named, both copied into its own folder when it was raised — in
- * its latest question first: the card's thumbnail.
+ * The first picture kept with the question — an `--attach`, or an image its
+ * body named, both copied into its own folder when it was asked: the card's
+ * thumbnail.
  */
 export function firstPicture(escalation: EscalationWire): string | undefined {
-  const questions = escalation.entries
-    .filter(
-      (entry) => entry.role === "orchestrator" && entry.kind === undefined,
-    )
-    .reverse();
-  for (const entry of questions) {
-    for (const match of entry.markdown.matchAll(
-      /!\[[^\]\n]*\]\(\s*<([^>\n]+)>/gu,
-    )) {
-      const path = match[1]!;
-      if (/\/devhub\/escalations\/\d+\/[^/]+$/u.test(path)) return path;
-    }
+  for (const match of escalation.question.markdown.matchAll(
+    /!\[[^\]\n]*\]\(\s*<([^>\n]+)>/gu,
+  )) {
+    const path = match[1]!;
+    if (/\/devhub\/escalations\/\d+\/[^/]+$/u.test(path)) return path;
   }
   return undefined;
 }
@@ -1316,7 +1392,8 @@ function AnswerComposer({
   onAnswered,
 }: {
   readonly escalation: EscalationWire;
-  readonly onAnswered: (id: number) => void;
+  /** The answer went out: its task's id. */
+  readonly onAnswered: (taskId: number) => void;
 }) {
   const { reportFailure } = useAgents();
   // The unsent answer is kept for the pane's return (`orchestratorMemory`).
@@ -1348,11 +1425,8 @@ function AnswerComposer({
       text,
       setText,
     });
-  const last = escalation.entries.at(-1);
   const options =
-    escalation.state === "needs_answer" && last?.role === "orchestrator"
-      ? (last.options ?? [])
-      : [];
+    escalation.state === "open" ? (escalation.question.options ?? []) : [];
   const send = useCallback(
     (words: string) => {
       if (words.trim() === "" || sending) return;
@@ -1363,7 +1437,7 @@ function AnswerComposer({
         .then(
           () => {
             setText("");
-            onAnswered(escalation.id);
+            onAnswered(escalation.taskId);
           },
           (error: unknown) => {
             setFailed(error instanceof Error ? error.message : String(error));
@@ -1374,7 +1448,14 @@ function AnswerComposer({
           setSending(false);
         });
     },
-    [escalation.id, reportFailure, sending, onAnswered, setText],
+    [
+      escalation.id,
+      escalation.taskId,
+      reportFailure,
+      sending,
+      onAnswered,
+      setText,
+    ],
   );
   const keys = useMessageKeys(
     () => {
@@ -1443,11 +1524,9 @@ function AnswerComposer({
             rows={2}
             value={text}
             placeholder={
-              escalation.state === "in_progress"
-                ? "Add to your answer…"
-                : options.length > 0
-                  ? "Choose above, or write your answer…"
-                  : "Write your answer…"
+              options.length > 0
+                ? "Choose above, or write your answer…"
+                : "Write your answer…"
             }
             onChange={(event) => {
               setText(event.target.value);

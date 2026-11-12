@@ -39,7 +39,10 @@ const PLACES: LinkPlaces = {
       agents: [{ id: AGENT, displayName: "API fix", status: "waiting" }],
     },
   ],
-  escalations: [{ id: 12, title: "列を追加してよいか", state: "needs_answer" }],
+  tasks: [{ id: 3, title: "列追加の作業", status: "answer" }],
+  escalations: [
+    { id: 12, taskId: 3, title: "列を追加してよいか", state: "open" },
+  ],
   orchestrator: true,
 };
 
@@ -210,16 +213,20 @@ describe("following a link on the Agents page", () => {
     ]);
   });
 
-  it("opens an escalation on the board as one move, one place in Back and Forward", async () => {
+  it("opens an escalation's task on the board as one move, one place in Back and Forward", async () => {
     const to = ports();
     await navigateLink(
-      { kind: "escalation", escalation: PLACES.escalations[0]! },
+      {
+        kind: "escalation",
+        escalation: PLACES.escalations[0]!,
+        task: PLACES.tasks[0]!,
+      },
       to,
     );
     expect(to.dispatch.mock.calls.map(([intent]) => intent)).toEqual([
       {
         type: "show_orchestrator_view",
-        view: { kind: "escalation", id: 12 },
+        view: { kind: "task", id: 3 },
         reason: "explicit",
       },
     ]);
@@ -279,7 +286,7 @@ describe("following a link on the Agents page", () => {
           },
         ],
       } as never,
-      { needsAnswer: [], inProgress: [], closed: [] } as never,
+      { answer: [], inProgress: [], waiting: [], done: [] } as never,
     );
     expect(places.workspaces[0]?.label).toBe("Scratch");
   });

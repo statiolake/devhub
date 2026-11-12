@@ -1,7 +1,7 @@
 /**
  * Where the Orchestrator screen's left pane was, for the next time it is
- * shown: the tab, the escalation or file open over it, how far its thread was
- * scrolled, and the answer being written.
+ * shown: the tab, the task or file open over it, how far it was scrolled,
+ * and the answers being written.
  *
  * The left pane unmounts whenever the Orchestrator row is not selected
  * (`AgentsApp`), but this page lives for the session, so a module is enough:
@@ -10,7 +10,7 @@
  * starts on the board. Only the tab is also kept in `sessionStorage`, so it
  * survives a reload of the page as it did before.
  *
- * An escalation or a file open here is a place of its own in Back and
+ * A task or a file open here is a place of its own in Back and
  * Forward (`orchestratorHistory.ts`, `docs/window-and-pages.md`): the model
  * keeps which one each entry showed, and this memory is what the pane draws
  * from when no snapshot says otherwise.
@@ -23,7 +23,7 @@ export type BoardTab = "board" | "files";
 
 const TAB_KEY = "devhub.orchestrator.tab";
 
-/** The thread's scroll, and how many entries it had then. */
+/** The reading view's scroll, and how many questions it had then. */
 export interface ThreadScroll {
   readonly top: number;
   readonly entries: number;
@@ -31,24 +31,24 @@ export interface ThreadScroll {
 
 export interface OrchestratorMemory {
   tab: BoardTab | undefined;
-  /** The lanes folded shut: 待機中 and 完了 fold, and both start shut. */
-  folded: { waiting: boolean; work?: boolean; closed: boolean };
-  /** The escalation open over the board, and whether it was closed then. */
-  escalation: { readonly id: number; readonly closed: boolean } | undefined;
+  /** The lanes folded shut: 待機 and 完了 fold; 完了 starts shut. */
+  folded: { waiting: boolean; closed: boolean };
+  /** The task open over the board, and whether it was done then. */
+  task: { readonly id: number; readonly done: boolean } | undefined;
   /** The file open over the tree, and the folders expanded under it. */
   file: string | undefined;
   expanded: readonly string[];
-  /** Per `esc:<id>` or `file:<path>`. */
+  /** Per `task:<id>` or `file:<path>`. */
   readonly scroll: Map<string, ThreadScroll>;
-  /** The unsent answer, per escalation. */
+  /** The unsent answer, per escalation (one question each). */
   readonly drafts: Map<number, string>;
 }
 
 function fresh(): OrchestratorMemory {
   return {
     tab: undefined,
-    folded: { waiting: true, closed: true },
-    escalation: undefined,
+    folded: { waiting: false, closed: true },
+    task: undefined,
     file: undefined,
     expanded: [],
     scroll: new Map(),
@@ -94,9 +94,9 @@ export function orchestratorView(): OrchestratorViewWire {
     return memory.file === undefined
       ? { kind: "board" }
       : { kind: "file", path: memory.file };
-  return memory.escalation === undefined
+  return memory.task === undefined
     ? { kind: "board" }
-    : { kind: "escalation", id: memory.escalation.id };
+    : { kind: "task", id: memory.task.id };
 }
 
 let reported: string | undefined;

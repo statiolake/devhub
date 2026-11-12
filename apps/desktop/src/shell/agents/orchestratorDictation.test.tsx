@@ -27,6 +27,7 @@ import { EMPTY_BOARD, type OrchestratorBoardWire } from "../../ipc/contract";
 import type { VoiceApi, VoiceUpdate } from "../../ipc/voice";
 import { AgentsValueProvider, type AgentsValue } from "./AgentsContext";
 import { forgetOrchestratorMemory, memory } from "./orchestratorMemory";
+import { askingTask, questionWire } from "./taskFixture";
 import { OrchestratorBoard } from "./OrchestratorScreen";
 
 interface FakeProcessor {
@@ -136,25 +137,20 @@ const BOARD: OrchestratorBoardWire = {
   ...EMPTY_BOARD,
   revision: 1,
   orchestratorAgentId: "orch",
-  needsAnswer: [
-    {
-      id: 1,
+  answer: [
+    askingTask(1, {
       title: "本番マイグレーションの実行承認",
-      state: "needs_answer",
-      entries: [
-        {
-          role: "orchestrator",
-          markdown: "列を追加します。",
-          at: NOW - 120_000,
-          options: ["実行する", "保留"],
-        },
+      escalations: [
+        questionWire({
+          title: "本番マイグレーションの実行承認",
+          question: {
+            markdown: "列を追加します。",
+            at: NOW - 120_000,
+            options: ["実行する", "保留"],
+          },
+        }),
       ],
-      agents: [],
-      links: [],
-      createdAt: NOW - 120_000,
-      updatedAt: NOW - 120_000,
-      stateSince: NOW - 120_000,
-    },
+    }),
   ],
 };
 

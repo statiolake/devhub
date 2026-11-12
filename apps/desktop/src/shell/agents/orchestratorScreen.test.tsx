@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
 /**
- * The Orchestrator board: three lanes, an escalation opened in place with
- * the conversation's renderer, and the person's answer going out through the
- * one door it has (`answerEscalation`).
+ * The Orchestrator board: the tasks by status, a task opened in place with
+ * its open questions drawn by the conversation's renderer, and the person's
+ * answer going out through the one door it has (`answerEscalation`).
  */
 
 import "@testing-library/jest-dom/vitest";
@@ -24,8 +24,9 @@ import { installHistoryButtons } from "../historyButtons";
 import { AgentsValueProvider, type AgentsValue } from "./AgentsContext";
 import { forgetOrchestratorMemory } from "./orchestratorMemory";
 import { forgetEntryStates } from "./orchestratorHistory";
+import { askingTask, questionWire, taskWire } from "./taskFixture";
 import {
-  escalationBase,
+  taskBase,
   NAV_MS,
   OrchestratorBoard,
   firstPicture,
@@ -106,42 +107,51 @@ const BOARD: OrchestratorBoardWire = {
   ...EMPTY_BOARD,
   revision: 1,
   orchestratorAgentId: "orch",
-  needsAnswer: [
-    {
-      id: 1,
+  answer: [
+    askingTask(1, {
       title: "本番マイグレーションの実行承認",
-      state: "needs_answer",
-      entries: [
+      agents: [
         {
-          role: "orchestrator",
-          markdown:
-            "## 背景\n\n列を追加します。\n\n```sql\nALTER TABLE t ADD c int;\n```",
-          at: NOW - 120_000,
-          options: ["実行する", "保留"],
+          agentId: "a1",
+          name: "payments-migration",
+          status: "idle",
+          live: true,
+          resumable: false,
         },
       ],
-      agents: [{ agentId: "a1", name: "payments-migration", status: "idle" }],
       links: ["https://github.com/acme/app/pull/7"],
-      createdAt: NOW - 120_000,
       updatedAt: NOW - 120_000,
-      stateSince: NOW - 120_000,
-    },
+      escalations: [
+        questionWire({
+          id: 1,
+          taskId: 1,
+          title: "本番マイグレーションの実行承認",
+          question: {
+            markdown:
+              "## 背景\n\n列を追加します。\n\n```sql\nALTER TABLE t ADD c int;\n```",
+            at: NOW - 120_000,
+            options: ["実行する", "保留"],
+          },
+        }),
+      ],
+    }),
   ],
   inProgress: [
-    {
+    taskWire({
       id: 2,
       title: "リトライ方針",
-      state: "in_progress",
-      entries: [
-        { role: "orchestrator", markdown: "A or B?", at: NOW - 600_000 },
-        { role: "human", markdown: "A で", at: NOW - 300_000 },
-      ],
-      agents: [],
-      links: [],
-      createdAt: NOW - 600_000,
       updatedAt: NOW - 300_000,
-      stateSince: NOW - 300_000,
-    },
+      escalations: [
+        questionWire({
+          id: 2,
+          taskId: 2,
+          title: "リトライ方針",
+          state: "answered",
+          question: { markdown: "A or B?", at: NOW - 600_000 },
+          answer: { markdown: "A で", at: NOW - 300_000 },
+        }),
+      ],
+    }),
   ],
 };
 
@@ -163,16 +173,53 @@ function mount(
 }
 
 describe("the Orchestrator board", () => {
-  it("lays out 要回答 and 対応中, with ages, and no 不明", () => {
+  it("lays out the tasks by status, the open question on its card, with ages", () => {
     mount();
-    const ask = screen.getByRole("region", { name: "要回答" });
+    const ask = screen.getByRole("region", { name: "回答待ち" });
     expect(
       within(ask).getByText("本番マイグレーションの実行承認"),
     ).toBeVisible();
-    expect(within(ask).getByText("列を追加します。")).toBeVisible();
-    const progress = screen.getByRole("region", { name: "対応中" });
-    expect(within(progress).getByText("answered 5m ago")).toBeVisible();
-    expect(screen.queryByRole("region", { name: "不明" })).toBeNull();
+    // The question waiting on the person: the card's first say.
+    expect(ask.querySelector(".orchestrator-card-question")).toHaveTextContent(
+      "列を追加します。",
+    );
+    expect(within(ask).getByText("選択肢 2")).toBeVisible();
+    const progress = screen.getByRole("region", { name: "処理中" });
+    expect(within(progress).getByText("5m")).toBeVisible();
+    expect(progress.querySelector(".orchestrator-card-question")).toBeNull();
+  });
+
+  it("marks a task nobody is moving, and lists the work with no task apart", () => {
+    mount({
+      ...BOARD,
+      inProgress: [{ ...BOARD.inProgress[0]!, needsAction: "idle" }],
+      needsAction: [
+        {
+          kind: "agent",
+          key: "agent z",
+          subject: "agent z",
+          line: "agent=zzzz9999 (調査) ws=docs — no_task",
+          clause: "no_task",
+          since: NOW - 60_000,
+        },
+        {
+          kind: "task",
+          key: "task 2",
+          subject: "task 2",
+          line: "task=2「リトライ方針」 — idle",
+          clause: "idle",
+          since: NOW,
+        },
+      ],
+    });
+    const progress = screen.getByRole("region", { name: "処理中" });
+    expect(within(progress).getByLabelText("要対応: idle")).toBeVisible();
+    const untasked = screen.getByRole("region", { name: "タスクなし" });
+    expect(untasked).toHaveTextContent(
+      "agent=zzzz9999 (調査) ws=docs — no_task",
+    );
+    // A task's own flag is on its card, not in the list.
+    expect(untasked).not.toHaveTextContent("リトライ方針");
   });
 
   it("jumps to an escalation's agent as a deliberate move, for Back and Forward", () => {
@@ -208,11 +255,60 @@ describe("the Orchestrator board", () => {
     });
     // Answered: back on the board.
     expect(document.querySelector(".orchestrator-reading")).toBeNull();
+    // An answered question is past: there is nothing to answer again.
     fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
-    const field = screen.getByRole("textbox", { name: "Your answer to #2" });
-    fireEvent.change(field, { target: { value: "やはり B で" } });
-    fireEvent.keyDown(field, { key: "Enter", metaKey: true });
-    expect(answerEscalation).toHaveBeenLastCalledWith(2, "やはり B で");
+    expect(
+      screen.queryByRole("textbox", { name: "Your answer to #2" }),
+    ).toBeNull();
+  });
+
+  it("shows a task's past questions folded, each with its answer", () => {
+    motion(true);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
+    const past =
+      document.querySelector<HTMLDetailsElement>(".orchestrator-past")!;
+    expect(past.open).toBe(false);
+    expect(past.querySelector("summary")).toHaveTextContent(
+      "これまでの質問と回答 (1)",
+    );
+    expect(past).toHaveTextContent("A or B?");
+    expect(past).toHaveTextContent("A で");
+  });
+
+  it("shows a task's links, agents and memo, and a stopped agent as resumable", () => {
+    motion(true);
+    mount({
+      ...BOARD,
+      inProgress: [
+        {
+          ...BOARD.inProgress[0]!,
+          memo: { text: "CI が通ったらレビュー依頼", at: NOW },
+          links: ["https://github.com/acme/app/issues/128"],
+          linkLabels: { "https://github.com/acme/app/issues/128": "Issue" },
+          agents: [
+            {
+              agentId: "s1",
+              name: "retry-fix",
+              live: false,
+              resumable: true,
+              stoppedAt: NOW,
+            },
+          ],
+        },
+      ],
+    });
+    const card = document.querySelector<HTMLElement>('[data-task-id="2"]')!;
+    expect(card).toHaveTextContent("CI が通ったらレビュー依頼");
+    expect(within(card).getByText("Issue")).toBeVisible();
+    fireEvent.click(card);
+    const view = document.querySelector<HTMLElement>(".orchestrator-reading")!;
+    expect(within(view).getByLabelText("Memo")).toHaveTextContent(
+      "CI が通ったらレビュー依頼",
+    );
+    expect(
+      within(view).getByRole("button", { name: /retry-fix/u }),
+    ).toHaveTextContent("停止 · 再開できる");
   });
 });
 
@@ -221,20 +317,20 @@ describe("folding lanes", () => {
     ...BOARD.inProgress[0]!,
     id: 5,
     title: "終わった件",
-    state: "closed" as const,
-    closed: { at: NOW },
+    status: "done" as const,
+    done: { at: NOW },
   };
 
-  it("puts 完了 under 待機中, both folded at first; both fold and unfold", () => {
-    mount({ ...BOARD, closed: [DONE] });
+  it("puts 完了 under 待機, 完了 folded at first; both fold and unfold", () => {
+    mount({ ...BOARD, done: [DONE] });
     const regions = screen
       .getAllByRole("region")
       .map((one) => one.getAttribute("aria-label"));
     expect(regions).toEqual([
       "Orchestrator board",
-      "要回答",
-      "対応中",
-      "待機中",
+      "回答待ち",
+      "処理中",
+      "待機",
       "完了",
     ]);
     const done = screen.getByRole("button", { name: /完了/u });
@@ -243,21 +339,16 @@ describe("folding lanes", () => {
     fireEvent.click(done);
     expect(done).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("終わった件")).toBeVisible();
-    const waiting = screen.getByRole("button", { name: /待機中/u });
-    expect(waiting).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("条件を待っているものはありません。")).toBeNull();
-    fireEvent.click(waiting);
+    const waiting = screen.getByRole("button", { name: /^待機/u });
     expect(waiting).toHaveAttribute("aria-expanded", "true");
-    expect(
-      screen.getByText("条件を待っているものはありません。"),
-    ).toBeVisible();
+    expect(screen.getByText("待機しているものはありません。")).toBeVisible();
     fireEvent.click(waiting);
     expect(waiting).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("条件を待っているものはありません。")).toBeNull();
+    expect(screen.queryByText("待機しているものはありません。")).toBeNull();
   });
 
   it("has no Closed button in the header any more", () => {
-    mount({ ...BOARD, closed: [DONE] });
+    mount({ ...BOARD, done: [DONE] });
     expect(screen.queryByRole("button", { name: /^Closed/u })).toBeNull();
   });
 });
@@ -274,7 +365,7 @@ describe("Enter on the board", () => {
 
   it("opens the first of the next lane when 要回答 is empty", () => {
     motion(false);
-    mount({ ...BOARD, needsAnswer: [] });
+    mount({ ...BOARD, answer: [] });
     fireEvent.keyDown(document.body, { key: "Enter" });
     expect(
       document.querySelector(".orchestrator-reading")?.textContent,
@@ -299,16 +390,18 @@ describe("Enter on the board", () => {
 describe("after an answer", () => {
   const TWO: OrchestratorBoardWire = {
     ...BOARD,
-    needsAnswer: [
-      ...BOARD.needsAnswer,
-      {
-        ...BOARD.needsAnswer[0]!,
-        id: 3,
+    answer: [
+      ...BOARD.answer,
+      askingTask(3, {
         title: "ステージングの再作成",
-        entries: [
-          { role: "orchestrator", markdown: "作り直してよい?", at: NOW },
+        escalations: [
+          questionWire({
+            id: 3,
+            taskId: 3,
+            question: { markdown: "作り直してよい?", at: NOW },
+          }),
         ],
-      },
+      }),
     ],
   };
 
@@ -381,36 +474,36 @@ describe("after an answer", () => {
   });
 });
 
-describe("an escalation's pictures", () => {
-  it("draws relative and absolute images — in a table too — and an svg block, from its workspace", async () => {
+describe("a question's pictures", () => {
+  it("draws relative and absolute images — in a table too — and an svg block, from its task's workspace", async () => {
+    const markdown = [
+      "![画面](out/shot.png)",
+      "",
+      "| 前 | 後 |",
+      "|---|---|",
+      "| ![前](out/shot.png) | ![図](/abs/flow.svg) |",
+      "",
+      "```svg",
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><rect width="4" height="4"/></svg>',
+      "```",
+    ].join("\n");
     mount(
       {
         ...BOARD,
-        needsAnswer: [
+        answer: [
           {
-            ...BOARD.needsAnswer[0]!,
-            workspaceId: "w-pay",
-            entries: [
-              {
-                role: "orchestrator",
-                markdown: [
-                  "![画面](out/shot.png)",
-                  "",
-                  "| 前 | 後 |",
-                  "|---|---|",
-                  "| ![前](out/shot.png) | ![図](/abs/flow.svg) |",
-                  "",
-                  "```svg",
-                  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><rect width="4" height="4"/></svg>',
-                  "```",
-                ].join("\n"),
-                at: NOW,
-              },
+            ...BOARD.answer[0]!,
+            escalations: [
+              questionWire({
+                id: 1,
+                taskId: 1,
+                question: { markdown, at: NOW },
+              }),
             ],
           },
         ],
       },
-      [{ id: "w-pay", root: "/w/payments", agents: [] }],
+      [{ id: "w-pay", root: "/w/payments", agents: [{ id: "a1" }] }],
     );
     fireEvent.click(
       screen.getByRole("button", { name: /本番マイグレーション/u }),
@@ -429,95 +522,79 @@ describe("an escalation's pictures", () => {
         .getByRole("img", { name: "図" })
         .getAttribute("src"),
     ).toMatch(/^data:image\/svg\+xml;base64,/u);
-    await waitFor(() => {
-      expect(
-        thread.querySelector(
-          '.conversation-embed[data-path="out/shot.png"] img',
-        ),
-      ).not.toBeNull();
-    });
     expect(thread.querySelector('figure[data-kind="svg"] img')).not.toBeNull();
   });
 
-  it("takes relative paths from the workspace, else the first agent's, else the orchestrator's folder", () => {
-    const one = BOARD.needsAnswer[0]!;
+  it("takes relative paths from its latest open agent's workspace, else the orchestrator's folder", () => {
+    const one = BOARD.answer[0]!;
     const workspaces = [
-      { id: "w1", root: "/w/one", agents: [] },
+      { id: "w1", root: "/w/one", agents: [{ id: "b2" }] },
       { id: "w2", root: "/w/two", agents: [{ id: "a1" }] },
     ] as unknown as AppSnapshot["workspaces"];
+    expect(taskBase(one, workspaces, "/orch")).toBe("/w/two");
     expect(
-      escalationBase({ ...one, workspaceId: "w1" }, workspaces, "/orch"),
+      taskBase(
+        {
+          ...one,
+          agents: [
+            ...one.agents,
+            { agentId: "b2", name: "b", live: true, resumable: false },
+          ],
+        },
+        workspaces,
+        "/orch",
+      ),
     ).toBe("/w/one");
-    expect(escalationBase(one, workspaces, "/orch")).toBe("/w/two");
-    expect(escalationBase({ ...one, agents: [] }, workspaces, "/orch")).toBe(
-      "/orch",
-    );
+    expect(taskBase({ ...one, agents: [] }, workspaces, "/orch")).toBe("/orch");
   });
 });
 
-describe("the orchestrator's ranking on the board", () => {
-  it("marks high, low and quick, with the reason as a quiet line; normal shows nothing", () => {
+describe("the task's priority on the board", () => {
+  it("marks high and low; normal shows nothing", () => {
     mount({
       ...BOARD,
-      needsAnswer: [
-        {
-          ...BOARD.needsAnswer[0]!,
-          priority: "high",
-          effort: "quick",
-          rankNote: "3 つのエージェントが止まっている",
-        },
-        {
-          ...BOARD.needsAnswer[0]!,
-          id: 4,
-          title: "ログの保存期間",
-          priority: "low",
-          effort: "normal",
-        },
+      answer: [
+        { ...BOARD.answer[0]!, priority: "high" },
+        askingTask(4, { title: "ログの保存期間", priority: "low" }),
       ],
     });
-    const ask = screen.getByRole("region", { name: "要回答" });
+    const ask = screen.getByRole("region", { name: "回答待ち" });
     const [first, second] = [
       ...ask.querySelectorAll<HTMLElement>(".orchestrator-card"),
     ];
     expect(within(first!).getByText("優先")).toBeVisible();
-    expect(within(first!).getByText("すぐ答えられる")).toBeVisible();
-    expect(
-      within(first!).getByText("3 つのエージェントが止まっている"),
-    ).toBeVisible();
     expect(within(second!).getByText("低")).toBeVisible();
-    expect(within(second!).queryByText("すぐ答えられる")).toBeNull();
-    const progress = screen.getByRole("region", { name: "対応中" });
+    const progress = screen.getByRole("region", { name: "処理中" });
     expect(within(progress).queryByText("優先")).toBeNull();
     expect(within(progress).queryByText("低")).toBeNull();
   });
 });
 
-describe("an escalation that stands on its own", () => {
+describe("a question that stands on its own", () => {
   const SHOT = "/u/devhub/escalations/5/a1-shot.png";
-  const ONE = {
-    ...BOARD.needsAnswer[0]!,
+  const QUESTION = questionWire({
     id: 5,
+    taskId: 5,
     title: "決済リトライのタイムアウト延長をマージしてよいか",
-    entries: [
-      {
-        role: "orchestrator" as const,
-        markdown: `## 背景\n\n決済が二重に失敗している。\n\n## 決めてほしいこと\n\n**マージしてよいか**\n\n## 人に聞く理由\n\n本番の挙動が変わる。\n\n## 添付\n\n**staging** — *shot.png*\n\n![staging](<${SHOT}>)`,
-        at: NOW - 60_000,
-      },
-    ],
+    question: {
+      markdown: `## 背景\n\n決済が二重に失敗している。\n\n## 決めてほしいこと\n\n**マージしてよいか**\n\n## 人に聞く理由\n\n本番の挙動が変わる。\n\n## 添付\n\n**staging** — *shot.png*\n\n![staging](<${SHOT}>)`,
+      at: NOW - 60_000,
+    },
     links: ["https://github.com/acme/pay/pull/1234"],
     linkLabels: {
       "https://github.com/acme/pay/pull/1234": "タイムアウト延長の PR",
     },
-  };
+  });
+  const ONE = askingTask(5, {
+    title: "決済リトライのタイムアウト延長",
+    escalations: [QUESTION],
+  });
 
   it("shows the decision on the card, and its first picture beside it", async () => {
     FILES[SHOT] = new Uint8Array([137, 80, 78, 71]);
-    expect(firstPicture(ONE)).toBe(SHOT);
-    mount({ ...BOARD, needsAnswer: [ONE] });
-    const card = document.querySelector<HTMLElement>(
-      '[data-escalation-id="5"]',
-    )!;
+    expect(firstPicture(QUESTION)).toBe(SHOT);
+    mount({ ...BOARD, answer: [ONE] });
+    const card = document.querySelector<HTMLElement>('[data-task-id="5"]')!;
     expect(within(card).getByText("マージしてよいか")).toBeVisible();
     expect(card).toHaveClass("has-picture");
     await waitFor(() => {
@@ -529,48 +606,39 @@ describe("an escalation that stands on its own", () => {
   });
 
   it("names a link by its label, with its short form beside it", () => {
-    mount({ ...BOARD, needsAnswer: [ONE] });
-    fireEvent.click(
-      document.querySelector<HTMLElement>('[data-escalation-id="5"]')!,
-    );
+    mount({ ...BOARD, answer: [ONE] });
+    fireEvent.click(document.querySelector<HTMLElement>('[data-task-id="5"]')!);
     const chip = screen.getByTitle("https://github.com/acme/pay/pull/1234");
     expect(chip).toHaveTextContent("タイムアウト延長の PRPR pay#1234");
   });
 
   it("has no picture for a body that names only files outside its folder", () => {
-    expect(firstPicture(BOARD.needsAnswer[0]!)).toBeUndefined();
+    expect(firstPicture(BOARD.answer[0]!.escalations[0]!)).toBeUndefined();
   });
 });
 
-describe("待機中", () => {
-  it("is a lane of its own: the trigger first, the time and how far off", () => {
+describe("待機", () => {
+  it("is a lane of its own: what each waits for first, the time and how far off", () => {
     const due = NOW + 3 * 86_400_000 + 60_000;
-    const waiting = (id: number, trigger: string, dueAt?: number) => ({
-      ...BOARD.inProgress[0]!,
-      id,
-      title: `待ち ${String(id)}`,
-      state: "waiting" as const,
-      entries: [
-        { role: "orchestrator" as const, markdown: "about", at: NOW - 60_000 },
-        {
-          role: "orchestrator" as const,
-          kind: "wait" as const,
-          markdown: trigger,
-          at: NOW - 60_000,
-          ...(dueAt === undefined ? {} : { dueAt }),
-        },
-      ],
-    });
     mount({
       ...BOARD,
       waiting: [
-        waiting(5, "11/10 以降に再開", due),
-        waiting(6, "Bob から Slack で返事が来たら"),
+        taskWire({
+          id: 5,
+          title: "待ち 5",
+          status: "waiting",
+          waitNote: "11/10 以降に再開",
+          checkAt: due,
+        }),
+        taskWire({
+          id: 6,
+          title: "待ち 6",
+          status: "waiting",
+          waitNote: "Bob から Slack で返事が来たら",
+        }),
       ],
     });
-    // 待機中 starts folded: open it.
-    fireEvent.click(screen.getByRole("button", { name: /待機中/u }));
-    const lane = screen.getByRole("region", { name: "待機中" });
+    const lane = screen.getByRole("region", { name: "待機" });
     const [first, second] = [
       ...lane.querySelectorAll<HTMLElement>(".orchestrator-card"),
     ];
@@ -582,34 +650,11 @@ describe("待機中", () => {
       within(second!).getByText("Bob から Slack で返事が来たら"),
     ).toBeVisible();
     expect(second!.querySelector(".orchestrator-card-due")).toBeNull();
-    // Nothing for the person to press here: no 対応中にする.
-    expect(within(lane).queryByText("対応中にする")).toBeNull();
-    expect(screen.queryByText("対応中にする")).toBeNull();
-  });
-});
-
-describe("停滞", () => {
-  it("marks a stalled 対応中 card quietly, with no tooltip", () => {
-    mount({
-      ...BOARD,
-      inProgress: [
-        { ...BOARD.inProgress[0]!, stalledSince: NOW - 60_000 },
-        { ...BOARD.inProgress[0]!, id: 3, title: "動いている" },
-      ],
-    });
-    const progress = screen.getByRole("region", { name: "対応中" });
-    const [stalled, moving] = [
-      ...progress.querySelectorAll<HTMLElement>(".orchestrator-card"),
-    ];
-    const mark = within(stalled!).getByText("停滞");
-    expect(mark).toBeVisible();
-    expect(mark).not.toHaveAttribute("title");
-    expect(within(moving!).queryByText("停滞")).toBeNull();
   });
 });
 
 describe("may be stale", () => {
-  it("marks the card quietly with DevHub's reasons, and leaves the others alone", () => {
+  it("marks the task's card quietly with DevHub's reasons, and leaves the others alone", () => {
     mount({
       ...BOARD,
       inProgress: [
@@ -623,7 +668,7 @@ describe("may be stale", () => {
         { ...BOARD.inProgress[0]!, id: 3, title: "まだ有効" },
       ],
     });
-    const progress = screen.getByRole("region", { name: "対応中" });
+    const progress = screen.getByRole("region", { name: "処理中" });
     const [stale, fresh] = [
       ...progress.querySelectorAll<HTMLElement>(".orchestrator-card"),
     ];
@@ -729,12 +774,16 @@ describe("opening an escalation and going back", () => {
     expect(card).toHaveFocus();
   });
 
-  it("focuses the thread when nothing is asked, and keeps a draft on Esc", () => {
+  it("focuses the view when nothing is asked, and keeps a draft on Esc", () => {
     motion(true);
     mount();
     fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
     expect(document.querySelector(".orchestrator-thread")).toHaveFocus();
-    const field = screen.getByRole("textbox", { name: "Your answer to #2" });
+    fireEvent.click(screen.getByRole("button", { name: "Back to the board" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    const field = screen.getByRole("textbox", { name: "Your answer to #1" });
     fireEvent.change(field, { target: { value: "やはり B" } });
     fireEvent.keyDown(field, { key: "Escape" });
     expect(document.querySelector(".orchestrator-reading")).not.toBeNull();
@@ -848,7 +897,7 @@ describe("the board in Back and Forward", () => {
     expect(model.said()).toEqual([
       {
         type: "show_orchestrator_view",
-        view: { kind: "escalation", id: 1 },
+        view: { kind: "task", id: 1 },
         reason: "explicit",
         drawn: true,
       },
@@ -878,7 +927,7 @@ describe("the board in Back and Forward", () => {
       fireEvent.click(
         screen.getByRole("button", { name: /本番マイグレーション/u }),
       );
-      model.settle({ kind: "escalation", id: 1 }, 2);
+      model.settle({ kind: "task", id: 1 }, 2);
       const back = press(thread(), 3);
       expect(back.defaultPrevented).toBe(true);
       expect(app).toHaveBeenCalledWith("back");
@@ -888,7 +937,7 @@ describe("the board in Back and Forward", () => {
       ).toBeVisible();
       model.move({ kind: "board" }, "back", 1);
       expect(document.querySelector(".orchestrator-reading")).toBeNull();
-      model.move({ kind: "escalation", id: 1 }, "forward", 2);
+      model.move({ kind: "task", id: 1 }, "forward", 2);
       expect(
         screen.getByRole("textbox", { name: "Your answer to #1" }),
       ).toBeVisible();
@@ -902,20 +951,20 @@ describe("the board in Back and Forward", () => {
   it("opens what a link names, and slides what Back brings in from the leading edge", () => {
     motion(false);
     const model = mountWithModel();
-    model.move({ kind: "escalation", id: 2 }, "open", 2);
+    model.move({ kind: "task", id: 2 }, "open", 2);
     const stage = document.querySelector(".orchestrator-stage");
     expect(stage).toHaveAttribute("data-nav", "push");
     expect(stage).not.toHaveAttribute("data-arrived");
-    model.move({ kind: "escalation", id: 1 }, "open", 3);
+    model.move({ kind: "task", id: 1 }, "open", 3);
     expect(
       screen.getByRole("textbox", { name: "Your answer to #1" }),
     ).toBeVisible();
-    model.move({ kind: "escalation", id: 2 }, "back", 2);
+    model.move({ kind: "task", id: 2 }, "back", 2);
     expect(stage).toHaveAttribute("data-arrived", "back");
     model.move({ kind: "board" }, "back", 1);
     expect(stage).toHaveAttribute("data-nav", "pop");
     expect(stage).not.toHaveAttribute("data-arrived");
-    model.move({ kind: "escalation", id: 2 }, "forward", 2);
+    model.move({ kind: "task", id: 2 }, "forward", 2);
     expect(stage).toHaveAttribute("data-nav", "push");
     expect(model.said()).toEqual([]);
   });
@@ -959,21 +1008,21 @@ describe("the board in Back and Forward", () => {
   it("puts the folded lanes back as each entry left them", () => {
     motion(true);
     const model = mountWithModel();
-    const waiting = () => screen.getByRole("button", { name: /待機中/u });
-    expect(waiting()).toHaveAttribute("aria-expanded", "false");
-    // Entry 1: 待機中 unfolded there.
-    fireEvent.click(waiting());
-    expect(waiting()).toHaveAttribute("aria-expanded", "true");
+    const done = () => screen.getByRole("button", { name: /完了/u });
+    expect(done()).toHaveAttribute("aria-expanded", "false");
+    // Entry 1: 完了 unfolded there.
+    fireEvent.click(done());
+    expect(done()).toHaveAttribute("aria-expanded", "true");
     // A new entry (a link, say) starts from the board as it is, then folds.
     model.move({ kind: "board" }, "open", 2);
-    expect(waiting()).toHaveAttribute("aria-expanded", "true");
-    fireEvent.click(waiting());
-    expect(waiting()).toHaveAttribute("aria-expanded", "false");
+    expect(done()).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(done());
+    expect(done()).toHaveAttribute("aria-expanded", "false");
     // Back to entry 1: unfolded, as it was left; Forward: folded again.
     model.move({ kind: "board" }, "back", 1);
-    expect(waiting()).toHaveAttribute("aria-expanded", "true");
+    expect(done()).toHaveAttribute("aria-expanded", "true");
     model.move({ kind: "board" }, "forward", 2);
-    expect(waiting()).toHaveAttribute("aria-expanded", "false");
+    expect(done()).toHaveAttribute("aria-expanded", "false");
   });
 
   it("puts the board's scroll back as each entry left it", () => {
@@ -1021,8 +1070,20 @@ describe("the answer composer", () => {
    */
   it("keeps the quick replies' row while there are none", () => {
     motion(true);
-    mount();
-    fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
+    mount({
+      ...BOARD,
+      answer: [
+        askingTask(1, {
+          title: "本番マイグレーションの実行承認",
+          escalations: [
+            questionWire({ question: { markdown: "どうする?", at: NOW } }),
+          ],
+        }),
+      ],
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
     const row = document.querySelector(
       ".orchestrator-composer > .orchestrator-options",
     );
@@ -1173,7 +1234,7 @@ describe("leaving the Orchestrator screen and coming back", () => {
     expect(document.querySelector(".orchestrator-reading")).toBeNull();
   });
 
-  it("reads the newest entry when one came while it was away", () => {
+  it("reads a question that came while it was away from the top", () => {
     motion(true);
     const screenNow = mountScreen();
     fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
@@ -1182,23 +1243,29 @@ describe("leaving the Orchestrator screen and coming back", () => {
     screenNow.leave();
     const more: OrchestratorBoardWire = {
       ...BOARD,
-      inProgress: [
+      inProgress: [],
+      answer: [
+        ...BOARD.answer,
         {
           ...BOARD.inProgress[0]!,
-          entries: [
-            ...BOARD.inProgress[0]!.entries,
-            { role: "orchestrator", markdown: "B も試す?", at: NOW },
+          status: "answer",
+          escalations: [
+            ...BOARD.inProgress[0]!.escalations,
+            questionWire({
+              id: 9,
+              taskId: 2,
+              question: { markdown: "B も試す?", at: NOW },
+            }),
           ],
         },
       ],
     };
     screenNow.back(more);
     expect(within(thread()).getByText("B も試す?")).toBeInTheDocument();
-    // jsdom lays nothing out: the bottom is 0, and not where it was left.
     expect(thread().scrollTop).toBe(0);
   });
 
-  it("falls back to the board when the escalation was closed meanwhile", () => {
+  it("falls back to the board when the task was done meanwhile", () => {
     motion(true);
     const screenNow = mountScreen();
     fireEvent.click(
@@ -1207,21 +1274,15 @@ describe("leaving the Orchestrator screen and coming back", () => {
     screenNow.leave();
     const closed: OrchestratorBoardWire = {
       ...BOARD,
-      needsAnswer: [],
-      closed: [
-        {
-          ...BOARD.needsAnswer[0]!,
-          state: "closed",
-          closed: { at: NOW },
-        },
-      ],
+      answer: [],
+      done: [{ ...BOARD.answer[0]!, status: "done", done: { at: NOW } }],
     };
     screenNow.back(closed);
     expect(document.querySelector(".orchestrator-reading")).toBeNull();
-    expect(screen.getByRole("region", { name: "要回答" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "回答待ち" })).toBeVisible();
   });
 
-  it("falls back to the board when the escalation is gone", () => {
+  it("falls back to the board when the task is gone", () => {
     motion(true);
     const screenNow = mountScreen();
     fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
@@ -1230,16 +1291,16 @@ describe("leaving the Orchestrator screen and coming back", () => {
     expect(document.querySelector(".orchestrator-reading")).toBeNull();
   });
 
-  it("is back on a closed escalation that was being read from 完了", () => {
+  it("is back on a done task that was being read from 完了", () => {
     motion(true);
     const done = {
       ...BOARD.inProgress[0]!,
       id: 5,
       title: "終わった件",
-      state: "closed" as const,
-      closed: { at: NOW },
+      status: "done" as const,
+      done: { at: NOW },
     };
-    const screenNow = mountScreen({ ...BOARD, closed: [done] });
+    const screenNow = mountScreen({ ...BOARD, done: [done] });
     fireEvent.click(screen.getByRole("button", { name: /完了/u }));
     fireEvent.click(screen.getByRole("button", { name: /終わった件/u }));
     screenNow.leave();
@@ -1269,7 +1330,7 @@ describe("leaving the Orchestrator screen and coming back", () => {
   });
 });
 
-describe("going to a Workspace from an escalation", () => {
+describe("going to a Workspace from a task", () => {
   const WORKSPACES = [
     {
       id: "w-pay",
@@ -1280,12 +1341,26 @@ describe("going to a Workspace from an escalation", () => {
     { id: "w-ops", label: "ops", root: "/w/ops", agents: [] },
   ];
 
-  it("offers each agent's Workspace and the escalation's own, by name with a folder, no tooltip", () => {
+  it("offers each agent's Workspace — a stopped one's by its folder's — by name with a folder, no tooltip", () => {
     motion(true);
     mountScreen(
       {
         ...BOARD,
-        needsAnswer: [{ ...BOARD.needsAnswer[0]!, workspaceId: "w-ops" }],
+        answer: [
+          {
+            ...BOARD.answer[0]!,
+            agents: [
+              ...BOARD.answer[0]!.agents,
+              {
+                agentId: "gone",
+                name: "ops-fix",
+                live: false,
+                resumable: true,
+                workspaceId: "w-ops",
+              },
+            ],
+          },
+        ],
       },
       WORKSPACES,
     );
@@ -1303,7 +1378,7 @@ describe("going to a Workspace from an escalation", () => {
     ).toBeInTheDocument();
   });
 
-  it("goes there explicitly, and Back comes back to the escalation", () => {
+  it("goes there explicitly, and Back comes back to the task", () => {
     motion(true);
     const screenNow = mountScreen(BOARD, WORKSPACES);
     fireEvent.click(
@@ -1347,12 +1422,12 @@ describe("what the pane tells main, for the window's title", () => {
     fireEvent.click(
       screen.getByRole("button", { name: /本番マイグレーション/u }),
     );
-    expect(last()).toEqual({ kind: "escalation", id: 1 });
+    expect(last()).toEqual({ kind: "task", id: 1 });
     fireEvent.click(screen.getByRole("button", { name: "Back to the board" }));
     expect(last()).toEqual({ kind: "board" });
     // Forward, as the model has it: the escalation again.
-    model.move({ kind: "escalation", id: 1 }, "forward", 2);
-    expect(last()).toEqual({ kind: "escalation", id: 1 });
+    model.move({ kind: "task", id: 1 }, "forward", 2);
+    expect(last()).toEqual({ kind: "task", id: 1 });
     // An id only: no subject, no answer, no thread.
     for (const [view] of reportOrchestratorView.mock.calls)
       expect(Object.keys(view as object).sort()).toEqual(
@@ -1382,7 +1457,7 @@ describe("what the pane tells main, for the window's title", () => {
     reportOrchestratorView.mockClear();
     screenNow.back();
     expect(reportOrchestratorView).toHaveBeenCalledWith({
-      kind: "escalation",
+      kind: "task",
       id: 2,
     });
     // And the board, when what it was left on has gone meanwhile.

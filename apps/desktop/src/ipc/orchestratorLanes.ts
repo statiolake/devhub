@@ -1,18 +1,13 @@
 /**
  * The orchestrator's work in the Sidebar: what is drawn under the Orchestrator
- * row, and in which lane (`docs/orchestrator.md`, "The orchestrator's work in
- * the Sidebar").
- *
- * Shared: the Sidebar draws it, and main reads the 対応中 lane with it for
- * saving mode — how many tasks are in progress, and whose agents they are
- * (`main/orchestrator/mode.ts`) — so the rule and the heading cannot
- * disagree.
+ * row, and under which status (`docs/orchestrator.md`, "The orchestrator's
+ * work in the Sidebar").
  *
  * **What is there.** Two kinds of item, read off the snapshot and never
  * stored here:
  *
  * - the helpers: the Agents in the Orchestrator row's own Workspace but the
- *   orchestrator agent itself (they were under the row before lanes, too);
+ *   orchestrator agent itself;
  * - the Workspaces the orchestrator manages (`managed`: the same flag as an
  *   Agent's, kept in `state.json`) — set when its side opened the folder,
  *   when one of its Agents was put under management, or by `workspace
@@ -20,24 +15,19 @@
  *   them now, and with none. Only Scratch's managed Agents stay where they
  *   are, with their wash: Scratch is a row of its own.
  *
- * **Which lane.** The board's lanes, in the board's order, plus 要対応 (the
- * invariant's "needs action", which the board lists above its lanes). An item
- * is in the first lane that holds of it:
+ * **Which status.** The board's task statuses, in the board's order. An item
+ * is under the first that holds of the tasks its Agents are bound to (or, for
+ * a Workspace, the open tasks with an agent that ran there):
  *
- * 1. 要回答 — an open escalation about it waits for the person's answer;
- * 2. 要対応 — one of its Agents breaks the invariant (`agentStates.needsAction`);
- * 3. 対応中 — an escalation about it is 対応中, or one of its Agents is at
- *    work (`working`, `background`, `waiting` on a prompt, `unknown` while
- *    it is read);
- * 4. 待機中 — an escalation about it is 待機中, or one of its Agents is
- *    stopped and fine: on a 待機中 escalation, or kept by the orchestrator;
- * 5. 完了 — nothing about it is open: no Agent left, or its Agents idle with
- *    nothing waiting on them (their escalation closed, or one the person
- *    started and left). The board's 完了 is "closed": this is the same word
- *    for the same fact, an item with nothing open.
+ * 1. 回答待ち — one of those tasks has an open escalation;
+ * 2. 処理中 — one is 処理中, or one of its Agents is at work (`working`,
+ *    `background`, `waiting` on a prompt, `unknown` while it is read);
+ * 3. 待機 — one is 待機, or one of its Agents needs action with no task
+ *    (stopped, bound to nothing: the △ says so);
+ * 4. 完了 — nothing about it is open: its tasks are done, or it has none.
  *
- * An escalation is about an item when its `workspaceId` is the item's
- * Workspace or one of its Agents is the item's (for a helper: the helper).
+ * Needing action (要対応) is not a place: it is the △ on the row
+ * (`agentStates.needsAction`), wherever the row stands.
  */
 
 import type {
@@ -46,9 +36,9 @@ import type {
 	WorkspaceSnapshot,
 } from "./appShell.js";
 import { sidebarWorkspaces } from "./appShell.js";
-import type { EscalationWire, OrchestratorBoardWire } from "./contract.js";
+import type { OrchestratorBoardWire, TaskWire } from "./contract.js";
 
-export type LaneId = "ask" | "action" | "progress" | "waiting" | "closed";
+export type LaneId = "ask" | "progress" | "waiting" | "closed";
 
 export interface LaneSpec {
 	readonly id: LaneId;
@@ -56,7 +46,7 @@ export interface LaneSpec {
 	readonly title: string;
 	/** What it means, for the tooltip. */
 	readonly hint: string;
-	/** Folded when the session starts: 待機中 and 完了, as on the board. */
+	/** Folded when the session starts: 完了, as on the board. */
 	readonly startsFolded: boolean;
 }
 
@@ -64,32 +54,26 @@ export interface LaneSpec {
 export const LANES: readonly LaneSpec[] = [
 	{
 		id: "ask",
-		title: "要回答",
-		hint: "An escalation about it waits for your answer.",
-		startsFolded: false,
-	},
-	{
-		id: "action",
-		title: "要対応",
-		hint: "One of its agents needs action: managed, stopped, and nothing settles it.",
+		title: "回答待ち",
+		hint: "Its task has a question waiting for your answer.",
 		startsFolded: false,
 	},
 	{
 		id: "progress",
-		title: "対応中",
-		hint: "In progress: an agent is at work, or the orchestrator is carrying out an answer.",
+		title: "処理中",
+		hint: "Its task is in progress, or an agent is at work.",
 		startsFolded: false,
 	},
 	{
 		id: "waiting",
-		title: "待機中",
-		hint: "Stopped and fine: waiting on an outside condition, or kept by the orchestrator.",
-		startsFolded: true,
+		title: "待機",
+		hint: "Its task is parked by the orchestrator, or it has no task yet.",
+		startsFolded: false,
 	},
 	{
 		id: "closed",
 		title: "完了",
-		hint: "Nothing open: its agents are done, or it has none left.",
+		hint: "Nothing open: its tasks are done, or it has none left.",
 		startsFolded: true,
 	},
 ];
@@ -115,37 +99,42 @@ export type OrchestratorItem =
 /** What of the board the lanes are read off: no delivery, no GitHub. */
 export type LaneBoard = Pick<
 	OrchestratorBoardWire,
-	"needsAnswer" | "inProgress" | "waiting" | "agentStates"
+	"answer" | "inProgress" | "waiting" | "agentStates"
 >;
 
 const AT_WORK = new Set(["working", "background", "waiting", "unknown"]);
 
-/** The lane of an item with these Agents, in this Workspace. */
+/**
+ * The lane of an item with these Agents, in this Workspace (a Workspace's
+ * open tasks include those whose agent ran there and has stopped).
+ */
 export function laneOf(
 	agents: readonly Pick<AgentSnapshot, "id" | "status">[],
 	workspaceId: string | undefined,
 	board: LaneBoard,
 ): LaneId {
-	const ids = new Set(agents.map((agent) => agent.id));
-	const about = (escalation: EscalationWire): boolean =>
-		(workspaceId !== undefined && escalation.workspaceId === workspaceId) ||
-		escalation.agents.some((ref) => ids.has(ref.agentId));
 	const states = board.agentStates;
-	if (board.needsAnswer.some(about)) return "ask";
-	if (agents.some((agent) => states[agent.id]?.needsAction !== undefined))
-		return "action";
+	const statuses = new Set<string>();
+	for (const agent of agents) {
+		const status = states[agent.id]?.task?.status;
+		if (status !== undefined) statuses.add(status);
+	}
+	if (workspaceId !== undefined) {
+		const here = (task: TaskWire) =>
+			task.agents.some((agent) => agent.workspaceId === workspaceId);
+		if (board.answer.some(here)) statuses.add("answer");
+		if (board.inProgress.some(here)) statuses.add("in_progress");
+		if (board.waiting.some(here)) statuses.add("waiting");
+	}
+	if (statuses.has("answer")) return "ask";
 	if (
-		board.inProgress.some(about) ||
+		statuses.has("in_progress") ||
 		agents.some((agent) => AT_WORK.has(agent.status))
 	)
 		return "progress";
 	if (
-		board.waiting.some(about) ||
-		agents.some(
-			(agent) =>
-				states[agent.id]?.waiting !== undefined ||
-				states[agent.id]?.kept !== undefined,
-		)
+		statuses.has("waiting") ||
+		agents.some((agent) => states[agent.id]?.needsAction !== undefined)
 	)
 		return "waiting";
 	return "closed";
@@ -211,53 +200,4 @@ export function groupByLane<T>(
 		lane,
 		items: items.filter((item) => laneOfItem(item) === lane.id),
 	})).filter((group) => group.items.length > 0);
-}
-
-/**
- * How many items are in 対応中 now: the number the Sidebar's 対応中 heading
- * shows, before its settle delay. While this is two or more, saving mode holds
- * the nudges about other work.
- */
-export function inProgressCount(
-	snapshot: Parameters<typeof orchestratorItems>[0],
-	board: LaneBoard,
-): number {
-	return orchestratorItems(snapshot, board).filter(
-		(item) => item.lane === "progress",
-	).length;
-}
-
-/**
- * The agents of the items in 対応中 now (a helper's own; a Workspace's, the
- * orchestrator's left out): saving never holds what is about them.
- */
-export function inProgressAgentIds(
-	snapshot: Parameters<typeof orchestratorItems>[0],
-	board: LaneBoard,
-): ReadonlySet<string> {
-	const ids = new Set<string>();
-	for (const [id, lane] of agentLaneIds(snapshot, board))
-		if (lane === "progress") ids.add(id);
-	return ids;
-}
-
-/**
- * Each agent under the Orchestrator row (a helper; a managed Workspace's,
- * the orchestrator left out) and the lane of its item: an escalation's
- * agent in another lane than the escalation may make it stale
- * (`main/orchestrator/staleness.ts`).
- */
-export function agentLaneIds(
-	snapshot: Parameters<typeof orchestratorItems>[0],
-	board: LaneBoard,
-): ReadonlyMap<string, LaneId> {
-	const lanes = new Map<string, LaneId>();
-	for (const item of orchestratorItems(snapshot, board)) {
-		if (item.kind === "helper") lanes.set(item.agent.id, item.lane);
-		else
-			for (const agent of item.workspace.agents)
-				if (agent.id !== snapshot.orchestratorAgentId)
-					lanes.set(agent.id, item.lane);
-	}
-	return lanes;
 }

@@ -1,16 +1,15 @@
 /**
- * The board header's +: a request to the orchestrator, in the person's
- * words (`main/orchestrator/requests.ts`, `docs/orchestrator.md`,
- * "Requests"). A click on +, or `Cmd+Q +` ("Orchestrator: New Request…" in
- * the palette), opens a small composer under the header — the conversation
- * composer's box — that sends with ⌘Return (or its button) and closes with
- * Esc, giving the keyboard back to the +. Sent, the request is on the
- * board's 依頼 lane at once, and goes to the orchestrator as the person's
- * own message (held only while the mode is off).
+ * The board header's +: a task from the person, in their words
+ * (`docs/orchestrator.md`, "Requests: the board's +"). A click on +, or
+ * `Cmd+Q +` ("Orchestrator: New Request…" in the palette), opens a small
+ * composer under the header — the conversation composer's box — that sends
+ * with ⌘Return (or its button) and closes with Esc, giving the keyboard back
+ * to the +. Sent, it is a 待機 task on the board at once (its title the
+ * first line, its words kept with it), and the words go to the orchestrator
+ * as the person's own message (held only while the mode is off).
  */
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { OrchestratorRequestWire } from "../../ipc/contract";
 import { devhub } from "./client";
 
 export function RequestButton({
@@ -138,49 +137,5 @@ export function RequestButton({
         </div>
       ) : null}
     </span>
-  );
-}
-
-const STATE_WORDS: Record<OrchestratorRequestWire["state"], string> = {
-  held: "送信待ち",
-  sent: "受付待ち",
-  filed: "登録済み",
-};
-
-/** One request on the board's 依頼 lane: its words, its state, where it went. */
-export function RequestCard({
-  request,
-  age,
-}: {
-  readonly request: OrchestratorRequestWire;
-  readonly age: string;
-}) {
-  return (
-    <li>
-      <div
-        className="orchestrator-card orchestrator-request-card"
-        data-request-id={request.id}
-        data-state={request.state}
-      >
-        <span className="orchestrator-card-head">
-          <span className="orchestrator-card-id">req {request.id}</span>
-          <span className="orchestrator-card-title">{request.text}</span>
-          <span className="orchestrator-card-age">{age}</span>
-        </span>
-        <span className="orchestrator-card-meta">
-          <span className="orchestrator-chip orchestrator-request-state">
-            {STATE_WORDS[request.state]}
-          </span>
-          {request.priority === "high" ? (
-            <span className="orchestrator-chip is-followup">優先</span>
-          ) : null}
-          {request.filed?.note === undefined ? null : (
-            <span className="orchestrator-request-note">
-              {request.filed.note}
-            </span>
-          )}
-        </span>
-      </div>
-    </li>
   );
 }

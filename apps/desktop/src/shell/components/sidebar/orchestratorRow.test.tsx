@@ -2,7 +2,7 @@
 
 /**
  * The Orchestrator row is the tree's first, above Scratch. It wears the
- * board's count of escalations waiting for the person, and the orchestrator
+ * board's count of questions waiting for the person, and the orchestrator
  * agent is drawn on it rather
  * than under its Workspace.
  */
@@ -18,6 +18,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot } from "../../../ipc/appShell";
 import { EMPTY_BOARD, type OrchestratorBoardWire } from "../../../ipc/contract";
+import { askingTask } from "../../agents/taskFixture";
 import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
@@ -83,18 +84,6 @@ function snapshot(orchestrator: boolean): AppSnapshot {
   } as unknown as AppSnapshot;
 }
 
-const escalation = (id: number) => ({
-  id,
-  title: `t${String(id)}`,
-  state: "needs_answer" as const,
-  entries: [{ role: "orchestrator" as const, markdown: "x", at: 0 }],
-  agents: [],
-  links: [],
-  createdAt: 0,
-  updatedAt: 0,
-  stateSince: 0,
-});
-
 function mount(value: AppSnapshot, board: OrchestratorBoardWire) {
   const dispatch = vi.fn().mockResolvedValue(undefined);
   render(
@@ -146,7 +135,7 @@ describe("the Orchestrator row", () => {
     mount(snapshot(true), {
       ...EMPTY_BOARD,
       orchestratorAgentId: "orch",
-      needsAnswer: [escalation(1), escalation(2)],
+      answer: [askingTask(1), askingTask(2)],
     });
     const row = treeItems()[0]!;
     expect(row.querySelector(".orchestrator-badge")).toHaveTextContent("2");

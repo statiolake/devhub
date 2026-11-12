@@ -22,9 +22,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot } from "../../../ipc/appShell";
 import {
   EMPTY_BOARD,
-  type EscalationWire,
+  type AgentOrchestrationWire,
   type OrchestratorBoardWire,
+  type TaskStatusWire,
 } from "../../../ipc/contract";
+import { askingTask, taskWire } from "../../agents/taskFixture";
 import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
@@ -157,23 +159,23 @@ function snapshot(
   } as unknown as AppSnapshot;
 }
 
-function escalation(
-  id: number,
-  state: EscalationWire["state"],
-  agents: readonly string[],
-): EscalationWire {
-  return {
-    id,
-    title: `#${String(id)}`,
-    state,
-    entries: [],
-    agents: agents.map((agentId) => ({ agentId })),
-    links: [],
-    createdAt: 0,
-    updatedAt: 0,
-    stateSince: 0,
-  };
+/** Each agent's task, as the board says it: `[agent, task id, status]`. */
+function bound(
+  ...entries: readonly (readonly [string, number, TaskStatusWire])[]
+): Record<string, AgentOrchestrationWire> {
+  return Object.fromEntries(
+    entries.map(([agentId, id, status]) => [
+      agentId,
+      { task: { id, title: `#${String(id)}`, status } },
+    ]),
+  );
 }
+
+/** The fixture's: r1 asked, v1 parked, research a managed helper with no task. */
+const STATES = {
+  ...bound(["r1", 1, "answer"], ["v1", 2, "waiting"]),
+  research: { needsAction: "no_task" },
+};
 
 function board(
   overrides: Partial<OrchestratorBoardWire> = {},
@@ -181,12 +183,9 @@ function board(
   return {
     ...EMPTY_BOARD,
     orchestratorAgentId: "orch",
-    needsAnswer: [escalation(1, "needs_answer", ["r1"])],
-    waiting: [escalation(2, "waiting", ["v1"])],
-    agentStates: {
-      research: { needsAction: "idle_no_escalation" },
-      v1: { waiting: { escalationId: 2, trigger: "deploy" } },
-    },
+    answer: [askingTask(1)],
+    waiting: [taskWire({ id: 2, status: "waiting" })],
+    agentStates: STATES,
     ...overrides,
   };
 }
@@ -263,35 +262,52 @@ const focused = () =>
   (document.activeElement as HTMLElement | null)?.dataset["treeItemId"];
 
 describe("which lane an item is in", () => {
-  it("is the first that holds: 要回答, 要対応, 対応中, 待機中, else 完了", () => {
+  it("is the first that holds of its tasks: 回答待ち, 処理中, 待機, else 完了", () => {
     const value = board({
-      inProgress: [escalation(3, "in_progress", ["x"])],
       agentStates: {
-        y: { needsAction: "idle_no_escalation" },
-        k: { kept: { note: "review", at: 0 } },
+        ...bound(
+          ["r1", 1, "answer"],
+          ["x", 3, "in_progress"],
+          ["v1", 2, "waiting"],
+        ),
+        y: { needsAction: "no_task" },
+        d: { task: { id: 9, title: "#9", status: "done" } },
       },
     });
     const idle = (id: string) => ({ id, status: "idle" as const });
     expect(laneOf([idle("r1")], undefined, value)).toBe("ask");
-    // An escalation about the Workspace, whoever its agents are.
+    // A task whose stopped agent ran in the Workspace.
     expect(
       laneOf(
         [],
         "ws",
         board({
-          needsAnswer: [
-            { ...escalation(4, "needs_answer", []), workspaceId: "ws" },
+          answer: [
+            taskWire({
+              id: 4,
+              status: "answer",
+              agents: [
+                {
+                  agentId: "gone",
+                  name: "g",
+                  live: false,
+                  resumable: true,
+                  workspaceId: "ws",
+                },
+              ],
+            }),
           ],
         }),
       ),
     ).toBe("ask");
-    expect(laneOf([idle("y")], undefined, value)).toBe("action");
     expect(laneOf([idle("x")], undefined, value)).toBe("progress");
     expect(laneOf([{ id: "w", status: "working" }], undefined, value)).toBe(
       "progress",
     );
     expect(laneOf([idle("v1")], undefined, value)).toBe("waiting");
-    expect(laneOf([idle("k")], undefined, value)).toBe("waiting");
+    // Needing a task, stopped: 待機, with its △.
+    expect(laneOf([idle("y")], undefined, value)).toBe("waiting");
+    expect(laneOf([idle("d")], undefined, value)).toBe("closed");
     expect(laneOf([idle("z")], undefined, value)).toBe("closed");
     expect(laneOf([], "gone", value)).toBe("closed");
   });
@@ -299,7 +315,7 @@ describe("which lane an item is in", () => {
   it("takes the helpers and the managed Workspaces, never the others", () => {
     const items = orchestratorItems(snapshot(), board());
     expect(items.map((item) => [item.key, item.lane])).toEqual([
-      ["agent:research", "action"],
+      ["agent:research", "waiting"],
       ["workspace:rounding", "ask"],
       ["workspace:investigate", "progress"],
       ["workspace:invoice", "waiting"],
@@ -310,20 +326,30 @@ describe("which lane an item is in", () => {
 });
 
 describe("the Orchestrator row's group", () => {
-  it("draws the board's lanes in its order, 待機中 and 完了 folded, the person's Workspaces where they were", () => {
+  it("draws the tasks' statuses in the board's order, 完了 folded, the person's Workspaces where they were", () => {
     mount();
     expect(lanes()).toEqual([
       { lane: "ask", open: true, count: "1", items: ["agent:r1"] },
-      { lane: "action", open: true, count: "1", items: ["agent:research"] },
       {
         lane: "progress",
         open: true,
         count: "2",
         items: ["agent:i1", "agent:p1"],
       },
-      { lane: "waiting", open: false, count: "1", items: [] },
+      {
+        lane: "waiting",
+        open: true,
+        count: "2",
+        items: ["agent:research", "agent:v1"],
+      },
       { lane: "closed", open: false, count: "1", items: [] },
     ]);
+    // Needing action is the row's △, not a place.
+    expect(
+      button("agent:research")!
+        .closest(".agent-row")!
+        .querySelector(".row-agent-mark.is-needs-action"),
+    ).not.toBeNull();
     expect(topLabels()).toEqual([
       "Orchestrator",
       "Scratch",
@@ -430,9 +456,8 @@ describe("the Orchestrator row's group", () => {
     mount();
     expect(lanes().map((one) => [one.lane, one.open])).toEqual([
       ["ask", false],
-      ["action", true],
       ["progress", true],
-      ["waiting", false],
+      ["waiting", true],
       ["closed", false],
     ]);
   });
@@ -493,13 +518,13 @@ describe("the keyboard in the group", () => {
       "true",
     );
     // A folded lane: → opens it, and only then enters it.
-    // r1, 要対応, research, 対応中, i1, p1, then 待機中's heading.
-    for (let step = 0; step < 7; step += 1) press("ArrowDown");
-    expect(focused()).toBe("lane:waiting");
+    // r1, 処理中, i1, p1, 待機, research, v1, then 完了's heading.
+    for (let step = 0; step < 8; step += 1) press("ArrowDown");
+    expect(focused()).toBe("lane:closed");
     press("ArrowRight");
-    expect(focused()).toBe("lane:waiting");
+    expect(focused()).toBe("lane:closed");
     press("ArrowRight");
-    expect(focused()).toBe("agent:v1");
+    expect(focused()).toBe("workspace:finished");
     // ← from a lane's heading goes to the Orchestrator row, and ← there folds
     // the whole group.
     press("ArrowLeft");
@@ -520,12 +545,7 @@ describe("the keyboard in the group", () => {
     // i1's work now waits for the person: its row moves to 要回答.
     view.update(
       snapshot(),
-      board({
-        needsAnswer: [
-          escalation(1, "needs_answer", ["r1"]),
-          escalation(5, "needs_answer", ["i1"]),
-        ],
-      }),
+      board({ agentStates: { ...STATES, ...bound(["i1", 5, "answer"]) } }),
     );
     expect(lanes()[0]!.items).toEqual(["agent:r1", "agent:i1"]);
     expect(focused()).toBe("agent:i1");
@@ -543,10 +563,7 @@ describe("a lane change under the pointer", () => {
     fireEvent.pointerMove(group);
     view.update(
       snapshot(),
-      board({
-        inProgress: [],
-        needsAnswer: [escalation(1, "needs_answer", ["r1", "p1"])],
-      }),
+      board({ agentStates: { ...STATES, ...bound(["p1", 1, "answer"]) } }),
     );
     // p1 is still drawn where it was; its row is live.
     expect(lanes().find((one) => one.lane === "progress")!.items).toEqual([
@@ -564,7 +581,7 @@ describe("a lane change under the pointer", () => {
     fireEvent.pointerDown(group);
     view.update(
       snapshot(),
-      board({ needsAnswer: [escalation(1, "needs_answer", ["r1", "p1"])] }),
+      board({ agentStates: { ...STATES, ...bound(["p1", 1, "answer"]) } }),
     );
     act(() => {
       vi.advanceTimersByTime(POINTER_IDLE_MS * 2);
@@ -610,10 +627,7 @@ describe("a lane change once the board is read", () => {
       board({ revision: 1, ...overrides });
     const view = mount(snapshot(), read());
     const asked = read({
-      needsAnswer: [
-        escalation(1, "needs_answer", ["r1"]),
-        escalation(5, "needs_answer", ["i1"]),
-      ],
+      agentStates: { ...STATES, ...bound(["i1", 5, "answer"]) },
     });
     // A flicker: there and back inside the settle time moves nothing.
     view.update(snapshot(), asked);
@@ -663,7 +677,7 @@ const railed = (value: AppSnapshot): AppSnapshot =>
  */
 describe("the rail and the expanded Sidebar", () => {
   const FOLDS_KEY = "devhub.sidebar.orchestratorFolds";
-  const LANE_IDS = ["ask", "action", "progress", "waiting", "closed"] as const;
+  const LANE_IDS = ["ask", "progress", "waiting", "closed"] as const;
 
   /** Every row's box, from the tree down: what a row's y is made of. */
   const rowBoxes = () =>
@@ -740,7 +754,7 @@ describe("the rail and the expanded Sidebar", () => {
     const single = both(one, board());
     expect(single.rail).toEqual(single.expanded);
     expect(single.expanded.filter((row) => row.startsWith("lane:"))).toEqual([
-      expect.stringMatching(/^lane:action /),
+      expect.stringMatching(/^lane:waiting /),
     ]);
   });
 

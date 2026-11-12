@@ -7,7 +7,7 @@
  * board) and how to go to one — through `DevhubLinksProvider`; the Agents
  * page's is `shell/agents/devhubLinks.tsx`. The chip draws the place's
  * current name: an agent's display name and status mark, a workspace's name,
- * a file's basename and `:line`, an escalation's number and title. What the
+ * a file's basename and `:line`, a task's or an escalation's number and title. What the
  * author wrote as the link's text is not drawn — the place's own name is the
  * one that stays true.
  *
@@ -54,6 +54,7 @@ const KIND_LABEL: Record<ResolvedLink["kind"], string> = {
   agent: "Agent",
   workspace: "Workspace",
   file: "File",
+  task: "Task",
   escalation: "Escalation",
   orchestrator: "Orchestrator",
   session: "Session",
@@ -80,6 +81,14 @@ function Glyph({ kind }: { readonly kind: ResolvedLink["kind"] }) {
           <>
             <path d="M4 2.5h5l3 3v8H4z" />
             <path d="M9 2.5v3h3" />
+          </>
+        );
+      // A checkbox.
+      case "task":
+        return (
+          <>
+            <rect x="3" y="3" width="10" height="10" rx="2" />
+            <path d="M5.5 8.2 7.3 10l3.4-4" />
           </>
         );
       // A flag.
@@ -166,6 +175,13 @@ function Chip({
             {baseName(target.path)}
             {positionSuffix(target.line, target.column)}
           </span>
+        );
+      case "task":
+        return (
+          <>
+            <span className="devhub-link-sub">#{String(target.task.id)}</span>
+            <span className="devhub-link-name">{target.task.title}</span>
+          </>
         );
       case "escalation":
         return (

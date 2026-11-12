@@ -15,6 +15,7 @@ import {
   projectsTooltip,
 } from "../../../model/projectStatus";
 import { agentLeadingText } from "../../../model/domain";
+import { TASK_STATUS_WORDS } from "../../../model/tasks";
 import { statusLabel } from "./status";
 import { isGitHubPage } from "../../githubPage";
 import { unreadShows } from "./StatusMark";
@@ -738,13 +739,16 @@ export function agentTooltipFacts(
           style: "muted",
         }
       : undefined,
-    // What the orchestration says of it: parked on a 待機中 escalation (and
-    // what it waits on), needing action (and the clause it fails), kept as it is (and why).
-    orchestration?.waiting === undefined
+    // What the orchestration says of it: the task it is bound to (and its
+    // status), and needing action (and the clause it fails).
+    orchestration?.task === undefined
       ? undefined
       : {
-          icon: "orchestratorWaiting",
-          text: `Waiting (#${String(orchestration.waiting.escalationId)}): ${orchestration.waiting.trigger}`,
+          icon:
+            orchestration.task.status === "waiting"
+              ? "orchestratorWaiting"
+              : "orchestrator",
+          text: `Task #${String(orchestration.task.id)} (${TASK_STATUS_WORDS[orchestration.task.status]}): ${orchestration.task.title}`,
           style: "muted",
         },
     orchestration?.needsAction === undefined
@@ -753,13 +757,6 @@ export function agentTooltipFacts(
           icon: "orchestratorNeedsAction",
           text: `Needs action: ${orchestration.needsAction}`,
           tone: "waiting",
-        },
-    orchestration?.kept === undefined
-      ? undefined
-      : {
-          icon: "orchestratorKept",
-          text: `Kept as it is: ${orchestration.kept.note}`,
-          style: "muted",
         },
     // Its own key/value pairs (`model/agentMeta.ts`), quietly, one a line:
     // somebody's notes about the Agent, never the row's business.

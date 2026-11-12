@@ -61,8 +61,8 @@ export function forgetOrchestratorFolds(): void {
 }
 
 /**
- * What is folded, kept for the session (as the board keeps its own): 待機中
- * and 完了 start folded, the rest and the group open. `sessionStorage`, so a
+ * What is folded, kept for the session (as the board keeps its own): 完了
+ * starts folded, the rest and the group open. `sessionStorage`, so a
  * reload of the page keeps it and a restart starts afresh.
  */
 export function useOrchestratorFolds(): {

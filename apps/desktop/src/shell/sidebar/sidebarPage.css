@@ -344,10 +344,6 @@
   --lane-ink: var(--accent);
 }
 
-.lane-row[data-lane="action"] {
-  --lane-ink: var(--status-waiting);
-}
-
 .lane-row[data-lane="progress"] {
   --lane-ink: var(--status-working);
 }

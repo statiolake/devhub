@@ -8,8 +8,8 @@
  *
  * - an agent, a workspace, the Orchestrator row: `select_context` with
  *   `reason: "explicit"`, a place in Back and Forward at once;
- * - an escalation: one move to the Orchestrator row with the escalation
- *   open over its board (`show_orchestrator_view`, `reason: "explicit"`),
+ * - a task, or an escalation (its task): one move to the Orchestrator row
+ *   with the task open over its board (`show_orchestrator_view`, `reason: "explicit"`),
  *   so it is one entry in Back and Forward and Back from it is where the
  *   link was clicked; the board follows the model (`orchestratorHistory.ts`);
  * - a file: main opens it in the workspace that holds it, through the
@@ -50,7 +50,18 @@ export function linkPlaces(
         status: agent.status,
       })),
     })),
-    escalations: [...board.needsAnswer, ...board.inProgress, ...board.closed],
+    tasks: [
+      ...board.answer,
+      ...board.inProgress,
+      ...board.waiting,
+      ...board.done,
+    ],
+    escalations: [
+      ...board.answer,
+      ...board.inProgress,
+      ...board.waiting,
+      ...board.done,
+    ].flatMap((task) => task.escalations),
     orchestrator: true,
   };
 }
@@ -83,10 +94,11 @@ export async function navigateLink(
     case "orchestrator":
       await select({ kind: "orchestrator" });
       return;
+    case "task":
     case "escalation":
       await ports.dispatch({
         type: "show_orchestrator_view",
-        view: { kind: "escalation", id: target.escalation.id },
+        view: { kind: "task", id: target.task.id },
         reason: "explicit",
       });
       return;

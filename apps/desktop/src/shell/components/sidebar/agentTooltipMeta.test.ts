@@ -58,18 +58,21 @@ describe("an Agent's metadata in its tooltip", () => {
     ).toContainEqual(["orchestrator", "Managed by the orchestrator"]);
   });
 
-  it("says what the orchestration says of it: waiting, needs action, kept", () => {
+  it("says what the orchestration says of it: its task, and needs action", () => {
     const lines = agentTooltipFacts(agent({ managed: true }), {
-      waiting: { escalationId: 12, trigger: "approve されたら" },
-      needsAction: "idle_no_escalation",
-      kept: { note: "他チームの依頼", at: 0 },
+      task: { id: 12, title: "ログイン修正", status: "waiting" },
+      needsAction: "idle",
     }).map((fact) => [fact.icon, fact.text]);
     expect(lines).toEqual(
       expect.arrayContaining([
-        ["orchestratorWaiting", "Waiting (#12): approve されたら"],
-        ["orchestratorNeedsAction", "Needs action: idle_no_escalation"],
-        ["orchestratorKept", "Kept as it is: 他チームの依頼"],
+        ["orchestratorWaiting", "Task #12 (待機): ログイン修正"],
+        ["orchestratorNeedsAction", "Needs action: idle"],
       ]),
     );
+    expect(
+      agentTooltipFacts(agent({ managed: true }), {
+        task: { id: 3, title: "A", status: "in_progress" },
+      }).map((fact) => [fact.icon, fact.text]),
+    ).toContainEqual(["orchestrator", "Task #3 (処理中): A"]);
   });
 });

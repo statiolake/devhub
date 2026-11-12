@@ -714,10 +714,6 @@
   margin-top: var(--space-3);
 }
 
-.orchestrator-lane[data-tone="request"] {
-  --lane-ink: var(--secondary);
-}
-
 .orchestrator-lane[data-tone="ask"] {
   --lane-ink: var(--accent);
 }
@@ -730,8 +726,8 @@
   --lane-ink: var(--status-idle);
 }
 
-.orchestrator-lane[data-tone="work"] {
-  --lane-ink: var(--secondary);
+.orchestrator-lane[data-tone="action"] {
+  --lane-ink: var(--status-waiting);
 }
 
 .orchestrator-lane[data-tone="closed"] {
@@ -1280,17 +1276,6 @@
   color: var(--danger);
 }
 
-/* DevHub's note that an agent went back to work: a system line, not words. */
-.orchestrator-entry-note {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-  margin: 10px 0;
-  color: var(--secondary);
-  font-size: 11px;
-}
-
 /* A send that did not go: said where it was written, the draft kept. */
 .orchestrator-composer-error {
   margin: 0 0 var(--space-2);
@@ -1311,12 +1296,7 @@
   color: var(--tertiary);
 }
 
-.orchestrator-chip.is-quick {
-  background: color-mix(in srgb, var(--status-working) 18%, transparent);
-  color: var(--primary);
-}
-
-/* 待機中: what it waits for, first and plain, and its time if it has one. */
+/* 待機: what it waits for, first and plain, and its time if it has one. */
 .orchestrator-card-trigger {
   display: flex;
   flex-direction: column;
@@ -1337,13 +1317,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 停滞: 対応中 with no agent working on it. Quiet, like the rest. */
-.orchestrator-chip.is-stalled {
-  background: color-mix(in srgb, var(--secondary) 14%, transparent);
-  color: var(--secondary);
-}
-
-/* May be stale (`staleness.ts`): as quiet as 停滞, the reasons beside it. */
+/* May be stale (`staleness.ts`): quiet, the reasons beside it. */
 .orchestrator-chip.is-stale {
   background: color-mix(in srgb, var(--tertiary) 14%, transparent);
   color: var(--secondary);
@@ -1363,7 +1337,7 @@
   color: var(--tertiary);
 }
 
-/* Why it is ranked so, in a quiet line under the card. */
+/* Why it may be stale, in a quiet line under the card. */
 .orchestrator-card-why {
   overflow: hidden;
   color: var(--tertiary);
@@ -1522,34 +1496,87 @@
   outline-offset: 1px;
 }
 
-/* A request on the board: not a link anywhere, so no hover wash. */
-.orchestrator-request-card:hover {
-  background: transparent;
+/* ------------------------------------------------------------- tasks */
+
+/* The open question on a task's card: the card's first say, in the accent's
+   ink, so a question waiting on the person stands out from the work. */
+.orchestrator-card-question {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--primary);
+  font-size: 12.5px;
 }
 
-.orchestrator-request-card[data-state="filed"] .orchestrator-card-title {
-  color: var(--secondary);
+.orchestrator-card-question-mark {
+  flex: none;
+  color: var(--accent);
+  font-weight: 700;
 }
 
-.orchestrator-request-note {
+.orchestrator-card-question-text {
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
-  color: var(--tertiary);
-  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* ------------------------------------------------------------- memos */
+/* 要対応: a task nobody is moving, or work with no task. The Sidebar's mark. */
+.orchestrator-needs-mark {
+  flex: none;
+  color: var(--status-waiting);
+  font-size: 11px;
+  font-weight: 600;
+}
 
-/* A 作業 card's note, and an escalation's under its thread: read-only,
-   quieter than the thread itself. */
-.orchestrator-work-card:hover {
+/* The task's memo on its card: what is next, one quiet line. */
+.orchestrator-card-memo {
+  overflow: hidden;
+  color: var(--secondary);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orchestrator-chip.is-request {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--primary);
+}
+
+.orchestrator-chip.is-link-label {
+  color: var(--secondary);
+}
+
+/* Work with no task: a line, not somewhere to go. */
+.orchestrator-untasked:hover {
   background: transparent;
 }
 
-.orchestrator-work-memo {
-  margin-top: 4px;
-  padding: 4px var(--space-2);
+.orchestrator-untasked .orchestrator-card-title {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  text-autospace: no-autospace;
+  text-spacing-trim: space-all;
+}
+
+/* The task view: its wait, its memo, then the questions. */
+.orchestrator-task-label {
+  margin-right: 6px;
+  color: var(--tertiary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.orchestrator-task-wait,
+.orchestrator-memo {
+  margin: 0 0 var(--space-3);
+  padding: 6px var(--space-2);
   border-radius: 6px;
   background: var(--wash);
   color: var(--secondary);
@@ -1557,32 +1584,38 @@
   overflow-wrap: anywhere;
 }
 
-.orchestrator-work-memo p,
-.orchestrator-memos .orchestrator-memo p {
-  margin: 0;
+.orchestrator-memo-text p {
+  margin: 2px 0 0;
 }
 
-.orchestrator-memos {
-  margin-top: var(--space-4);
-  padding-top: var(--space-3);
+/* An open question: its body, and its own composer under it. */
+.orchestrator-question {
+  padding-bottom: var(--space-2);
+}
+
+.orchestrator-question .orchestrator-composer {
+  margin-top: var(--space-2);
+}
+
+/* The task's past questions and answers, folded by default. */
+.orchestrator-past {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
   border-top: 0.5px solid var(--line-strong);
 }
 
-.orchestrator-memos-heading {
-  display: flex;
-  gap: var(--space-2);
-  align-items: baseline;
-  margin: 0 0 var(--space-2);
+.orchestrator-past > summary {
   color: var(--secondary);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
 }
 
-.orchestrator-memos-subject {
-  color: var(--tertiary);
-  font-weight: 400;
+.orchestrator-past-entry {
+  margin-top: var(--space-3);
 }
 
-.orchestrator-chip[data-resumable="true"] {
-  color: var(--status-idle);
+.orchestrator-answer {
+  margin-top: var(--space-2);
+  padding-left: var(--space-2);
+  border-left: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
 }

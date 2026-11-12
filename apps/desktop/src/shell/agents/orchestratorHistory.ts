@@ -1,6 +1,6 @@
 /**
  * The Orchestrator pane in Back and Forward: the hooks that keep its stack —
- * the board (or the tree) with an escalation (or a file) over it — and the
+ * the board (or the tree) with a task (or a file) over it — and the
  * window's history the same thing.
  *
  * The model holds the history (`model/navigationHistory.ts`); an entry on
@@ -9,7 +9,7 @@
  * draws first: a click opens the card in the frame it happens and *then*
  * tells the model (`drawn`), so no input waits for a round trip. The other
  * way, the pane follows the model's `seq`, which moves only when the model
- * moved the pane — Back, Forward, a `devhub:escalation` link — so a word the
+ * moved the pane — Back, Forward, a `devhub:task` link — so a word the
  * pane sent never comes back to it as an order.
  *
  * What the pane says, and what it means:
@@ -19,7 +19,7 @@
  * - its own ‹, Esc, or an answer sent: "up to the board" — Back when Back
  *   leads to the board it was opened from, else a navigation to the board
  *   (`AppModel.leaveOrchestratorView`);
- * - an escalation that left the board while it was read, a tab chosen: the
+ * - a task that left the board while it was read, a tab chosen: the
  *   entry on screen written over, as `replaceState` does.
  *
  * And per entry, as a browser keeps scroll and form state per entry, the
@@ -71,9 +71,9 @@ export function paneViewOn(tab: BoardTab): OrchestratorPlaceWire {
     return memory.file === undefined
       ? { kind: "files" }
       : { kind: "file", path: memory.file };
-  return memory.escalation === undefined
+  return memory.task === undefined
     ? { kind: "board" }
-    : { kind: "escalation", id: memory.escalation.id };
+    : { kind: "task", id: memory.task.id };
 }
 
 /**
@@ -198,8 +198,8 @@ export function forgetEntryStates(): void {
  * Written while the entry is on screen, under its id; read back when an
  * entry that has some comes on screen again — Back, Forward, the pane
  * mounting on it. An entry with nothing written yet (a new navigation)
- * takes the board as it is. Only the board's own: an escalation's thread
- * keeps its scroll per escalation (`orchestratorMemory.ts`).
+ * takes the board as it is. Only the board's own: a task's view
+ * keeps its scroll per task (`orchestratorMemory.ts`).
  */
 export function useEntryState(
   entry: number | undefined,

@@ -256,9 +256,9 @@ function WorkspaceRow({
   // and as the lines the tooltip page draws behind the row's own marks. Two
   // compositions of the same facts is how a row comes to name its Issue to one
   // reader and not the other, with neither able to tell.
-  // A managed Workspace whose agent is stopped (完了): the agent that did
-  // its work, which can be brought back with its conversation, and the
-  // memo of that work — said in the tooltip, and as a quiet mark.
+  // A managed Workspace whose agent is stopped: the task its agent worked
+  // on, the agent that can be brought back with its conversation, and the
+  // task's memo — said in the tooltip.
   const resumeBoard =
     (useSidebar() as Partial<SidebarValue>).board ?? EMPTY_BOARD;
   const resumable =
@@ -628,9 +628,6 @@ function AgentRowItem({
   const sidebarBoard =
     (useSidebar() as Partial<SidebarValue>).board ?? EMPTY_BOARD;
   const agentStates = sidebarBoard.agentStates ?? {};
-  // The last triage's priority (`orchestrator priority set`), said in the
-  // tooltip only: the row stays as calm as it was.
-  const agentPriority = sidebarBoard.agentPriorities?.[agent.id];
   const selectedAgentId =
     snapshot.selection.context.kind === "agent"
       ? snapshot.selection.context.agentId
@@ -736,9 +733,6 @@ function AgentRowItem({
         // it is anchored on.
         data-tooltip-lines={JSON.stringify([
           ...tooltipLines(agentTooltipFacts(agent, agentStates[agent.id])),
-          ...(agentPriority === undefined
-            ? []
-            : tooltipLines([{ text: `priority: ${agentPriority}` }])),
           ...(merged?.tooltip ?? []),
         ])}
         // The prompt cache's line is a countdown, composed when the
@@ -840,11 +834,11 @@ function AgentRowItem({
 }
 
 /**
- * The orchestrator's marks on an Agent's row, after its words: one of a 待機中
- * escalation's agents — stopped, but fine; needs action — managed, stopped,
- * and nothing settles it (missed); kept as it is by the orchestrator. Quiet,
- * like the row's other context, but for "needs action"; the tooltip says each
- * in words (`agentTooltipFacts`), off the board
+ * The orchestrator's marks on an Agent's row, after its words: on a 待機
+ * task — stopped, but fine; needs action (要対応) — its task is 処理中 and
+ * nobody moves it, or it is managed and on no task (missed). Quiet, like the
+ * row's other context, but for "needs action"; the tooltip says each in
+ * words (`agentTooltipFacts`), off the board
  * (`OrchestratorBoardWire.agentStates`). Being under the orchestrator's
  * management (`Agent.managed`) is not a mark: the whole row wears a pale wash
  * of the accent (`.agent-row.is-managed`), and the tooltip says it in words.
@@ -855,15 +849,12 @@ function AgentMarks({
   readonly orchestration: AgentOrchestrationWire | undefined;
 }) {
   const marks: GlyphName[] = [
-    ...(orchestration?.waiting === undefined
-      ? []
-      : (["orchestratorWaiting"] as const)),
+    ...(orchestration?.task?.status === "waiting"
+      ? (["orchestratorWaiting"] as const)
+      : []),
     ...(orchestration?.needsAction === undefined
       ? []
       : (["orchestratorNeedsAction"] as const)),
-    ...(orchestration?.kept === undefined
-      ? []
-      : (["orchestratorKept"] as const)),
   ];
   if (marks.length === 0) return null;
   return (
@@ -1195,7 +1186,12 @@ function OrchestratorRow({
   const agent = snapshot.workspaces
     .flatMap((workspace) => workspace.agents)
     .find((one) => one.id === snapshot.orchestratorAgentId);
-  const waiting = board.needsAnswer.length;
+  // The questions waiting for the person's answer, on every task.
+  const waiting = board.answer.reduce(
+    (sum, task) =>
+      sum + task.escalations.filter((one) => one.state === "open").length,
+    0,
+  );
   const total = groups.reduce((sum, group) => sum + group.items.length, 0);
   // The rail draws the group as well, row for row: the same lanes, folded
   // the same way, each heading a quiet mark and each item its mark, so that
@@ -1440,11 +1436,7 @@ function LaneHeading({
               onFold(!folded);
             }}
           >
-            <span className="lane-mark" aria-hidden="true">
-              {lane.id === "action" ? (
-                <Glyph name="orchestratorNeedsAction" />
-              ) : null}
-            </span>
+            <span className="lane-mark" aria-hidden="true" />
             <span className="row-text">
               <span className="row-label">{lane.title}</span>
             </span>
@@ -2357,29 +2349,34 @@ export function Sidebar({ snapshot }: SidebarProps) {
 }
 
 /**
- * The stopped agent whose work was done in `workspaceId` and can be resumed
- * (`OrchestratorWorkWire`), as the Workspace row's tooltip says it, with
- * its memo (the note of what is next). Undefined: none.
+ * The task whose agent ran in `workspaceId` and has stopped
+ * (`TaskAgentWire.workspaceId`), as the Workspace row's tooltip says it:
+ * the task, the agent that can be resumed, and the task's memo. Undefined:
+ * none.
  */
 function resumableWorkAt(
   board: SidebarValue["board"],
   workspaceId: string,
 ): { readonly facts: readonly { readonly text: string }[] } | undefined {
-  for (const work of board.work ?? []) {
-    const last = work.agents.at(-1);
-    if (last?.workspaceId !== workspaceId || !last.resumable) continue;
-    const memo = board.memos?.find((one) => one.subject === work.subject);
-    const latest = memo?.text.replace(/\s+/gu, " ").trim();
+  for (const task of [...board.answer, ...board.inProgress, ...board.waiting]) {
+    const last = task.agents.at(-1);
+    if (last?.workspaceId !== workspaceId || last.live) continue;
+    const memo = task.memo?.text.replace(/\s+/gu, " ").trim();
     return {
       facts: [
-        {
-          text: `Resumable: ${last.name} (devhub --tell agent resume ${work.token})`,
-        },
-        ...(latest === undefined
+        { text: `Task #${String(task.id)}: ${task.title}` },
+        ...(last.resumable
+          ? [
+              {
+                text: `Resumable: ${last.name} (devhub --tell agent resume task=${String(task.id)})`,
+              },
+            ]
+          : []),
+        ...(memo === undefined
           ? []
           : [
               {
-                text: `Memo: ${latest.length <= 120 ? latest : `${latest.slice(0, 119)}…`}`,
+                text: `Memo: ${memo.length <= 120 ? memo : `${memo.slice(0, 119)}…`}`,
               },
             ]),
       ],
