@@ -352,6 +352,11 @@ export type TellCommand =
 			/** `--attach`: pictures drawn under the body (`## 添付`). */
 			readonly attachments?: readonly TellAttachment[];
 			readonly options: readonly string[];
+			/**
+			 * `--review`: the question is a review of a deliverable (checked
+			 * and given its default options here; not stored).
+			 */
+			readonly review?: true;
 	  }
 	| { readonly verb: "escalation-show"; readonly id: number }
 	| {
@@ -853,7 +858,7 @@ orchestrator (the Orchestrator row: tasks, escalations, events)
   task list [--all]                the open tasks (--all: done ones too)
   escalation new --task <t> --title <t> --body <text>|-
                  [--link <url>[=<label>]]... [--attach <file>|<att-id>[=<caption>]]...
-                 [--option <text>]...
+                 [--option <text>]... [--review]
                                    ask the person one question about a
                                    task; they read it cold (Markdown: code,
                                    math, mermaid, svg - as the chat
@@ -865,7 +870,14 @@ orchestrator (the Orchestrator row: tasks, escalations, events)
                                    title says the decision in words, no
                                    numbers. It warns of no '## 背景' or
                                    '## 推奨', and of 前回 / 上記タスク
-                                   pointing outside it. A --link is an
+                                   pointing outside it. --review: the
+                                   question is a review of a deliverable
+                                   (「この成果物で完了としてよいか」): its
+                                   reason may name the review, its options
+                                   are 完了 / 直してほしい unless given, and
+                                   it warns when there is no evidence (no
+                                   --attach, no code block, no '## 実行結果').
+                                   A --link is an
                                    http(s) URL or a devhub: link ('link'
                                    makes one), with what it is after '='
                                    (or a space, when the URL has a '?').
@@ -1556,7 +1568,7 @@ function parseEscalation(
 					"--option",
 					"--attach",
 				],
-				switches: [],
+				switches: ["--review"],
 			});
 			positionals(flags, []);
 			const task = taskFlag(flags);
@@ -1577,6 +1589,7 @@ function parseEscalation(
 				...linkFlags(flags),
 				options: flags.values.get("--option") ?? [],
 				...attachFlags(flags),
+				...(flags.switches.has("--review") ? { review: true as const } : {}),
 			};
 		}
 		case "show": {

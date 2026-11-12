@@ -156,4 +156,44 @@ describe("an escalation's brief", () => {
       }),
     ).toEqual([expect.stringMatching(/「As discussed earlier」/u)]);
   });
+
+  it("takes a review's reason that names the review, and warns of a review with no evidence", () => {
+    const review = (reason: string, more = "") =>
+      `## 背景\n検索画面を作った。\n\n## 決めてほしいこと\nこの成果物で完了としてよいか\n\n## 人に聞く理由\n${reason}\n\n## 推奨\n完了${more}`;
+    // A reason that only names the review is enough for a review, not for a question.
+    expect(
+      briefProblems({ body: review("レビュー"), links: [], review: true }),
+    ).toEqual([]);
+    expect(
+      briefProblems({
+        body: review("確認してほしい"),
+        links: [],
+        review: true,
+      }),
+    ).toHaveLength(1);
+    expect(
+      briefProblems({
+        body: review("成果物のレビューを確認してほしい"),
+        links: [],
+        review: true,
+      }),
+    ).toEqual([]);
+    expect(briefProblems({ body: review("レビュー"), links: [] })).toEqual([]);
+    expect(
+      briefProblems({ body: review("確認のため"), links: [] }),
+    ).toHaveLength(1);
+    // No evidence: warned of, for a review only.
+    const bare = { body: review("成果物のレビュー"), links: [] };
+    expect(briefWarnings(bare)).toEqual([]);
+    expect(briefWarnings({ ...bare, review: true })).toEqual([
+      expect.stringMatching(/^a review with no evidence/u),
+    ]);
+    for (const evidence of [
+      { attachments: 1 },
+      { body: review("成果物のレビュー", "\n\n```text\n12 passed\n```") },
+      { body: review("成果物のレビュー", "\n\n## 実行結果\n12 passed") },
+      { body: review("成果物のレビュー", "\n\n![画面](out/shot.png)") },
+    ])
+      expect(briefWarnings({ ...bare, review: true, ...evidence })).toEqual([]);
+  });
 });

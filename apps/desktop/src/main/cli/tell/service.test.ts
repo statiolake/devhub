@@ -4553,11 +4553,24 @@ describe("the Orchestrator row from the command line", () => {
 		expect(leaning.message).toMatch(
 			/^Asked #2[\s\S]*\nWarning: it may not stand on its own[\s\S]*no '## 背景'[\s\S]*no '## 推奨'[\s\S]*「前回」 points outside/u,
 		);
+		// A review: its reason may name the review, its options default to
+		// 完了 / 直してほしい, and it is warned of when it shows no evidence.
+		const review = await raise(
+			"検索画面の追加で完了としてよいか",
+			"## 背景\n検索画面を作った。\n## 決めてほしいこと\nこの成果物で完了としてよいか\n## 人に聞く理由\n成果物のレビュー\n## 推奨\n完了",
+			"--review",
+		);
+		expect(review.data).toMatchObject({
+			question: { options: ["完了", "直してほしい"] },
+		});
+		expect(review.message).toMatch(
+			/on 直してほしい, have it fixed and raise a new review[\s\S]*Warning:[\s\S]*a review with no evidence/u,
+		);
 		// A follow-up stands on its own too: both sections.
 		await expect(raise("追加", "## 決めてほしいこと\nどう?")).rejects.toThrow(
 			/no '## 人に聞く理由'/u,
 		);
-		expect(ports.service.escalations()).toHaveLength(2);
+		expect(ports.service.escalations()).toHaveLength(3);
 		expect(ports.service.escalations()[0]!.linkLabels).toEqual({
 			"https://github.com/acme/app/pull/1234": "決済リトライの延長",
 		});

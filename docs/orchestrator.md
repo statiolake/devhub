@@ -1455,7 +1455,7 @@ devhub --tell agent manage A | agent unmanage A     # under the orchestrator's m
 devhub --tell workspace manage W | workspace unmanage W   # a workspace, the same flag (unmanage: its agents too)
 devhub --tell --json agent status A                 # managed, its task, invariant (settled or the clause)
 devhub --tell --json workspace status W             # branch, Issue (state, lanes), PR (state, draft, review decision), conversations, checks
-devhub --tell escalation new --task T --title T --body -|TEXT [--link URL[=LABEL]]... [--option TEXT]...
+devhub --tell escalation new --task T --title T --body -|TEXT [--link URL[=LABEL]]... [--option TEXT]... [--review]
                          [--attach FILE|att-ID[=CAPTION]]...   # one question; its task is 回答待ち until answered
 devhub --tell escalation show ID [--json]           # the question and its answer (acknowledges the answer)
 devhub --tell escalation list [--state open|answered|withdrawn] [--task T] [--json]
@@ -1570,7 +1570,7 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
      easier one to undo when nothing says; notes what it chose and why in a
      line or two in the task's memo (「決めたこと: … (…)」, kept when the memo
      is rewritten; `decisions.md` too when it holds beyond the task); and
-     shows the result (below, "How the person sees what was decided").
+     shows the result in the task's review (below).
    - **Irreversible, destructive or outward: asked, and waited for.**
      Deleting data or branches, force-pushes and rewritten history, merges,
      releases, deploys or production changes that reach others, messages to
@@ -1578,6 +1578,14 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
      undone — and what only the person knows or may allow. What the person
      explicitly handed over beforehand (their skill, a past answer) it may
      do within that.
+   - **Work with a deliverable ends in a review** — anything the person
+     would look at: code, UI, docs, a release candidate, a report. Its
+     task closes only through an escalation raised with `--review`,
+     「この成果物で完了としてよいか」, answered 完了 or 直してほしい (the
+     details in the answer). 完了: `task done`. 直してほしい: the fixes, then
+     a new review — one question, one answer, each time. A task with no
+     deliverable may still close with `task done --note`. See "How the
+     person sees what was decided".
 8. **The person reads escalations, not the chat; one question each, and
    wait for the answer**: only what the 7 says to ask, one escalation
    per question, on its task; **never proceed on something the person is
@@ -1612,27 +1620,45 @@ leaves these to the charter and is about the team's own rules.
 
 ### How the person sees what was decided
 
-There is no informational kind of escalation: an escalation stays one
-question and one answer, its open state is what makes a task 回答待ち, and
-a "look at this" that needs no answer would be a question that is not one —
-a card that blocks nothing yet sits in the lane that means "waiting for
-you". The result of reversible decisions reaches the person through what
-already exists, by where the work ends:
+**Through a review that ends the task.** Work with a deliverable — code,
+UI, docs, a release candidate, a report, anything the person would look
+at — is not done until the person says so: the orchestrator raises a
+review, an ordinary escalation asking 「この成果物で完了としてよいか」, with
+`--review`. It stays one question and one answer: 完了 closes the task
+(`task done`); 直してほしい (what to fix in the answer) sends the fixes to
+the task's agent, and the fixed result is a **new** review. There is no
+informational kind that is closed by "seen": the review is a real
+question, the task 回答待ち until it is answered.
 
-- **A decision of the person's is still ahead** (most work: the merge, the
-  release). The escalation that asks it carries the result: `## やったこと`
-  lists what the orchestrator decided on the way, a line each with its
-  reason, and `## 確認方法` the PR, the URL to try and the screenshots
-  (`--attach`). The person reviews the outcome where they answer, and may
-  overturn a decision in the same answer.
-- **Nothing is left for the person** (internal work, or what they handed
-  over). `task done T --note "<結果>。決めたこと: …"`, with the PR or Issue
-  linked (`task link`): the board's 完了 lane lists it most recent first
-  (folded at start, its count on the heading), the card showing the note,
-  and its view the links.
+A review stands on its own like any escalation, and is written so that
+someone who knows nothing of the task can judge the deliverable from it
+alone:
+
+```markdown
+## 背景 — what was made, and why (restated)
+## やったこと — what the orchestrator decided on the way, a line each with why
+## 実行結果 — test results, real output or an excerpt (screenshots: --attach)
+## 確認方法 — how to try it; the PR and commits as full URLs
+## 既知の制限 — what it does not do, known issues
+## 決めてほしいこと — この成果物で完了としてよいか (完了 / 直してほしい)
+## 人に聞く理由 — 成果物のレビュー: whether it is done is the person's
+## 推奨
+```
+
+`--review` is read by the command line only and is not stored (the
+escalation is an ordinary one in `orchestrator-tasks.json`): its
+`## 人に聞く理由` may simply name the review (成果物のレビュー, review — not
+refused as generic), its options are 完了 / 直してほしい when none are
+given, and it is warned of — not refused — when it carries no evidence: no
+`--attach`, no picture or code block in the body, no `## 実行結果`
+(テスト結果, 出力, 動作確認, Evidence, Results) section.
+
+**A task with no deliverable** (an investigation that ends in an answer, a
+clean-up) may close with `task done T --note "<結果>。決めたこと: …"`: the
+board's 完了 lane lists it, the card showing the note.
 
 The memo (`task edit T --memo`) holds 「決めたこと」 while the work is under
-way, so the board shows it on the card before the work is done.
+way, so the board shows it on the card before the review.
 
 ## `/devhub-orchestrator`: writing the person's make-progress skill
 

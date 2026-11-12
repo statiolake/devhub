@@ -45,6 +45,7 @@ import {
 import {
 	briefProblems,
 	briefWarnings,
+	REVIEW_OPTIONS,
 } from "../../../model/escalationBrief.js";
 import {
 	AttachmentError,
@@ -1632,11 +1633,14 @@ export class TellService {
 	private async raise(
 		command: Extract<TellCommand, { verb: "escalation-new" }>,
 	): Promise<TellAnswer> {
-		refuseBrief({
+		const brief = {
 			title: command.title,
 			body: command.body,
 			links: command.links,
-		});
+			review: command.review === true,
+			attachments: command.attachments?.length ?? 0,
+		};
+		refuseBrief(brief);
 		const task = this.task(command.task);
 		if (task.status === "done")
 			throw new Error(
@@ -1648,7 +1652,11 @@ export class TellService {
 			taskId: task.id,
 			title: command.title,
 			markdown: command.body,
-			options: command.options,
+			// A review is answered 完了 or 直してほしい, unless it says otherwise.
+			options:
+				command.review === true && command.options.length === 0
+					? REVIEW_OPTIONS
+					: command.options,
 			links,
 			...labelsFor(command.links, links, command.linkLabels),
 			...(attachments.length === 0 ? {} : { attachments }),
@@ -1657,14 +1665,11 @@ export class TellService {
 		return {
 			message:
 				`Asked #${String(made.id)} 「${made.title}」 on task=${String(task.id)}: the task is 回答待ち until the person answers. Wait for the answer; never go ahead on this decision without it. A follow-up question is a new escalation.` +
+				(command.review === true
+					? " A review: on 完了, task done; on 直してほしい, have it fixed and raise a new review (--review) of the result."
+					: "") +
 				attachedWords(attachments) +
-				warningWords(
-					briefWarnings({
-						title: command.title,
-						body: command.body,
-						links: command.links,
-					}),
-				),
+				warningWords(briefWarnings(brief)),
 			data: made,
 		};
 	}

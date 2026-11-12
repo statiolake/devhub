@@ -23,6 +23,13 @@
  * 背景 or 推奨 section, and words that point outside the brief
  * (前回, 先ほど, 上記のタスク, as discussed) as if the reader had been there.
  *
+ * A **review** (`escalation new --review`, known only here, never stored:
+ * the escalation is an ordinary question, 「この成果物で完了としてよいか」)
+ * asks the person to look at a deliverable before its task is done. Its
+ * reason may simply name the review (成果物のレビュー), and it is warned of
+ * when it carries no evidence: no `--attach`, no picture or code block in
+ * the body, no 実行結果 section (`REVIEW_EVIDENCE_HEADINGS`).
+ *
  * And nothing is referred to by number alone: a `#12`, `PR 1234` or
  * `Issue 56` in the body needs its URL there or in `--link`, and the title
  * names what is decided in words, never by number.
@@ -55,6 +62,22 @@ export const RECOMMENDATION_HEADINGS: readonly string[] = [
   "おすすめ",
   "Recommendation",
 ];
+
+/** A review's evidence: a section of results, under one of these. */
+export const REVIEW_EVIDENCE_HEADINGS: readonly string[] = [
+  "実行結果",
+  "テスト結果",
+  "出力",
+  "動作確認",
+  "Evidence",
+  "Results",
+];
+
+/** The options a review gets when it is given none. */
+export const REVIEW_OPTIONS: readonly string[] = ["完了", "直してほしい"];
+
+/** A reason that names the review: what a review's 人に聞く理由 may say. */
+const NAMES_REVIEW = /レビュー|成果物|review|deliverable/iu;
 
 /**
  * Words that point at something outside the brief — an earlier question,
@@ -238,7 +261,7 @@ export function urlsIn(markdown: string): readonly string[] {
 
 /** What a 人に聞く理由 must name, said in every refusal about it. */
 const REASON_HINT =
-  "name what about this cannot be undone, destroys or reaches others (deleting data or a branch, a force-push or rewritten history, a merge or release others get, a message sent to someone, money spent), or why it is the person's own (only they know it, only they may). A choice that can be corrected later (a design, an implementation, a name, the order of work) is yours: decide it on the person's past decisions, note it in the task's memo, and show the result instead of asking.";
+  "name what about this cannot be undone, destroys or reaches others (deleting data or a branch, a force-push or rewritten history, a merge or release others get, a message sent to someone, money spent), or why it is the person's own (only they know it, only they may). A choice that can be corrected later (a design, an implementation, a name, the order of work) is yours: decide it on the person's past decisions, note it in the task's memo, and show the result in the review that ends the task (--review; its reason may just say 成果物のレビュー).";
 
 /**
  * What may keep the escalation from standing on its own and the command
@@ -267,13 +290,31 @@ export function briefWarnings(request: BriefRequest): readonly string[] {
     warnings.push(
       `${outside.map((one) => `「${one}」`).join(", ")} points outside this escalation: the person sees it alone, with no earlier question or task state. Say here what it was (escalation new again, or withdraw this one, to fix it).`,
     );
+  if (request.review === true && !hasEvidence(request))
+    warnings.push(
+      "a review with no evidence: attach screenshots (--attach), or show what was run and what it printed (a ``` block, or a '## 実行結果' section: test results, output excerpts), so the person can judge the deliverable from here alone.",
+    );
   return warnings;
+}
+
+/** Whether a review shows what was made: a picture, code or results. */
+function hasEvidence(request: BriefRequest): boolean {
+  return (
+    (request.attachments ?? 0) > 0 ||
+    /^ {0,3}(?:`{3,}|~{3,})/mu.test(request.body) ||
+    /!\[[^\]]*\]\([^)]+\)/u.test(withoutCode(request.body)) ||
+    sectionText(request.body, REVIEW_EVIDENCE_HEADINGS) !== undefined
+  );
 }
 
 export interface BriefRequest {
   readonly title?: string;
   readonly body: string;
   readonly links: readonly string[];
+  /** `--review`: the person is asked to review a deliverable. */
+  readonly review?: boolean;
+  /** How many pictures `--attach` gives. */
+  readonly attachments?: number;
 }
 
 /**
@@ -296,7 +337,10 @@ export function briefProblems(request: BriefRequest): readonly string[] {
   const reason = sectionText(request.body, REASON_HEADINGS);
   if (reason === undefined)
     problems.push(`the body has no '## 人に聞く理由' section: ${REASON_HINT}`);
-  else if (genericReason(reason))
+  else if (
+    genericReason(reason) &&
+    !(request.review === true && NAMES_REVIEW.test(reason))
+  )
     problems.push(
       `the '## 人に聞く理由' section says nothing about why the person is asked (${JSON.stringify(reason.slice(0, 60))}): ${REASON_HINT}`,
     );
