@@ -784,3 +784,35 @@ body {
 .settings-theme-done {
   margin: 0;
 }
+
+/* General → 音声入力: where the chosen model is, and the ones on this Mac. */
+.sf-voice-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sf-voice-status[data-failed] {
+  color: var(--danger);
+}
+
+.sf-voice-status progress {
+  width: 120px;
+}
+
+.sf-voice-models {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sf-voice-models li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}

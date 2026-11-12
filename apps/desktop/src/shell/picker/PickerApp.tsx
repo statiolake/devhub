@@ -60,6 +60,7 @@ import { CommandPaletteSheet } from "./CommandPaletteSheet";
 import { QuickPickSheet } from "./QuickPickSheet";
 import { RecentlyClosedSheet } from "./RecentlyClosedSheet";
 import { ThemePreviewSheet } from "./ThemePreviewSheet";
+import { VoiceConsentPicker } from "../voice/VoiceConsent";
 
 /** Take one modal off screen, with the answer if it asked for one. */
 function close(id: string, response?: number | string): void {
@@ -194,6 +195,18 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
           request={request}
           onDismiss={(answer) => {
             close(id, answer);
+          }}
+        />
+      );
+    case "voice-consent":
+      return (
+        <VoiceConsentPicker
+          consent={request.consent}
+          onDownload={() => {
+            close(id, 0);
+          }}
+          onCancel={() => {
+            close(id, -1);
           }}
         />
       );

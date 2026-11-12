@@ -97,6 +97,8 @@ function fakeVoice(): VoiceApi {
   updateListener = undefined;
   return {
     status: vi.fn(() => Promise.resolve({ available: true as const })),
+    onStatus: vi.fn(() => () => undefined),
+    setUp: vi.fn(() => Promise.resolve({ ok: true as const, value: true })),
     requestMicrophone: vi.fn(() =>
       Promise.resolve({ ok: true as const, value: true }),
     ),

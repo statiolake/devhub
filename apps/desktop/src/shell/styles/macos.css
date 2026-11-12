@@ -431,6 +431,14 @@
   color: var(--secondary);
 }
 
+/* Voice input's confirmation: the promise under the facts it is about. */
+.voice-consent-local {
+  margin: var(--space-2) 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--secondary);
+}
+
 .mac-alert-actions {
   display: flex;
   justify-content: flex-end;

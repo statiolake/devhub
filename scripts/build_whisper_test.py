@@ -24,16 +24,23 @@ class Pins(unittest.TestCase):
 		for model in bw.MODELS.values():
 			self.assertRegex(model.sha1, r"^[0-9a-f]{40}$")
 
-	def test_carries_small_unless_told_otherwise(self) -> None:
-		self.assertEqual(bw.MODEL, "ggml-small.bin")
+	def test_installs_no_model_unless_told_to(self) -> None:
+		self.assertEqual(bw.DEFAULT_MODEL, "ggml-small.bin")
 		# whisper.cpp's models/README.md at v1.9.4.
 		self.assertEqual(bw.MODELS["ggml-small.bin"].sha1, "55356645c2b361a969dfd0ef2c5a50d530afd8d5")
-		self.assertEqual(bw.chosen_model({}), bw.MODEL)
+		self.assertIsNone(bw.chosen_model({}))
 		self.assertEqual(
 			bw.chosen_model({bw.MODEL_ENV: "ggml-large-v3-turbo-q5_0.bin"}), "ggml-large-v3-turbo-q5_0.bin"
 		)
 		with self.assertRaises(SystemExit):
 			bw.chosen_model({bw.MODEL_ENV: "ggml-tiny.bin"})
+
+	def test_reads_the_pins_the_app_downloads_by(self) -> None:
+		product = json.loads(bw.PRODUCT_FILE.read_text())
+		for pin in product["whisperModels"].values():
+			self.assertEqual(bw.MODELS[pin["file"]].sha1, pin["sha1"])
+			self.assertEqual(bw.model_url(pin["file"]), pin["url"])
+		self.assertIn("ggml-large-v3-turbo-q5_0.bin", bw.MODELS)
 
 	def test_cannot_fetch_anything_at_runtime(self) -> None:
 		self.assertIn("-DWHISPER_CURL=OFF", bw.CMAKE_FLAGS)
@@ -80,14 +87,8 @@ class InstallProblems(unittest.TestCase):
 		server = self.dir / bw.SERVER_BINARY
 		server.write_bytes(b"#!/bin/sh\n# server\n")
 		server.chmod(0o755)
-		(self.dir / bw.MODEL).write_bytes(b"model")
-		self.write(
-			bw.statement(
-				bw.hash_file(binary, "sha256"),
-				bw.hash_file(self.dir / bw.MODEL, "sha256"),
-				bw.hash_file(server, "sha256"),
-			)
-		)
+		(self.dir / bw.LICENSE).write_text("MIT")
+		self.write(bw.statement(bw.hash_file(binary, "sha256"), bw.hash_file(server, "sha256")))
 
 	def write(self, said: dict) -> None:
 		(self.dir / bw.STATEMENT).write_text(json.dumps(said))
@@ -95,8 +96,17 @@ class InstallProblems(unittest.TestCase):
 	def test_accepts_what_install_writes(self) -> None:
 		self.assertEqual(bw.install_problems(self.dir), [])
 
-	def test_refuses_a_model_that_changed(self) -> None:
-		(self.dir / bw.MODEL).write_bytes(b"truncated")
+	def test_states_no_model(self) -> None:
+		said = json.loads((self.dir / bw.STATEMENT).read_text())
+		self.assertNotIn("model", said)
+
+	def test_refuses_a_statement_from_when_the_model_was_bundled(self) -> None:
+		said = json.loads((self.dir / bw.STATEMENT).read_text())
+		self.write({**said, "model": "ggml-small.bin"})
+		self.assertIn("names a model", bw.install_problems(self.dir)[0])
+
+	def test_refuses_a_binary_that_changed(self) -> None:
+		(self.dir / bw.BINARY).write_bytes(b"#!/bin/sh\n# other\n")
 		self.assertEqual(len(bw.install_problems(self.dir)), 1)
 		self.assertEqual(bw.install_problems(self.dir, deep=False), [])
 
@@ -113,16 +123,22 @@ class InstallProblems(unittest.TestCase):
 		(self.dir / bw.BINARY).chmod(0o644)
 		self.assertIn("not executable", bw.install_problems(self.dir)[0])
 
-	def test_refuses_the_model_it_used_to_carry_beside_it(self) -> None:
-		(self.dir / "ggml-large-v3-turbo-q5_0.bin").write_bytes(b"old")
-		self.assertIn("another model", bw.install_problems(self.dir)[0])
-
-	def test_holds_a_directory_to_the_model_asked_for(self) -> None:
-		self.assertIn("carries", bw.install_problems(self.dir, model="ggml-large-v3-turbo-q5_0.bin")[0])
-
 	def test_refuses_a_directory_without_the_server(self) -> None:
 		(self.dir / bw.SERVER_BINARY).unlink()
 		self.assertIn(bw.SERVER_BINARY, bw.install_problems(self.dir)[0])
+
+	def test_ignores_a_development_model_unless_asked_about_it(self) -> None:
+		(self.dir / bw.DEFAULT_MODEL).write_bytes(b"model")
+		self.assertEqual(bw.install_problems(self.dir), [])
+		self.assertIn("too small", bw.install_problems(self.dir, model=bw.DEFAULT_MODEL)[0])
+
+	def test_bundles_the_programs_and_never_a_model(self) -> None:
+		(self.dir / bw.DEFAULT_MODEL).write_bytes(b"model")
+		(self.dir / "ggml-large-v3-turbo-q5_0.bin.part").write_bytes(b"part")
+		self.assertEqual(
+			[path.name for path in bw.bundled_files(self.dir)],
+			sorted([bw.BINARY, bw.SERVER_BINARY, bw.LICENSE, bw.STATEMENT]),
+		)
 
 
 class ModelProblem(unittest.TestCase):

@@ -39,6 +39,12 @@ export interface DevhubProduct {
 	/** Where `docker` and `devcontainer` are, when they are not on `PATH`. */
 	readonly dockerPath?: string;
 	readonly devcontainerPath?: string;
+	/**
+	 * The speech models voice input may download once the person turns it
+	 * on, by id: label, file, URL, hash and size (`main/voice/voiceModels.ts`).
+	 * The one thing DevHub downloads at runtime, and only on that yes.
+	 */
+	readonly whisperModels?: unknown;
 	/** Only in a packaged app: the commit it was built from. */
 	readonly commit?: string;
 	/** Only in a packaged app: DevHub's version, with the build's date. */

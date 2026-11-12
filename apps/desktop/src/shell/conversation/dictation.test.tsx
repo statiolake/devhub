@@ -37,7 +37,7 @@ import {
   it,
   vi,
 } from "vitest";
-import type { VoiceApi, VoiceUpdate } from "../../ipc/voice";
+import type { VoiceApi, VoiceStatus, VoiceUpdate } from "../../ipc/voice";
 import { EMPTY_SESSION } from "../../model/conversation";
 import {
   concatenate,
@@ -273,6 +273,8 @@ function fakeVoice(overrides: Partial<VoiceApi> = {}): VoiceApi {
   updateListener = undefined;
   return {
     status: vi.fn(() => Promise.resolve({ available: true as const })),
+    onStatus: vi.fn(() => () => undefined),
+    setUp: vi.fn(() => Promise.resolve({ ok: true as const, value: true })),
     requestMicrophone: vi.fn(() =>
       Promise.resolve({ ok: true as const, value: true }),
     ),
@@ -340,6 +342,101 @@ describe("dictating in the composer", () => {
     expect(reported.summary).toBe(DICTATION_UNAVAILABLE_TITLE);
     expect(reported.detail).toBe("No recogniser.");
     expect(voice.begin).not.toHaveBeenCalled();
+  });
+
+  it("turns voice input on from a press while it is off, recording nothing", async () => {
+    const voice = fakeVoice({
+      status: () =>
+        Promise.resolve({
+          available: false as const,
+          reason: "音声入力はオフです。",
+          step: { kind: "enable" as const },
+        }),
+    });
+    const actions = fakeActions({ voice });
+    draw(READY, actions);
+    const button = screen.getByRole("button", { name: "Dictate" });
+    await waitFor(() => expect(button).toHaveAttribute("data-phase", "setup"));
+    expect(button).not.toHaveAttribute("aria-disabled");
+    expect(button).toHaveAttribute("title", "音声入力はオフです。");
+    fireEvent.click(button);
+    await waitFor(() => expect(voice.setUp).toHaveBeenCalledTimes(1));
+    expect(voice.begin).not.toHaveBeenCalled();
+    expect(voice.requestMicrophone).not.toHaveBeenCalled();
+    expect(actions.reportFailure).not.toHaveBeenCalled();
+  });
+
+  it("shows the download's progress, then dictates once main says the model is ready", async () => {
+    let push: ((status: VoiceStatus) => void) | undefined;
+    const voice = fakeVoice({
+      status: () =>
+        Promise.resolve({
+          available: false as const,
+          reason: "音声入力はオフです。",
+          step: { kind: "enable" as const },
+        }),
+      onStatus: (listener) => {
+        push = listener;
+        return () => undefined;
+      },
+    });
+    draw(READY, fakeActions({ voice }));
+    const button = screen.getByRole("button", { name: "Dictate" });
+    await waitFor(() => expect(button).toHaveAttribute("data-phase", "setup"));
+    fireEvent.click(button);
+    await waitFor(() => expect(voice.setUp).toHaveBeenCalled());
+    act(() =>
+      push?.({
+        available: false,
+        reason: "ダウンロードしています…",
+        step: {
+          kind: "downloading",
+          received: 233_000_000,
+          total: 466_000_000,
+        },
+      }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "音声認識モデルをダウンロードしています… 50%（233 MB / 466 MB）",
+    );
+    act(() => push?.({ available: true }));
+    await waitFor(() => expect(button).toHaveAttribute("data-phase", "idle"));
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.click(button);
+    await waitFor(() => expect(voice.begin).toHaveBeenCalled());
+  });
+
+  it("offers a retry under the composer when the download it started fails", async () => {
+    let push: ((status: VoiceStatus) => void) | undefined;
+    const voice = fakeVoice({
+      status: () =>
+        Promise.resolve({
+          available: false as const,
+          reason: "モデルがまだありません。",
+          step: { kind: "download" as const },
+        }),
+      onStatus: (listener) => {
+        push = listener;
+        return () => undefined;
+      },
+    });
+    draw(READY, fakeActions({ voice }));
+    const button = screen.getByRole("button", { name: "Dictate" });
+    await waitFor(() => expect(button).toHaveAttribute("data-phase", "setup"));
+    fireEvent.click(button);
+    await waitFor(() => expect(voice.setUp).toHaveBeenCalledTimes(1));
+    act(() =>
+      push?.({
+        available: false,
+        reason: "ダウンロードできませんでした: 接続が切れました。",
+        step: { kind: "retry" },
+      }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "接続が切れました。",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "再試行" }));
+    await waitFor(() => expect(voice.setUp).toHaveBeenCalledTimes(2));
   });
 
   it("shows the press at once, and keeps what it hears until main has opened the session", async () => {

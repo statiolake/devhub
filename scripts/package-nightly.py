@@ -16,8 +16,11 @@ about and Node's own resolver finds every dependency in every process.
                                     (scripts/darwin_bundle.py)
       Resources/DevHub.icns
       Resources/licenses/           DevHub's, Electron's, the third parties'
-      Resources/whisper/            the speech recogniser the GUI Agent
-                                    composer dictates with (build_whisper.py)
+      Resources/whisper/            the speech recogniser's programs the GUI
+                                    Agent composer dictates with
+                                    (build_whisper.py); not its model, which
+                                    the app downloads when voice input is
+                                    turned on
       Resources/app/                what Electron loads (`APP_ROOT`)
         package.json                "main": "out/main/main.js"
         product.json                apps/desktop/product.json + version, commit
@@ -67,7 +70,7 @@ DESKTOP_DIR = REPO_ROOT / "apps" / "desktop"
 import build_cache  # noqa: E402
 from build_whisper import (  # noqa: E402
 	DEFAULT_OUT_DIR as WHISPER_BUILD_DIR,
-	chosen_model as chosen_whisper_model,
+	bundled_files as whisper_bundled_files,
 	ensure as ensure_whisper,
 	install_problems as whisper_install_problems,
 )
@@ -355,8 +358,12 @@ def write_licenses(app: Path, electron_dir: Path) -> None:
 
 
 def bundle_whisper(app: Path, whisper_dir: Path) -> None:
-	"""Put the speech recogniser in the app, or refuse to package."""
-	problems = whisper_install_problems(whisper_dir, model=chosen_whisper_model())
+	"""Put the speech recogniser's programs in the app, or refuse to package.
+
+	Not a model: voice input downloads the one it reads when the person turns
+	it on (`src/main/voice/voiceSetup.ts`), so a development model in
+	`whisper_dir` (`build_whisper.py --model`) is left where it is."""
+	problems = whisper_install_problems(whisper_dir)
 	if problems:
 		fail(
 			"the speech recogniser is not ready to bundle:\n  "
@@ -366,7 +373,9 @@ def bundle_whisper(app: Path, whisper_dir: Path) -> None:
 		)
 	target = app / "Contents" / "Resources" / "whisper"
 	shutil.rmtree(target, ignore_errors=True)
-	shutil.copytree(whisper_dir, target, ignore=lambda d, names: {n for n in names if n.endswith(".part")})
+	target.mkdir(parents=True)
+	for source in whisper_bundled_files(whisper_dir):
+		shutil.copy2(source, target / source.name)
 	# A Mach-O under Resources is sealed as a resource by the bundle's
 	# signature, not signed as code, and Apple Silicon kills an arm64 program
 	# with no signature of its own the moment it is spawned.
@@ -451,8 +460,8 @@ def main() -> int:
 	from darwin_bundle import APP_NAME, base_app, rebrand, sign
 
 	if not args.without_whisper:
-		# Before the long steps: the first build on a Mac compiles whisper.cpp
-		# and downloads its model, both cached under ~/.cache/devhub/whisper.
+		# Before the long steps: the first build on a Mac compiles whisper.cpp,
+		# cached under ~/.cache/devhub/whisper. No model is downloaded.
 		step("speech recogniser")
 		if ensure_whisper(Path(args.whisper_dir).resolve()) != 0:
 			return 1

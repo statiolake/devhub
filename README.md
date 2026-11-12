@@ -680,8 +680,10 @@ and opens a file in its editor. CI runs it on every bundle it packages.
 
 What has to be on the machine first: macOS on Apple Silicon, the Xcode command
 line tools (`xcode-select --install`), `python3`, Node, and pnpm. The speech
-recogniser (`dist/whisper`) is built by `scripts/build_whisper.py` when
-missing — it needs cmake — or left out with `pnpm build -- --without-whisper`.
+recogniser's programs (`dist/whisper`) are built by `scripts/build_whisper.py`
+when missing — it needs cmake — or left out with `pnpm build -- --without-whisper`.
+Its model is not bundled: voice input is off by default, and DevHub downloads
+the model (pinned and verified) when the person turns it on and agrees.
 The layout of the bundle is in `scripts/package-nightly.py`.
 
 DevHub's product identity is stated once, in

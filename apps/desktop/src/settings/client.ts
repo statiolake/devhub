@@ -9,6 +9,7 @@ import type {
 import type { SettingsPageBridge } from "../ipc/contract";
 import { pageBridge } from "../shell/bridge";
 import type { ThemesClient } from "./ThemePreviewRow";
+import type { VoiceSetupApi } from "../ipc/voice";
 
 export interface SettingsClient {
   getSnapshot(): Promise<SettingsSnapshot>;
@@ -24,6 +25,8 @@ export interface SettingsClient {
   subscribe(listener: (snapshot: SettingsSnapshot) => void): () => void;
   /** Appearance's colour themes; absent where there is no main to ask. */
   readonly themes?: ThemesClient;
+  /** Voice input's setup; absent where there is no main to ask. */
+  readonly voice?: VoiceSetupApi;
 }
 
 declare global {
@@ -71,6 +74,7 @@ export function createSettingsClient(
       themes: () => api.themes(),
       preview: () => api.previewThemes(),
     },
+    voice: api.voice,
   };
 }
 

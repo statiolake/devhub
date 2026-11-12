@@ -51,6 +51,7 @@ export function testConfig(
       timers: [],
     },
     terminal: { macOptionIsMeta: false },
+    voice: { enabled: false, model: "small" },
     agents: {
       defaultPresentation: "tui",
       resumeAfterLimit: true,

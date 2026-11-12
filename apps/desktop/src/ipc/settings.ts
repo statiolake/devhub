@@ -16,6 +16,7 @@
 export const SETTINGS_SCHEMA_VERSION = 1 as const;
 
 import type { AgentActionTriggerWire } from "./contract.js";
+import type { VoiceModelId, VoiceSetupApi } from "./voice.js";
 
 export type SettingsAgentProfileKindWire =
 	| "codex"
@@ -175,6 +176,15 @@ export interface SettingsConfigWire {
 	 */
 	readonly terminal: {
 		readonly macOptionIsMeta: boolean | "left";
+	};
+	/**
+	 * `[voice]`: whether voice input is on, and which model it reads. The
+	 * page does not turn it on by saving this: that asks first and may
+	 * download (`VoiceSetupApi.enable`), so a save carries it as it is.
+	 */
+	readonly voice: {
+		readonly enabled: boolean;
+		readonly model: VoiceModelId;
 	};
 	readonly keybindings: SettingsKeybindingsWire;
 	readonly workspaceSources: readonly SettingsWorkspaceSourceWire[];
@@ -386,6 +396,7 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_appearance"
 	| "invalid_theme"
 	| "invalid_mac_option_is_meta"
+	| "invalid_voice_model"
 	| "invalid_keybinding"
 	| "unknown_command"
 	| "invalid_font_family"
@@ -558,6 +569,8 @@ export interface SettingsApi {
 	themes(): Promise<SettingsThemesWire>;
 	/** Theme: Preview… in the main window. */
 	previewThemes(): Promise<void>;
+	/** Voice input: turned on and off, and its models (`ipc/voice.ts`). */
+	readonly voice: VoiceSetupApi;
 }
 
 export const SETTINGS_CHANNELS = {

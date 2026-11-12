@@ -25,6 +25,7 @@ import {
 	type SettingsThemesWire,
 } from "../ipc/settings.js";
 import { on, pageBridge } from "./bridge.js";
+import { voiceSetupApi } from "./voice.js";
 
 const devhub: SettingsPageBridge = {
 	...pageBridge(),
@@ -71,6 +72,7 @@ const devhubSettings: SettingsApi = {
 		ipcRenderer.invoke(SETTINGS_CHANNELS.themes) as Promise<SettingsThemesWire>,
 	previewThemes: () =>
 		ipcRenderer.invoke(SETTINGS_CHANNELS.previewThemes) as Promise<void>,
+	voice: voiceSetupApi,
 };
 
 contextBridge.exposeInMainWorld("devhub", devhub);

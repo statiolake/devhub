@@ -813,6 +813,39 @@ describe("parsing", () => {
     });
   });
 
+  describe("[voice]", () => {
+    it("is off, with small, unless the file says otherwise", () => {
+      expect(defaultConfig().voice).toEqual({ enabled: false, model: "small" });
+      expect(parseConfig(MINIMAL).voice).toEqual({
+        enabled: false,
+        model: "small",
+      });
+    });
+
+    it("reads, keeps and writes back whether it is on and the model", () => {
+      const config = parseConfig(
+        'version = 1\n[voice]\nenabled = true\nmodel = "large-v3-turbo"\n',
+      );
+      expect(config.voice).toEqual({ enabled: true, model: "large-v3-turbo" });
+      const written = configToToml(config);
+      expect(written).toContain("enabled = true");
+      expect(written).toContain('model = "large-v3-turbo"');
+      expect(parseConfig(written).voice).toEqual(config.voice);
+    });
+
+    it("refuses a model DevHub does not know, and an unknown key", () => {
+      const text = 'version = 1\n[voice]\nmodel = "tiny"\n';
+      expect(codeOf(() => parseConfig(text))).toBe("invalid_voice_model");
+      expect(pathOf(() => parseConfig(text))).toBe("voice.model");
+      expect(
+        codeOf(() => parseConfig("version = 1\n[voice]\nenabled = 1\n")),
+      ).toBe("invalid_type");
+      expect(
+        codeOf(() => parseConfig("version = 1\n[voice]\nauto = true\n")),
+      ).toBe("unknown_key");
+    });
+  });
+
   it("scrolls an Agent pane three lines a notch until told otherwise", () => {
     // One at a time is what xterm.js gives on its own, and it is far heavier
     // than every other terminal on the machine.

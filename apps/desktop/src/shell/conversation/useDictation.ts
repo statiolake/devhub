@@ -51,6 +51,8 @@ import {
   type VoiceApi,
   type VoiceLanguage,
   type VoiceResult,
+  type VoiceSetupStep,
+  type VoiceStatus,
 } from "../../ipc/voice";
 import {
   concatenate,
@@ -65,6 +67,12 @@ import {
 export type DictationPhase =
   /** No recogniser in this build, or no bridge: a press says why. */
   | "unavailable"
+  /**
+   * Voice input is off, or its model is not here yet: a press turns it on
+   * (main asks first, where that downloads the model), retries a failed
+   * download, or shows how the download is going. See `Dictation.step`.
+   */
+  | "setup"
   | "idle"
   /** Pressed: the microphone is opening (the permission prompt, the device). */
   | "starting"
@@ -104,6 +112,15 @@ export interface Dictation {
   readonly waitingFor: DictationWait | undefined;
   /** Why dictation is unavailable, when it is. */
   readonly reason: string | undefined;
+  /** While `setup`: what a press does about it. */
+  readonly step: VoiceSetupStep | undefined;
+  /**
+   * Whether this composer's press set voice input up (or asked how it is
+   * going), so it shows the download's progress and, if it fails, a retry.
+   */
+  readonly settingUp: boolean;
+  /** Retry a download that failed. */
+  readonly retry: () => void;
   /** The microphone's level, to draw, while recording. */
   readonly analyser: AnalyserNode | undefined;
   /** The words since the last pause, which may still change. */
@@ -222,6 +239,8 @@ export function useDictation(options: {
   const [reason, setReason] = useState<string | undefined>(
     voice === undefined ? "Dictation is not available here." : undefined,
   );
+  const [step, setStep] = useState<VoiceSetupStep | undefined>(undefined);
+  const [settingUp, setSettingUp] = useState(false);
   const [analyser, setAnalyser] = useState<AnalyserNode | undefined>(undefined);
   const [tentative, setTentative] = useState("");
   /** Whether main's recogniser has said it can take this press's audio. */
@@ -243,18 +262,56 @@ export function useDictation(options: {
   useEffect(() => {
     if (voice === undefined) return;
     let live = true;
-    void voice.status().then(
-      (status) => {
-        if (!live || status.available) return;
-        setPhase("unavailable");
-        setReason(status.reason);
+    // A recording under way is left to finish: main answers it.
+    const settled = (current: DictationPhase) =>
+      current === "idle" || current === "unavailable" || current === "setup";
+    const apply = (status: VoiceStatus) => {
+      if (!live) return;
+      if (status.available) {
+        setPhase((current) => (settled(current) ? "idle" : current));
+        setReason(undefined);
+        setStep(undefined);
+        setSettingUp(false);
+        return;
+      }
+      setReason(status.reason);
+      setStep(status.step);
+      setPhase((current) =>
+        settled(current)
+          ? status.step === undefined
+            ? "unavailable"
+            : "setup"
+          : current,
+      );
+    };
+    const unsubscribe = voice.onStatus(apply);
+    void voice
+      .status()
+      .then(apply, (error: unknown) => latest.current.reportFailure(error));
+    return () => {
+      live = false;
+      unsubscribe();
+    };
+  }, [voice]);
+
+  /** A press while voice input is not ready: main asks, enables, downloads. */
+  const setUp = useCallback(() => {
+    if (voice === undefined) return;
+    if (step?.kind === "downloading" || step?.kind === "verifying") {
+      setSettingUp(true);
+      return;
+    }
+    void voice.setUp().then(
+      (result) => {
+        if (!result.ok) {
+          latest.current.reportFailure(dictationUnavailable(result.reason));
+          return;
+        }
+        if (result.value) setSettingUp(true);
       },
       (error: unknown) => latest.current.reportFailure(error),
     );
-    return () => {
-      live = false;
-    };
-  }, [voice]);
+  }, [step, voice]);
 
   /** Hand over what of `committed` the composer has not had yet. */
   const deliver = useCallback((session: number, committed: string) => {
@@ -356,13 +413,14 @@ export function useDictation(options: {
   }, [deliver, fail, release, voice]);
 
   const warm = useCallback(() => {
-    if (voice === undefined) return;
+    if (voice === undefined || phase === "setup" || phase === "unavailable")
+      return;
     primeAudio();
     if (Date.now() - warmed.current < 60_000) return;
     warmed.current = Date.now();
     // Nobody waits on this one; a press asks again and waits.
     void voice.warm().catch(() => undefined);
-  }, [voice]);
+  }, [phase, voice]);
 
   const start = useCallback(async () => {
     if (voice === undefined) return;
@@ -512,7 +570,8 @@ export function useDictation(options: {
   }, [abandon, phase]);
 
   const toggle = useCallback(() => {
-    if (phase === "unavailable") {
+    if (phase === "setup") setUp();
+    else if (phase === "unavailable") {
       latest.current.reportFailure(
         dictationUnavailable(reason ?? "Dictation is not available here."),
       );
@@ -525,7 +584,7 @@ export function useDictation(options: {
       });
     } else if (phase === "starting") cancel();
     else if (phase === "recording") finish();
-  }, [abandon, cancel, finish, phase, reason, start]);
+  }, [abandon, cancel, finish, phase, reason, setUp, start]);
 
   const waitingFor: DictationWait | undefined =
     phase === "starting"
@@ -537,6 +596,9 @@ export function useDictation(options: {
     phase,
     waitingFor,
     reason,
+    step,
+    settingUp,
+    retry: setUp,
     analyser,
     tentative,
     toggle,

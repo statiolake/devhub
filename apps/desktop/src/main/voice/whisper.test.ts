@@ -12,7 +12,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { join } from "node:path";
 
-import { VOICE_CHANNELS } from "../../ipc/voice.js";
+import { VOICE_CHANNELS, VOICE_SETUP_CHANNELS } from "../../ipc/voice.js";
+import type { VoiceModelPin } from "./voiceModels.js";
+import { VoiceSetup, type VoiceSettings } from "./voiceSetup.js";
 import type { TranscribeOptions, Transcriber } from "./dictationStream.js";
 import {
 	chunkRefusal,
@@ -24,14 +26,12 @@ import {
 	cleanTranscript,
 	isNonSpeech,
 	locateWhisper,
-	statedModel,
+	overrideModel,
 	recordingRefusal,
 	wavFile,
 	whisperArgs,
 	whisperCandidates,
 	WHISPER_BINARY,
-	WHISPER_MODEL,
-	WHISPER_MODELS,
 	WHISPER_SERVER_BINARY,
 } from "./whisper.js";
 
@@ -52,71 +52,47 @@ describe("where the recogniser is", () => {
 		]);
 	});
 
-	it("takes the first directory with both the program and the model", () => {
-		const present = new Set([
-			join("/a", WHISPER_BINARY),
-			join("/b", WHISPER_BINARY),
-			join("/b", WHISPER_MODEL),
-		]);
+	it("takes the first directory with the program, and its server when it has one", () => {
+		const present = new Set([join("/b", WHISPER_BINARY)]);
 		expect(locateWhisper(["/a", "/b"], (p) => present.has(p))).toEqual({
+			directory: "/b",
 			binary: join("/b", WHISPER_BINARY),
-			model: join("/b", WHISPER_MODEL),
 		});
 		expect(locateWhisper(["/a"], (p) => present.has(p))).toBeUndefined();
 		present.add(join("/b", WHISPER_SERVER_BINARY));
 		expect(locateWhisper(["/a", "/b"], (p) => present.has(p))).toEqual({
+			directory: "/b",
 			binary: join("/b", WHISPER_BINARY),
-			model: join("/b", WHISPER_MODEL),
 			server: join("/b", WHISPER_SERVER_BINARY),
 		});
 	});
+
+	it("needs no model beside the program: the model is downloaded", () => {
+		const present = new Set([join("/b", WHISPER_BINARY)]);
+		expect(locateWhisper(["/b"], (p) => present.has(p))?.binary).toBe(
+			join("/b", WHISPER_BINARY),
+		);
+	});
 });
 
-describe("which model it reads", () => {
-	it("is small by default, with large-v3-turbo still one it knows", () => {
-		expect(WHISPER_MODEL).toBe("ggml-small.bin");
-		expect(WHISPER_MODELS).toContain("ggml-large-v3-turbo-q5_0.bin");
-	});
+describe("the development override", () => {
+	const programs = { directory: "/d", binary: join("/d", WHISPER_BINARY) };
 
-	it("takes the one the statement names, else any it knows, the default first", () => {
-		const turbo = "ggml-large-v3-turbo-q5_0.bin";
-		const present = new Set([
-			join("/d", WHISPER_BINARY),
-			join("/d", WHISPER_MODEL),
-			join("/d", turbo),
-		]);
+	it("is a model file beside the programs", () => {
+		const present = new Set([join("/d", "ggml-small.bin")]);
 		const has = (p: string) => present.has(p);
-		expect(locateWhisper(["/d"], has, () => turbo)?.model).toBe(
-			join("/d", turbo),
+		expect(overrideModel(programs, "ggml-small.bin", has)).toBe(
+			join("/d", "ggml-small.bin"),
 		);
-		expect(locateWhisper(["/d"], has, () => undefined)?.model).toBe(
-			join("/d", WHISPER_MODEL),
-		);
-		// A directory built before the default changed still works.
-		present.delete(join("/d", WHISPER_MODEL));
-		expect(locateWhisper(["/d"], has, () => undefined)?.model).toBe(
-			join("/d", turbo),
-		);
-		// A statement naming a file that is not there is passed over.
-		expect(locateWhisper(["/d"], has, () => "ggml-gone.bin")?.model).toBe(
-			join("/d", turbo),
-		);
+		expect(
+			overrideModel(programs, "ggml-large-v3-turbo-q5_0.bin", has),
+		).toBeUndefined();
+		expect(overrideModel(undefined, "ggml-small.bin", has)).toBeUndefined();
 	});
 
-	it("reads only a plain model file name from the statement", () => {
-		const reading = (text: string) => () => text;
-		expect(statedModel("/d", reading('{"model":"ggml-small.bin"}'))).toBe(
-			"ggml-small.bin",
-		);
+	it("is only ever a plain file name", () => {
 		expect(
-			statedModel("/d", reading('{"model":"../../etc/x.bin"}')),
-		).toBeUndefined();
-		expect(statedModel("/d", reading('{"model":3}'))).toBeUndefined();
-		expect(statedModel("/d", reading("not json"))).toBeUndefined();
-		expect(
-			statedModel("/d", () => {
-				throw new Error("ENOENT");
-			}),
+			overrideModel(programs, "../ggml-small.bin", () => true),
 		).toBeUndefined();
 	});
 });
@@ -233,12 +209,53 @@ function tone(seconds: number, amplitude = 0.3): Uint8Array {
 	return new Uint8Array(samples.buffer);
 }
 
+/** A voice input setup with one model, on or off, downloaded or not. */
+function setupFor(options: {
+	recogniser: boolean;
+	enabled: boolean;
+	ready: boolean;
+}): VoiceSetup {
+	let voice: VoiceSettings = { enabled: options.enabled, model: "small" };
+	return new VoiceSetup({
+		pins: [SMALL],
+		directory: "/models",
+		displayDirectory: "~/models",
+		recogniser: options.recogniser,
+		override: () => undefined,
+		settings: {
+			read: () => voice,
+			write: (next) => {
+				voice = next;
+				return Promise.resolve();
+			},
+		},
+		ask: () => Promise.resolve(false),
+		fetch: () => Promise.reject(new Error("no network in a test")),
+		isReady: () => options.ready,
+		download: () => new Promise<string>(() => undefined),
+	});
+}
+
+const SMALL: VoiceModelPin = {
+	id: "small",
+	label: "Whisper small",
+	file: "ggml-small.bin",
+	url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+	sha1: "55356645c2b361a969dfd0ef2c5a50d530afd8d5",
+	size: "466 MiB",
+	minBytes: 1,
+};
+
 describe("the Agents page's requests", () => {
 	type Handler = (event: { sender: unknown }, ...args: unknown[]) => unknown;
 
 	function register(
 		options: {
 			installed?: boolean;
+			/** `[voice] enabled`; on unless a test says otherwise. */
+			enabled?: boolean;
+			/** Whether the model is downloaded; it is unless a test says otherwise. */
+			ready?: boolean;
 			status?: string;
 			ask?: () => Promise<boolean>;
 			transcriber?: Transcriber & { warm?(): Promise<void> };
@@ -252,6 +269,7 @@ describe("the Agents page's requests", () => {
 			isDestroyed: () => false,
 			once: () => undefined,
 		};
+		const settings = { send: () => undefined, isDestroyed: () => false };
 		registerVoiceIpc({
 			ipcMain: {
 				handle: (channel: string, handler: Handler) =>
@@ -260,10 +278,19 @@ describe("the Agents page's requests", () => {
 					void listeners.set(channel, handler),
 			} as never,
 			pages: () => [page as never],
-			install:
+			programs:
 				options.installed === false
 					? undefined
-					: { binary: "/nonexistent/devhub-whisper", model: "/m.bin" },
+					: {
+							directory: "/nonexistent",
+							binary: "/nonexistent/devhub-whisper",
+						},
+			setup: setupFor({
+				recogniser: options.installed !== false,
+				enabled: options.enabled ?? true,
+				ready: options.ready ?? true,
+			}),
+			settingsPage: () => settings as never,
 			microphone: {
 				status: () => options.status ?? "not-determined",
 				ask: options.ask ?? (() => Promise.resolve(true)),
@@ -274,7 +301,9 @@ describe("the Agents page's requests", () => {
 			handlers.get(channel)!({ sender: page }, ...args);
 		const emit = (channel: string, ...args: unknown[]) =>
 			listeners.get(channel)!({ sender: page }, ...args);
-		return { handlers, listeners, call, emit, sent };
+		const manage = (channel: string, ...args: unknown[]) =>
+			handlers.get(channel)!({ sender: settings }, ...args);
+		return { handlers, listeners, call, emit, manage, sent };
 	}
 
 	it("answers no other page", async () => {
@@ -422,5 +451,77 @@ describe("the Agents page's requests", () => {
 		};
 		expect(result.ok).toBe(false);
 		expect(result.reason).toMatch(/could not be started/);
+	});
+	it("refuses to warm or begin while voice input is off, and says what a press does", async () => {
+		const transcribe = vi.fn(() => Promise.resolve("x"));
+		const { call } = register({
+			enabled: false,
+			transcriber: { live: true, transcribe },
+		});
+		const status = (await call(VOICE_CHANNELS.status)) as {
+			available: boolean;
+			reason: string;
+			step?: { kind: string };
+		};
+		expect(status.available).toBe(false);
+		expect(status.step).toEqual({ kind: "enable" });
+		expect(status.reason).toMatch(/音声入力はオフ/);
+		await expect(call(VOICE_CHANNELS.warm)).resolves.toEqual({
+			ok: false,
+			reason: status.reason,
+		});
+		await expect(call(VOICE_CHANNELS.begin, "ja")).resolves.toEqual({
+			ok: false,
+			reason: status.reason,
+		});
+		expect(transcribe).not.toHaveBeenCalled();
+	});
+
+	it("refuses to begin while the model is not downloaded", async () => {
+		const { call } = register({
+			ready: false,
+			transcriber: { live: true, transcribe: vi.fn() },
+		});
+		const status = (await call(VOICE_CHANNELS.status)) as {
+			available: boolean;
+			step?: { kind: string };
+		};
+		expect(status).toMatchObject({
+			available: false,
+			step: { kind: "download" },
+		});
+		await expect(call(VOICE_CHANNELS.begin, "ja")).resolves.toMatchObject({
+			ok: false,
+			reason: expect.stringMatching(/まだありません/) as unknown,
+		});
+	});
+
+	it("answers a press that is cancelled at the confirmation with false, and stays off", async () => {
+		const { call } = register({ enabled: false, ready: false });
+		await expect(call(VOICE_CHANNELS.setUp)).resolves.toEqual({
+			ok: true,
+			value: false,
+		});
+		await expect(call(VOICE_CHANNELS.status)).resolves.toMatchObject({
+			available: false,
+			step: { kind: "enable" },
+		});
+	});
+
+	it("answers voice input's setup to the Settings window only", async () => {
+		const { handlers, manage } = register({ enabled: false });
+		await expect(
+			handlers.get(VOICE_SETUP_CHANNELS.get)!({ sender: {} }),
+		).rejects.toThrow(/only the Settings window/);
+		await expect(manage(VOICE_SETUP_CHANNELS.get)).resolves.toMatchObject({
+			enabled: false,
+			model: "small",
+		});
+		await expect(
+			manage(VOICE_SETUP_CHANNELS.enable, "huge"),
+		).resolves.toMatchObject({ ok: false });
+		await expect(
+			manage(VOICE_SETUP_CHANNELS.enable, "small"),
+		).resolves.toMatchObject({ ok: true, value: { enabled: true } });
 	});
 });

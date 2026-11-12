@@ -720,6 +720,9 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
             onReset={resetSection}
             runtime={snapshot.runtime}
             themes={transport.themes}
+            {...(transport.voice === undefined
+              ? {}
+              : { voice: transport.voice })}
           />
         ) : null}
         {section === "Workspaces" ? (

@@ -31,12 +31,13 @@ on one that is not on its list with a reason; it also fails on any
 | libghostty-vt | `out/vt/ghostty-vt.wasm` | — |
 | node-pty | its N-API prebuild in `node_modules` | — |
 | helpers | `out/native/devhub-exec-clean`, `devhub-footprint`, `devhub-input-source` (C, built by `build:native`) | — |
-| speech recogniser | `Resources/whisper/devhub-whisper{,-server}` | — |
+| speech recogniser (whisper.cpp v1.9.4, ~9 MB) | `Resources/whisper/devhub-whisper{,-server}`; its model is **not** bundled — see below | — |
 
 ## Where they come from
 
 All of it is put in the app when the app is built. Nothing is downloaded at
-runtime, for this Mac or for an SSH host.
+runtime, for this Mac or for an SSH host — with one deliberate exception,
+the speech model, below.
 
 - **Built by DevHub, released per architecture.** tmux and bash have no good
   upstream distribution: DevHub needs a static, musl-linked tmux with its own
@@ -56,8 +57,43 @@ runtime, for this Mac or for an SSH host.
   version on a host is that build's digest, so it is part of the build,
   not a separately versioned tool. Building it from source for all three
   platforms takes seconds and needs nothing outside the repository. The
-  libghostty-vt module, the native helpers and the speech recogniser are
-  built with the app as before.
+  libghostty-vt module, the native helpers and the speech recogniser's
+  programs are built with the app as before.
+
+### The one exception: the speech model
+
+Voice input (`docs/agent-gui.md`, "Voice input") reads a Whisper model of
+466 MiB (`ggml-small.bin`; 547 MiB for `large-v3-turbo`) — when it was
+bundled, half the app. It is the one thing DevHub downloads while it runs,
+and it is held to the same rules as everything above:
+
+- **Only on an explicit opt-in.** Voice input is off by default
+  (`[voice] enabled = false`). Turning it on — Settings → General → 音声入力,
+  or the first press of the composer's microphone — first shows what would
+  be downloaded: the model, its size, the host (`huggingface.co`), where it is
+  kept, and that it runs on the Mac afterwards with no audio leaving it.
+  Nothing is fetched unless the person chooses ダウンロード; キャンセル leaves voice
+  input off. A model already on disk is not downloaded again.
+- **Pinned.** `product.json` holds each model's URL and hash
+  (`whisperModels`): the SHA-1 whisper.cpp's `models/README.md` publishes, the
+  one hash upstream states (a pin may add `sha256`, and every hash a pin
+  states is checked). `scripts/build_whisper.py` reads the same pins.
+- **Verified before use.** The download goes to `<file>.part`, resumes from
+  there after a failure (`Range`), and is hashed when complete; a file that
+  does not match is deleted, never loaded. A verified model is recorded
+  beside it (`<file>.verified.json`: the hash it matched, its size and time),
+  so a later launch knows it is the checked file without hashing it again.
+- **Kept in the profile.** `<userData>/devhub/whisper/` — on a Mac,
+  `~/Library/Application Support/DevHub/editor/devhub/whisper/`. Turning voice
+  input off offers to delete the models; Settings deletes one on request,
+  asking first.
+
+It is fetched by main with Electron's `net.fetch`
+(`src/main/voice/modelDownload.ts`, `voiceSetup.ts`); the recogniser itself
+still has no network code (`-DWHISPER_CURL=OFF`). For working on DevHub, a
+model beside the programs — `scripts/build_whisper.py --model NAME` into
+`dist/whisper`, or the directory `DEVHUB_WHISPER_DIR` names — is used
+instead, and nothing is downloaded; packaging never bundles one.
 
 `product.json` pins every downloaded asset: `<tool>Version`, and per
 `<os>-<arch>` its URL (`<tool>DownloadUrls`) and sha256

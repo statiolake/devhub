@@ -15,7 +15,7 @@ import type { DevhubNeovimApi } from "./neovim.js";
 import type { ShellPalette } from "./palette.js";
 import type { DevhubTerminalApi } from "./terminal.js";
 import type { ConversationApi, FileRange } from "./conversation.js";
-import type { VoiceApi } from "./voice.js";
+import type { VoiceApi, VoiceConsentWire } from "./voice.js";
 import type {
 	AgentLaunchWire,
 	AgentPresentationWire,
@@ -2757,6 +2757,13 @@ export type ModalRequest =
 	 * input) as its response; Escape answers -1.
 	 */
 	| ({ readonly kind: "quick-pick" } & QuickPickRequestWire)
+	/**
+	 * Turning voice input on from the microphone, where that downloads its
+	 * model: what is downloaded, from where, to where, and that it runs on
+	 * the Mac afterwards. Closes with 0 for ダウンロード; anything else,
+	 * Escape included, is キャンセル and leaves voice input off.
+	 */
+	| { readonly kind: "voice-consent"; readonly consent: VoiceConsentWire }
 	/**
 	 * What `Cmd+Q Shift+T` would reopen, newest first, as a list to choose
 	 * from. Closes with the chosen row's index, as the palette does; main

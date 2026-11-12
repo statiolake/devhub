@@ -10,8 +10,15 @@
  * warmed when the page says the microphone is about to be used; a directory
  * with only the CLI is transcribed once, at `end`.
  *
- * The recogniser is looked for once, at registration. A build without one —
- * `--without-whisper`, or a source run that never ran
+ * Voice input is off until the person turns it on, and the model is not in
+ * the app (`voiceSetup.ts`): until it is on and its model is here, `status`
+ * says why not and what a press does (`VoiceStatus.step`), `setUp` is that
+ * press, and `warm` and `begin` refuse with the same sentence — nothing is
+ * started. The status is pushed to the pages as it changes (a download's
+ * progress), and Settings is answered on `VOICE_SETUP_CHANNELS`.
+ *
+ * The recogniser's programs are looked for once, at registration. A build
+ * without them — `--without-whisper`, or a source run that never ran
  * `scripts/build_whisper.py` — answers `status` with the sentence that says
  * so, and the composer shows its microphone as unavailable with that
  * sentence rather than offering a button that fails when pressed.
@@ -33,16 +40,24 @@ import type {
 
 import {
 	DEFAULT_VOICE_LANGUAGE,
+	isVoiceModelId,
 	VOICE_CHANNELS,
+	VOICE_SETUP_CHANNELS,
 	VOICE_LANGUAGES,
 	VOICE_MAX_SECONDS,
 	VOICE_SAMPLE_RATE,
 	type VoiceLanguage,
 	type VoiceResult,
 	type VoiceStatus,
+	type VoiceSetupWire,
 } from "../../ipc/voice.js";
 import { DictationStream, type Transcriber } from "./dictationStream.js";
-import { Whisper, type WhisperInstall } from "./whisper.js";
+import type { VoiceSetup } from "./voiceSetup.js";
+import {
+	Whisper,
+	type WhisperInstall,
+	type WhisperPrograms,
+} from "./whisper.js";
 import { WhisperServer } from "./whisperServer.js";
 
 export interface MicrophoneAccess {
@@ -56,10 +71,24 @@ export const MICROPHONE_REFUSED =
 export const MICROPHONE_SETTINGS_URL =
 	"x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
 
-export const NO_RECOGNISER =
-	"This build of DevHub has no speech recogniser: devhub-whisper and its model were not found in dist/whisper. Run python3 scripts/build_whisper.py (or set DEVHUB_WHISPER_DIR), then restart DevHub.";
+export { NO_RECOGNISER } from "../../ipc/voice.js";
 
-type WarmTranscriber = Transcriber & { warm?(): Promise<void> };
+type WarmTranscriber = Transcriber & { warm?(): Promise<void>; stop?(): void };
+
+/** What the IPC asks of voice input's setup (`VoiceSetup`). */
+export type VoiceGate = Pick<
+	VoiceSetup,
+	| "status"
+	| "wire"
+	| "modelPath"
+	| "subscribe"
+	| "setUp"
+	| "enable"
+	| "disable"
+	| "deleteModel"
+	| "retry"
+	| "cancelDownload"
+>;
 
 /** The recogniser for an install: the server when it has one, else the CLI. */
 export function transcriberFor(install: WhisperInstall): WarmTranscriber {
@@ -84,18 +113,70 @@ export function registerVoiceIpc(options: {
 	 * to the page that began it.
 	 */
 	readonly pages: () => readonly (WebContents | undefined)[];
-	readonly install: WhisperInstall | undefined;
+	/** The Settings window's page, when it is open: it manages voice input. */
+	readonly settingsPage?: () => WebContents | undefined;
+	readonly programs: WhisperPrograms | undefined;
+	readonly setup: VoiceGate;
 	readonly microphone: MicrophoneAccess;
-	/** For tests: the recogniser to use instead of the install's. */
+	/** For tests: the recogniser to use instead of the programs', once a model is here. */
 	readonly transcriber?: WarmTranscriber;
 }): void {
-	const transcriber =
-		options.transcriber ??
-		(options.install === undefined
-			? undefined
-			: transcriberFor(options.install));
+	const { setup } = options;
+	/** The recogniser for the model in use, made when it is first wanted. */
+	let current:
+		| { readonly model: string; readonly transcriber: WarmTranscriber }
+		| undefined;
+	const transcriber = (): WarmTranscriber | undefined => {
+		const model = setup.modelPath();
+		if (model === undefined || options.programs === undefined) {
+			if (model !== undefined && options.transcriber !== undefined)
+				return options.transcriber;
+			return undefined;
+		}
+		if (current?.model !== model) {
+			current?.transcriber.stop?.();
+			current = {
+				model,
+				transcriber:
+					options.transcriber ??
+					transcriberFor({
+						binary: options.programs.binary,
+						model,
+						...(options.programs.server === undefined
+							? {}
+							: { server: options.programs.server }),
+					}),
+			};
+		}
+		return current.transcriber;
+	};
+	const refusal = (): string => {
+		const status = setup.status();
+		return status.available ? "" : status.reason;
+	};
 	const sessions = new Map<number, DictationStream>();
 	let nextSession = 1;
+
+	// Told as it changes: the pages' microphones, and Settings' section.
+	let lastStatus = "";
+	setup.subscribe(() => {
+		// A model turned off or switched gives its GPU memory back now.
+		if (current !== undefined && current.model !== setup.modelPath()) {
+			current.transcriber.stop?.();
+			current = undefined;
+		}
+		const status = setup.status();
+		const said = JSON.stringify(status);
+		if (said !== lastStatus) {
+			lastStatus = said;
+			for (const page of options.pages())
+				if (page !== undefined && !page.isDestroyed())
+					page.send(VOICE_CHANNELS.statusChanged, status);
+		}
+		const settings = options.settingsPage?.();
+		if (settings !== undefined && !settings.isDestroyed())
+			settings.send(VOICE_SETUP_CHANNELS.changed, setup.wire());
+	});
 
 	const dictates = (sender: WebContents) => options.pages().includes(sender);
 	const handle = <T>(
@@ -115,14 +196,40 @@ export function registerVoiceIpc(options: {
 			if (!dictates(event.sender)) return;
 			work(...args);
 		});
+	const manage = <T>(
+		channel: string,
+		work: (...args: unknown[]) => Promise<T> | T,
+	) =>
+		options.ipcMain.handle(
+			channel,
+			async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
+				const settings = options.settingsPage?.();
+				if (settings === undefined || event.sender !== settings)
+					throw new Error("only the Settings window manages voice input");
+				return work(...args);
+			},
+		);
 
-	handle(
-		VOICE_CHANNELS.status,
-		(): VoiceStatus =>
-			transcriber === undefined
-				? { available: false, reason: NO_RECOGNISER }
-				: { available: true },
+	handle(VOICE_CHANNELS.status, (): VoiceStatus => setup.status());
+
+	handle(VOICE_CHANNELS.setUp, () => setup.setUp());
+
+	manage(VOICE_SETUP_CHANNELS.get, (): VoiceSetupWire => setup.wire());
+	manage(VOICE_SETUP_CHANNELS.enable, (model: unknown) =>
+		isVoiceModelId(model)
+			? setup.enable(model)
+			: { ok: false as const, reason: "その音声認識モデルはありません。" },
 	);
+	manage(VOICE_SETUP_CHANNELS.disable, (deleteModels: unknown) =>
+		setup.disable(deleteModels === true),
+	);
+	manage(VOICE_SETUP_CHANNELS.deleteModel, (model: unknown) =>
+		isVoiceModelId(model)
+			? setup.deleteModel(model)
+			: { ok: false as const, reason: "その音声認識モデルはありません。" },
+	);
+	manage(VOICE_SETUP_CHANNELS.retry, () => setup.retry());
+	manage(VOICE_SETUP_CHANNELS.cancelDownload, () => setup.cancelDownload());
 
 	handle(VOICE_CHANNELS.microphone, async (): Promise<VoiceResult<boolean>> => {
 		try {
@@ -140,9 +247,10 @@ export function registerVoiceIpc(options: {
 	// Answered when the recogniser can take audio, so the page can say it is
 	// still starting; a failure to start is the answer too.
 	handle(VOICE_CHANNELS.warm, async (): Promise<VoiceResult<true>> => {
-		if (transcriber === undefined) return { ok: false, reason: NO_RECOGNISER };
+		const recogniser = transcriber();
+		if (recogniser === undefined) return { ok: false, reason: refusal() };
 		try {
-			await transcriber.warm?.();
+			await recogniser.warm?.();
 			return { ok: true, value: true };
 		} catch (error: unknown) {
 			return {
@@ -155,16 +263,16 @@ export function registerVoiceIpc(options: {
 	handle(
 		VOICE_CHANNELS.begin,
 		(page: WebContents, language: unknown): VoiceResult<number> => {
-			if (transcriber === undefined)
-				return { ok: false, reason: NO_RECOGNISER };
+			const recogniser = transcriber();
+			if (recogniser === undefined) return { ok: false, reason: refusal() };
 			const spoken: VoiceLanguage = VOICE_LANGUAGES.includes(
 				language as VoiceLanguage,
 			)
 				? (language as VoiceLanguage)
 				: DEFAULT_VOICE_LANGUAGE;
 			const id = nextSession++;
-			void transcriber.warm?.().catch(() => undefined);
-			const stream = new DictationStream(transcriber, spoken, (update) => {
+			void recogniser.warm?.().catch(() => undefined);
+			const stream = new DictationStream(recogniser, spoken, (update) => {
 				if (sessions.has(id) && !page.isDestroyed())
 					page.send(VOICE_CHANNELS.update, id, update);
 			});

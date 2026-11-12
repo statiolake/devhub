@@ -26,7 +26,12 @@ import {
   type KeyboardEvent,
   type RefObject,
 } from "react";
-import type { VoiceApi, VoiceLanguage } from "../../ipc/voice";
+import {
+  downloadPercent,
+  megabytes,
+  type VoiceApi,
+  type VoiceLanguage,
+} from "../../ipc/voice";
 import {
   DICTATION_KEY,
   hasDictated,
@@ -145,12 +150,38 @@ export function useFieldDictation({
   return { dictation, language, cycleLanguage, onKey, onFieldFocus };
 }
 
-/** The words still being recognised, while there are any. */
+/**
+ * The words still being recognised, while there are any — or, after this
+ * composer's press turned voice input on, how its model's download is going,
+ * and a retry when it failed.
+ */
 export function DictationTentative({
   dictation,
 }: {
   readonly dictation: Dictation;
 }) {
+  if (dictation.phase === "setup" && dictation.settingUp) {
+    const step = dictation.step;
+    const failed = step?.kind === "retry";
+    return (
+      <div
+        className="conversation-dictation-setup"
+        role="status"
+        data-failed={failed || undefined}
+      >
+        <span>{setupLine(dictation)}</span>
+        {failed ? (
+          <button
+            type="button"
+            className="conversation-dictation-retry"
+            onClick={dictation.retry}
+          >
+            再試行
+          </button>
+        ) : null}
+      </div>
+    );
+  }
   if (
     dictation.tentative === "" ||
     (dictation.phase !== "recording" && dictation.phase !== "transcribing")
@@ -165,6 +196,22 @@ export function DictationTentative({
       {dictation.tentative}
     </div>
   );
+}
+
+/** What the setup line says. */
+function setupLine(dictation: Dictation): string {
+  const step = dictation.step;
+  if (step?.kind === "downloading") {
+    const percent = downloadPercent(step.received, step.total);
+    return `音声認識モデルをダウンロードしています…${
+      percent === undefined
+        ? ""
+        : ` ${String(percent)}%（${megabytes(step.received)} / ${megabytes(step.total!)}）`
+    }`;
+  }
+  if (step?.kind === "verifying")
+    return "ダウンロードした音声認識モデルを確認しています…";
+  return dictation.reason ?? "";
 }
 
 /** `localStorage`, where the page has one it may use. */
@@ -212,9 +259,13 @@ export function DictationControls({
   const { phase, waitingFor } = dictation;
   const recording = phase === "recording";
   const unavailable = phase === "unavailable";
+  const downloading =
+    phase === "setup" &&
+    (dictation.step?.kind === "downloading" ||
+      dictation.step?.kind === "verifying");
   return (
     <>
-      {phase !== "unavailable" ? (
+      {phase !== "unavailable" && phase !== "setup" ? (
         <button
           type="button"
           className="conversation-dictation-language"
@@ -243,7 +294,7 @@ export function DictationControls({
         data-waiting={waitingFor}
         aria-busy={waitingFor !== undefined || undefined}
         title={
-          unavailable
+          unavailable || phase === "setup"
             ? dictation.reason
             : waitingFor !== undefined
               ? WAITING_TITLES[waitingFor]
@@ -254,7 +305,7 @@ export function DictationControls({
         onPointerEnter={dictation.warm}
         onFocus={dictation.warm}
       >
-        {waitingFor !== undefined ? (
+        {waitingFor !== undefined || downloading ? (
           <span className="conversation-dictation-spinner" aria-hidden="true" />
         ) : (
           <MicIcon />

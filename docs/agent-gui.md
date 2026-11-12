@@ -2039,6 +2039,35 @@ turned off, a resume already shown is not written when it comes due.
 
 ## Voice input
 
+**Off by default.** Voice input needs a speech model of about half a
+gigabyte, which is not in the app. Turn it on in Settings → General →
+音声入力, or just press the microphone (or ⌘⇧M): either way DevHub first asks,
+in a sheet that states the model (`Whisper small`, `ggml-small.bin`), its size
+(about 466 MiB), where it is downloaded from (`huggingface.co`), where it is
+kept (`<userData>/devhub/whisper/`, i.e.
+`~/Library/Application Support/DevHub/editor/devhub/whisper/`), and that from
+then on it runs on this Mac and no audio leaves it. **ダウンロード** turns voice
+input on (`[voice] enabled = true` in `settings.toml`) and downloads the
+model; **キャンセル** — the first row, so Return and Escape take it — leaves it
+off and downloads nothing. While it downloads, the composer whose
+microphone was pressed shows the progress under the field, and Settings
+shows it with 中止; the microphone is ready the moment the model is checked.
+A failed download says why, with 再試行, which resumes from what arrived. A
+model already on this Mac (turned off and on again) is not asked about.
+
+This is the one thing DevHub downloads while it runs, and only on that yes:
+the URL and the model's hash are pinned in `product.json`, the file is
+hashed before it is used and deleted if it does not match
+(`docs/bundled-binaries.md`, "The one exception").
+
+Settings → 音声入力 → モデル chooses between `small` (the default) and
+`large-v3-turbo` (q5_0, 547 MiB: more accurate, much heavier); choosing one
+that is not on the Mac asks and downloads it the same way. Turning voice
+input off asks whether to keep the model or delete it to free the space;
+Settings also lists the downloaded models, each with 削除…, which asks first.
+While voice input is off or its model is missing, main refuses to start the
+recogniser or a dictation (`main/voice/voiceSetup.ts`, `voiceIpc.ts`).
+
 The microphone beside Send dictates into the composer. Click it, or press
 **⌘⇧M** in the field, and speak; click or press it again to stop. What you
 say is transcribed **on this Mac while you speak**: the words of the phrase
@@ -2069,10 +2098,11 @@ Japanese it gets none.
 
 **Nothing leaves the Mac.** The recogniser is
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (pinned to v1.9.4,
-built with Metal, no network code compiled in) with the
-`small` model (f16, `ggml-small.bin`), both inside the app at
-`DevHub.app/Contents/Resources/whisper/`. Nothing is downloaded while DevHub
-runs. The recogniser is loaded when you point at the microphone or start
+built with Metal, no network code compiled in), inside the app at
+`DevHub.app/Contents/Resources/whisper/`, reading the `small` model (f16,
+`ggml-small.bin`) downloaded when voice input was turned on. The model is
+the only thing ever downloaded for it, once; dictating sends nothing
+anywhere. The recogniser is loaded when you point at the microphone or start
 dictating — and, once you have dictated on this Mac, whenever the composer
 gets the keyboard — (a second or two, once) and stays loaded until dictation has been
 unused for ten minutes. While loaded, the words of what you are saying show,
@@ -2084,28 +2114,30 @@ The first time, macOS asks whether DevHub may use the microphone. If you said
 no, the button says so when pressed; allow it in System Settings → Privacy &
 Security → Microphone.
 
-**What it costs.** The model is 466 MiB, which makes the app about 0.49 GB
-bigger. It was `large-v3-turbo` (q5_0, 547 MiB) for its Japanese, which was
+**What it costs.** The model is 466 MiB on disk once downloaded, and nothing
+in the app: it used to be bundled, which made the app about 0.49 GB bigger
+for everyone, dictating or not. The programs are about 9 MB. It was `large-v3-turbo` (q5_0, 547 MiB) for its Japanese, which was
 too heavy to run as often as streaming does; `small` is several times
 cheaper per pass, and its Japanese is decent for dictation — the same model
 the author's podcast-maker transcribes with. f16 rather than a quantised
 `small` because it is the one whisper.cpp publishes a hash for, and a
 quantised model this size is not clearly faster on Metal.
-`scripts/build_whisper.py --model ggml-large-v3-turbo-q5_0.bin` (or
-`DEVHUB_WHISPER_MODEL=ggml-large-v3-turbo-q5_0.bin` for packaging) builds
-with turbo instead; DevHub loads whichever model the directory's
-`whisper.json` names.
+Settings offers turbo for a person who wants its accuracy.
 
 **How it is built.** `scripts/build_whisper.py` clones whisper.cpp at the
 pinned tag (refusing it if the tag no longer names the pinned commit),
-builds `whisper-cli` and `whisper-server` statically with the Metal shaders embedded, downloads
-the model and checks it against the SHA-1 whisper.cpp publishes, and caches
-both under `~/.cache/devhub/whisper/` (`DEVHUB_WHISPER_CACHE`). `pnpm build`
-runs it when `dist/whisper` is missing or stale; it needs `cmake`
-(`brew install cmake`). `--without-whisper` packages without it, and the
-composer then shows the microphone as unavailable with the reason. In a
-source run DevHub looks in `dist/whisper` (or `DEVHUB_WHISPER_DIR`), so run
-`scripts/build_whisper.py` once to dictate there. A `dist/whisper` built
+builds `whisper-cli` and `whisper-server` statically with the Metal shaders
+embedded, and caches them under `~/.cache/devhub/whisper/`
+(`DEVHUB_WHISPER_CACHE`). It installs no model by default. `pnpm build` runs
+it when `dist/whisper` is missing or stale; it needs `cmake`
+(`brew install cmake`). Packaging copies the programs and never a model.
+`--without-whisper` packages without them, and the composer then shows the
+microphone as unavailable with the reason. In a source run DevHub looks for
+the programs in `dist/whisper` (or `DEVHUB_WHISPER_DIR`), so run
+`scripts/build_whisper.py` once to dictate there; voice input then downloads
+its model like the app does, or, for local work, `scripts/build_whisper.py
+--model ggml-small.bin` (or `DEVHUB_WHISPER_MODEL`) puts a verified model
+beside the programs, which is used instead and downloads nothing. A `dist/whisper` built
 before streaming dictation has no `devhub-whisper-server`; dictation still
 works with it, but transcribes only when you stop — run
 `scripts/build_whisper.py` again to get the live words.

@@ -189,7 +189,11 @@ export class PickerView {
 		request: Extract<
 			ModalRequest,
 			{
-				kind: "command-palette" | "recently-closed" | "theme-preview";
+				kind:
+					| "command-palette"
+					| "recently-closed"
+					| "theme-preview"
+					| "voice-consent";
 			}
 		>,
 	): Promise<number> {

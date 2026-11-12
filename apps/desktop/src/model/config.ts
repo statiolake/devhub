@@ -90,6 +90,11 @@ import {
 } from "./settingsMigration.js";
 import { isHexColor } from "./themes/color.js";
 import {
+  DEFAULT_VOICE_MODEL,
+  isVoiceModelId,
+  type VoiceModelId,
+} from "../ipc/voice.js";
+import {
   CUSTOM_THEME_KEYS,
   DEFAULT_THEME_SELECTION,
   completeTheme,
@@ -557,6 +562,16 @@ export interface TerminalConfig {
   readonly macOptionIsMeta: MacOptionIsMeta;
 }
 
+/**
+ * `[voice]`: dictation into the composer. Off by default, and the model it
+ * reads is downloaded only when it is turned on and the person agrees
+ * (`main/voice/voiceSetup.ts`). `model` names one of `VOICE_MODEL_IDS`.
+ */
+export interface VoiceConfig {
+  readonly enabled: boolean;
+  readonly model: VoiceModelId;
+}
+
 export interface ProjectsConfig {
   /**
    * Where new projects go: an absolute or `~/` path, taken as written (no date
@@ -575,6 +590,8 @@ export interface Config {
   readonly themes: readonly CustomThemeConfig[];
   /** `[terminal]`: how DevHub's own terminals read the keyboard. */
   readonly terminal: TerminalConfig;
+  /** `[voice]`: whether voice input is on, and with which model. */
+  readonly voice: VoiceConfig;
   /**
    * What arms a chord, and what the second stroke reaches.
    *
@@ -798,6 +815,7 @@ export function defaultConfig(): Config {
     terminal: {
       macOptionIsMeta: DEFAULT_MAC_OPTION_IS_META,
     },
+    voice: { enabled: false, model: DEFAULT_VOICE_MODEL },
     keybindings: defaultKeybindings(),
     workspaceSources: defaultWorkspaceSources(),
     scratch: { daily: DEFAULT_SCRATCH_DAILY },
@@ -834,6 +852,7 @@ export type ValidationCode =
   | "invalid_appearance"
   | "invalid_theme"
   | "invalid_mac_option_is_meta"
+  | "invalid_voice_model"
   | "invalid_keybinding"
   | "unknown_command"
   | "invalid_font_family"
@@ -1542,6 +1561,9 @@ export function validateConfig(config: Config): void {
   if (!isMacOptionIsMeta(config.terminal.macOptionIsMeta)) {
     fail("invalid_mac_option_is_meta", "terminal.mac_option_is_meta");
   }
+  if (!isVoiceModelId(config.voice.model)) {
+    fail("invalid_voice_model", "voice.model");
+  }
   validateKeybindings(config.keybindings);
   validateWorkspaceSources(config.workspaceSources);
   if (scratchDailyProblem(config.scratch.daily)) {
@@ -1581,6 +1603,7 @@ const TOP_LEVEL_KEYS = [
   "appearance",
   "themes",
   "terminal",
+  "voice",
   "keybindings",
   "workspace_sources",
   "scratch",
@@ -2184,6 +2207,16 @@ export function interpretConfig(document: unknown): Config {
     );
   }
 
+  const voiceTable = requireTable(table["voice"] ?? {}, "voice");
+  checkKeys(voiceTable, ["enabled", "model"], "voice");
+  const voiceModel = optionalString(
+    voiceTable,
+    "model",
+    "voice",
+    DEFAULT_VOICE_MODEL,
+  );
+  if (!isVoiceModelId(voiceModel)) fail("invalid_voice_model", "voice.model");
+
   const keybindingsTable = requireTable(
     table["keybindings"] ?? {},
     "keybindings",
@@ -2311,6 +2344,10 @@ export function interpretConfig(document: unknown): Config {
     },
     themes: customThemesFromValue(table["themes"]),
     terminal: { macOptionIsMeta },
+    voice: {
+      enabled: optionalBoolean(voiceTable, "enabled", "voice", false),
+      model: voiceModel as VoiceModelId,
+    },
     keybindings: {
       prefix: optionalString(
         keybindingsTable,
@@ -2523,6 +2560,10 @@ export function configDocument(config: Config): Record<string, TomlValue> {
         }),
     terminal: {
       mac_option_is_meta: config.terminal.macOptionIsMeta,
+    },
+    voice: {
+      enabled: config.voice.enabled,
+      model: config.voice.model,
     },
     keybindings: {
       prefix: config.keybindings.prefix,

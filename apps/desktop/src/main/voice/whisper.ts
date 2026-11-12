@@ -1,6 +1,7 @@
 /**
  * The bundled speech recogniser: whisper.cpp's `whisper-cli`, as
- * `devhub-whisper`, with the model beside it (`scripts/build_whisper.py`).
+ * `devhub-whisper` (`scripts/build_whisper.py`), reading the model voice
+ * input downloaded when it was turned on (`voiceSetup.ts`).
  *
  * This is the fallback. Dictation streams through `devhub-whisper-server`
  * (`whisperServer.ts`), which keeps the model loaded; a recogniser directory
@@ -24,7 +25,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -39,21 +40,14 @@ import type { Transcriber } from "./dictationStream.js";
 
 export const WHISPER_BINARY = "devhub-whisper";
 export const WHISPER_SERVER_BINARY = "devhub-whisper-server";
-/** The model `scripts/build_whisper.py` installs by default. */
-export const WHISPER_MODEL = "ggml-small.bin";
-/** Every model it can install, the default first: what a directory may hold. */
-export const WHISPER_MODELS: readonly string[] = [
-	WHISPER_MODEL,
-	"ggml-large-v3-turbo-q5_0.bin",
-];
-const STATEMENT = "whisper.json";
 
 /**
- * Where a recogniser may be, most specific first: what the environment names
- * (`DEVHUB_WHISPER_DIR`, for trying another build), the packaged app's
- * `Contents/Resources/whisper` (the app root is `Resources/app`), and in a
- * source run the `dist/whisper` that `scripts/build_whisper.py` writes by
- * default (the app root is `apps/desktop`).
+ * Where the recogniser's programs may be, most specific first: what the
+ * environment names (`DEVHUB_WHISPER_DIR`, for trying another build), the
+ * packaged app's `Contents/Resources/whisper` (the app root is
+ * `Resources/app`), and in a source run the `dist/whisper` that
+ * `scripts/build_whisper.py` writes by default (the app root is
+ * `apps/desktop`).
  */
 export function whisperCandidates(
 	appRoot: string,
@@ -67,61 +61,53 @@ export function whisperCandidates(
 	];
 }
 
-export interface WhisperInstall {
+/** The recogniser's programs: what the app carries. The model is not one. */
+export interface WhisperPrograms {
+	/** The directory they were found in. */
+	readonly directory: string;
 	readonly binary: string;
-	readonly model: string;
 	/** `devhub-whisper-server`, when the directory has it. */
 	readonly server?: string;
 }
 
-/**
- * The model file a directory's statement (`whisper.json`) names, when it
- * names a plain file name; `undefined` for no statement or a strange one.
- */
-export function statedModel(
-	directory: string,
-	read: (path: string) => string = (path) => readFileSync(path, "utf8"),
-): string | undefined {
-	try {
-		const said: unknown = JSON.parse(read(join(directory, STATEMENT)));
-		const model =
-			typeof said === "object" && said !== null && "model" in said
-				? said.model
-				: undefined;
-		return typeof model === "string" &&
-			model.endsWith(".bin") &&
-			basename(model) === model
-			? model
-			: undefined;
-	} catch {
-		return undefined;
-	}
+/** The programs and the model one dictation runs with. */
+export interface WhisperInstall {
+	readonly binary: string;
+	readonly model: string;
+	readonly server?: string;
 }
 
-/**
- * The first candidate that holds both the program and a model: the one its
- * statement names (`build_whisper.py --model` picks it), else any it could
- * have installed, the default first — so a directory built before the
- * default changed keeps working until it is built again.
- */
+/** The first candidate that holds the program. */
 export function locateWhisper(
 	candidates: readonly string[],
 	exists: (path: string) => boolean = existsSync,
-	stated: (directory: string) => string | undefined = statedModel,
-): WhisperInstall | undefined {
+): WhisperPrograms | undefined {
 	for (const directory of candidates) {
 		const binary = join(directory, WHISPER_BINARY);
 		if (!exists(binary)) continue;
-		const named = stated(directory);
-		const model = [...(named ? [named] : []), ...WHISPER_MODELS]
-			.map((name) => join(directory, name))
-			.find(exists);
-		if (model !== undefined) {
-			const server = join(directory, WHISPER_SERVER_BINARY);
-			return exists(server) ? { binary, model, server } : { binary, model };
-		}
+		const server = join(directory, WHISPER_SERVER_BINARY);
+		return exists(server)
+			? { directory, binary, server }
+			: { directory, binary };
 	}
 	return undefined;
+}
+
+/**
+ * The development override for a model: `file` beside the programs, as
+ * `scripts/build_whisper.py --model` puts it in `dist/whisper` (or in the
+ * directory `DEVHUB_WHISPER_DIR` names). The packaged app carries no model
+ * (`scripts/package-nightly.py` leaves it out), so there this finds nothing
+ * and the model is the one downloaded.
+ */
+export function overrideModel(
+	programs: WhisperPrograms | undefined,
+	file: string,
+	exists: (path: string) => boolean = existsSync,
+): string | undefined {
+	if (programs === undefined || basename(file) !== file) return undefined;
+	const path = join(programs.directory, file);
+	return exists(path) ? path : undefined;
 }
 
 /**

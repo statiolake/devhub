@@ -103,17 +103,20 @@ jobs:
       - name: Set up Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
 
-      # The speech recogniser the composer dictates with: whisper.cpp built
-      # with Metal and its model, both made by scripts/build_whisper.py and
-      # cached where it caches them on a developer's Mac. A miss is a few
-      # minutes of compiling and a 547 MiB download; the key is the script,
-      # which pins both by hash.
+      # The speech recogniser's programs the composer dictates with:
+      # whisper.cpp built with Metal by scripts/build_whisper.py, cached where
+      # it caches them on a developer's Mac. A miss is a few minutes of
+      # compiling; the key is the script, which pins the source by commit.
+      # Only the programs: the model is not bundled (the app downloads it
+      # when voice input is turned on), so nothing here downloads one, and
+      # the `bin` path and its own key prefix keep an older cache's model
+      # from being restored and saved again.
       - name: Restore the speech recogniser cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/devhub/whisper
-          key: whisper-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_whisper.py') }}
-          restore-keys: whisper-${{ runner.os }}-${{ runner.arch }}-
+          path: ~/.cache/devhub/whisper/bin
+          key: whisper-bin-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_whisper.py') }}
+          restore-keys: whisper-bin-${{ runner.os }}-${{ runner.arch }}-
 
       # The same entry point a developer runs on their own Mac, so there is one
       # build to keep working rather than a local one and a CI one. It repeats

@@ -99,6 +99,8 @@ import {
   type AgentActionTrigger,
 } from "../model/agentActions";
 import { Collection } from "./Collection";
+import { VoiceGroup } from "./VoiceGroup";
+import type { VoiceSetupApi } from "../ipc/voice";
 import {
   Group,
   NumberField,
@@ -156,7 +158,10 @@ export function GeneralSection({
   runtime,
   onReset,
   themes,
+  voice,
 }: {
+  /** Voice input's setup; absent in a harness without it. */
+  readonly voice?: VoiceSetupApi;
   /** The colour themes and the library; absent in a harness without them. */
   readonly themes?: ThemesClient;
   /** Absent while there is nothing to reset against yet. */
@@ -225,6 +230,10 @@ export function GeneralSection({
           />
         </Row>
       </Group>
+
+      {voice ? (
+        <VoiceGroup client={voice} config={config} update={update} />
+      ) : null}
 
       <Group
         heading="Terminals"

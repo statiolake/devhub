@@ -3992,6 +3992,30 @@ button.conversation-background-line:hover {
   overflow-wrap: anywhere;
 }
 
+/* After a press turned voice input on: how the model's download is going,
+   and a retry when it failed. */
+.conversation-dictation-setup {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+  color: var(--secondary);
+  font-size: 0.9em;
+}
+
+.conversation-dictation-setup[data-failed] {
+  color: var(--danger);
+}
+
+.conversation-dictation-retry {
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+}
+
 .conversation-dictation-language {
   padding: 0 var(--space-1);
   border: 0;

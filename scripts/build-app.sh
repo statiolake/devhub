@@ -19,12 +19,12 @@
 #   * the pnpm workspace's node_modules, npm's Electron among them
 #                                            (`pnpm install`)
 #   * DevHub's build                         (`pnpm run build:packages`)
-#   * the speech recogniser the GUI Agent composer dictates with, in
-#     dist/whisper — package-nightly.py runs scripts/build_whisper.py when it
-#     is missing or stale: needs cmake, compiles whisper.cpp with Metal (a few
-#     minutes) and downloads its model once, both cached under
-#     ~/.cache/devhub/whisper. Without cmake it stops, naming it.
-#     `--without-whisper` packages without it.
+#   * the speech recogniser's programs the GUI Agent composer dictates with,
+#     in dist/whisper — package-nightly.py runs scripts/build_whisper.py when
+#     it is missing or stale: needs cmake, compiles whisper.cpp with Metal (a
+#     few minutes, once), cached under ~/.cache/devhub/whisper. Without cmake
+#     it stops, naming it. No model is bundled: the app downloads it when the
+#     person turns voice input on. `--without-whisper` packages without it.
 #
 # Refused with a message:
 #   * anything but macOS on Apple Silicon — the bundle runs nowhere else

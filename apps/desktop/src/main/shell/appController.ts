@@ -297,7 +297,13 @@ import {
 	MICROPHONE_SETTINGS_URL,
 	registerVoiceIpc,
 } from "../voice/voiceIpc.js";
-import { locateWhisper, whisperCandidates } from "../voice/whisper.js";
+import {
+	locateWhisper,
+	overrideModel,
+	whisperCandidates,
+} from "../voice/whisper.js";
+import { VoiceSetup } from "../voice/voiceSetup.js";
+import { voiceModelDirectory, voiceModelPins } from "../voice/voiceModels.js";
 import { AgentDrafts } from "../agent/conversation/drafts.js";
 import { AgentRecords } from "../agent/conversation/agentRecords.js";
 import { SessionMetaFile } from "../agent/conversation/sessionMetaFile.js";
@@ -789,6 +795,8 @@ export class AppController {
 	});
 	/** This profile's user-data directory, from `startRuntimes`. */
 	private userDataPath: string | undefined;
+	/** Voice input: on or off, and its model (`voice/voiceSetup.ts`). */
+	private voiceSetup: VoiceSetup | undefined;
 	/** The launcher installation, asked for once per machine. */
 	private readonly launchers = new Map<RuntimeId, Promise<TerminalLauncher>>();
 	/** What became of each of those, for `devhub --metrics`. */
@@ -1327,14 +1335,52 @@ export class AppController {
 		});
 		const agentWiring = this.agentWiring;
 		// Dictation into the GUI Agent composer: the bundled recogniser, if
-		// this build has one, and macOS's microphone permission.
+		// this build has one, the model voice input downloads once it is
+		// turned on, and macOS's microphone permission.
+		const programs = locateWhisper(whisperCandidates(APP_ROOT, process.env));
+		const modelDirectory = voiceModelDirectory(userDataPath);
+		const home = homedir();
+		this.voiceSetup = new VoiceSetup({
+			pins: voiceModelPins(devhubProduct().whisperModels),
+			directory: modelDirectory,
+			displayDirectory: modelDirectory.startsWith(`${home}/`)
+				? `~${modelDirectory.slice(home.length)}`
+				: modelDirectory,
+			recogniser: programs !== undefined,
+			override: (pin) => overrideModel(programs, pin.file),
+			settings: {
+				read: () => this.config.voice,
+				write: async (voice) => {
+					const loaded = this.settings.editing();
+					await this.settings.save(loaded.revision, {
+						...loaded.config,
+						voice,
+					});
+					// Written here, not by the Settings window: it is told.
+					publishSettingsSnapshot();
+				},
+			},
+			ask: async (consent) =>
+				(await shellWindow().picker.choose({
+					kind: "voice-consent",
+					consent,
+				})) === 0,
+			// Chromium's network stack: the Mac's proxy settings and certificates.
+			fetch: (url, init) =>
+				electron.net.fetch(url, {
+					headers: init.headers,
+					signal: init.signal,
+				}),
+		});
 		registerVoiceIpc({
 			ipcMain: electron.ipcMain,
 			pages: () => [
 				shellWindow().conversations.contents(),
 				shellWindow().agents.contents(),
 			],
-			install: locateWhisper(whisperCandidates(APP_ROOT, process.env)),
+			settingsPage: settingsWindowContents,
+			programs,
+			setup: this.voiceSetup,
 			microphone: {
 				status: () =>
 					electron.systemPreferences.getMediaAccessStatus("microphone"),
@@ -9107,6 +9153,7 @@ export class AppController {
 		const unsubscribe = this.settings.subscribe({
 			accepted: (config, from) => {
 				this.settingsAccepted(config);
+				this.voiceSetup?.settingsChanged();
 				// The Settings window answers its own write with a snapshot.
 				if (from === "file") publishSettingsSnapshot();
 			},
