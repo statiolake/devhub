@@ -239,17 +239,16 @@ Then tell the person which agent took it (id, workspace, branch).
 ## Work with no Issue yet (e.g. investigating logs to write one)
 
     devhub --tell workspace open ~/src/REPO --worktree investigate-api-500s
-    devhub --tell agent new --workspace ~/src/REPO_investigate-api-500s --profile claude --gui --managed --meta issue=pending --name "API 500s" --prompt "..."
+    devhub --tell task new --title "API 500 エラーの調査" --status in_progress     # prints its id, 12 here
+    devhub --tell agent new --workspace ~/src/REPO_investigate-api-500s --profile claude --gui --managed --task 12 --name "API 500s" --prompt "..."
 
 - \`--worktree\` makes the branch (from origin's default) and its worktree,
   \`<repo>_<branch>\`, when they are not there yet. Name it for the work,
   with no Issue number in it: \`investigate-<a-few-words>\`.
-- \`--meta issue=pending\` says its Issue is still to be filed, so the
-  orchestrator does not take it for an agent with no item.
-- Once the Issue is filed (\`gh issue create\`), link it:
-  \`agent meta A set issue https://github.com/OWNER/REPO/issues/N\`. The
-  branch keeps its name; rename it yourself (\`git branch -m\`) before you
-  push, if the team names branches by Issue.
+- A task with no link is work with no Issue yet. Once the Issue is filed
+  (\`gh issue create\`), link it: \`task link 12 https://github.com/OWNER/REPO/issues/N\`.
+  The branch keeps its name; rename it yourself (\`git branch -m\`) before
+  you push, if the team names branches by Issue.
 
 ## Monitor other agents
 
@@ -330,33 +329,34 @@ happens between two calls is missed - always read before waiting again.
   in a new GUI agent, its name and meta given back; \`session meta ID [set K V
   | unset K]\` tags a stopped one. \`sessions --folder PATH\` / \`--all\` look beyond
   your workspace; \`agent resume\` opens a closed folder unfocused.
-- The orchestrator keeps one short note per piece of work (\`issue=OWNER/REPO#N\`,
-  \`pr=…\`, \`agent=ID\`): what it means to do next. A prompt that resumes or
-  starts you on that work ends with it; \`memo list\` and \`status SUBJECT\`
-  show it too. It is the orchestrator's (\`memo set SUBJECT TEXT\`); say where
-  you stopped in your own reply.
+- The orchestrator keeps its work as tasks (\`task list\`, \`task show T\`),
+  each with one short memo: what it means to do next. A prompt that resumes
+  or starts you on a task ends with its memo; \`status task=T\` shows it too.
+  It is the orchestrator's (\`task edit T --memo TEXT\`); say where you
+  stopped in your own reply.
 - **Tag the agents you start**: \`--meta parent=YOUR_ID --meta role=reviewer\`
   on \`agent new\` and \`issue assign\`, then find them again with
   \`agents --meta parent=YOUR_ID\`. \`agent meta A [set KEY VALUE | unset
   KEY]\` reads or changes an agent's pairs; they show in its row's tooltip.
   Your own id is in \`DEVHUB_ORIGIN\` (its last field).
 
-## The Orchestrator row: escalations for the person
+## The Orchestrator row: tasks, and questions for the person
 
-If you are the orchestrator (the agent on DevHub's Orchestrator row), the
-person reads a board of escalations and answers them in DevHub - only there;
-no command answers one. Raise one when work cannot go on without the
-person's decision or permission (finish read-only investigation first):
+If you are the orchestrator (the agent on DevHub's Orchestrator row), every
+piece of work is a task (\`task new\`, bind its agents, \`task done\` when it
+is over), and the person reads a board of tasks. Ask them only what only
+they can decide, one escalation per question, and wait for the answer; they
+answer in DevHub - only there; no command answers one:
 
-    devhub --tell escalation new --title T --body - [--agent A] [--link URL=WHAT] [--attach FILE=CAPTION] [--option TEXT]  # repeatable; body on stdin
-    devhub --tell escalation ask 12 --body -        # a follow-up on the same ticket
-    devhub --tell escalation show 12                # the thread, the person's answers too
-    devhub --tell escalation close 12 [--note TEXT] # the answer is used up
-    devhub --tell --json board                      # needs_answer, in_progress, waiting
+    devhub --tell task new --title T [--link URL=WHAT ...]             # one piece of work; prints its id
+    devhub --tell escalation new --task 12 --title T --body - [--link URL=WHAT] [--attach FILE=CAPTION] [--option TEXT]  # one question; body on stdin
+    devhub --tell escalation show 12                # the question, and the person's answer
+    devhub --tell escalation withdraw 12 [--note TEXT] # the question no longer stands
+    devhub --tell --json board                      # 回答待ち, 処理中, 待機, and what needs action
 
-The person reads escalations, not your chat, and each one cold: its body needs \`## 決めてほしいこと\` (the decision) and \`## 人に聞く理由\` (why you hold it), every PR/Issue its full URL, and a title that says the decision in words (the command refuses otherwise).
+The person reads escalations, not your chat, and each one cold: its body needs \`## 決めてほしいこと\` (the decision) and \`## 人に聞く理由\` (why you hold it), every PR/Issue its full URL, and a title that says the decision in words (the command refuses otherwise). A follow-up question is a new escalation on the same task.
 The body is Markdown drawn like a chat answer (code, math, mermaid, svg).
-Related agents, workspaces, files and escalations can be pasted as devhub: links, in \`--link\` or as \`[text](devhub:...)\` here or in chat (\`devhub --tell link agent A | workspace W | file PATH[:L] | escalation ID\` prints one).
+Related agents, workspaces, files and tasks can be pasted as devhub: links, in \`--link\` or as \`[text](devhub:...)\` here or in chat (\`devhub --tell link agent A | workspace W | file PATH[:L] | task T\` prints one).
 \`agent wait --any\` also wakes you on an answer you have not shown. DevHub also sends you each such event as a message (\`[event: ...]\`).
 See docs/orchestrator.md in DevHub for a recommended escalation template.
 

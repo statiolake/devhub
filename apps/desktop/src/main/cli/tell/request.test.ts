@@ -114,6 +114,8 @@ describe("devhub --tell's words, as the app reads them", () => {
 		const argv = [
 			"escalation",
 			"new",
+			"--task",
+			"1",
 			"--title",
 			"t",
 			"--body",
@@ -152,7 +154,18 @@ describe("devhub --tell's words, as the app reads them", () => {
 		// Nothing asked for when only stored ones are named.
 		expect(
 			tellFromWords(
-				["escalation", "ask", "1", "--body", "b", "--attach", "att-1a2b3c4d"],
+				[
+					"escalation",
+					"new",
+					"--task",
+					"1",
+					"--title",
+					"t",
+					"--body",
+					"b",
+					"--attach",
+					"att-1a2b3c4d",
+				],
 				"/w",
 				"/h",
 				undefined,
@@ -200,14 +213,13 @@ describe("devhub --tell's words, as the app reads them", () => {
 		});
 		expect(
 			command([
-				"escalation",
+				"task",
 				"link",
 				"1",
-				"--link",
 				"https://github.com/a/b/issues/3=ログインの不具合",
 			]).command,
 		).toEqual({
-			verb: "escalation-link",
+			verb: "task-link",
 			id: 1,
 			links: ["https://github.com/a/b/issues/3"],
 			linkLabels: { "https://github.com/a/b/issues/3": "ログインの不具合" },
@@ -215,24 +227,29 @@ describe("devhub --tell's words, as the app reads them", () => {
 	});
 });
 
-describe("memo and agent resume text from stdin", () => {
+describe("a task's memo and agent resume text from stdin", () => {
 	it("puts what is piped in where - stood", () => {
 		expect(
-			tellFromWords(["memo", "set", "pr=a/b#1", "-"], "/w", "/h", undefined),
+			tellFromWords(
+				["task", "edit", "1", "--memo", "-"],
+				"/w",
+				"/h",
+				undefined,
+			),
 		).toEqual({
 			kind: "needs-stdin",
 		});
 		expect(
 			tellFromWords(
-				["memo", "set", "pr=a/b#1", "-"],
+				["task", "edit", "1", "--memo", "-"],
 				"/w",
 				"/h",
 				"CI を直させる\n",
 			),
-		).toMatchObject({ command: { verb: "memo-set", text: "CI を直させる" } });
+		).toMatchObject({ command: { verb: "task-edit", memo: "CI を直させる" } });
 		expect(
 			tellFromWords(
-				["agent", "resume", "pr=a/b#1", "--prompt", "-"],
+				["agent", "resume", "task=1", "--prompt", "-"],
 				"/w",
 				"/h",
 				"続けて\n",

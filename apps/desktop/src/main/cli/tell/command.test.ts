@@ -162,20 +162,27 @@ describe("devhub --tell's arguments", () => {
 		});
 	});
 
-	it("reads agent keep with a note or --clear, never both or neither", () => {
-		expect(told("agent", "keep", "A", "--note", " 他チームの依頼 ")).toEqual({
-			verb: "agent-keep",
-			agent: "A",
-			note: "他チームの依頼",
-		});
-		expect(told("agent", "keep", "A", "--clear")).toEqual({
-			verb: "agent-keep",
-			agent: "A",
-		});
-		expect(refusal("agent", "keep", "A")).toContain("--note");
-		expect(refusal("agent", "keep", "A", "--note", "x", "--clear")).toContain(
-			"--clear",
+	it("refuses agent keep, saying the task way of parking an agent", () => {
+		expect(refusal("agent", "keep", "A", "--note", "x")).toMatch(
+			/task bind T A.*task status T waiting/u,
 		);
+	});
+
+	it("reads agent new and issue assign with --task", () => {
+		expect(
+			told("agent", "new", "--workspace", "w", "--managed", "--task", "task=4"),
+		).toMatchObject({ verb: "agent-new", task: 4 });
+		expect(
+			told(
+				"issue",
+				"assign",
+				"https://github.com/o/r/issues/1",
+				"--root",
+				"--task",
+				"#5",
+			),
+		).toMatchObject({ verb: "issue-assign", task: 5 });
+		expect(refusal("agent", "new", "--task", "x")).toMatch(/not a task id/u);
 	});
 
 	it("reads issue assign with a branch of the caller's choosing", () => {
@@ -515,94 +522,135 @@ describe("devhub --tell link", () => {
 		expect(TELL_USAGE).toContain("link agent <a> | workspace <w> | file");
 	});
 
-	it("takes --link on escalation ask", () => {
+	it("takes --link on escalation new, and makes a link to a task", () => {
 		expect(
 			told(
 				"escalation",
-				"ask",
-				"3",
+				"new",
+				"--task",
+				"2",
+				"--title",
+				"t",
 				"--body",
 				"b",
 				"--link",
 				"devhub:orchestrator",
 			),
 		).toEqual({
-			verb: "escalation-ask",
-			id: 3,
+			verb: "escalation-new",
+			task: 2,
+			title: "t",
 			body: "b",
 			options: [],
 			links: ["devhub:orchestrator"],
 		});
+		expect(told("link", "task", "task=7")).toEqual({
+			verb: "link",
+			kind: "task",
+			target: "7",
+		});
 	});
 });
 
-describe("devhub --tell escalation link", () => {
-	it("takes an agent, links, or both, after the escalation was raised", () => {
-		expect(told("escalation", "link", "12", "--agent", "aaaa")).toEqual({
-			verb: "escalation-link",
-			id: 12,
-			agent: "aaaa",
+describe("devhub --tell task", () => {
+	it("reads the task verbs, each with what it takes", () => {
+		expect(
+			told(
+				"task",
+				"new",
+				"--title",
+				"t",
+				"--link",
+				"https://github.com/o/r/issues/1=Issue",
+				"--status",
+				"in_progress",
+				"--priority",
+				"high",
+			),
+		).toEqual({
+			verb: "task-new",
+			title: "t",
+			links: ["https://github.com/o/r/issues/1"],
+			linkLabels: { "https://github.com/o/r/issues/1": "Issue" },
+			status: "in_progress",
+			priority: "high",
 		});
 		expect(
 			told(
-				"escalation",
-				"link",
-				"#12",
-				"--link",
-				"https://github.com/o/r/pull/3",
-				"--link",
-				"devhub:orchestrator",
+				"task",
+				"status",
+				"3",
+				"waiting",
+				"--note",
+				"n",
+				"--check-at",
+				"2026-11-10",
 			),
 		).toEqual({
-			verb: "escalation-link",
-			id: 12,
-			links: ["https://github.com/o/r/pull/3", "devhub:orchestrator"],
+			verb: "task-status",
+			id: 3,
+			status: "waiting",
+			note: "n",
+			checkAt: Date.parse("2026-11-10"),
 		});
-		expect(refusal("escalation", "link", "12")).toContain(
-			"--agent <a>, one or more --link <url>, or both",
-		);
+		expect(told("task", "edit", "3", "--memo", "-")).toEqual({
+			verb: "task-edit",
+			id: 3,
+			memo: "-",
+		});
+		expect(told("task", "edit", "3", "--clear-memo")).toEqual({
+			verb: "task-edit",
+			id: 3,
+			memo: "",
+		});
+		expect(told("task", "bind", "3", "a", "b")).toEqual({
+			verb: "task-bind",
+			id: 3,
+			agents: ["a", "b"],
+		});
+		expect(told("task", "unbind", "3", "a")).toEqual({
+			verb: "task-unbind",
+			id: 3,
+			agent: "a",
+		});
+		expect(told("task", "done", "3", "--note", "x")).toEqual({
+			verb: "task-done",
+			id: 3,
+			note: "x",
+		});
+		expect(told("task")).toEqual({ verb: "task-list" });
+		expect(told("task", "list", "--all")).toEqual({
+			verb: "task-list",
+			all: true,
+		});
+		expect(refusal("task", "edit", "3")).toMatch(/task edit takes/u);
+		expect(refusal("task", "status", "3", "done")).toMatch(/'task done'/u);
+		expect(refusal("task", "new")).toMatch(/--title is required/u);
+		expect(refusal("task", "link", "3")).toMatch(/<url>/u);
+		expect(
+			refusal("task", "status", "3", "waiting", "--check-at", "soon"),
+		).toMatch(/ISO date/u);
+	});
+
+	it("reads escalation withdraw and list by task", () => {
+		expect(told("escalation", "withdraw", "4", "--note", "n")).toEqual({
+			verb: "escalation-withdraw",
+			id: 4,
+			note: "n",
+		});
+		expect(
+			told("escalation", "list", "--state", "answered", "--task", "2"),
+		).toEqual({ verb: "escalation-list", state: "answered", task: 2 });
 	});
 });
 
-describe("devhub --tell memo, and agent resume by subject", () => {
-	it("reads the memo verbs: set, list, clear", () => {
+describe("devhub --tell agent resume by task", () => {
+	it("takes a task and a prompt on agent resume", () => {
 		expect(
-			told("memo", "set", "issue=acme/app#1", "直させる", "次", "に"),
-		).toEqual({
-			verb: "memo-set",
-			subject: "issue=acme/app#1",
-			text: "直させる 次 に",
-		});
-		expect(told("memo", "set", "agent=ab12", "-")).toEqual({
-			verb: "memo-set",
-			subject: "agent=ab12",
-			text: "-",
-		});
-		expect(told("memo", "clear", "req=2")).toEqual({
-			verb: "memo-clear",
-			subject: "req=2",
-		});
-		expect(told("memo")).toEqual({ verb: "memo-list" });
-		expect(told("memo", "list")).toEqual({ verb: "memo-list" });
-		expect(refusal("memo", "set", "issue=acme/app#1")).toMatch(
-			/missing <text>/,
-		);
-		expect(refusal("memo", "set", "issue=acme/app#1", " ")).toMatch(
-			/the note is empty/,
-		);
-		expect(refusal("memo", "clear")).toMatch(/<subject>/);
-		for (const gone of ["add", "edit", "show"])
-			expect(refusal("memo", gone, "esc=3", "x")).toMatch(
-				/memo takes: set, list, clear\. A subject has one note/,
-			);
-	});
-
-	it("takes a subject and a prompt on agent resume", () => {
-		expect(
-			told("agent", "resume", "issue=acme/app#1", "--prompt", "指摘に対応して"),
+			told("agent", "resume", "task=1", "--prompt", "指摘に対応して"),
 		).toEqual({
 			verb: "agent-resume",
-			session: "issue=acme/app#1",
+			session: "task=1",
 			prompt: "指摘に対応して",
 		});
 	});

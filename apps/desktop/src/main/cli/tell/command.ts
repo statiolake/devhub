@@ -31,6 +31,7 @@ export type LinkTargetKind =
 	| "agent"
 	| "workspace"
 	| "file"
+	| "task"
 	| "escalation"
 	| "orchestrator"
 	| "session";
@@ -39,6 +40,7 @@ const LINK_TARGET_KINDS: readonly LinkTargetKind[] = [
 	"agent",
 	"workspace",
 	"file",
+	"task",
 	"escalation",
 	"orchestrator",
 	"session",
@@ -149,15 +151,8 @@ export type TellCommand =
 			readonly meta?: readonly AgentMetaPair[];
 			/** `--managed` / `--unmanaged`: required, refused when missing. */
 			readonly managed?: boolean;
-	  }
-	| {
-			/**
-			 * `agent keep <a> --note <text>`: a managed agent that needs action, left as
-			 * it is, for the reason given; `--clear` (no note) ends that.
-			 */
-			readonly verb: "agent-keep";
-			readonly agent: string;
-			readonly note?: string;
+			/** `--task T`: bound to that task from the start. */
+			readonly task?: number;
 	  }
 	| {
 			/** `agent manage` / `agent unmanage`: the orchestrator's managed flag. */
@@ -188,6 +183,11 @@ export type TellCommand =
 			readonly managed?: boolean;
 			/** The agent's name from the start, as `agent new --name`. */
 			readonly name?: string;
+			/**
+			 * `--task T`: bound to that task. Absent: the open task linking the
+			 * item, or a new one linked to it.
+			 */
+			readonly task?: number;
 			/**
 			 * `--offline`: a failed fetch of `origin` is gone past, from the copy
 			 * on disk. Absent: a failed fetch stops the assignment.
@@ -282,9 +282,9 @@ export type TellCommand =
 	  }
 	| {
 			/**
-			 * One of them, gone on with in a new GUI Agent — or the recorded
-			 * agent of a subject (`issue=…`, `pr=…`, a URL, `ws=…`) or by its
-			 * id or name (`orchestrator/work.ts`), on its latest session.
+			 * One of them, gone on with in a new GUI Agent — or the latest agent
+			 * of a task (`task=12`), or a task's agent by its id or name
+			 * (`model/tasks.ts`), on its latest session.
 			 */
 			readonly verb: "agent-resume";
 			readonly session: string;
@@ -325,7 +325,7 @@ export type TellCommand =
 	| { readonly verb: "focus"; readonly target: string }
 	/**
 	 * The canonical `devhub:` link to a place (`model/devhubLink.ts`), checked
-	 * against what is open. `target` is the agent, workspace, escalation id or
+	 * against what is open. `target` is the agent, workspace, task id, escalation id or
 	 * session; for `file`, the absolute path (made so on the CLI's side).
 	 */
 	| {
@@ -338,37 +338,20 @@ export type TellCommand =
 	| { readonly verb: "notify"; readonly text: string }
 	// --- the Orchestrator row (`docs/orchestrator.md`) ----------------------
 	| {
-			/** The orchestrator raises one. There is no command that answers one. */
+			/**
+			 * The orchestrator asks the person one question about a task.
+			 * There is no command that answers one.
+			 */
 			readonly verb: "escalation-new";
+			readonly task: number;
 			readonly title: string;
 			readonly body: string;
-			readonly agents: readonly string[];
 			readonly links: readonly string[];
 			/** `--link URL=LABEL`: what each link is, in a line, by its URL as given. */
 			readonly linkLabels?: Readonly<Record<string, string>>;
 			/** `--attach`: pictures drawn under the body (`## 添付`). */
 			readonly attachments?: readonly TellAttachment[];
 			readonly options: readonly string[];
-			readonly workspace?: string;
-			/** The orchestrator's ranking (`docs/orchestrator.md`). */
-			readonly priority?: "high" | "normal" | "low";
-			readonly effort?: "quick" | "normal" | "deep";
-			readonly rankNote?: string;
-			/** Born waiting (`--wait`): its trigger, in words. */
-			readonly wait?: string;
-			/** `--at`: the wait's time, ms since the epoch. */
-			readonly at?: number;
-	  }
-	| {
-			/** A follow-up question on the same ticket: back to needs_answer. */
-			readonly verb: "escalation-ask";
-			readonly id: number;
-			readonly body: string;
-			readonly options: readonly string[];
-			/** More links it is about (`--link`); absent: none. */
-			readonly links?: readonly string[];
-			readonly linkLabels?: Readonly<Record<string, string>>;
-			readonly attachments?: readonly TellAttachment[];
 	  }
 	| { readonly verb: "escalation-show"; readonly id: number }
 	| {
@@ -381,53 +364,71 @@ export type TellCommand =
 	  }
 	| {
 			readonly verb: "escalation-list";
-			readonly state?: "needs_answer" | "in_progress" | "waiting" | "closed";
+			readonly state?: "open" | "answered" | "withdrawn";
+			readonly task?: number;
 	  }
 	| {
-			/** Parked on an outside condition: 待機中. The trigger is required. */
-			readonly verb: "escalation-wait";
-			readonly id: number;
-			readonly trigger: string;
-			/** `--at`: ms since the epoch. */
-			readonly at?: number;
-	  }
-	| {
-			/** Off its wait, to in_progress. */
-			readonly verb: "escalation-resume";
+			/** The question no longer stands: taken back, with why. */
+			readonly verb: "escalation-withdraw";
 			readonly id: number;
 			readonly note?: string;
 	  }
+	// --- tasks (`model/tasks.ts`) -------------------------------------------
 	| {
-			readonly verb: "escalation-close";
-			readonly id: number;
+			readonly verb: "task-new";
+			readonly title: string;
+			readonly links: readonly string[];
+			readonly linkLabels?: Readonly<Record<string, string>>;
+			readonly status?: "waiting" | "in_progress";
 			readonly note?: string;
+			/** `--check-at`: ms since the epoch. */
+			readonly checkAt?: number;
+			readonly memo?: string;
+			readonly priority?: "high" | "normal" | "low";
 	  }
 	| {
-			/** Parked in in_progress by the orchestrator: never an answer. */
-			readonly verb: "escalation-hold";
+			readonly verb: "task-edit";
 			readonly id: number;
-			readonly note?: string;
+			readonly title?: string;
+			/** `""`: the memo taken away; `-`: read from stdin. */
+			readonly memo?: string;
+			readonly priority?: "high" | "normal" | "low";
+			readonly priorityNote?: string;
 	  }
 	| {
-			readonly verb: "escalation-link";
+			readonly verb: "task-status";
 			readonly id: number;
-			/** Another agent it is about (`--agent`). */
-			readonly agent?: string;
-			/** More links it is about (`--link`, repeatable). */
-			readonly links?: readonly string[];
+			readonly status: "waiting" | "in_progress";
+			readonly note?: string;
+			readonly checkAt?: number;
+	  }
+	| {
+			readonly verb: "task-link";
+			readonly id: number;
+			readonly links: readonly string[];
 			readonly linkLabels?: Readonly<Record<string, string>>;
 	  }
 	| {
-			/** Ranked again, as things change: only what is given moves. */
-			readonly verb: "escalation-rank";
+			readonly verb: "task-unlink";
 			readonly id: number;
-			readonly priority?: "high" | "normal" | "low";
-			readonly effort?: "quick" | "normal" | "deep";
-			readonly rankNote?: string;
+			readonly links: readonly string[];
 	  }
+	| {
+			readonly verb: "task-bind";
+			readonly id: number;
+			readonly agents: readonly string[];
+	  }
+	| {
+			readonly verb: "task-unbind";
+			readonly id: number;
+			readonly agent: string;
+	  }
+	| { readonly verb: "task-done"; readonly id: number; readonly note?: string }
+	| { readonly verb: "task-show"; readonly id: number }
+	| { readonly verb: "task-list"; readonly all?: true }
 	/** The lanes. */
 	| { readonly verb: "board" }
-	/** One subject's whole state now: an item (URL, `owner/repo#N`) or an agent. */
+	/** One subject's whole state now: a task, an item (URL, `owner/repo#N`) or an agent. */
 	| { readonly verb: "status"; readonly ref: string }
 	| {
 			readonly verb: "orchestrator-start";
@@ -444,34 +445,6 @@ export type TellCommand =
 	/** Off (pause) or full (resume): `orchestrator mode` with a name. */
 	| { readonly verb: "orchestrator-pause" }
 	| { readonly verb: "orchestrator-resume" }
-	/** Triage: a subject's priority, set, cleared or listed. */
-	| {
-			readonly verb: "orchestrator-priority-set";
-			readonly subject: string;
-			readonly priority: "high" | "normal" | "low";
-			readonly note?: string;
-	  }
-	| { readonly verb: "orchestrator-priority-clear"; readonly subject: string }
-	| { readonly verb: "orchestrator-priority-list" }
-	/**
-	 * The memos (`orchestrator/memos.ts`): one note per subject, as the
-	 * triage names it (`issue=`, `pr=`, `agent=`, `esc=`, `req=`, an item's
-	 * URL, `ws=`).
-	 */
-	| {
-			readonly verb: "memo-set";
-			readonly subject: string;
-			readonly text: string;
-	  }
-	| { readonly verb: "memo-clear"; readonly subject: string }
-	| { readonly verb: "memo-list" }
-	/** The person's requests (the board's +): listed, or marked filed. */
-	| { readonly verb: "orchestrator-request-list" }
-	| {
-			readonly verb: "orchestrator-request-done";
-			readonly id: number;
-			readonly note?: string;
-	  }
 	/** The mode (full, saving, off), or choose one. */
 	| {
 			readonly verb: "orchestrator-mode";
@@ -598,35 +571,24 @@ agents
                                    read and the cursor, context use, prompt
                                    cache, why it stopped or broke, whether
                                    it is managed, and how it stands against
-                                   the invariant (settled, or the clause it
-                                   fails, the 待機中 escalation it is on,
-                                   agent keep's note); its whole state:
+                                   the invariant (its task, and the clause
+                                   it or its task fails); its whole state:
                                    'status <a>'
   agent new --workspace <w> --profile <p> --gui|--tui --managed|--unmanaged
-            [--name <n>] [--prompt <text>|-] [--meta KEY=VALUE]...
+            [--name <n>] [--prompt <text>|-] [--meta KEY=VALUE]... [--task <t>]
                                    start an agent (Cmd+Q c) and, with
                                    --prompt, tell it something once it is up
                                    (without: an idle agent). --managed puts
                                    it under the orchestrator's management
                                    (its state is the orchestrator's to keep
                                    settled); --unmanaged leaves it out, as
-                                   the window's New Agent does.
-                                   --meta issue=pending: its Issue is still
-                                   to be filed (an investigation): held to
-                                   its status only, not 'no_item', until
-                                   'agent meta <a> set issue <URL>' links it
+                                   the window's New Agent does. --task binds
+                                   it to that task from the start, and
+                                   --prompt carries the task's memo after it
   agent manage <a>                 put an agent under the orchestrator's
   agent unmanage <a>               management, or take it out (kept across
                                    restarts and resumes; shown in 'agents',
                                    'agent status' and the row)
-  agent keep <a> --note <text>     leave a managed agent that needs action as
-  agent keep <a> --clear           it is, for the reason given: it is not said
-                                   again ('needs_action') until its state
-                                   changes (its status, its item, its PR).
-                                   Shown in
-                                   'agent status', 'board' and the row's
-                                   tooltip; kept across restarts; --clear
-                                   ends it
   agent rename <a> <name>          the row menu's Rename...: the name the
   agent rename <a> --clear         Sidebar, the pane and the resume lists
                                    show (--clear: back to DevHub's label)
@@ -708,18 +670,17 @@ agents
                                    sessions, 180 days each
   agent resume <session> [--workspace <w> | --folder <path>] [--profile <p>]
                [--name <n>] [--prompt <text>|-]
-  agent resume <subject|agent> [--prompt <text>|-]
-                                   bring back the agent that worked on a
-                                   subject (issue=OWNER/REPO#N, pr=…, the
-                                   item's URL, ws=<w>, agent=ID) or a stopped
-                                   agent by its id or name, on its latest
-                                   session, in its folder (an SSH host's
-                                   too), with its name, metadata and
-                                   management; --prompt is its first message,
-                                   with the subject's memo (its note) after it.
-                                   Refused, saying so, when DevHub has no
-                                   such record or the session cannot be
-                                   resumed (start a new agent then).
+  agent resume task=<t>|<agent> [--prompt <text>|-]
+                                   bring back the latest agent bound to a
+                                   task (task=12) or a task's stopped agent
+                                   by its id or name, on its latest session,
+                                   in its folder (an SSH host's too), with
+                                   its name, metadata and management, bound
+                                   to the task again; --prompt is its first
+                                   message, with the task's memo after it.
+                                   Refused, saying so, when no agent worked
+                                   on it or the session cannot be resumed
+                                   (start a new agent then).
                                    The session form: go on with one in a new
                                    GUI agent, as the picker does. Where it opens is the
                                    session's own: its folder, or its
@@ -745,7 +706,7 @@ issues
                --profile <p> --gui|--tui --action <id>|none
                --managed|--unmanaged
                [--name <n>] [--prompt <text>|-] [--meta KEY=VALUE]...
-               [--offline]                           (all but [] required)
+               [--task <t>] [--offline]              (all but [] required)
   issue assign <url> --repo <path> --branch <name>|--root --editor-only
                [--offline]
                                    hand an Issue or pull request to a new
@@ -758,9 +719,11 @@ issues
                                    otherwise the action's wording is sent as
                                    its first message (no review sheet).
                                    --managed / --unmanaged as 'agent new'.
-                                   The agent is linked to the item (meta
-                                   issue=<its URL>, an Issue's or a pull
-                                   request's alike).
+                                   The agent is bound to --task, else to
+                                   the open task that links the item, else
+                                   to a new task linked to it (said in the
+                                   answer); its meta issue=<URL> names the
+                                   item.
                                    --editor-only opens the editor and
                                    starts no agent. --name gives the agent
                                    its name from the start, as 'agent new
@@ -813,8 +776,8 @@ app
                                    select it in DevHub ('orchestrator': the
                                    Orchestrator screen)
   notify <text>                    show a notification in DevHub
-  link agent <a> | workspace <w> | file <path>[:line[:col]] | escalation <id>
-       | orchestrator | session <session>
+  link agent <a> | workspace <w> | file <path>[:line[:col]] | task <t>
+       | escalation <id> | orchestrator | session <session>
                                    print the canonical devhub: link to it
                                    (checked: it must be open), for an
                                    escalation's --link or a Markdown link
@@ -835,98 +798,98 @@ in the Sidebar, unselected (a closed workspace that was selected is the one
 exception: its row is gone, and the window selects the next). Where the
 window would ask, the command takes the answer as an argument.
 
-orchestrator (the Orchestrator row: the board, escalations, events)
-  board                            the lanes as data: needs_answer (oldest
-                                   first), in_progress (how long since the
-                                   answer, 停滞 marked), waiting (each
-                                   trigger and time, soonest first), and
-                                   what breaks the invariant now: each item
-                                   (Issue or PR) or managed agent that needs
-                                   action, and the clause it fails (--json
-                                   needsAction)
-  status <item|agent>              one subject's whole state, as one call:
-                                   an item (its URL, or owner/repo#N: an
-                                   Issue's or a PR's) — its state, whether
-                                   it is assigned to me and in the
-                                   population, its lane on each watched
-                                   Project, its pull request (state, review
-                                   decision, unresolved conversations,
-                                   checks), the agents linked to it and how
-                                   each stands, the escalations about it,
-                                   the clause it fails and since when; or an
-                                   agent (id, prefix or name) — the same of
-                                   its item, its Workspace's facts as the
-                                   Sidebar's tooltip has them, its 待機中
-                                   escalation and agent keep's note; and
-                                   its memo (the orchestrator's note)
-  escalation new --title <t> --body <text>|- [--agent <a>]...
+orchestrator (the Orchestrator row: tasks, escalations, events)
+  board                            the tasks by status as data: 回答待ち
+                                   (answer: the open question first),
+                                   処理中 (in_progress), 待機 (waiting: what
+                                   each waits for, soonest --check-at
+                                   first), and what breaks the invariant
+                                   now: each task, item or managed agent
+                                   that needs action, and the clause it
+                                   fails (--json needsAction)
+  status <task|item|agent>         one subject's whole state, as one call: a
+                                   task (task=12) — its status, links (as
+                                   DevHub read them: state, PR, review,
+                                   checks), agents and how each stands,
+                                   memo, priority and questions; an item
+                                   (its URL, or owner/repo#N) — its state,
+                                   whether it is assigned to me and in the
+                                   population, its lanes, its pull request,
+                                   the tasks that link it; or an agent (id,
+                                   prefix or name) — its task and the
+                                   clause it fails
+  task new --title <t> [--link <url>[=<label>]]...
+           [--status waiting|in_progress] [--note <what it waits for>]
+           [--check-at <datetime>] [--memo <text>] [--priority high|normal|low]
+                                   a task: one piece of work. Links are
+                                   0..n Issues, PRs or other URLs (none yet
+                                   is fine: a task to file an Issue). Starts
+                                   in 待機 (waiting) unless --status says so
+  task edit <t> [--title <t>] [--memo <text>|- | --clear-memo]
+                [--priority high|normal|low] [--priority-note <why>]
+                                   retitle it, set its one memo (what you
+                                   will do next with it, 500 characters at
+                                   most; replaces the one before), rank it
+                                   (in saving only nudges about high tasks
+                                   go)
+  task status <t> waiting|in_progress [--note <what it waits for>]
+                                   [--check-at <datetime>]
+                                   待機 (parked, with what it waits for in
+                                   words, and maybe a time to look again:
+                                   task.changed due then; it decides
+                                   nothing) or 処理中. 回答待ち is an open
+                                   escalation, done is 'task done'
+  task link <t> <url>[=<label>]... | task unlink <t> <url>...
+                                   what it is about: an Issue, a PR, …
+  task bind <t> <a>... | task unbind <t> <a>
+                                   the agents working on it (an agent is on
+                                   one open task: binding moves it)
+  task done <t> [--note <text>]    completed (an open question on it is
+                                   withdrawn with it)
+  task show <t>                    the task, its agents, memo and every
+                                   question with its answer (this
+                                   acknowledges an answer for 'agent wait
+                                   --any')
+  task list [--all]                the open tasks (--all: done ones too)
+  escalation new --task <t> --title <t> --body <text>|-
                  [--link <url>[=<label>]]... [--attach <file>|<att-id>[=<caption>]]...
-                 [--option <text>]... [--workspace <w>]
-                 [--priority high|normal|low] [--effort quick|normal|deep]
-                 [--rank-note <text>] [--wait <trigger> [--at <datetime>]]
-                                   raise one for the person, who reads it
-                                   cold (Markdown: code, math, mermaid, svg -
-                                   as the chat renders). The body needs a
-                                   '## 決めてほしいこと' and a '## 人に聞く理由'
-                                   section, and no PR/Issue by number alone;
-                                   the title says the decision in words, no
-                                   numbers. needs_answer is sorted by
-                                   priority, then effort (quick first), then
-                                   age. A --link is an http(s) URL or a
-                                   devhub: link ('link' makes one), with what
-                                   it is after '=' (or a space, when the URL
-                                   has a '?'); a devhub: link must name what
-                                   is open. --attach: a PNG, JPEG, GIF, WebP
-                                   or SVG on the machine you run this on, or
-                                   an id from 'attachment add'; drawn under
-                                   the body. With --wait it starts in
-                                   waiting: nothing is asked of the person yet
-  escalation ask <id> --body <text>|- [--option <text>]...
-                 [--link <url>[=<label>]]... [--attach <file>|<att-id>[=<caption>]]...
-                                   a follow-up question on the same ticket;
-                                   back to needs_answer (the body needs its
-                                   '## 決めてほしいこと')
+                 [--option <text>]...
+                                   ask the person one question about a
+                                   task; they read it cold (Markdown: code,
+                                   math, mermaid, svg - as the chat
+                                   renders). The body needs a '##
+                                   決めてほしいこと' and a '## 人に聞く理由'
+                                   section, and no PR/Issue by number
+                                   alone; the title says the decision in
+                                   words, no numbers. A --link is an
+                                   http(s) URL or a devhub: link ('link'
+                                   makes one), with what it is after '='
+                                   (or a space, when the URL has a '?').
+                                   --attach: a PNG, JPEG, GIF, WebP or SVG
+                                   on the machine you run this on, or an id
+                                   from 'attachment add'; drawn under the
+                                   body. The task is 回答待ち until the
+                                   person answers; wait for the answer. A
+                                   follow-up is a new escalation
   attachment add <file>[=<caption>]...
                                    hand pictures (screenshots) to the
                                    orchestrator: kept 14 days, each under an
                                    id (att-1a2b3c4d) to put in your report;
                                    it attaches them with --attach <id>
-  escalation show <id>             the thread, the person's answers included,
-                                   and its memo (or its item's)
-                                   (this is what acknowledges an answer for
-                                   'agent wait --any')
-  escalation list [--state needs_answer|in_progress|waiting|closed]
-  escalation close <id> [--note <text>]
-                                   the answer is used up: close it
-  escalation hold <id> [--note <text>]
-                                   park a needs_answer one in in_progress
-                                   while you work on it, or note where an
-                                   in_progress one stands (not an answer;
-                                   back to needs_answer with 'escalation ask')
-  escalation wait <id> --trigger <text> [--at <datetime>]
-                                   park it in waiting on an outside
-                                   condition, written in words (a date,
-                                   someone's reply, a deploy); --at (ISO,
-                                   like 2026-11-10T09:00) when it is a time:
-                                   waiting.changed (due) comes then
-  escalation resume <id> [--note <text>]
-                                   off its wait, to in_progress
-  escalation rank <id> [--priority high|normal|low]
-                 [--effort quick|normal|deep] [--rank-note <text>]
-                                   rank it again as things change (a
-                                   --rank-note of "" takes the note away)
-  escalation link <id> [--agent <a>] [--link <url>[=<label>]]...
-                                   more it is about, after it was raised:
-                                   another agent, and links (https: or
-                                   devhub:, as escalation new --link)
-                                   (the person answers in DevHub only: no
-                                   command writes an answer)
+  escalation show <id>             the question, and the person's answer
+                                   when there is one (this acknowledges it
+                                   for 'agent wait --any')
+  escalation list [--state open|answered|withdrawn] [--task <t>]
+  escalation withdraw <id> [--note <why>]
+                                   the question no longer stands: take it
+                                   back (the person answers in DevHub only:
+                                   no command writes an answer)
   orchestrator start --root <path> --profile <p> --gui|--tui [--prompt <text>|-]
                                    (all but [] required) open <path> as a
                                    workspace, start the orchestrator agent in
                                    it unfocused, and send it the init event
                                    (or --prompt). Refused while one runs
-  orchestrator status              its agent, state, lane counts, whether
+  orchestrator status              its agent, state, task counts, whether
                                    its events are paused, and each GitHub
                                    board's items and assigned to me
   orchestrator stop | restart      Stop Agent / Restart Session on it
@@ -939,30 +902,6 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    launch starts off). Full switches to saving
                                    by itself at saving_threshold (80%) of a
                                    plan window, and back when it resets
-  orchestrator priority set <subject> high|normal|low [--note <text>]
-                                   triage: rank a subject as its event line
-                                   names it (esc=12, issue=OWNER/REPO#N,
-                                   pr=OWNER/REPO#N, agent=ID, req=N); in
-                                   saving only lines about high ones go
-  orchestrator priority [list] | clear <subject>
-                                   the priorities, the last and next triage
-  memo set <subject> <text>|-      the subject's one note (issue=OWNER/REPO#N,
-                                   pr=…, the item's URL, agent=ID, esc=N,
-                                   req=N, ws=<w>): what you will do next
-                                   with it, in a line or a few (500
-                                   characters at most); replaces the one
-                                   before. It shows in board, memo list,
-                                   status and escalation show, and goes
-                                   with agent resume / issue assign / agent
-                                   new --prompt. An agent whose work is an
-                                   item's notes on the item
-  memo list                        every note, newest first; and the
-                                   recorded work: each subject's agents,
-                                   live or resumable
-  memo clear <subject>             take the note away
-  orchestrator request list | done <id> [--note <where>]
-                                   the person's requests (the board's +):
-                                   done says where it was filed as a task
   orchestrator pause | resume      mode off / mode full: turning on delivers
                                    the held ones at once, the person's words
                                    each alone, then the rest as one message
@@ -1324,6 +1263,7 @@ function parseVerb(args: readonly string[]): TellCommand {
 					"--prompt-extra",
 					"--meta",
 					"--name",
+					"--task",
 				],
 				switches: [
 					"--root",
@@ -1350,6 +1290,7 @@ function parseVerb(args: readonly string[]): TellCommand {
 				meta: metaPairs(flags),
 				name: one(flags, "--name"),
 				managed: managedFlag(flags),
+				task: taskFlag(flags),
 			};
 			return {
 				verb: "issue-assign",
@@ -1384,7 +1325,7 @@ function parseVerb(args: readonly string[]): TellCommand {
 			return { verb: "board" };
 		case "status": {
 			const [ref] = positionals(readFlags(args.slice(1), NO_FLAGS), [
-				"<item|agent>",
+				"<task|item|agent>",
 			]);
 			return { verb: "status", ref: ref! };
 		}
@@ -1417,8 +1358,12 @@ function parseVerb(args: readonly string[]): TellCommand {
 		}
 		case "orchestrator":
 			return parseOrchestrator(sub, rest);
+		case "task":
+			return parseTask(sub, rest);
 		case "memo":
-			return parseMemo(sub, rest);
+			throw new Refusal(
+				"memo is gone: a task has one memo (task edit T --memo <text>|-).",
+			);
 		case "notify": {
 			const words = args.slice(1);
 			if (words.length === 0) throw new Refusal("missing <text>.");
@@ -1451,6 +1396,8 @@ function parseLink(args: readonly string[]): TellCommand {
 	]);
 	if (typed === "escalation")
 		return { verb: "link", kind: typed, target: String(escalationId(target)) };
+	if (typed === "task")
+		return { verb: "link", kind: typed, target: String(taskId(target)) };
 	if (typed !== "file") return { verb: "link", kind: typed, target: target! };
 	const at = /^(.*?):(\d{1,7})(?::(\d{1,7}))?$/su.exec(target!);
 	const line = at?.[2] === undefined ? undefined : Number(at[2]);
@@ -1478,22 +1425,9 @@ function oneOf<T extends string>(
 	return value as T;
 }
 
-/** `--priority`, `--effort` and `--rank-note`, the ones given. */
-function rankFlags(flags: Flags): {
-	readonly priority?: "high" | "normal" | "low";
-	readonly effort?: "quick" | "normal" | "deep";
-	readonly rankNote?: string;
-} {
-	return defined({
-		priority: oneOf(flags, "--priority", ["high", "normal", "low"] as const),
-		effort: oneOf(flags, "--effort", ["quick", "normal", "deep"] as const),
-		rankNote: one(flags, "--rank-note"),
-	});
-}
-
-/** `--at`: an ISO date and time (local unless it says otherwise), as ms. */
-function atFlag(flags: Flags): number | undefined {
-	const value = one(flags, "--at");
+/** `--check-at` (or `--at`): an ISO date and time (local unless it says otherwise), as ms. */
+function atFlag(flags: Flags, name = "--check-at"): number | undefined {
+	const value = one(flags, name);
 	if (value === undefined) return undefined;
 	const trimmed = value.trim();
 	const ms = /^\d{4}-\d{2}-\d{2}/u.test(trimmed)
@@ -1501,20 +1435,37 @@ function atFlag(flags: Flags): number | undefined {
 		: Number.NaN;
 	if (!Number.isFinite(ms))
 		throw new Refusal(
-			`--at takes an ISO date and time, like 2026-11-10T09:00 or 2026-11-10, not ${JSON.stringify(value)}.`,
+			`${name} takes an ISO date and time, like 2026-11-10T09:00 or 2026-11-10, not ${JSON.stringify(value)}.`,
 		);
 	return ms;
 }
 
-/** `#12`, `12` or `E12`. */
+/** `#12`, `12`, `E12` or `esc=12`. */
 function escalationId(text: string | undefined): number {
-	const match = /^(?:#|e|E)?(\d{1,9})$/u.exec((text ?? "").trim());
+	const match = /^(?:#|e|E|esc=)?(\d{1,9})$/u.exec((text ?? "").trim());
 	const id = match === null ? 0 : Number(match[1]);
 	if (id < 1)
 		throw new Refusal(
 			`${JSON.stringify(text ?? "")} is not an escalation id (like 12 or #12).`,
 		);
 	return id;
+}
+
+/** `#12`, `12`, `T12` or `task=12`. */
+function taskId(text: string | undefined): number {
+	const match = /^(?:#|t|T|task=)?(\d{1,9})$/u.exec((text ?? "").trim());
+	const id = match === null ? 0 : Number(match[1]);
+	if (id < 1)
+		throw new Refusal(
+			`${JSON.stringify(text ?? "")} is not a task id (like 12, #12 or task=12).`,
+		);
+	return id;
+}
+
+/** `--task T`, when given. */
+function taskFlag(flags: Flags): number | undefined {
+	const value = one(flags, "--task");
+	return value === undefined ? undefined : taskId(value);
 }
 
 /**
@@ -1594,104 +1545,33 @@ function parseEscalation(
 		case "new": {
 			const flags = readFlags(rest, {
 				values: [
+					"--task",
 					"--title",
 					"--body",
-					"--agent",
 					"--link",
 					"--option",
-					"--workspace",
-					"--priority",
-					"--effort",
-					"--rank-note",
-					"--wait",
-					"--at",
 					"--attach",
 				],
 				switches: [],
 			});
 			positionals(flags, []);
-			const wait = one(flags, "--wait");
-			if (wait !== undefined && wait.trim() === "")
-				throw new Refusal(
-					"--wait needs its trigger, in words: what it waits for.",
-				);
-			if (wait === undefined && one(flags, "--at") !== undefined)
-				throw new Refusal("--at goes with --wait: the time it waits for.");
+			const task = taskFlag(flags);
 			const title = one(flags, "--title");
 			const body = one(flags, "--body");
+			if (task === undefined)
+				throw new Refusal(
+					"--task is required: an escalation is one question about a task (make one first: task new --title …).",
+				);
 			if (title === undefined) throw new Refusal("--title is required.");
 			if (body === undefined)
 				throw new Refusal("--body is required (Markdown, or - for stdin).");
 			return {
 				verb: "escalation-new",
+				task,
 				title,
 				body,
-				agents: flags.values.get("--agent") ?? [],
 				...linkFlags(flags),
 				options: flags.values.get("--option") ?? [],
-				...attachFlags(flags),
-				...defined({ workspace: one(flags, "--workspace") }),
-				...rankFlags(flags),
-				...defined({ wait, at: atFlag(flags) }),
-			};
-		}
-		case "wait": {
-			const flags = readFlags(rest, {
-				values: ["--trigger", "--at"],
-				switches: [],
-			});
-			const [id] = positionals(flags, ["<id>"]);
-			const trigger = one(flags, "--trigger");
-			if (trigger === undefined || trigger.trim() === "")
-				throw new Refusal(
-					"--trigger is required: what it waits for, in words (「11/10 以降に再開」「Bob から Slack で返事が来たら」).",
-				);
-			return {
-				verb: "escalation-wait",
-				id: escalationId(id),
-				trigger,
-				...defined({ at: atFlag(flags) }),
-			};
-		}
-		case "resume": {
-			const flags = readFlags(rest, { values: ["--note"], switches: [] });
-			const [id] = positionals(flags, ["<id>"]);
-			return {
-				verb: "escalation-resume",
-				id: escalationId(id),
-				...defined({ note: one(flags, "--note") }),
-			};
-		}
-		case "rank": {
-			const flags = readFlags(rest, {
-				values: ["--priority", "--effort", "--rank-note"],
-				switches: [],
-			});
-			const [id] = positionals(flags, ["<id>"]);
-			const rank = rankFlags(flags);
-			if (Object.keys(rank).length === 0)
-				throw new Refusal(
-					"escalation rank takes --priority, --effort or --rank-note.",
-				);
-			return { verb: "escalation-rank", id: escalationId(id), ...rank };
-		}
-		case "ask": {
-			const flags = readFlags(rest, {
-				values: ["--body", "--option", "--link", "--attach"],
-				switches: [],
-			});
-			const [id] = positionals(flags, ["<id>"]);
-			const body = one(flags, "--body");
-			if (body === undefined)
-				throw new Refusal("--body is required (Markdown, or - for stdin).");
-			const { links, linkLabels } = linkFlags(flags);
-			return {
-				verb: "escalation-ask",
-				id: escalationId(id),
-				body,
-				options: flags.values.get("--option") ?? [],
-				...(links.length === 0 ? {} : { links }),
-				...(linkLabels === undefined ? {} : { linkLabels }),
 				...attachFlags(flags),
 			};
 		}
@@ -1700,94 +1580,186 @@ function parseEscalation(
 			return { verb: "escalation-show", id: escalationId(id) };
 		}
 		case "list": {
-			const flags = readFlags(rest, { values: ["--state"], switches: [] });
+			const flags = readFlags(rest, {
+				values: ["--state", "--task"],
+				switches: [],
+			});
 			positionals(flags, []);
 			return {
 				verb: "escalation-list",
 				...defined({
 					state: oneOf(flags, "--state", [
-						"needs_answer",
-						"in_progress",
-						"waiting",
-						"closed",
+						"open",
+						"answered",
+						"withdrawn",
 					] as const),
+					task: taskFlag(flags),
 				}),
 			};
 		}
-		case "close": {
+		case "withdraw": {
 			const flags = readFlags(rest, { values: ["--note"], switches: [] });
 			const [id] = positionals(flags, ["<id>"]);
 			return {
-				verb: "escalation-close",
+				verb: "escalation-withdraw",
 				id: escalationId(id),
 				...defined({ note: one(flags, "--note") }),
-			};
-		}
-		case "hold": {
-			const flags = readFlags(rest, { values: ["--note"], switches: [] });
-			const [id] = positionals(flags, ["<id>"]);
-			return {
-				verb: "escalation-hold",
-				id: escalationId(id),
-				...defined({ note: one(flags, "--note") }),
-			};
-		}
-		case "link": {
-			const flags = readFlags(rest, {
-				values: ["--agent", "--link"],
-				switches: [],
-			});
-			const [id] = positionals(flags, ["<id>"]);
-			const agent = one(flags, "--agent");
-			const { links, linkLabels } = linkFlags(flags);
-			if (agent === undefined && links.length === 0)
-				throw new Refusal(
-					"escalation link takes --agent <a>, one or more --link <url>, or both.",
-				);
-			return {
-				verb: "escalation-link",
-				id: escalationId(id),
-				...(agent === undefined ? {} : { agent }),
-				...(links.length === 0 ? {} : { links }),
-				...(linkLabels === undefined ? {} : { linkLabels }),
 			};
 		}
 		case "answer":
 			throw new Refusal(
 				"an escalation is answered by the person, in DevHub's window, and by no command.",
 			);
-		default:
+		case "ask":
+		case "close":
+		case "hold":
+		case "wait":
+		case "resume":
+		case "link":
+		case "rank":
 			throw new Refusal(
-				"escalation takes: new, ask, show, list, close, hold, wait, resume, link, rank.",
+				`escalation ${sub} is gone: an escalation is one question and its answer. A follow-up is a new one on the same task (escalation new --task T); one that no longer stands is withdrawn (escalation withdraw ID); waiting, links and priority are the task's (task status / task link / task edit).`,
 			);
+		default:
+			throw new Refusal("escalation takes: new, show, list, withdraw.");
 	}
 }
 
-function parseMemo(
+const PRIORITY_VALUES = ["high", "normal", "low"] as const;
+
+function parseTask(
 	sub: string | undefined,
 	rest: readonly string[],
 ): TellCommand {
 	switch (sub) {
-		case "set": {
-			const [subject, ...words] = readFlags(rest, NO_FLAGS).positional;
-			if (subject === undefined) throw new Refusal("missing <subject>.");
-			if (words.length === 0)
-				throw new Refusal("missing <text> (or - for stdin).");
-			const text = words.join(" ");
-			if (text.trim().length === 0) throw new Refusal("the note is empty.");
-			return { verb: "memo-set", subject, text };
+		case "new": {
+			const flags = readFlags(rest, {
+				values: [
+					"--title",
+					"--link",
+					"--status",
+					"--note",
+					"--check-at",
+					"--memo",
+					"--priority",
+				],
+				switches: [],
+			});
+			positionals(flags, []);
+			const title = one(flags, "--title");
+			if (title === undefined) throw new Refusal("--title is required.");
+			return {
+				verb: "task-new",
+				title,
+				...linkFlags(flags),
+				...defined({
+					status: oneOf(flags, "--status", ["waiting", "in_progress"] as const),
+					note: one(flags, "--note"),
+					checkAt: atFlag(flags),
+					memo: one(flags, "--memo"),
+					priority: oneOf(flags, "--priority", PRIORITY_VALUES),
+				}),
+			};
 		}
-		case "clear": {
-			const [subject] = positionals(readFlags(rest, NO_FLAGS), ["<subject>"]);
-			return { verb: "memo-clear", subject: subject! };
+		case "edit": {
+			const flags = readFlags(rest, {
+				values: ["--title", "--memo", "--priority", "--priority-note"],
+				switches: ["--clear-memo"],
+			});
+			const [id] = positionals(flags, ["<task>"]);
+			const memo = flags.switches.has("--clear-memo")
+				? ""
+				: one(flags, "--memo");
+			const edit = defined({
+				title: one(flags, "--title"),
+				memo,
+				priority: oneOf(flags, "--priority", PRIORITY_VALUES),
+				priorityNote: one(flags, "--priority-note"),
+			});
+			if (Object.keys(edit).length === 0)
+				throw new Refusal(
+					"task edit takes --title, --memo <text>|- (or --clear-memo), --priority high|normal|low or --priority-note.",
+				);
+			return { verb: "task-edit", id: taskId(id), ...edit };
+		}
+		case "status": {
+			const flags = readFlags(rest, {
+				values: ["--note", "--check-at"],
+				switches: [],
+			});
+			const [id, status] = positionals(flags, ["<task>", "<status>"]);
+			if (status !== "waiting" && status !== "in_progress")
+				throw new Refusal(
+					`task status takes waiting (待機) or in_progress (処理中), not ${JSON.stringify(status)}: 回答待ち is an open escalation, and done is 'task done'.`,
+				);
+			return {
+				verb: "task-status",
+				id: taskId(id),
+				status,
+				...defined({ note: one(flags, "--note"), checkAt: atFlag(flags) }),
+			};
+		}
+		case "link": {
+			const [id, ...urls] = readFlags(rest, NO_FLAGS).positional;
+			if (urls.length === 0)
+				throw new Refusal("task link takes <task> <url>[=<label>]...");
+			const links: string[] = [];
+			const labels: Record<string, string> = {};
+			for (const value of urls) {
+				const { url, label } = splitLink(value);
+				links.push(url);
+				if (label !== undefined) labels[url] = label;
+			}
+			return {
+				verb: "task-link",
+				id: taskId(id),
+				links,
+				...(Object.keys(labels).length === 0 ? {} : { linkLabels: labels }),
+			};
+		}
+		case "unlink": {
+			const [id, ...links] = readFlags(rest, NO_FLAGS).positional;
+			if (links.length === 0)
+				throw new Refusal("task unlink takes <task> <url>...");
+			return { verb: "task-unlink", id: taskId(id), links };
+		}
+		case "bind": {
+			const [id, ...agents] = readFlags(rest, NO_FLAGS).positional;
+			if (agents.length === 0)
+				throw new Refusal("task bind takes <task> <agent>...");
+			return { verb: "task-bind", id: taskId(id), agents };
+		}
+		case "unbind": {
+			const [id, agent] = positionals(readFlags(rest, NO_FLAGS), [
+				"<task>",
+				"<agent>",
+			]);
+			return { verb: "task-unbind", id: taskId(id), agent: agent! };
+		}
+		case "done": {
+			const flags = readFlags(rest, { values: ["--note"], switches: [] });
+			const [id] = positionals(flags, ["<task>"]);
+			return {
+				verb: "task-done",
+				id: taskId(id),
+				...defined({ note: one(flags, "--note") }),
+			};
+		}
+		case "show": {
+			const [id] = positionals(readFlags(rest, NO_FLAGS), ["<task>"]);
+			return { verb: "task-show", id: taskId(id) };
 		}
 		case "list":
-		case undefined:
-			positionals(readFlags(rest, NO_FLAGS), []);
-			return { verb: "memo-list" };
+		case undefined: {
+			const flags = readFlags(rest, { values: [], switches: ["--all"] });
+			positionals(flags, []);
+			return flags.switches.has("--all")
+				? { verb: "task-list", all: true }
+				: { verb: "task-list" };
+		}
 		default:
 			throw new Refusal(
-				"memo takes: set, list, clear. A subject has one note: memo set replaces it.",
+				"task takes: new, edit, status, link, unlink, bind, unbind, done, show, list.",
 			);
 	}
 }
@@ -1820,68 +1792,13 @@ function parseOrchestrator(
 		case "resume":
 			positionals(readFlags(rest, NO_FLAGS), []);
 			return { verb: `orchestrator-${sub}` };
-		case "priority": {
-			const [action = "list", ...more] = rest;
-			switch (action) {
-				case "list":
-					positionals(readFlags(more, NO_FLAGS), []);
-					return { verb: "orchestrator-priority-list" };
-				case "clear": {
-					const [subject] = positionals(readFlags(more, NO_FLAGS), [
-						"<subject>",
-					]);
-					return { verb: "orchestrator-priority-clear", subject: subject! };
-				}
-				case "set": {
-					const flags = readFlags(more, { values: ["--note"], switches: [] });
-					const [subject, priority] = positionals(flags, [
-						"<subject>",
-						"<priority>",
-					]);
-					if (
-						priority !== "high" &&
-						priority !== "normal" &&
-						priority !== "low"
-					)
-						throw new Refusal(
-							`a priority is high, normal or low, not ${JSON.stringify(priority)}.`,
-						);
-					const note = one(flags, "--note");
-					return {
-						verb: "orchestrator-priority-set",
-						subject: subject!,
-						priority,
-						...(note === undefined ? {} : { note }),
-					};
-				}
-				default:
-					throw new Refusal("orchestrator priority takes: list, set, clear.");
-			}
-		}
-		case "request": {
-			const [action = "list", ...more] = rest;
-			switch (action) {
-				case "list":
-					positionals(readFlags(more, NO_FLAGS), []);
-					return { verb: "orchestrator-request-list" };
-				case "done": {
-					const flags = readFlags(more, { values: ["--note"], switches: [] });
-					const [id] = positionals(flags, ["<id>"]);
-					if (!/^\d+$/u.test(id!))
-						throw new Refusal(
-							`a request id is a number, not ${JSON.stringify(id)}.`,
-						);
-					const note = one(flags, "--note");
-					return {
-						verb: "orchestrator-request-done",
-						id: Number(id),
-						...(note === undefined ? {} : { note }),
-					};
-				}
-				default:
-					throw new Refusal("orchestrator request takes: list, done.");
-			}
-		}
+		case "priority":
+		case "request":
+			throw new Refusal(
+				sub === "priority"
+					? "orchestrator priority is gone: a priority is the task's (task edit T --priority high|normal|low)."
+					: "orchestrator request is gone: the board's + makes a task (task list).",
+			);
 		case "mode": {
 			const [mode, ...more] = rest;
 			positionals(readFlags(more, NO_FLAGS), []);
@@ -1984,7 +1901,14 @@ function parseAgent(
 	switch (sub) {
 		case "new": {
 			const flags = readFlags(rest, {
-				values: ["--workspace", "--profile", "--name", "--prompt", "--meta"],
+				values: [
+					"--workspace",
+					"--profile",
+					"--name",
+					"--prompt",
+					"--meta",
+					"--task",
+				],
 				switches: ["--gui", "--tui", "--managed", "--unmanaged"],
 			});
 			positionals(flags, []);
@@ -1998,29 +1922,14 @@ function parseAgent(
 					presentation: presentation(flags),
 					meta: metaPairs(flags),
 					managed: managedFlag(flags),
+					task: taskFlag(flags),
 				}),
 			};
 		}
-		case "keep": {
-			const flags = readFlags(rest, {
-				values: ["--note"],
-				switches: ["--clear"],
-			});
-			const [agent] = positionals(flags, ["<agent>"]);
-			const note = one(flags, "--note");
-			const clear = flags.switches.has("--clear");
-			if (clear === (note !== undefined))
-				throw new Refusal(
-					"agent keep takes --note <text> (why it is left as it is) or --clear.",
-				);
-			if (note !== undefined && note.trim().length === 0)
-				throw new Refusal("--note needs the reason.");
-			return {
-				verb: "agent-keep",
-				agent: agent!,
-				...(note === undefined ? {} : { note: note.trim() }),
-			};
-		}
+		case "keep":
+			throw new Refusal(
+				"agent keep is gone: bind the agent to a task (task bind T A) and park the task (task status T waiting --note <what it waits for>).",
+			);
 		case "manage":
 		case "unmanage": {
 			const [agent] = positionals(readFlags(rest, NO_FLAGS), ["<agent>"]);

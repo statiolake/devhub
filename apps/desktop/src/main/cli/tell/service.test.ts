@@ -39,11 +39,13 @@ import {
 	type TellTerminalPane,
 	type TellWorkspace,
 } from "./service.js";
-import { EscalationStore } from "../../orchestrator/escalationStore.js";
+import { TaskStore } from "../../orchestrator/taskStore.js";
 import type { UsageReport } from "../../shell/usageLimits.js";
-import { parseSubject } from "../../orchestrator/triage.js";
-import { OrchestratorService } from "../../orchestrator/orchestratorService.js";
-import { issueLinkOf, type ItemFacts } from "../../orchestrator/invariant.js";
+import {
+	OrchestratorService,
+	escalationWire,
+} from "../../orchestrator/orchestratorService.js";
+import type { ItemFacts } from "../../orchestrator/invariant.js";
 import { DEFAULT_ORCHESTRATOR } from "../../../model/orchestratorSettings.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -243,11 +245,13 @@ class FakePorts implements TellPorts {
 					managed: one.managed,
 					status: one.status,
 					stopping: one.controlState !== "running",
-					...issueLinkOf(one.meta["issue"]),
+					...(one.meta["issue"] === undefined
+						? {}
+						: { issue: one.meta["issue"] }),
 				})),
 			),
 		}),
-		store: EscalationStore.inMemory(),
+		store: TaskStore.inMemory(),
 		agents: () =>
 			this.spaces.flatMap((space) =>
 				space.agents.map((one) => ({
@@ -282,51 +286,38 @@ class FakePorts implements TellPorts {
 	};
 	readonly orchestrator: TellPorts["orchestrator"] = {
 		board: () => this.service.wire(),
-		resolveSubject: (text, workspace) =>
-			this.service.resolveSubject(text, workspace),
-		subjectToken: (key) => this.service.subjectTokenOf(key),
-		memo: (key) => this.service.memo(key),
-		memos: () => this.service.memos(),
-		setMemo: (key, text) => this.service.setMemo(key, text),
-		clearMemo: (key) => this.service.clearMemo(key),
-		memoAbout: (subject) => this.service.memoAbout(subject),
-		workRecords: () => this.service.workRecords(),
-		resumeTarget: (text, workspace) =>
-			this.service.resumeTarget(text, workspace),
-		escalations: () => this.service.allWires(),
+		tasks: () => this.service.tasks().map((one) => this.service.taskWire(one)),
+		newTask: (request) => this.service.taskWire(this.service.newTask(request)),
+		editTask: (id, edit) =>
+			this.service.taskWire(this.service.editTask(id, edit)),
+		setTaskStatus: (id, status, wait) =>
+			this.service.taskWire(this.service.setTaskStatus(id, status, wait)),
+		linkTask: (id, links, labels) =>
+			this.service.taskWire(this.service.linkTask(id, links, labels)),
+		unlinkTask: (id, links) =>
+			this.service.taskWire(this.service.unlinkTask(id, links)),
+		bindTask: (id, agentIds) =>
+			this.service.taskWire(this.service.bindTask(id, agentIds)),
+		unbindTask: (id, agentId) =>
+			this.service.taskWire(this.service.unbindTask(id, agentId)),
+		completeTask: (id, note) =>
+			this.service.taskWire(this.service.completeTask(id, note)),
+		resumeTarget: (text) => {
+			const found = this.service.resumeTarget(text);
+			return found === undefined
+				? undefined
+				: { ...found, task: this.service.taskWire(found.task) };
+		},
+		escalations: () => this.service.escalations().map(escalationWire),
 		raise: (request) => {
 			this.attached.push(request.attachments ?? []);
-			return this.service.toWire(
-				this.service.raise({
-					...request,
-					...(request.workspaceId === undefined
-						? {}
-						: { workspaceId: request.workspaceId }),
-				}),
-			);
+			return escalationWire(this.service.raise(request));
 		},
-		ask: (id, markdown, options, links, more) => {
-			this.attached.push(more?.attachments ?? []);
-			return this.service.toWire(
-				this.service.ask(id, markdown, options, links, more?.linkLabels),
-			);
+		withdraw: (id, note) => escalationWire(this.service.withdraw(id, note)),
+		acknowledge: (id) => {
+			this.service.acknowledge(id);
 		},
-		close: (id, note) => this.service.toWire(this.service.close(id, note)),
-		hold: (id, note) => this.service.toWire(this.service.hold(id, note)),
-		wait: (id, trigger, dueAt) =>
-			this.service.toWire(
-				this.service.wait(id, {
-					trigger,
-					...(dueAt === undefined ? {} : { dueAt }),
-				}),
-			),
-		resumeWait: (id, note) =>
-			this.service.toWire(this.service.resume(id, note)),
-		link: (id, agentId) => this.service.toWire(this.service.link(id, agentId)),
-		rank: (id, rank) => this.service.toWire(this.service.rank(id, rank)),
-		acknowledge: (id, entries) => {
-			this.service.acknowledge(id, entries);
-		},
+		triage: () => ({}),
 		configuredRoot: () => "/Users/me/orchestrator",
 		start: (request) => {
 			this.calls.push(`orchestrator-start ${request.root} ${request.profile}`);
@@ -344,20 +335,6 @@ class FakePorts implements TellPorts {
 				: { auto: this.service.autoSaving }),
 		}),
 		setMode: (mode) => this.service.setMode(mode),
-		setPriority: (subject, priority, note) => {
-			const ref = parseSubject(subject);
-			if (ref === undefined) throw new Error(`not a subject: ${subject}`);
-			return this.service.setPriority(ref, priority, note);
-		},
-		clearPriority: (subject) => {
-			const ref = parseSubject(subject);
-			if (ref === undefined || ref.kind === "esc")
-				throw new Error(`not a subject: ${subject}`);
-			return this.service.clearPriority(ref);
-		},
-		priorities: () => ({ entries: this.service.priorities() }),
-		requests: () => this.service.requests(),
-		fileRequest: (id, note) => this.service.fileRequest(id, note),
 		events: (last) => this.service.eventLog(last),
 		emit: (type, text) => this.service.emit(type, text),
 		timers: () => this.service.timers.list(),
@@ -370,8 +347,6 @@ class FakePorts implements TellPorts {
 		},
 		standing: (agentId) => this.service.standing(agentId),
 		status: (target) => this.service.status(target),
-		keep: (agentId, note) => this.service.keep(agentId, note),
-		unkeep: (agentId) => this.service.unkeep(agentId),
 	};
 	constructor() {
 		this.conversations.set("aaaa1111-0000", new FakeConversation());
@@ -1034,6 +1009,7 @@ describe("devhub --tell, in the app", () => {
 			workspaceId: "w1",
 			profile: "codex",
 			managed: true,
+			task: null,
 		});
 	});
 
@@ -2371,7 +2347,7 @@ describe("agent status", () => {
 			status: "waiting",
 			statusSince: "1970-01-01T00:01:30.000Z",
 			lastActivityAt: "1970-01-01T00:01:30.000Z",
-			memo: null,
+			task: null,
 			activity: "Running tests",
 			turn: "running",
 			control: "running",
@@ -2854,7 +2830,9 @@ describe("sessions and agent resume", () => {
 				],
 				self,
 			),
-		).rejects.toThrow(/issue= links the agent to an item: it takes the URL/u);
+		).rejects.toThrow(
+			/issue= names the item the agent was started on: the URL/u,
+		);
 		const list = await viaSocket(
 			service,
 			["session", "meta", "x1dd-0001"],
@@ -3769,7 +3747,7 @@ describe("agent rename and agent meta", () => {
 		expect(ports.calls).toContain("meta aaaa1111-0000 ticket <unset>");
 	});
 
-	it("takes the item linkage by hand only as an item URL, and keeps only an agent that needs action", async () => {
+	it("takes the item an agent was started on by hand only as an item URL", async () => {
 		const { service, ports } = setup();
 		await viaSocket(
 			service,
@@ -3795,19 +3773,21 @@ describe("agent rename and agent meta", () => {
 			],
 			coordinator,
 		);
-		// The one value that is not a URL: its Issue is still to be filed.
-		await viaSocket(
-			service,
-			["agent", "meta", "aaaa", "set", "issue", "pending"],
-			coordinator,
-		);
+		// Work with no Issue yet is a task with no link, not a value of issue=.
+		await expect(
+			viaSocket(
+				service,
+				["agent", "meta", "aaaa", "set", "issue", "pending"],
+				coordinator,
+			),
+		).rejects.toThrow(/a task with no link/u);
 		await viaSocket(
 			service,
 			["agent", "meta", "aaaa", "unset", "issue"],
 			coordinator,
 		);
 		expect(ports.calls.filter((call) => call.startsWith("meta "))).toHaveLength(
-			4,
+			3,
 		);
 		ports.calls.length = 0;
 		for (const line of [
@@ -3827,22 +3807,9 @@ describe("agent rename and agent meta", () => {
 			],
 		])
 			await expect(viaSocket(service, line, coordinator)).rejects.toThrow(
-				/issue= links the agent to an item: it takes the URL/u,
+				/issue= names the item the agent was started on: the URL/u,
 			);
 		expect(ports.calls).toEqual([]);
-		await expect(
-			viaSocket(
-				service,
-				["agent", "keep", "aaaa", "--note", "続ける"],
-				coordinator,
-			),
-		).rejects.toThrow(/does not need action/u);
-		const cleared = await viaSocket(
-			service,
-			["agent", "keep", "aaaa", "--clear"],
-			coordinator,
-		);
-		expect(cleared.message).toContain("was not kept");
 	});
 
 	it("puts an agent under the orchestrator's management and takes it out, never the orchestrator", async () => {
@@ -4337,19 +4304,130 @@ describe("the Orchestrator row from the command line", () => {
 		return world;
 	}
 
-	it("raises, asks again, shows, lists and closes an escalation", async () => {
+	it("makes, edits, parks, links, binds and completes a task, and lists it", async () => {
 		const { service, ports } = orchestrated();
+		const made = await viaSocket(
+			service,
+			["task", "new", "--title", "ログイン 500 の修正", "--memo", "まず原因"],
+			coordinator,
+		);
+		expect(made.data).toMatchObject({
+			id: 1,
+			status: "waiting",
+			links: [],
+			memo: { text: "まず原因" },
+		});
+		expect(made.message).toContain("Made task=1 待機 「ログイン 500 の修正」");
+		await viaSocket(
+			service,
+			[
+				"task",
+				"link",
+				"1",
+				"https://github.com/acme/app/issues/128=ログイン 500 の Issue",
+			],
+			coordinator,
+		);
+		await viaSocket(
+			service,
+			["task", "bind", "task=1", "Claude 1"],
+			coordinator,
+		);
+		const edited = await viaSocket(
+			service,
+			["task", "edit", "#1", "--priority", "high", "--memo", "CI を待つ"],
+			coordinator,
+		);
+		expect(edited.data).toMatchObject({
+			priority: "high",
+			links: ["https://github.com/acme/app/issues/128"],
+			linkLabels: {
+				"https://github.com/acme/app/issues/128": "ログイン 500 の Issue",
+			},
+			agents: [{ agentId: "aaaa1111-0000", name: "Claude 1" }],
+			memo: { text: "CI を待つ" },
+		});
+		const parked = await viaSocket(
+			service,
+			[
+				"task",
+				"status",
+				"1",
+				"waiting",
+				"--note",
+				"Bob の返事",
+				"--check-at",
+				"2026-11-20T09:00",
+			],
+			coordinator,
+		);
+		expect(parked.data).toMatchObject({
+			status: "waiting",
+			waitNote: "Bob の返事",
+			checkAt: Date.parse("2026-11-20T09:00"),
+		});
+		const shown = await viaSocket(service, ["task", "show", "1"], coordinator);
+		expect(shown.message).toContain("waits for: Bob の返事");
+		expect(shown.message).toContain("agents: Claude 1 (aaaa1111, ");
+		expect(
+			(await viaSocket(service, ["task", "list"], coordinator)).message,
+		).toBe("task=1 待機 「ログイン 500 の修正」 [high]");
+		await viaSocket(service, ["task", "unbind", "1", "Claude 1"], coordinator);
+		await viaSocket(
+			service,
+			["task", "unlink", "1", "https://github.com/acme/app/issues/128"],
+			coordinator,
+		);
+		const done = await viaSocket(
+			service,
+			["task", "done", "1", "--note", "直した"],
+			coordinator,
+		);
+		expect(done.data).toMatchObject({
+			status: "done",
+			done: { note: "直した" },
+		});
+		expect(
+			(await viaSocket(service, ["task", "list"], coordinator)).message,
+		).toMatch(/^No open tasks/u);
+		expect(
+			(await viaSocket(service, ["task", "list", "--all"], coordinator))
+				.message,
+		).toBe("task=1 完了 「ログイン 500 の修正」 [high]");
+		expect(ports.service.task(1)?.agents).toEqual([]);
+		// 回答待ち and done are not statuses a command sets.
+		expect(parseTellArguments(["task", "status", "1", "answer"])).toMatchObject(
+			{ kind: "invalid" },
+		);
+	});
+
+	it("asks one question per escalation, on a task, and shows and lists it", async () => {
+		const { service, ports } = orchestrated();
+		expect(
+			parseTellArguments([
+				"escalation",
+				"new",
+				"--title",
+				"x",
+				"--body",
+				BRIEF,
+			]),
+		).toMatchObject({
+			kind: "invalid",
+			message: expect.stringMatching(/--task is required/u),
+		});
+		await viaSocket(service, ["task", "new", "--title", "移行"], coordinator);
 		const made = await viaSocket(
 			service,
 			[
 				"escalation",
 				"new",
+				"--task",
+				"1",
 				"--title",
 				"本番DBのマイグレーション",
 				"--body",
 				`${BRIEF}\n実行してよいですか?`,
-				"--agent",
-				"Claude 1",
 				"--option",
 				"実行する",
 				"--link",
@@ -4359,52 +4437,96 @@ describe("the Orchestrator row from the command line", () => {
 		);
 		expect(made.data).toMatchObject({
 			id: 1,
-			state: "needs_answer",
-			agents: [{ agentId: "aaaa1111-0000", name: "Claude 1" }],
-			entries: [{ role: "orchestrator", options: ["実行する"] }],
+			taskId: 1,
+			state: "open",
+			question: { options: ["実行する"] },
 		});
+		expect(made.message).toMatch(/回答待ち until the person answers/u);
+		expect(ports.service.statusOf(ports.service.task(1)!)).toBe("answer");
 		ports.service.answer(1, "実行してよい");
-		const again = await viaSocket(
-			service,
-			["escalation", "ask", "#1", "--body", "## 決めてほしいこと\nstaging も?"],
-			coordinator,
-		);
-		expect(again.data).toMatchObject({ state: "needs_answer" });
 		const shown = await viaSocket(
 			service,
 			["escalation", "show", "1"],
 			coordinator,
 		);
-		expect(shown.message).toContain("the person (answer)");
+		expect(shown.message).toContain("the person's answer");
 		expect(shown.message).toContain("実行してよい");
-		const listed = await viaSocket(
-			service,
-			["escalation", "list"],
-			coordinator,
-		);
-		expect(listed.message).toContain("#1  needs_answer");
+		expect(
+			(await viaSocket(service, ["escalation", "list"], coordinator)).message,
+		).toBe("No open escalations.");
+		// A follow-up is a new one; one that no longer stands is withdrawn.
 		await viaSocket(
 			service,
-			["escalation", "close", "1", "--note", "done"],
+			[
+				"escalation",
+				"new",
+				"--task",
+				"1",
+				"--title",
+				"staging も",
+				"--body",
+				BRIEF,
+			],
+			coordinator,
+		);
+		await viaSocket(
+			service,
+			["escalation", "withdraw", "esc=2", "--note", "不要"],
 			coordinator,
 		);
 		expect(
 			(
 				await viaSocket(
 					service,
-					["escalation", "list", "--state", "closed"],
+					["escalation", "list", "--state", "withdrawn", "--task", "1"],
 					coordinator,
 				)
 			).data,
-		).toMatchObject({ escalations: [{ id: 1, state: "closed" }] });
+		).toMatchObject({ escalations: [{ id: 2, state: "withdrawn" }] });
+		// The verbs of a thread are gone, each saying where its job went.
+		for (const verb of [
+			"ask",
+			"hold",
+			"wait",
+			"resume",
+			"close",
+			"rank",
+			"link",
+		])
+			expect(parseTellArguments(["escalation", verb, "1"])).toMatchObject({
+				kind: "invalid",
+				message: expect.stringMatching(
+					/is gone: an escalation is one question/u,
+				),
+			});
+		// No question on a done task.
+		await viaSocket(service, ["task", "done", "1"], coordinator);
+		await expect(
+			viaSocket(
+				service,
+				["escalation", "new", "--task", "1", "--title", "x", "--body", BRIEF],
+				coordinator,
+			),
+		).rejects.toThrow(/is done/u);
 	});
 
 	it("refuses an escalation that does not stand on its own, saying every problem and how to fix it", async () => {
 		const { service, ports } = orchestrated();
+		ports.service.newTask({ title: "決済" });
 		const raise = (title: string, body: string, ...more: string[]) =>
 			viaSocket(
 				service,
-				["escalation", "new", "--title", title, "--body", body, ...more],
+				[
+					"escalation",
+					"new",
+					"--task",
+					"1",
+					"--title",
+					title,
+					"--body",
+					body,
+					...more,
+				],
 				coordinator,
 			);
 		await expect(
@@ -4426,22 +4548,11 @@ describe("the Orchestrator row from the command line", () => {
 			"決済リトライの延長",
 			`${BRIEF}\n[PR 1234](https://github.com/acme/app/pull/1234) の修正`,
 		);
-		// A wait asks nothing yet: no decision is required of it.
-		await raise(
-			"staging の deploy 待ち",
-			"deploy の後に確認する",
-			"--wait",
-			"deploy 後",
+		// A follow-up stands on its own too: both sections.
+		await expect(raise("追加", "## 決めてほしいこと\nどう?")).rejects.toThrow(
+			/no '## 人に聞く理由'/u,
 		);
-		// A follow-up needs its decision, not the reason again.
-		await expect(
-			viaSocket(
-				service,
-				["escalation", "ask", "1", "--body", "どう?"],
-				coordinator,
-			),
-		).rejects.toThrow(/no '## 決めてほしいこと'/u);
-		expect(ports.service.escalations()).toHaveLength(3);
+		expect(ports.service.escalations()).toHaveLength(2);
 		expect(ports.service.escalations()[0]!.linkLabels).toEqual({
 			"https://github.com/acme/app/pull/1234": "決済リトライの延長",
 		});
@@ -4449,6 +4560,7 @@ describe("the Orchestrator row from the command line", () => {
 
 	it("attaches pictures the command sent and ones a worker put in the store, and refuses what is not one", async () => {
 		const { service, ports } = orchestrated();
+		ports.service.newTask({ title: "ログイン画面" });
 		const png = Buffer.from([
 			0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1,
 		]);
@@ -4479,6 +4591,8 @@ describe("the Orchestrator row from the command line", () => {
 			[
 				"escalation",
 				"new",
+				"--task",
+				"1",
 				"--title",
 				"ログイン画面の新デザインを出してよいか",
 				"--body",
@@ -4511,255 +4625,19 @@ describe("the Orchestrator row from the command line", () => {
 			send(
 				[
 					"escalation",
-					"ask",
+					"new",
+					"--task",
 					"1",
+					"--title",
+					"x",
 					"--body",
-					"## 決めてほしいこと\nx",
+					BRIEF,
 					"--attach",
 					"att-00000000",
 				],
 				{},
 			),
 		).rejects.toThrow(/there is no attachment att-00000000/u);
-	});
-
-	it("waits on a condition: the trigger is required, --at is a time, resume and the board", async () => {
-		const { service, ports } = orchestrated();
-		await viaSocket(
-			service,
-			["escalation", "new", "--title", "返事待ち", "--body", BRIEF],
-			coordinator,
-		);
-		expect(() =>
-			viaSocket(service, ["escalation", "wait", "1"], coordinator),
-		).toThrow(/--trigger is required/u);
-		expect(() =>
-			viaSocket(
-				service,
-				["escalation", "wait", "1", "--trigger", "x", "--at", "tomorrow"],
-				coordinator,
-			),
-		).toThrow(/--at takes an ISO date/u);
-		const waited = await viaSocket(
-			service,
-			["escalation", "wait", "1", "--trigger", "Bob から Slack で返事が来たら"],
-			coordinator,
-		);
-		expect(waited.data).toMatchObject({ state: "waiting" });
-		const at = "2026-11-10T09:00:00.000Z";
-		const born = await viaSocket(
-			service,
-			[
-				"escalation",
-				"new",
-				"--title",
-				"日付待ち",
-				"--body",
-				"b",
-				"--wait",
-				"11/10 以降に再開",
-				"--at",
-				at,
-			],
-			coordinator,
-		);
-		expect(born.message).toContain("in waiting");
-		expect(ports.service.escalations()[1]!.entries.at(-1)).toMatchObject({
-			kind: "wait",
-			markdown: "11/10 以降に再開",
-			dueAt: Date.parse(at),
-		});
-		expect(() =>
-			viaSocket(
-				service,
-				["escalation", "new", "--title", "t", "--body", BRIEF, "--at", at],
-				coordinator,
-			),
-		).toThrow(/--at goes with --wait/u);
-		const board = await viaSocket(service, ["--json", "board"], coordinator);
-		expect(board.message).toContain("waiting (2, soonest first):");
-		expect(board.message).toContain(
-			"#2  日付待ち  waiting on: 11/10 以降に再開  [2026-11-10T09:00:00.000Z,",
-		);
-		expect(board.message).toContain(
-			"#1  返事待ち  waiting on: Bob から Slack で返事が来たら",
-		);
-		expect(
-			(board.data as { waiting: { id: number }[] }).waiting.map(
-				(one) => one.id,
-			),
-		).toEqual([2, 1]);
-		const listed = await viaSocket(
-			service,
-			["escalation", "list", "--state", "waiting"],
-			coordinator,
-		);
-		expect(listed.data).toMatchObject({
-			escalations: [{ id: 1 }, { id: 2 }],
-		});
-		const shown = await viaSocket(
-			service,
-			["escalation", "show", "2"],
-			coordinator,
-		);
-		expect(shown.message).toContain(
-			"--- waiting on: 11/10 以降に再開 (at 2026-11-10T09:00:00.000Z)",
-		);
-		const resumed = await viaSocket(
-			service,
-			["escalation", "resume", "1", "--note", "返事が来た"],
-			coordinator,
-		);
-		expect(resumed.data).toMatchObject({ state: "in_progress" });
-		await expect(
-			viaSocket(service, ["escalation", "resume", "1"], coordinator),
-		).rejects.toThrow(/not waiting on a condition/u);
-	});
-
-	it("holds one in in_progress on the orchestrator's side, never as an answer; ask puts it back", async () => {
-		const { service, ports } = orchestrated();
-		await viaSocket(
-			service,
-			["escalation", "new", "--title", "調査", "--body", BRIEF],
-			coordinator,
-		);
-		const held = await viaSocket(
-			service,
-			["escalation", "hold", "1", "--note", "B に追加調査を依頼"],
-			coordinator,
-		);
-		expect(held.data).toMatchObject({ state: "in_progress" });
-		const entry = ports.service.escalations()[0]!.entries.at(-1);
-		expect(entry).toEqual({
-			role: "orchestrator",
-			kind: "held",
-			markdown: "B に追加調査を依頼",
-			at: expect.any(Number),
-		});
-		// Not an answer: nothing to report as answered, and nothing the person said.
-		const shown = await viaSocket(
-			service,
-			["escalation", "show", "1"],
-			coordinator,
-		);
-		expect(shown.message).toContain("held in in_progress by the orchestrator");
-		expect(shown.message).not.toContain("the person (answer)");
-		// On one already in in_progress it notes where the work stands.
-		await viaSocket(
-			service,
-			["escalation", "hold", "1", "--note", "B から返事待ち"],
-			coordinator,
-		);
-		expect(ports.service.escalations()[0]!.entries.at(-1)).toMatchObject({
-			role: "orchestrator",
-			kind: "held",
-			markdown: "B から返事待ち",
-		});
-		expect(
-			(await viaSocket(service, ["escalation", "show", "1"], coordinator)).data,
-		).toMatchObject({ state: "in_progress" });
-		await viaSocket(
-			service,
-			["escalation", "ask", "1", "--body", "## 決めてほしいこと\n結論は?"],
-			coordinator,
-		);
-		expect(ports.service.escalations()[0]!.entries.at(-1)?.role).toBe(
-			"orchestrator",
-		);
-		expect(
-			(await viaSocket(service, ["escalation", "show", "1"], coordinator)).data,
-		).toMatchObject({ state: "needs_answer" });
-	});
-
-	it("ranks escalations: new and rank take the fields, list and board show them, the board sorts by them", async () => {
-		const { service, ports } = orchestrated();
-		const raise = (title: string, ...rank: string[]) =>
-			viaSocket(
-				service,
-				["escalation", "new", "--title", title, "--body", BRIEF, ...rank],
-				coordinator,
-			);
-		const first = await raise("ふつう");
-		expect(first.data).toMatchObject({ priority: "normal", effort: "normal" });
-		ports.clock.now += 1000;
-		await raise(
-			"急ぎ",
-			"--priority",
-			"high",
-			"--effort",
-			"deep",
-			"--rank-note",
-			"リリースを止めている",
-		);
-		ports.clock.now += 1000;
-		await raise("すぐ", "--effort", "quick");
-		ports.clock.now += 1000;
-		await raise("後で", "--priority", "low", "--effort", "quick");
-		const board = await viaSocket(service, ["--json", "board"], coordinator);
-		const order = (
-			board.data as { needsAnswer: { title: string }[] }
-		).needsAnswer.map((one) => one.title);
-		expect(order).toEqual(["急ぎ", "すぐ", "ふつう", "後で"]);
-		expect(board.message).toContain(
-			"[priority high, effort deep: リリースを止めている]",
-		);
-		// Re-ranked as things change; only what is given moves.
-		const ranked = await viaSocket(
-			service,
-			["escalation", "rank", "#1", "--priority", "high", "--effort", "quick"],
-			coordinator,
-		);
-		expect(ranked.data).toMatchObject({
-			id: 1,
-			priority: "high",
-			effort: "quick",
-			state: "needs_answer",
-			entries: [{ role: "orchestrator" }],
-		});
-		expect(ranked.message).toBe("#1 is ranked priority high, effort quick.");
-		expect(
-			ports.orchestrator.board().needsAnswer.map((one) => one.title),
-		).toEqual(["ふつう", "急ぎ", "すぐ", "後で"]);
-		await viaSocket(
-			service,
-			["escalation", "rank", "2", "--rank-note", ""],
-			coordinator,
-		);
-		const listed = await viaSocket(
-			service,
-			["escalation", "list"],
-			coordinator,
-		);
-		expect(listed.message).toMatch(
-			/#2 {2}needs_answer {2}\S+ {2}\[priority high, effort deep\] {2}急ぎ/u,
-		);
-		expect(listed.data).toMatchObject({
-			escalations: expect.arrayContaining([
-				expect.objectContaining({ id: 4, priority: "low", effort: "quick" }),
-			]),
-		});
-	});
-
-	it("refuses a rank that names nothing, or a priority it does not know", () => {
-		expect(parseTellArguments(["escalation", "rank", "1"])).toMatchObject({
-			kind: "invalid",
-			message: "escalation rank takes --priority, --effort or --rank-note.",
-		});
-		expect(
-			parseTellArguments([
-				"escalation",
-				"new",
-				"--title",
-				"t",
-				"--body",
-				"b",
-				"--priority",
-				"urgent",
-			]),
-		).toMatchObject({
-			kind: "invalid",
-			message: "--priority takes high or normal or low.",
-		});
 	});
 
 	it("has no way to answer one: not a command, not a port", () => {
@@ -4774,63 +4652,51 @@ describe("the Orchestrator row from the command line", () => {
 		expect(Object.keys(ports.orchestrator).sort()).toEqual(
 			[
 				"acknowledge",
-				"ask",
+				"bindTask",
 				"board",
-				"clearMemo",
-				"clearPriority",
 				"clearTimer",
-				"close",
+				"completeTask",
 				"configuredRoot",
+				"editTask",
 				"emit",
 				"escalations",
 				"events",
 				"expiredWhileOff",
-				"fileRequest",
 				"focus",
-				"hold",
-				"keep",
-				"link",
-				"memo",
-				"memoAbout",
-				"memos",
+				"linkTask",
 				"mode",
+				"newTask",
 				"pause",
-				"priorities",
 				"raise",
-				"rank",
-				"requests",
-				"resolveSubject",
 				"resume",
 				"resumeTarget",
-				"resumeWait",
-				"setMemo",
 				"setMode",
-				"setPriority",
+				"setTaskStatus",
 				"setTimer",
 				"standing",
 				"start",
 				"status",
-				"subjectToken",
+				"tasks",
 				"timers",
-				"unkeep",
-				"wait",
-				"workRecords",
+				"triage",
+				"unbindTask",
+				"unlinkTask",
+				"withdraw",
 			].sort(),
 		);
-		// Nothing a tell command can carry reaches a human entry.
+		// Nothing a tell command can carry reaches an answer.
 		const source = readFileSync(
 			new URL("./service.ts", import.meta.url),
 			"utf8",
 		);
 		expect(source).not.toMatch(/\.answer\(\s*command\.id/u);
 		expect(source).not.toMatch(/role:\s*"human"/u);
-		// `hold` writes the orchestrator's side, never the person's.
-		expect(source).not.toMatch(/\.take\(/u);
 	});
 
 	it("wakes the orchestrator's wait --any on an answer, until it is shown", async () => {
 		const { service, ports } = orchestrated();
-		ports.service.raise({ title: "決めて", markdown: "A or B?" });
+		ports.service.newTask({ title: "移行" });
+		ports.service.raise({ taskId: 1, title: "決めて", markdown: "A or B?" });
 		const quiet = await viaSocket(
 			service,
 			["agent", "wait", "--any", "--until", "idle", "--timeout", "1"],
@@ -4859,49 +4725,10 @@ describe("the Orchestrator row from the command line", () => {
 		).toMatchObject({ reached: false, answered: [] });
 	});
 
-	it("marks a stalled 対応中 escalation on the board, a grace after its answer reached the orchestrator", async () => {
-		const { service, ports } = orchestrated();
-		ports.service.observe();
-		ports.service.raise({ title: "決めて", markdown: "A or B?" });
-		// Delivered with the answer in it, off included: that is the reading.
-		ports.service.events.pause();
-		ports.service.answer(1, "A");
-		ports.clock.now += 59_000;
-		ports.service.observe();
-		const soon = await viaSocket(service, ["--json", "board"], coordinator);
-		expect(soon.message).not.toContain("停滞");
-		ports.clock.now += 1_000;
-		ports.service.observe();
-		const board = await viaSocket(service, ["--json", "board"], coordinator);
-		expect(board.message).toMatch(
-			/#1 {2}決めて {2}answered .* ago {2}\[停滞 .*: no agent is working on it\]/u,
-		);
-		expect(
-			(board.data as { inProgress: { stalledSince?: number }[] }).inProgress[0]
-				?.stalledSince,
-		).toBe(ports.clock.now - 60_000);
-	});
-
-	it("has no 不明: an idle agent no escalation names wakes nothing and is on no lane", async () => {
-		const { service, ports } = orchestrated();
-		ports.service.observe();
-		ports.clock.now += 61_000;
-		ports.service.observe();
-		const quiet = await viaSocket(
-			service,
-			["agent", "wait", "--any", "--until", "idle", "--timeout", "1"],
-			coordinator,
-		);
-		expect(quiet.data).not.toHaveProperty("unaccounted");
-		expect(ports.delivered.join("\n")).not.toContain("[unaccounted]");
-		const board = await viaSocket(service, ["--json", "board"], coordinator);
-		expect(board.message).not.toContain("unaccounted");
-		expect(board.data).not.toHaveProperty("unaccounted");
-	});
-
 	it("does not wake an agent that is not the orchestrator on these", async () => {
 		const { service, ports } = orchestrated();
-		ports.service.raise({ title: "t", markdown: "b" });
+		ports.service.newTask({ title: "t" });
+		ports.service.raise({ taskId: 1, title: "t", markdown: "b" });
 		ports.service.answer(1, "a");
 		const other = callerFromOrigin("local\tw1\taaaa1111-0000");
 		const answer = await viaSocket(
@@ -4973,7 +4800,7 @@ describe("the Orchestrator row from the command line", () => {
 		expect(status.data).toMatchObject({ agentId: ORCHESTRATOR });
 	});
 
-	it("gives one subject's whole state in one call: an item, or an agent", async () => {
+	it("gives one subject's whole state in one call: a task, an item, or an agent", async () => {
 		const { service, ports } = orchestrated();
 		const PR = "https://github.com/acme/app/pull/9";
 		ports.items = [
@@ -5009,32 +4836,43 @@ describe("the Orchestrator row from the command line", () => {
 				projects: [{ project: "acme/7", lane: "Review" }],
 				pullRequest: { review: "changes_requested", unresolved: 2 },
 			},
-			needsAction: { clause: "no_agent" },
-			agents: [],
+			needsAction: { clause: "no_task" },
+			tasks: [],
 		});
 		const worker = ports.spaces[0]!.agents[0]!;
 		ports.spaces[0] = {
 			...ports.spaces[0]!,
-			agents: [
-				{ ...worker, status: "idle", managed: true, meta: { issue: PR } },
-			],
+			agents: [{ ...worker, status: "idle", managed: true }],
 		};
+		const task = ports.service.newTask({
+			title: "設定画面のレビュー対応",
+			links: [PR],
+			status: "in_progress",
+			memo: "指摘 2 件を直させる",
+		});
+		ports.service.bindTask(task.id, [worker.id]);
 		const linked = await viaSocket(
 			service,
 			["--json", "status", PR],
 			undefined,
 		);
 		expect(linked.data).toMatchObject({
-			needsAction: { clause: "idle_no_escalation" },
-			agents: [
-				{
-					id: worker.id,
-					status: "idle",
-					managed: true,
-					needsAction: "idle_no_escalation",
-				},
-			],
+			needsAction: null,
+			tasks: [{ id: task.id, status: "in_progress" }],
 		});
+		const byTask = await viaSocket(
+			service,
+			["--json", "status", `task=${String(task.id)}`],
+			undefined,
+		);
+		expect(byTask.data).toMatchObject({
+			subject: "task",
+			task: { id: task.id, memo: { text: "指摘 2 件を直させる" } },
+			needsAction: { clause: "idle" },
+			items: [{ ref: "pr=acme/app#9", pullRequest: { checks: "failing" } }],
+			agents: [{ id: worker.id, status: "idle", needsAction: "idle" }],
+		});
+		expect(byTask.message).toContain("memo (");
 		const byAgent = await viaSocket(
 			service,
 			["status", worker.id.slice(0, 4)],
@@ -5042,61 +4880,22 @@ describe("the Orchestrator row from the command line", () => {
 		);
 		expect(byAgent.data).toMatchObject({
 			subject: "agent",
-			agent: { id: worker.id, linked: PR },
-			item: { ref: "pr=acme/app#9" },
+			agent: { id: worker.id },
+			task: { id: task.id, title: "設定画面のレビュー対応" },
 			workspace: { issue: null },
-			needsAction: { clause: "idle_no_escalation" },
+			needsAction: { clause: "idle" },
 		});
 		expect(byAgent.message).toContain(
-			"pr=acme/app#9「設定画面」  open, assigned to me, in the population",
-		);
-		expect(byAgent.data).toMatchObject({ memo: null });
-		// The subject's note goes with it, the item's and its agent's alike.
-		ports.service.setMemo("item acme/app#9", "指摘 2 件を直させる");
-		const noted = await viaSocket(service, ["--json", "status", PR], undefined);
-		expect(noted.message).toMatch(
-			/\nmemo \(pr=acme\/app#9, \d+\/\d+ \d\d:\d\d\): 指摘 2 件を直させる$/u,
-		);
-		expect(noted.data).toMatchObject({
-			memo: { subject: "pr=acme/app#9", text: "指摘 2 件を直させる" },
-		});
-		expect(
-			(await viaSocket(service, ["status", worker.id], undefined)).message,
-		).toContain("memo (pr=acme/app#9, ");
-		ports.service.clearMemo("item acme/app#9");
-		// Work whose Issue is still to be filed: no item, and none missing.
-		ports.spaces[0] = {
-			...ports.spaces[0]!,
-			agents: [
-				{
-					...worker,
-					status: "working",
-					managed: true,
-					meta: { issue: "pending" },
-				},
-			],
-		};
-		const pending = await viaSocket(
-			service,
-			["--json", "status", worker.id],
-			undefined,
-		);
-		expect(pending.data).toMatchObject({
-			subject: "agent",
-			agent: { linked: null, pendingIssue: true, needsAction: null },
-			item: null,
-			needsAction: null,
-		});
-		expect(
-			(await viaSocket(service, ["status", worker.id], undefined)).message,
-		).toContain(
-			"linked to no item yet (issue=pending: its Issue is still to be filed)",
+			`task: task=${String(task.id)} 処理中 「設定画面のレビュー対応」`,
 		);
 		await expect(
 			viaSocket(service, ["status", "acme/app#404"], undefined),
 		).rejects.toThrow(
 			/has not read acme\/app#404: the registered Projects have not been read \(yet\)\..*GitHub polling:/u,
 		);
+		await expect(
+			viaSocket(service, ["status", "task=99"], undefined),
+		).rejects.toThrow(/there is no task #99/u);
 	});
 
 	it("lists what needs action on the board, and counts my items in status", async () => {
@@ -5154,10 +4953,11 @@ describe("the Orchestrator row from the command line", () => {
 		const { service, ports } = orchestrated();
 		ports.delivered = [];
 		await viaSocket(service, ["orchestrator", "pause"], undefined);
-		ports.service.raise({ title: "one", markdown: "x" });
+		ports.service.newTask({ title: "仕事" });
+		ports.service.raise({ taskId: 1, title: "one", markdown: "x" });
 		ports.service.answer(1, "a");
 		expect(ports.delivered.map(([, text]) => text)).toEqual([
-			"esc=1「one」 への人の回答:\na",
+			"task=1「仕事」 esc=1「one」 への人の回答:\na",
 		]);
 		ports.delivered = [];
 		ports.service.request("b");
@@ -5170,16 +4970,20 @@ describe("the Orchestrator row from the command line", () => {
 			["orchestrator", "resume"],
 			undefined,
 		);
-		expect(resumed.data).toMatchObject({ delivered: 3 });
+		// The answer set task 1 処理中 with no agent: its needs_action rides along.
+		expect(resumed.data).toMatchObject({ delivered: 4 });
 		expect(ports.delivered.map(([, text]) => text)).toEqual([
-			expect.stringMatching(/^req=1 人からの依頼 .*\nb$/u),
-			expect.stringMatching(/\[custom\.deploy\][^]*\[custom\.build\]/u),
+			expect.stringMatching(/^task=2「b」 人からの依頼 .*\nb$/u),
+			expect.stringMatching(
+				/\[custom\.deploy\][^]*\[custom\.build\][^]*\[needs_action\] task=1「仕事」 — no_agent/u,
+			),
 		]);
 	});
 
 	it("lists recent events with what came of them, as lines or as data", async () => {
 		const { service, ports } = orchestrated();
-		ports.service.raise({ title: "決めて", markdown: "A?" });
+		ports.service.newTask({ title: "仕事" });
+		ports.service.raise({ taskId: 1, title: "決めて", markdown: "A?" });
 		ports.service.answer(1, "A");
 		ports.service.emit("custom.deploy", "staging");
 		const listed = await viaSocket(
@@ -5188,7 +4992,7 @@ describe("the Orchestrator row from the command line", () => {
 			coordinator,
 		);
 		expect(listed.message).toMatch(
-			/delivered +\[escalation_answered\] esc=1「決めて」/u,
+			/delivered +\[escalation_answered\] task=1「仕事」 esc=1「決めて」/u,
 		);
 		expect(listed.message).toMatch(/\[custom\.deploy\] — staging/u);
 		expect(listed.message).not.toContain("[init]");
@@ -5272,12 +5076,12 @@ describe("the Orchestrator row from the command line", () => {
 		).toMatchObject({ command: { verb: "orchestrator-emit", text: "-" } });
 	});
 
-	it("lists a wait's --at that came while off as expired while off", async () => {
+	it("lists a task's --check-at that came while off as expired while off", async () => {
 		const { service, ports } = orchestrated();
-		const one = ports.service.raise({ title: "リリース後", markdown: "?" });
-		ports.service.wait(one.id, {
-			trigger: "15:00",
-			dueAt: ports.clock.now + 60_000,
+		const one = ports.service.newTask({ title: "リリース後" });
+		ports.service.setTaskStatus(one.id, "waiting", {
+			note: "15:00",
+			checkAt: ports.clock.now + 60_000,
 		});
 		ports.service.events.pause();
 		ports.clock.now += 61_000;
@@ -5288,9 +5092,9 @@ describe("the Orchestrator row from the command line", () => {
 			undefined,
 		);
 		expect(listed.message).toMatch(
-			/Expired while off[^]*esc=1 「リリース後」 {2}wait --at \S+ {2}expired while off/u,
+			/Expired while off[^]*task=1 「リリース後」 {2}--check-at \S+ {2}expired while off/u,
 		);
-		expect(listed.data).toMatchObject({ expired: [{ escalationId: 1 }] });
+		expect(listed.data).toMatchObject({ expired: [{ taskId: 1 }] });
 	});
 
 	it("lists, sets and clears timers for the session", async () => {
@@ -5361,10 +5165,11 @@ describe("devhub: links from the command line", () => {
 	}
 
 	it("prints the canonical link to each kind of place, checked", async () => {
-		const { service } = orchestrated();
+		const { service, ports } = orchestrated();
+		ports.service.newTask({ title: "t" });
 		await viaSocket(
 			service,
-			["escalation", "new", "--title", "t", "--body", BRIEF],
+			["escalation", "new", "--task", "1", "--title", "t", "--body", BRIEF],
 			coordinator,
 		);
 		const link = async (...argv: string[]) =>
@@ -5376,6 +5181,7 @@ describe("devhub: links from the command line", () => {
 			"devhub:file/src/app/src/main.ts:12:3",
 		);
 		expect(await link("escalation", "#1")).toBe("devhub:escalation/1");
+		expect(await link("task", "1")).toBe("devhub:task/1");
 		expect(await link("orchestrator")).toBe("devhub:orchestrator");
 		expect(await link("session", "sess-1234")).toBe("devhub:session/sess-1234");
 		await expect(link("agent", "nobody")).rejects.toThrow(/no agent/u);
@@ -5398,11 +5204,14 @@ describe("devhub: links from the command line", () => {
 
 	it("checks an escalation's devhub: links, in --link and in the body, and stores them canonically", async () => {
 		const { service, ports } = orchestrated();
+		ports.service.newTask({ title: "t" });
 		const made = await viaSocket(
 			service,
 			[
 				"escalation",
 				"new",
+				"--task",
+				"1",
 				"--title",
 				"t",
 				"--body",
@@ -5424,22 +5233,35 @@ describe("devhub: links from the command line", () => {
 			service,
 			[
 				"escalation",
-				"ask",
+				"new",
+				"--task",
 				"1",
+				"--title",
+				"follow-up",
 				"--body",
-				"## 決めてほしいこと\nb",
+				BRIEF,
 				"--link",
 				"devhub:workspace/app",
 			],
 			coordinator,
 		);
-		expect(ports.service.escalations()[0]!.links).toContain(
+		expect(ports.service.escalations()[1]!.links).toContain(
 			"devhub:workspace/w1",
 		);
 		const refused = (argv: string[]) =>
 			viaSocket(
 				service,
-				["escalation", "new", "--title", "x", "--body", BRIEF, ...argv],
+				[
+					"escalation",
+					"new",
+					"--task",
+					"1",
+					"--title",
+					"x",
+					"--body",
+					BRIEF,
+					...argv,
+				],
 				coordinator,
 			);
 		// An invalid scheme: the valid forms are listed.
@@ -5456,6 +5278,8 @@ describe("devhub: links from the command line", () => {
 				[
 					"escalation",
 					"new",
+					"--task",
+					"1",
 					"--title",
 					"x",
 					"--body",
@@ -5469,10 +5293,13 @@ describe("devhub: links from the command line", () => {
 				service,
 				[
 					"escalation",
-					"ask",
+					"new",
+					"--task",
 					"1",
+					"--title",
+					"x",
 					"--body",
-					"## 決めてほしいこと\nb",
+					BRIEF,
 					"--link",
 					"devhub:file/etc/x",
 				],
@@ -5480,7 +5307,7 @@ describe("devhub: links from the command line", () => {
 			),
 		).rejects.toThrow(/no open workspace holds/u);
 		// Nothing was raised by a refusal.
-		expect(ports.service.escalations()).toHaveLength(1);
+		expect(ports.service.escalations()).toHaveLength(2);
 	});
 });
 
@@ -5585,7 +5412,7 @@ describe("the orchestrator's workspace, by name", () => {
 	});
 });
 
-describe("memos and resuming the agent that did the work", () => {
+describe("a task's memo, and resuming the agent that did the work", () => {
 	const ISSUE = "https://github.com/acme/app/issues/128";
 	const live = {
 		agentId: "dddd4444-0000",
@@ -5597,156 +5424,95 @@ describe("memos and resuming the agent that did the work", () => {
 		machine: "local",
 		folder: "/src/app_128",
 		branch: "128-fix",
-		issue: ISSUE,
 		session: "c1aa-0001",
 	};
 
-	it("sets, lists and clears a subject's one note, by any of its names", async () => {
-		const { service } = setup();
-		await viaSocket(
-			service,
-			["memo", "set", "issue=acme/app#128", "指摘 2 件を直させる"],
-			self,
-		);
+	/** Task 1, linked to the Issue, its agent stopped on a session. */
+	function worked(ports: FakePorts, memo?: string) {
+		const task = ports.service.newTask({
+			title: "ログイン修正",
+			links: [ISSUE],
+			...(memo === undefined ? {} : { memo }),
+		});
+		ports.service.bindTask(task.id, [live.agentId]);
+		ports.service.observeWork([live]);
+		ports.service.observeWork([]);
+		return task;
+	}
+
+	it("sets a task's one memo with task edit, read from stdin too, and refuses a long one", async () => {
+		const { service, ports } = setup();
+		ports.service.newTask({ title: "A" });
 		const set = await viaSocket(
 			service,
-			["--json", "memo", "set", ISSUE, "CI が通ったら人にレビューを頼む"],
+			[
+				"--json",
+				"task",
+				"edit",
+				"1",
+				"--memo",
+				"CI が通ったら人にレビューを頼む",
+			],
 			self,
 		);
 		expect(set.data).toMatchObject({
-			subject: "issue=acme/app#128",
-			key: "item acme/app#128",
-			text: "CI が通ったら人にレビューを頼む",
+			memo: { text: "CI が通ったら人にレビューを頼む" },
 		});
-		const listed = await viaSocket(service, ["memo", "list"], self);
-		expect(listed.message).toMatch(
-			/memos \(1, newest first\):\n {2}issue=acme\/app#128 {2}\d+\/\d+ \d\d:\d\d {2}CI が通ったら人にレビューを頼む\n/u,
+		expect(set.message).toMatch(
+			/\nmemo \(\d+\/\d+ \d\d:\d\d\): CI が通ったら/u,
 		);
-		expect(
-			(
-				(await viaSocket(service, ["--json", "memo", "list"], self)).data as {
-					memos: unknown[];
-				}
-			).memos,
-		).toEqual([
-			expect.objectContaining({
-				subject: "issue=acme/app#128",
-				text: "CI が通ったら人にレビューを頼む",
-			}),
-		]);
 		await expect(
 			viaSocket(
 				service,
-				["memo", "set", "acme/app#128", "x".repeat(501)],
+				["task", "edit", "1", "--memo", "x".repeat(501)],
 				self,
 			),
 		).rejects.toThrow(/keep it to 500: what you will do next/u);
-		expect(
-			(await viaSocket(service, ["memo", "clear", "issue=acme/app#128"], self))
-				.message,
-		).toBe("issue=acme/app#128: its note is cleared.");
-		await expect(
-			viaSocket(service, ["memo", "set", "esc=99", "x"], self),
-		).rejects.toThrow(/no escalation #99/);
-		await expect(
-			viaSocket(service, ["memo", "set", "nonsense", "x"], self),
-		).rejects.toThrow(/a subject is/);
-	});
-
-	it("notes an agent's work under the item it is linked to", async () => {
-		const { service, ports } = setup();
-		withAgent(ports, "aaaa1111-0000", { meta: { issue: ISSUE } });
-		const answer = await viaSocket(
-			service,
-			["memo", "set", "agent=aaaa1111", "x"],
-			self,
-		);
-		expect(answer.message).toMatch(/^issue=acme\/app#128: noted\./u);
-	});
-
-	it("shows the note in board (under its line, the rest after), its --json, agent status and escalation show", async () => {
-		const { service, ports } = setup();
-		ports.service.observeWork([live]);
-		ports.service.observeWork([]);
-		ports.service.setMemo(
-			"item acme/app#128",
-			"指摘を直させてから人にレビューを頼む",
-		);
-		ports.service.raise({
-			title: "決めて",
-			markdown: "A or B?",
-			links: [ISSUE],
+		await viaSocket(service, ["task", "edit", "1", "--clear-memo"], self);
+		expect(ports.service.task(1)?.memo).toBeUndefined();
+		expect(parseTellArguments(["memo", "set", "x", "y"])).toMatchObject({
+			kind: "invalid",
+			message: expect.stringMatching(/task edit T --memo/u),
 		});
+	});
+
+	it("shows the memo in board, task show, and the agent's status", async () => {
+		const { service, ports } = setup();
+		const task = worked(ports, "指摘を直させてから人にレビューを頼む");
 		const board = await viaSocket(service, ["board"], self);
-		// Under the escalation that links the item, and under its resumable work.
 		expect(board.message).toMatch(
-			/ {2}#1 {2}決めて .*\n {6}memo \(issue=acme\/app#128, \d+\/\d+ \d\d:\d\d\): 指摘を直させてから人にレビューを頼む\n/u,
+			/ {2}task=1 待機 「ログイン修正」\n {4}links: .*\n {4}agents: 128 login fix \(dddd4444, stopped, resumable\)\n {4}memo \(\d+\/\d+ \d\d:\d\d\): 指摘を直させてから人にレビューを頼む/u,
 		);
-		expect(board.message).toMatch(
-			/ {2}issue=acme\/app#128 {2}128 login fix \(dddd4444\)\n {6}memo \(issue=acme\/app#128/u,
-		);
-		expect(board.message).not.toContain("more, newest first");
-		const json = await viaSocket(service, ["--json", "board"], self);
-		expect(json.data).toMatchObject({
-			memos: [
-				{
-					subject: "issue=acme/app#128",
-					text: "指摘を直させてから人にレビューを頼む",
-				},
-			],
-			resumable: [{ subject: "issue=acme/app#128", agentId: "dddd4444-0000" }],
-		});
-		const shown = await viaSocket(
-			service,
-			["--json", "escalation", "show", "1"],
-			self,
-		);
-		expect(shown.message).toContain("memo (issue=acme/app#128, ");
-		expect(shown.data).toMatchObject({
-			memo: {
-				subject: "issue=acme/app#128",
-				text: "指摘を直させてから人にレビューを頼む",
-			},
-		});
-		// An agent shows its item's note.
-		withAgent(ports, "aaaa1111-0000", { meta: { issue: ISSUE } });
+		// An agent shows its task and the task's memo.
+		withAgent(ports, "aaaa1111-0000", {});
+		ports.service.bindTask(task.id, ["aaaa1111-0000"]);
 		const status = await viaSocket(
 			service,
 			["--json", "agent", "status", "aaaa"],
 			self,
 		);
 		expect(status.message).toMatch(
-			/\nmemo {6}issue=acme\/app#128, \d+\/\d+ \d\d:\d\d: 指摘を直させてから人にレビューを頼む$/u,
+			/\nmemo {6}\d+\/\d+ \d\d:\d\d: 指摘を直させてから人にレビューを頼む$/u,
 		);
 		expect(status.data).toMatchObject({
-			memo: { subject: "issue=acme/app#128" },
+			task: {
+				id: 1,
+				status: "waiting",
+				memo: { text: "指摘を直させてから人にレビューを頼む" },
+			},
 		});
-		// A note whose subject is on none of the board's lines is listed after.
-		ports.service.setMemo("agent zzzz9999", "起票させる");
-		expect((await viaSocket(service, ["board"], self)).message).toMatch(
-			/memos \(1 more, newest first: what you meant to do next\):\n {2}agent=zzzz9999 {2}\d+\/\d+ \d\d:\d\d {2}起票させる$/u,
-		);
 	});
 
-	it("resumes a subject's agent on its latest session, in its folder, with the memo after the prompt", async () => {
+	it("resumes a task's agent on its latest session, in its folder, with the memo after the prompt", async () => {
 		const { service, ports } = setup();
-		ports.service.observeWork([live]);
-		ports.service.observeWork([]);
-		ports.service.setMemo("item acme/app#128", "指摘 2 件を直させる");
+		worked(ports, "指摘 2 件を直させる");
 		ports.paths.set("/src/app_128", "directory");
 		ports.pastIn.set("here /src/app_128 claude", [
 			{ ...PAST.claude![0]!, cwd: "/src/app_128" },
 		]);
 		const answer = await viaSocket(
 			service,
-			[
-				"--json",
-				"agent",
-				"resume",
-				"issue=acme/app#128",
-				"--prompt",
-				"指摘に対応して",
-			],
+			["--json", "agent", "resume", "task=1", "--prompt", "指摘に対応して"],
 			self,
 		);
 		expect(ports.calls).toContain(
@@ -5754,46 +5520,50 @@ describe("memos and resuming the agent that did the work", () => {
 		);
 		expect(answer.data).toMatchObject({
 			agentId: "resumed-agent",
-			subject: "issue=acme/app#128",
+			task: 1,
 			was: "dddd4444-0000",
 			memo: "指摘 2 件を直させる",
 		});
 		const [to, text] = ports.queued.at(-1)!;
 		expect(to).toBe("resumed-agent");
 		expect(text).toMatch(
-			/^指摘に対応して\n\n---\nDevHub より: この作業 \(issue=acme\/app#128\) のオーケストレーターのメモ \(\d+\/\d+ \d\d:\d\d\):\n指摘 2 件を直させる$/u,
+			/^指摘に対応して\n\n---\nDevHub より: このタスク \(task=1「ログイン修正」\) のオーケストレーターのメモ \(\d+\/\d+ \d\d:\d\d\):\n指摘 2 件を直させる$/u,
+		);
+		// The resumed agent is bound to the task again.
+		expect(ports.service.task(1)!.agents.map((one) => one.agentId)).toContain(
+			"resumed-agent",
 		);
 	});
 
 	it("names the agent by its id or name too, and says when there is nothing to resume", async () => {
 		const { service, ports } = setup();
+		const task = ports.service.newTask({ title: "ログイン修正" });
+		ports.service.bindTask(task.id, ["aaaa1111-0000"]);
 		ports.service.observeWork([{ ...live, agentId: "aaaa1111-0000" }]);
+		withAgent(ports, "aaaa1111-0000", {});
 		// Open now: nothing to resume.
-		const open = await viaSocket(
-			service,
-			["agent", "resume", "issue=acme/app#128"],
-			self,
-		);
+		const open = await viaSocket(service, ["agent", "resume", "task=1"], self);
 		expect(open.message).toMatch(/is open now: nothing to resume/u);
-		ports.service.observeWork([live]);
-		ports.service.observeWork([]);
-		ports.paths.set("/src/app_128", "directory");
+		const other = setup();
+		worked(other.ports);
+		other.ports.paths.set("/src/app_128", "directory");
 		// The session gone from the CLI: refused, with what to do instead.
 		await expect(
-			viaSocket(service, ["agent", "resume", "128 login fix"], self),
+			viaSocket(other.service, ["agent", "resume", "128 login fix"], self),
 		).rejects.toThrow(/no longer has it there .* Start a new agent/su);
+		other.ports.service.newTask({ title: "空" });
 		await expect(
-			viaSocket(service, ["agent", "resume", "issue=acme/app#999"], self),
-		).rejects.toThrow(
-			/no record of an agent that worked on issue=acme\/app#999: start a new one/u,
-		);
-		expect(ports.calls.filter((call) => call.startsWith("resume"))).toEqual([]);
+			viaSocket(other.service, ["agent", "resume", "task=2"], self),
+		).rejects.toThrow(/no agent has worked on task #2/u);
+		expect(
+			other.ports.calls.filter((call) => call.startsWith("resume")),
+		).toEqual([]);
 	});
 
-	it("gives a new agent for a subject its memo with the prompt", async () => {
+	it("binds a new agent to its task, with the task's memo after the prompt", async () => {
 		const { service, ports } = setup();
-		ports.service.setMemo("item acme/app#128", "前回: 再試行で直すと決めた");
-		await viaSocket(
+		ports.service.newTask({ title: "A", memo: "前回: 再試行で直すと決めた" });
+		const made = await viaSocket(
 			service,
 			[
 				"agent",
@@ -5804,13 +5574,16 @@ describe("memos and resuming the agent that did the work", () => {
 				"claude",
 				"--gui",
 				"--managed",
-				"--meta",
-				`issue=${ISSUE}`,
+				"--task",
+				"1",
 				"--prompt",
 				"始めて",
 			],
 			self,
 		);
+		expect(made.message).toContain("bound to task=1");
 		expect(ports.queued.at(-1)![1]).toContain("前回: 再試行で直すと決めた");
+		const id = (made.data as { agentId: string }).agentId;
+		expect(ports.service.taskOfAgent(id)?.id).toBe(1);
 	});
 });

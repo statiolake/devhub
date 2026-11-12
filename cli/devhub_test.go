@@ -293,7 +293,7 @@ func TestTellSendsTheFilesItIsAskedFor(t *testing.T) {
 	})
 	env := localEnv(socket)
 	env["DEVHUB_MACHINE"] = "ssh:box"
-	words := []string{"--tell", "escalation", "new", "--title", "t", "--body", "-", "--attach", shot}
+	words := []string{"--tell", "escalation", "new", "--task", "1", "--title", "t", "--body", "-", "--attach", shot}
 	code, stdout, stderr := run(t, words, env, "body\n", false)
 	if code != 0 || stdout != "Raised #1.\n" {
 		t.Fatalf("code %d stdout %q stderr %q", code, stdout, stderr)

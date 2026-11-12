@@ -83,7 +83,6 @@ export function tellFromWords(
 function attachmentsOf(command: TellCommand): readonly TellAttachment[] {
 	switch (command.verb) {
 		case "escalation-new":
-		case "escalation-ask":
 		case "attachment-add":
 			return command.attachments ?? [];
 		default:
@@ -116,7 +115,6 @@ function withAttachedFiles(
 		);
 	switch (command.verb) {
 		case "escalation-new":
-		case "escalation-ask":
 			return { ...command, attachments: filled(command.attachments)! };
 		case "attachment-add":
 			return { ...command, attachments: filled(command.attachments)! };
@@ -159,18 +157,6 @@ function expandTellPaths(
 				? { ...command, target: expandPath(command.target, cwd, home) }
 				: command;
 		case "escalation-new":
-			return {
-				...command,
-				...(command.attachments === undefined
-					? {}
-					: {
-							attachments: expandAttachments(command.attachments, cwd, home)!,
-						}),
-				...(command.workspace === undefined
-					? {}
-					: { workspace: expandWorkspacePath(command.workspace, cwd, home) }),
-			};
-		case "escalation-ask":
 			return command.attachments === undefined
 				? command
 				: {
@@ -242,8 +228,9 @@ export function withStdinText(
 	switch (command.verb) {
 		case "agent-send":
 		case "orchestrator-emit":
-		case "memo-set":
 			return command.text === STDIN_TEXT ? { ...command, text } : command;
+		case "task-edit":
+			return command.memo === STDIN_TEXT ? { ...command, memo: text } : command;
 		case "agent-resume":
 		case "agent-new":
 		case "issue-assign":
@@ -252,7 +239,6 @@ export function withStdinText(
 				? { ...command, prompt: text }
 				: command;
 		case "escalation-new":
-		case "escalation-ask":
 			return command.body === STDIN_TEXT ? { ...command, body: text } : command;
 		default:
 			return command;
@@ -263,15 +249,15 @@ function readsStdin(command: TellCommand): boolean {
 	switch (command.verb) {
 		case "agent-send":
 		case "orchestrator-emit":
-		case "memo-set":
 			return command.text === STDIN_TEXT;
+		case "task-edit":
+			return command.memo === STDIN_TEXT;
 		case "agent-resume":
 		case "agent-new":
 		case "issue-assign":
 		case "orchestrator-start":
 			return command.prompt === STDIN_TEXT;
 		case "escalation-new":
-		case "escalation-ask":
 			return command.body === STDIN_TEXT;
 		default:
 			return false;

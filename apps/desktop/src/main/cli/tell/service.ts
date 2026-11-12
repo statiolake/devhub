@@ -22,12 +22,13 @@ import type { PastSession } from "../../agent/conversation/resume.js";
 import type {
 	EscalationWire,
 	OrchestratorBoardWire,
+	TaskWire,
 	WorkspaceRepositoryWire,
 } from "../../../ipc/contract.js";
 import type { UsageReport } from "../../shell/usageLimits.js";
 import { usageJson, usageText } from "./usage.js";
 import { ORCHESTRATOR_CANNOT_CLOSE } from "./windowActs.js";
-import { ISSUE_LINK_KEY, ISSUE_PENDING } from "../../orchestrator/invariant.js";
+import { ISSUE_LINK_KEY, itemLinkKey } from "../../orchestrator/invariant.js";
 import { breachWords, type Breach } from "../../orchestrator/events.js";
 import type {
 	StatusItem,
@@ -41,7 +42,6 @@ import {
 	parseDevhubLink,
 	type DevhubLink,
 } from "../../../model/devhubLink.js";
-import { dueWords } from "../../../model/escalations.js";
 import { briefProblems } from "../../../model/escalationBrief.js";
 import {
 	AttachmentError,
@@ -50,10 +50,7 @@ import {
 	type StoredAttachment,
 } from "../../orchestrator/attachments.js";
 import type { TellAttachment } from "./command.js";
-import type { Memo } from "../../orchestrator/memos.js";
-import { memoClock, memoLine } from "../../orchestrator/memos.js";
-import type { WorkAgent, WorkRecord } from "../../orchestrator/work.js";
-import { itemKey, itemOfUrl } from "../../orchestrator/subjects.js";
+import type { TaskAgent } from "../../../model/tasks.js";
 import { pollTimes } from "../../../model/orchestratorSettings.js";
 import {
 	TELL_USAGE,
@@ -623,27 +620,27 @@ export interface TellPorts {
 
 /** A new escalation, as `escalation new` asks for one. */
 export interface TellNewEscalation {
+	readonly taskId: number;
 	readonly title: string;
 	readonly markdown: string;
 	readonly options: readonly string[];
-	readonly agents: readonly string[];
 	readonly links: readonly string[];
 	/** What each link is, by the link as checked. */
 	readonly linkLabels?: Readonly<Record<string, string>>;
 	/** `--attach`: drawn under the body, in its `## 添付`. */
 	readonly attachments?: readonly AttachmentFile[];
-	readonly workspaceId: string | undefined;
-	readonly rank: TellEscalationRank;
-	/** Born waiting (`--wait`, `--at`). */
-	readonly wait?: { readonly trigger: string; readonly dueAt?: number };
 }
 
-/** The orchestrator's ranking of one, as `--priority`/`--effort`/`--rank-note` give it. */
-export interface TellEscalationRank {
+/** A new task, as `task new` (or `issue assign`) asks for one. */
+export interface TellNewTask {
+	readonly title: string;
+	readonly links?: readonly string[];
+	readonly linkLabels?: Readonly<Record<string, string>>;
+	readonly status?: "waiting" | "in_progress";
+	readonly waitNote?: string;
+	readonly checkAt?: number;
+	readonly memo?: string;
 	readonly priority?: "high" | "normal" | "low";
-	readonly effort?: "quick" | "normal" | "deep";
-	/** `""` takes the note away. */
-	readonly note?: string;
 }
 
 /**
@@ -657,46 +654,42 @@ export interface TellEscalationRank {
 export interface TellOrchestratorPorts {
 	/** The board, as the Orchestrator screen draws it. */
 	board(): OrchestratorBoardWire;
-	/** Every escalation, closed ones included. */
+	/** Every task, done ones included, oldest first. */
+	tasks(): readonly TaskWire[];
+	newTask(request: TellNewTask): TaskWire;
+	editTask(
+		id: number,
+		edit: {
+			readonly title?: string;
+			readonly memo?: string;
+			readonly priority?: "high" | "normal" | "low";
+			readonly priorityNote?: string;
+		},
+	): TaskWire;
+	setTaskStatus(
+		id: number,
+		status: "waiting" | "in_progress",
+		wait: { readonly note?: string; readonly checkAt?: number },
+	): TaskWire;
+	linkTask(
+		id: number,
+		links: readonly string[],
+		labels?: Readonly<Record<string, string>>,
+	): TaskWire;
+	unlinkTask(id: number, links: readonly string[]): TaskWire;
+	/** Bound (by full id): each leaves the other open task it was on. */
+	bindTask(id: number, agentIds: readonly string[]): TaskWire;
+	unbindTask(id: number, agentId: string): TaskWire;
+	completeTask(id: number, note: string | undefined): TaskWire;
+	/** Every escalation, answered and withdrawn ones included. */
 	escalations(): readonly EscalationWire[];
 	raise(request: TellNewEscalation): EscalationWire;
-	ask(
-		id: number,
-		markdown: string,
-		options: readonly string[],
-		links?: readonly string[],
-		more?: {
-			readonly linkLabels?: Readonly<Record<string, string>>;
-			readonly attachments?: readonly AttachmentFile[];
-		},
-	): EscalationWire;
-	close(id: number, note: string | undefined): EscalationWire;
+	withdraw(id: number, note: string | undefined): EscalationWire;
 	/**
-	 * Parked in in_progress by the orchestrator (`escalation hold`): an entry
-	 * on its side, never a human one.
+	 * The orchestrator has been shown escalation `id` with its answer
+	 * (`escalation show`, `task show`): `agent wait --any` stops owing it.
 	 */
-	hold(id: number, note: string | undefined): EscalationWire;
-	/** Parked on an outside condition (`escalation wait`): 待機中. */
-	wait(id: number, trigger: string, dueAt: number | undefined): EscalationWire;
-	/** Off its wait, to in_progress (`escalation resume`). */
-	resumeWait(id: number, note: string | undefined): EscalationWire;
-	/** More it is about (`escalation link`): an agent, links. */
-	link(
-		id: number,
-		more: {
-			readonly agentId?: string;
-			readonly links?: readonly string[];
-			readonly linkLabels?: Readonly<Record<string, string>>;
-		},
-	): EscalationWire;
-	/** Ranked again by the orchestrator. Not an answer: it writes no entry. */
-	rank(id: number, rank: TellEscalationRank): EscalationWire;
-	/**
-	 * The orchestrator has been shown escalation `id`'s first `entries`
-	 * entries (`escalation show`): an answer among them is read, and 停滞
-	 * (on the board) may start counting.
-	 */
-	acknowledge?(id: number, entries: number): void;
+	acknowledge?(id: number): void;
 	/** `[orchestrator] root`, for a refusal that names it. */
 	configuredRoot(): string | undefined;
 	start(request: {
@@ -722,36 +715,16 @@ export interface TellOrchestratorPorts {
 	};
 	/** The person chooses a mode. How many held lines went out. */
 	setMode(mode: "full" | "saving" | "off"): number;
-	/** Triage: a subject's priority (`esc=12`, `agent=ab12`, …); its key. */
-	setPriority(
-		subject: string,
-		priority: "high" | "normal" | "low",
-		note: string | undefined,
-	): string;
-	clearPriority(subject: string): boolean;
-	/** Every priority set, newest first, and the triage's times. */
-	priorities(): {
-		readonly entries: readonly {
-			readonly subject: string;
-			readonly priority: "high" | "normal" | "low";
-			readonly at: number;
-			readonly note?: string;
-		}[];
-		readonly triagedAt?: number;
-		readonly nextTriageAt?: number;
-	};
-	/** The person's requests, oldest first. */
-	requests(): readonly TellRequest[];
-	/** Filed as a task, and where. */
-	fileRequest(id: number, note: string | undefined): TellRequest;
+	/** When the last triage went, and the next is due. */
+	triage(): { readonly lastAt?: number; readonly nextAt?: number };
 	/** The last `last` events, oldest first, each with what came of it. */
 	events(last: number): readonly TellEventEntry[];
 	/** A `custom.*` event, as any source dispatches one. */
 	emit(type: string, text: string): TellEventEntry;
 	timers(): readonly TellTimer[];
 	/**
-	 * The one-shot wake-ups (a wait's `--at`) that came due while off and
-	 * were dropped, while their wait stands. Absent: none.
+	 * The check-back times (`task status --check-at`) that came while off
+	 * and were dropped, while the task still waits with them. Absent: none.
 	 */
 	expiredWhileOff?(): readonly TellExpiredWake[];
 	/** For this session; refused with the rule it breaks. */
@@ -763,64 +736,26 @@ export interface TellOrchestratorPorts {
 	/** How an agent stands against the invariant (`orchestrator/invariant.ts`). */
 	standing(agentId: string): TellStanding | undefined;
 	/**
-	 * `status`: one subject's whole state now — an item (URL or
+	 * `status`: one subject's whole state now — a task, an item (URL or
 	 * `owner/repo#N`) or an agent. Undefined when DevHub has not read it.
 	 */
 	status(
-		target: { readonly item: string } | { readonly agentId: string },
+		target:
+			| { readonly task: number }
+			| { readonly item: string }
+			| { readonly agentId: string },
 	): SubjectStatus | undefined;
-	/** `agent keep A --note`: leave an agent that needs action as it is, for `note`. */
-	keep(
-		agentId: string,
-		note: string,
-	): { readonly note: string; readonly at: number };
-	/** `agent keep A --clear`: whether it was being kept. */
-	unkeep(agentId: string): boolean;
 	/**
-	 * A subject as typed (`issue=…`, `agent=…`, `esc=…`, a URL, …) made the
-	 * stores' key (`orchestrator/subjects.ts`); `ws=` arrives resolved to its
-	 * workspace. Absent: no memos here.
+	 * The bound agent `agent resume <task|agent>` names: the task's latest,
+	 * or a task's agent by id or name; undefined when the text names
+	 * neither (a session id).
 	 */
-	resolveSubject?(text: string, workspace?: TellSubjectPlace): TellSubject;
-	/** A key as the command line names it: `issue=…` / `pr=…`, `agent=…`. */
-	subjectToken?(key: string): string;
-	memo?(key: string): Memo | undefined;
-	memos?(): readonly Memo[];
-	/** `memo set`: the subject's one note is now `text`. */
-	setMemo?(key: string, text: string): Memo;
-	clearMemo?(key: string): boolean;
-	/**
-	 * The note shown with a subject (a key, `esc N`, `agent <id>`, `item
-	 * …`): its own, an agent's work's, an escalation's linked item's.
-	 */
-	memoAbout?(subject: string): Memo | undefined;
-	/** Who worked on what, most recently seen first (`orchestrator/work.ts`). */
-	workRecords?(): readonly WorkRecord[];
-	/**
-	 * The recorded agent `agent resume <subject|agent>` names; undefined
-	 * when the text names no subject and no recorded agent (a session id).
-	 */
-	resumeTarget?(
-		text: string,
-		workspace?: TellSubjectPlace,
-	): TellResumeTarget | undefined;
+	resumeTarget?(text: string): TellResumeTarget | undefined;
 }
 
-/** A Workspace a `ws=` subject names: where its work is looked up. */
-export interface TellSubjectPlace {
-	readonly machine: string;
-	readonly folder: string;
-	readonly agentIds: readonly string[];
-}
-
-export interface TellSubject {
-	readonly key: string;
-	readonly token: string;
-}
-
-export interface TellResumeTarget extends TellSubject {
-	readonly record: WorkRecord;
-	readonly agent: WorkAgent;
+export interface TellResumeTarget {
+	readonly task: TaskWire;
+	readonly agent: TaskAgent;
 	/** The agent running that conversation now. */
 	readonly live?: string;
 }
@@ -828,13 +763,12 @@ export interface TellResumeTarget extends TellSubject {
 /** An agent's standing against the invariant, as `agent status` reads it. */
 export interface TellStanding {
 	readonly settled: boolean;
-	/** The clause it fails (managed agents), as `needs_action` says it. */
+	/** The clause it fails itself (a managed agent with no task: `no_task`). */
 	readonly breach?: Breach;
-	readonly waiting?: {
-		readonly escalationId: number;
-		readonly trigger: string;
-	};
-	readonly kept?: { readonly note: string; readonly at: number };
+	/** The open task it is bound to. */
+	readonly task?: number;
+	/** That task's clause, when the task needs action. */
+	readonly taskBreach?: Breach;
 }
 
 /** One event in the orchestrator's log (`orchestrator events`). */
@@ -855,16 +789,6 @@ export interface TellEventEntry {
 	readonly event: Record<string, unknown>;
 }
 
-/** A request the person sent from the board's +. */
-export interface TellRequest {
-	readonly id: number;
-	readonly text: string;
-	readonly at: number;
-	readonly state: "held" | "sent" | "filed";
-	readonly sentAt?: number;
-	readonly filed?: { readonly at: number; readonly note?: string };
-}
-
 export interface TellTimer {
 	readonly name: string;
 	readonly interval: string;
@@ -873,13 +797,12 @@ export interface TellTimer {
 	readonly nextAt: number;
 }
 
-/** A wait's `--at` that came while off: dropped, not sent later. */
+/** A task's `--check-at` that came while off: dropped, not sent later. */
 export interface TellExpiredWake {
-	readonly escalationId: number;
+	readonly taskId: number;
 	readonly title: string;
-	readonly waitSince: number;
 	/** ms since the epoch. */
-	readonly dueAt: number;
+	readonly checkAt: number;
 	readonly droppedAt: number;
 }
 
@@ -1055,17 +978,18 @@ export class TellMemory {
 		return this.#times.get(agentId);
 	}
 
-	readonly #escalations = new Map<string, Map<number, number>>();
+	readonly #answers = new Map<string, Set<number>>();
 
-	/** How many entries of escalation `id` the caller has been shown (`escalation show`). */
-	escalationSeen(caller: string, id: number): number | undefined {
-		return this.#escalations.get(caller)?.get(id);
+	/** Whether the caller has been shown escalation `id`'s answer. */
+	answerSeen(caller: string, id: number): boolean {
+		return this.#answers.get(caller)?.has(id) === true;
 	}
 
-	markEscalation(caller: string, id: number, entries: number): void {
-		const byId = this.#escalations.get(caller) ?? new Map<number, number>();
-		this.#escalations.set(caller, byId);
-		byId.set(id, entries);
+	/** The caller has been shown escalation `id` (its answer, if it had one). */
+	markAnswerSeen(caller: string, id: number): void {
+		const ids = this.#answers.get(caller) ?? new Set<number>();
+		this.#answers.set(caller, ids);
+		ids.add(id);
 	}
 
 	seen(caller: string, agentId: string): TellSeen | undefined {
@@ -1152,18 +1076,16 @@ export interface TellAgentStatus {
 	readonly managed: boolean;
 	/**
 	 * How it stands against the invariant: settled or not, the clause it
-	 * fails as its `needs_action` line says it, the 待機中 escalation it is
-	 * one of the agents of, and `agent keep`'s note. Null while no
+	 * (or its task) fails as its `needs_action` line says it, and the open
+	 * task it is bound to. Null while no
 	 * orchestrator service reads it. Its whole state: `status`.
 	 */
 	readonly invariant: {
 		readonly settled: boolean;
+		/** The clause it, or its task, fails. */
 		readonly needsAction: string | null;
-		readonly waiting: {
-			readonly escalationId: number;
-			readonly trigger: string;
-		} | null;
-		readonly kept: { readonly note: string; readonly at: string } | null;
+		/** The open task it is bound to. */
+		readonly task: number | null;
 	} | null;
 	readonly workspace: {
 		readonly id: string;
@@ -1214,14 +1136,12 @@ export interface TellAgentStatus {
 		readonly misses: number;
 		readonly autoCompactAt: string | null;
 	} | null;
-	/**
-	 * The orchestrator's note on its work (its item's, else its own):
-	 * what is next with it. Null: none.
-	 */
-	readonly memo: {
-		readonly subject: string;
-		readonly text: string;
-		readonly at: string;
+	/** The open task it is bound to, with its memo (what is next). Null: none. */
+	readonly task: {
+		readonly id: number;
+		readonly title: string;
+		readonly status: string;
+		readonly memo: { readonly text: string; readonly at: string } | null;
 	} | null;
 }
 
@@ -1273,8 +1193,6 @@ export class TellService {
 				return this.meta(command);
 			case "agent-manage":
 				return this.manage(command.agent, command.managed);
-			case "agent-keep":
-				return this.keep(command.agent, command.note);
 			case "agent-new":
 				return this.newAgent(command);
 			case "issue-assign":
@@ -1312,12 +1230,6 @@ export class TellService {
 				return this.sessions(command);
 			case "agent-resume":
 				return this.resumeAny(command);
-			case "memo-set":
-				return this.setMemo(command);
-			case "memo-clear":
-				return this.clearMemo(command.subject);
-			case "memo-list":
-				return this.listMemos();
 			case "session-meta":
 				return this.sessionMeta(command);
 			case "commands":
@@ -1355,43 +1267,77 @@ export class TellService {
 				return this.subjectStatus(command.ref);
 			case "escalation-new":
 				return this.raise(command);
-			case "escalation-ask":
-				return this.askAgain(command);
 			case "escalation-show":
 				return this.showEscalation(command.id);
 			case "attachment-add":
 				return this.addAttachments(command.attachments);
 			case "escalation-list":
-				return this.listEscalations(command.state);
-			case "escalation-close":
-				return this.closeEscalation(command.id, command.note);
-			case "escalation-hold":
-				return this.holdEscalation(command.id, command.note);
-			case "escalation-wait": {
-				const waiting = this.ports.orchestrator.wait(
-					command.id,
-					command.trigger,
-					command.at,
-				);
-				return {
-					message: `#${String(waiting.id)} 「${waiting.title}」 waits on: ${command.trigger.trim()}${command.at === undefined ? "" : ` (waiting.changed, due, at ${new Date(command.at).toISOString()})`}. 'escalation resume', 'ask' or 'close' takes it off.`,
-					data: waiting,
-				};
-			}
-			case "escalation-resume": {
-				const resumed = this.ports.orchestrator.resumeWait(
+				return this.listEscalations(command.state, command.task);
+			case "escalation-withdraw": {
+				const withdrawn = this.ports.orchestrator.withdraw(
 					command.id,
 					command.note,
 				);
 				return {
-					message: `Resumed #${String(resumed.id)} 「${resumed.title}」: in_progress.`,
-					data: resumed,
+					message: `Withdrew #${String(withdrawn.id)} 「${withdrawn.title}」 (task=${String(withdrawn.taskId)}).`,
+					data: withdrawn,
 				};
 			}
-			case "escalation-link":
-				return this.linkEscalation(command);
-			case "escalation-rank":
-				return this.rankEscalation(command);
+			case "task-new":
+				return this.newTask(command);
+			case "task-edit":
+				return this.editTask(command);
+			case "task-status":
+				return this.taskStatus(command);
+			case "task-link": {
+				const links = await this.checkedLinks(command.links, "");
+				const task = this.ports.orchestrator.linkTask(
+					command.id,
+					links,
+					labelsFor(command.links, links, command.linkLabels).linkLabels,
+				);
+				return {
+					message: `${taskLine(task)}\nlinks: ${task.links.join(" ")}`,
+					data: task,
+				};
+			}
+			case "task-unlink": {
+				const task = this.ports.orchestrator.unlinkTask(
+					command.id,
+					command.links,
+				);
+				return {
+					message: `${taskLine(task)}\nlinks: ${task.links.length === 0 ? "none" : task.links.join(" ")}`,
+					data: task,
+				};
+			}
+			case "task-bind": {
+				const ids = command.agents.map((name) => this.agent(name).id);
+				const task = this.ports.orchestrator.bindTask(command.id, ids);
+				return {
+					message: `${taskLine(task)}\nagents: ${agentsLine(task)}`,
+					data: task,
+				};
+			}
+			case "task-unbind": {
+				const id = this.boundAgentId(command.id, command.agent);
+				const task = this.ports.orchestrator.unbindTask(command.id, id);
+				return {
+					message: `${taskLine(task)}\nagents: ${agentsLine(task)}`,
+					data: task,
+				};
+			}
+			case "task-done": {
+				const task = this.ports.orchestrator.completeTask(
+					command.id,
+					command.note,
+				);
+				return { message: `Done: ${taskLine(task)}`, data: task };
+			}
+			case "task-show":
+				return this.showTask(command.id);
+			case "task-list":
+				return this.listTasks(command.all === true);
 			case "orchestrator-start":
 				return this.startOrchestrator(command);
 			case "orchestrator-status":
@@ -1407,78 +1353,6 @@ export class TellService {
 						"The orchestrator is off: its events are held (one line per subject), GitHub polling is suspended, and 'orchestrator mode full' (or saving, or resume) delivers them at once, as one message.",
 					data: { paused: true, mode: "off" },
 				};
-			case "orchestrator-priority-set": {
-				const key = this.ports.orchestrator.setPriority(
-					command.subject,
-					command.priority,
-					command.note,
-				);
-				return {
-					message: `${command.subject}: ${command.priority}${command.note === undefined ? "" : ` (${command.note})`}`,
-					data: { subject: key, priority: command.priority },
-				};
-			}
-			case "orchestrator-priority-clear": {
-				const had = this.ports.orchestrator.clearPriority(command.subject);
-				return {
-					message: had
-						? `${command.subject}: no priority now`
-						: `${command.subject} had no priority`,
-					data: { cleared: had },
-				};
-			}
-			case "orchestrator-priority-list": {
-				const list = this.ports.orchestrator.priorities();
-				const clock = (at: number | undefined) =>
-					at === undefined ? "never" : new Date(at).toISOString();
-				return {
-					message: [
-						`last triage: ${clock(list.triagedAt)}; next: ${list.nextTriageAt === undefined ? "none (off, or no orchestrator)" : clock(list.nextTriageAt)}`,
-						...list.entries.map(
-							(one) =>
-								`  ${one.priority.padEnd(6)} ${one.subject}${one.note === undefined ? "" : `  ${one.note}`}`,
-						),
-					].join("\n"),
-					data: list,
-				};
-			}
-			case "orchestrator-request-list": {
-				const list = this.ports.orchestrator.requests();
-				const memoOf = (id: number) =>
-					this.ports.orchestrator.memoAbout?.(`req ${String(id)}`);
-				return {
-					message:
-						list.length === 0
-							? "No requests."
-							: list
-									.flatMap((one) => {
-										const memo = memoOf(one.id);
-										return [
-											`req=${String(one.id)}  ${one.state}${one.filed?.note === undefined ? "" : ` (${one.filed.note})`}  ${one.text.replace(/\s+/gu, " ").slice(0, 100)}`,
-											...(memo === undefined
-												? []
-												: [`      ${this.memoText(memo)}`]),
-										];
-									})
-									.join("\n"),
-					data: {
-						requests: list.map((one) => ({
-							...one,
-							memo: this.memoData(memoOf(one.id)),
-						})),
-					},
-				};
-			}
-			case "orchestrator-request-done": {
-				const filed = this.ports.orchestrator.fileRequest(
-					command.id,
-					command.note,
-				);
-				return {
-					message: `req=${String(filed.id)} is filed${filed.filed?.note === undefined ? "" : `: ${filed.filed.note}`}.`,
-					data: filed,
-				};
-			}
 			case "orchestrator-mode": {
 				if (command.mode === undefined) {
 					const now = this.ports.orchestrator.mode();
@@ -1584,91 +1458,60 @@ export class TellService {
 		return found;
 	}
 
+	private task(id: number): TaskWire {
+		const found = this.ports.orchestrator.tasks().find((one) => one.id === id);
+		if (found === undefined)
+			throw new Error(
+				`there is no task #${String(id)}. Run 'devhub --tell task list'.`,
+			);
+		return found;
+	}
+
+	/** An agent named as `task unbind` takes it: open now, or bound to the task. */
+	private boundAgentId(taskId: number, name: string): string {
+		const task = this.task(taskId);
+		const bound = task.agents.filter(
+			(one) =>
+				one.agentId === name ||
+				one.name === name ||
+				(name.length >= 4 && one.agentId.startsWith(name)),
+		);
+		if (bound.length === 1) return bound[0]!.agentId;
+		return this.agent(name).id;
+	}
+
 	private board(): TellAnswer {
 		const board = this.ports.orchestrator.board();
 		const now = this.clock.now();
-		// The triage's context: every note (what the orchestrator meant to
-		// do next), and the work whose agent is stopped and can be brought
-		// back. In the text, a note goes under the line of its subject; the
-		// rest are listed after.
-		const memos = (board.memos ?? []).map((memo) => ({
-			subject: memo.token,
-			text: memo.text,
-			at: new Date(memo.at).toISOString(),
-		}));
-		const shown = new Set<string>();
-		const noteUnder = (subject: string): string[] => {
-			const memo = this.ports.orchestrator.memoAbout?.(subject);
-			if (memo === undefined) return [];
-			shown.add(memo.subject);
-			return [`      ${this.memoText(memo)}`];
-		};
-		const resumable = (board.work ?? []).flatMap((work) => {
-			const last = work.agents.at(-1);
-			return last === undefined || !last.resumable
-				? []
-				: [
-						{
-							subject: work.token,
-							key: work.subject,
-							agentId: last.agentId,
-							name: last.name,
-							machine: last.machine,
-							folder: last.folder,
-							...(last.stoppedAt === undefined
-								? {}
-								: { stoppedAt: new Date(last.stoppedAt).toISOString() }),
-						},
-					];
-		});
-		// DevHub's own reading that an escalation may no longer hold.
-		const staleUnder = (one: EscalationWire): string[] =>
-			one.mayBeStale === undefined
-				? []
-				: [`    may be stale: ${one.mayBeStale.reasons.join("; ")}`];
+		const section = (
+			title: string,
+			tasks: readonly TaskWire[],
+			extra: (task: TaskWire) => string[] = () => [],
+		) => [
+			`${title} (${String(tasks.length)}):`,
+			...tasks.flatMap((task) => [
+				`  ${taskLine(task)}`,
+				...extra(task),
+				...taskDetailLines(task, now).map((line) => `    ${line}`),
+			]),
+		];
 		const lines = [
 			`orchestrator: ${board.orchestratorAgentId ?? "none"}  (mode ${board.mode ?? "off"}${board.held > 0 ? `, ${String(board.held)} held` : ""})`,
-			`needs answer (${String(board.needsAnswer.length)}, priority then effort then age):`,
-			...board.needsAnswer.flatMap((one) => [
-				`  #${String(one.id)}  ${one.title}  waiting ${span(now - one.stateSince)}  [${rankText(one)}]${agentsText(one)}`,
-				...staleUnder(one),
-				...noteUnder(`esc ${String(one.id)}`),
-			]),
-			`in progress (${String(board.inProgress.length)}):`,
-			...board.inProgress.flatMap((one) => [
-				`  #${String(one.id)}  ${one.title}  answered ${span(now - one.stateSince)} ago${agentsText(one)}${one.stalledSince === undefined ? "" : `  [停滞 ${span(now - one.stalledSince)}: no agent is working on it]`}`,
-				...staleUnder(one),
-				...noteUnder(`esc ${String(one.id)}`),
-			]),
-			`waiting (${String(board.waiting.length)}, soonest first):`,
-			...board.waiting.flatMap((one) => {
-				const wait = one.entries.at(-1);
-				return [
-					`  #${String(one.id)}  ${one.title}  waiting on: ${wait?.markdown ?? ""}${wait?.dueAt === undefined ? "" : `  [${new Date(wait.dueAt).toISOString()}, ${dueWords(wait.dueAt, now)}]`}`,
-					...staleUnder(one),
-					...noteUnder(`esc ${String(one.id)}`),
-				];
-			}),
-			...needsActionLines(board, now, noteUnder),
-			...(resumable.length === 0
-				? []
-				: [
-						`resumable (${String(resumable.length)}: stopped agents whose work can go on, devhub --tell agent resume <subject>):`,
-						...resumable.flatMap((one) => [
-							`  ${one.subject}  ${one.name} (${one.agentId.slice(0, 8)}${one.machine === "local" ? "" : `, ${one.machine}`})`,
-							...noteUnder(one.key),
-						]),
-					]),
+			...section(
+				"回答待ち answer — waiting for the person",
+				board.answer,
+				(task) =>
+					task.escalations
+						.filter((one) => one.state === "open")
+						.map(
+							(one) =>
+								`    ? esc=${String(one.id)} 「${one.title}」 asked ${span(now - one.question.at)} ago`,
+						),
+			),
+			...section("処理中 in_progress", board.inProgress),
+			...section("待機 waiting", board.waiting),
+			...needsActionLines(board, now),
 		];
-		const rest = (board.memos ?? []).filter((memo) => !shown.has(memo.subject));
-		if (rest.length > 0)
-			lines.push(
-				`memos (${String(rest.length)} more, newest first: what you meant to do next):`,
-				...rest.map(
-					(memo) =>
-						`  ${memo.token}  ${memoClock(memo.at)}  ${memo.text.replace(/\s+/gu, " ").trim()}`,
-				),
-			);
 		return {
 			message: lines.join("\n"),
 			data: {
@@ -1676,15 +1519,111 @@ export class TellService {
 				paused: board.paused,
 				mode: board.mode ?? "off",
 				held: board.held,
-				needsAnswer: board.needsAnswer,
+				answer: board.answer,
 				inProgress: board.inProgress,
 				waiting: board.waiting,
-				graceMs: board.graceMs,
 				needsAction: board.needsAction,
-				memos,
-				resumable: resumable.map(({ key: _, ...one }) => one),
+				triage: board.triage ?? {},
 			},
 		};
+	}
+
+	private async newTask(
+		command: Extract<TellCommand, { verb: "task-new" }>,
+	): Promise<TellAnswer> {
+		const links = await this.checkedLinks(command.links, "");
+		const task = this.ports.orchestrator.newTask({
+			title: command.title,
+			links,
+			...labelsFor(command.links, links, command.linkLabels),
+			...(command.status === undefined ? {} : { status: command.status }),
+			...(command.note === undefined ? {} : { waitNote: command.note }),
+			...(command.checkAt === undefined ? {} : { checkAt: command.checkAt }),
+			...(command.memo === undefined ? {} : { memo: command.memo }),
+			...(command.priority === undefined ? {} : { priority: command.priority }),
+		});
+		return {
+			message: `Made ${taskLine(task)}. Bind its agents with 'agent new --task ${String(task.id)}' / 'issue assign --task ${String(task.id)}' / 'task bind ${String(task.id)} <a>'.`,
+			data: task,
+		};
+	}
+
+	private editTask(
+		command: Extract<TellCommand, { verb: "task-edit" }>,
+	): TellAnswer {
+		const task = this.ports.orchestrator.editTask(command.id, {
+			...(command.title === undefined ? {} : { title: command.title }),
+			...(command.memo === undefined ? {} : { memo: command.memo }),
+			...(command.priority === undefined ? {} : { priority: command.priority }),
+			...(command.priorityNote === undefined
+				? {}
+				: { priorityNote: command.priorityNote }),
+		});
+		return {
+			message: [
+				taskLine(task),
+				...(task.memo === undefined ? [] : [memoLineOf(task.memo)]),
+			].join("\n"),
+			data: task,
+		};
+	}
+
+	private taskStatus(
+		command: Extract<TellCommand, { verb: "task-status" }>,
+	): TellAnswer {
+		const task = this.ports.orchestrator.setTaskStatus(
+			command.id,
+			command.status,
+			{
+				...(command.note === undefined ? {} : { note: command.note }),
+				...(command.checkAt === undefined ? {} : { checkAt: command.checkAt }),
+			},
+		);
+		const open = task.escalations.filter((one) => one.state === "open");
+		return {
+			message: [
+				taskLine(task),
+				...(open.length === 0
+					? []
+					: [
+							`It is 回答待ち while esc=${open.map((one) => String(one.id)).join(",")} waits for the person's answer; the status you set shows once it is answered or withdrawn.`,
+						]),
+			].join("\n"),
+			data: task,
+		};
+	}
+
+	private showTask(id: number): TellAnswer {
+		const task = this.task(id);
+		const now = this.clock.now();
+		// Being shown the answers is reading them: 'agent wait --any' stops
+		// reporting them.
+		for (const one of task.escalations) this.acknowledgeEscalation(one);
+		const lines = [
+			taskLine(task),
+			...taskDetailLines(task, now),
+			...task.escalations.flatMap((one) => ["", ...escalationLines(one)]),
+		];
+		return { message: lines.join("\n"), data: task };
+	}
+
+	private listTasks(all: boolean): TellAnswer {
+		const tasks = this.ports.orchestrator
+			.tasks()
+			.filter((one) => all || one.status !== "done");
+		return {
+			message:
+				tasks.length === 0
+					? `No ${all ? "" : "open "}tasks. 'task new --title …' makes one.`
+					: tasks.map(taskLine).join("\n"),
+			data: { tasks },
+		};
+	}
+
+	private acknowledgeEscalation(one: EscalationWire): void {
+		this.memory.markAnswerSeen(callerKey(this.caller), one.id);
+		if (this.callerIsOrchestrator() && one.answer !== undefined)
+			this.ports.orchestrator.acknowledge?.(one.id);
 	}
 
 	private async raise(
@@ -1694,85 +1633,29 @@ export class TellService {
 			title: command.title,
 			body: command.body,
 			links: command.links,
-			asks: command.wait === undefined,
-			first: command.wait === undefined,
 		});
-		const agents = command.agents.map((name) => this.agent(name).id);
-		const workspaceId =
-			command.workspace === undefined
-				? undefined
-				: this.workspace(command.workspace).id;
+		const task = this.task(command.task);
+		if (task.status === "done")
+			throw new Error(
+				`task #${String(task.id)} is done: an escalation is about open work.`,
+			);
 		const links = await this.checkedLinks(command.links, command.body);
 		const attachments = this.attachedFiles(command.attachments);
 		const made = this.ports.orchestrator.raise({
+			taskId: task.id,
 			title: command.title,
 			markdown: command.body,
 			options: command.options,
-			agents,
 			links,
 			...labelsFor(command.links, links, command.linkLabels),
 			...(attachments.length === 0 ? {} : { attachments }),
-			workspaceId,
-			rank: rankOf(command),
-			...(command.wait === undefined
-				? {}
-				: {
-						wait: {
-							trigger: command.wait,
-							...(command.at === undefined ? {} : { dueAt: command.at }),
-						},
-					}),
 		});
-		this.memory.markEscalation(
-			callerKey(this.caller),
-			made.id,
-			made.entries.length,
-		);
+		this.memory.markAnswerSeen(callerKey(this.caller), made.id);
 		return {
 			message:
-				(made.state === "waiting"
-					? `Raised #${String(made.id)} 「${made.title}」 in waiting: nothing is asked of the person yet.`
-					: `Raised #${String(made.id)} 「${made.title}」: it waits for the person's answer (needs_answer).`) +
+				`Asked #${String(made.id)} 「${made.title}」 on task=${String(task.id)}: the task is 回答待ち until the person answers. Wait for the answer; never go ahead on this decision without it. A follow-up question is a new escalation.` +
 				attachedWords(attachments),
 			data: made,
-		};
-	}
-
-	private async askAgain(
-		command: Extract<TellCommand, { verb: "escalation-ask" }>,
-	): Promise<TellAnswer> {
-		refuseBrief({
-			body: command.body,
-			links: [...(command.links ?? []), ...this.escalation(command.id).links],
-			asks: true,
-			first: false,
-		});
-		const links = await this.checkedLinks(command.links ?? [], command.body);
-		const attachments = this.attachedFiles(command.attachments);
-		const more = {
-			...labelsFor(command.links ?? [], links, command.linkLabels),
-			...(attachments.length === 0 ? {} : { attachments }),
-		};
-		const asked =
-			links.length === 0 && Object.keys(more).length === 0
-				? this.ports.orchestrator.ask(command.id, command.body, command.options)
-				: this.ports.orchestrator.ask(
-						command.id,
-						command.body,
-						command.options,
-						links,
-						more,
-					);
-		this.memory.markEscalation(
-			callerKey(this.caller),
-			asked.id,
-			asked.entries.length,
-		);
-		return {
-			message:
-				`Asked again on #${String(asked.id)}: it waits for the person's answer (needs_answer).` +
-				attachedWords(attachments),
-			data: asked,
 		};
 	}
 
@@ -1832,61 +1715,24 @@ export class TellService {
 
 	private showEscalation(id: number): TellAnswer {
 		const one = this.escalation(id);
-		// Being shown the thread is reading the answer: 'agent wait --any'
-		// stops reporting it.
-		this.memory.markEscalation(callerKey(this.caller), id, one.entries.length);
-		if (this.callerIsOrchestrator())
-			this.ports.orchestrator.acknowledge?.(id, one.entries.length);
-		const memo = this.ports.orchestrator.memoAbout?.(`esc ${String(id)}`);
-		const lines = [
-			`#${String(one.id)} ${one.title}  [${one.state}]`,
-			`rank: ${rankText(one)}`,
-			...(one.agents.length === 0
-				? []
-				: [
-						`agents: ${one.agents.map((agent) => `${agent.name ?? "(gone)"} (${agent.agentId})`).join(", ")}`,
-					]),
-			...(one.links.length === 0 ? [] : [`links: ${one.links.join(" ")}`]),
-			...(one.mayBeStale === undefined
-				? []
-				: [
-						`may be stale (DevHub's reading, since ${new Date(one.mayBeStale.since).toISOString()}): ${one.mayBeStale.reasons.join("; ")} — update it (escalation ask / link), close it with a note, or keep it`,
-					]),
-			...(memo === undefined ? [] : [this.memoText(memo)]),
-			...one.entries.flatMap((entry) =>
-				entry.kind !== undefined
-					? ["", noteLine(entry)]
-					: [
-							"",
-							`--- ${entry.role === "human" ? "the person (answer)" : "orchestrator"}, ${new Date(entry.at).toISOString()}`,
-							entry.markdown,
-							...(entry.options === undefined
-								? []
-								: [
-										`options: ${entry.options.map((option) => JSON.stringify(option)).join(", ")}`,
-									]),
-						],
-			),
-			...(one.closed === undefined
-				? []
-				: [
-						"",
-						`--- closed ${new Date(one.closed.at).toISOString()}${one.closed.note === undefined ? "" : `: ${one.closed.note}`}`,
-					]),
-		];
+		this.acknowledgeEscalation(one);
+		const task = this.task(one.taskId);
 		return {
-			message: lines.join("\n"),
-			data: { ...one, memo: this.memoData(memo) },
+			message: [`task: ${taskLine(task)}`, ...escalationLines(one)].join("\n"),
+			data: one,
 		};
 	}
 
 	private listEscalations(
-		state: "needs_answer" | "in_progress" | "waiting" | "closed" | undefined,
+		state: "open" | "answered" | "withdrawn" | undefined,
+		task: number | undefined,
 	): TellAnswer {
 		const all = this.ports.orchestrator
 			.escalations()
-			.filter((one) =>
-				state === undefined ? one.state !== "closed" : one.state === state,
+			.filter(
+				(one) =>
+					(state === undefined ? one.state === "open" : one.state === state) &&
+					(task === undefined || one.taskId === task),
 			);
 		const now = this.clock.now();
 		return {
@@ -1896,57 +1742,10 @@ export class TellService {
 					: all
 							.map(
 								(one) =>
-									`#${String(one.id)}  ${one.state}  ${span(now - one.stateSince)}  [${rankText(one)}]  ${one.title}${agentsText(one)}`,
+									`#${String(one.id)}  ${one.state}  task=${String(one.taskId)}  ${span(now - (one.answer?.at ?? one.withdrawn?.at ?? one.question.at))}  ${one.title}`,
 							)
 							.join("\n"),
 			data: { escalations: all },
-		};
-	}
-
-	private closeEscalation(id: number, note: string | undefined): TellAnswer {
-		const closed = this.ports.orchestrator.close(id, note);
-		return {
-			message: `Closed #${String(closed.id)} 「${closed.title}」.`,
-			data: closed,
-		};
-	}
-
-	private holdEscalation(id: number, note: string | undefined): TellAnswer {
-		const held = this.ports.orchestrator.hold(id, note);
-		return {
-			message: `Held #${String(held.id)} 「${held.title}」 in in_progress; 'escalation ask' puts it back to needs_answer.`,
-			data: held,
-		};
-	}
-
-	private rankEscalation(
-		command: Extract<TellCommand, { verb: "escalation-rank" }>,
-	): TellAnswer {
-		const ranked = this.ports.orchestrator.rank(command.id, rankOf(command));
-		return {
-			message: `#${String(ranked.id)} is ranked ${rankText(ranked)}.`,
-			data: ranked,
-		};
-	}
-
-	private linkEscalation(
-		command: Extract<TellCommand, { verb: "escalation-link" }>,
-	): TellAnswer {
-		const agent =
-			command.agent === undefined ? undefined : this.agent(command.agent);
-		const links = command.links ?? [];
-		const linked = this.ports.orchestrator.link(command.id, {
-			...(agent === undefined ? {} : { agentId: agent.id }),
-			...(links.length === 0 ? {} : { links }),
-			...labelsFor(links, links, command.linkLabels),
-		});
-		const what = [
-			...(agent === undefined ? [] : [`${agent.name} (${agent.id})`]),
-			...links,
-		].join(", ");
-		return {
-			message: `#${String(linked.id)} is about ${what} too.`,
-			data: linked,
 		};
 	}
 
@@ -2010,10 +1809,10 @@ export class TellService {
 					);
 		if (expired.length > 0)
 			lines.push(
-				"Expired while off (dropped, not sent later; the wait still stands):",
+				"Expired while off (dropped, not sent later; the task still waits):",
 				...expired.map(
 					(one) =>
-						`  esc=${String(one.escalationId)} 「${one.title}」  wait --at ${new Date(one.dueAt).toISOString()}  expired while off`,
+						`  task=${String(one.taskId)} 「${one.title}」  --check-at ${new Date(one.checkAt).toISOString()}  expired while off`,
 				),
 			);
 		return {
@@ -2029,7 +1828,7 @@ export class TellService {
 				? undefined
 				: this.liveAgents().get(board.orchestratorAgentId);
 		const counts = {
-			needsAnswer: board.needsAnswer.length,
+			answer: board.answer.length,
 			inProgress: board.inProgress.length,
 			waiting: board.waiting.length,
 		};
@@ -2038,7 +1837,7 @@ export class TellService {
 				agent === undefined
 					? "No orchestrator is running."
 					: `orchestrator: ${agent.name} (${agent.id}), ${agent.status}${agent.presentation === "gui" ? "" : ", terminal"}`,
-				`needs answer ${String(counts.needsAnswer)}, in progress ${String(counts.inProgress)}, waiting ${String(counts.waiting)}`,
+				`tasks: 回答待ち ${String(counts.answer)}, 処理中 ${String(counts.inProgress)}, 待機 ${String(counts.waiting)}`,
 				`${modeLine(board.mode ?? "off", board.autoSaving)}${board.held > 0 ? ` (${String(board.held)} pending)` : ""}`,
 				githubPollingLine(board),
 			].join("\n"),
@@ -2060,8 +1859,8 @@ export class TellService {
 
 	/**
 	 * What the board has for the orchestrator that it has not been shown:
-	 * answers it has not read (`escalation show`). Only the orchestrator is
-	 * woken by these.
+	 * answers it has not read (`escalation show`, `task show`, or the
+	 * answer's delivery). Only the orchestrator is woken by these.
 	 */
 	private boardNews(): {
 		readonly answered: readonly {
@@ -2071,15 +1870,12 @@ export class TellService {
 	} {
 		if (!this.callerIsOrchestrator()) return { answered: [] };
 		const caller = callerKey(this.caller);
-		const board = this.ports.orchestrator.board();
 		return {
-			answered: board.inProgress
-				.filter((one) =>
-					one.entries
-						.slice(this.memory.escalationSeen(caller, one.id) ?? 0)
-						.some(
-							(entry) => entry.role === "human" && entry.kind === undefined,
-						),
+			answered: this.ports.orchestrator
+				.escalations()
+				.filter(
+					(one) =>
+						one.state === "answered" && !this.memory.answerSeen(caller, one.id),
 				)
 				.map((one) => ({ id: one.id, title: one.title })),
 		};
@@ -2266,17 +2062,28 @@ export class TellService {
 	}
 
 	/**
-	 * `status <item|agent>`: one subject's whole state now, as one call — an
-	 * item's state, assignment, lanes and pull request, the agents linked to
-	 * it and how each stands, the escalations about it, the clause it fails
-	 * and `agent keep`'s note; for an agent, all of that of its item, and its
-	 * Workspace's facts as the Sidebar's tooltip has them.
+	 * `status <task|item|agent>`: one subject's whole state now, as one call —
+	 * a task's status, links (as DevHub read them), agents, memo and
+	 * questions; an item's state, assignment, lanes and pull request and the
+	 * tasks linking it; an agent's task, and its Workspace's facts as the
+	 * Sidebar's tooltip has them.
 	 */
 	private subjectStatus(ref: string): TellAnswer {
 		const now = this.clock.now();
+		const typed = ref.trim();
+		const taskMatch = /^(?:task=|#|T)(\d{1,9})$/u.exec(typed);
+		if (taskMatch !== null) {
+			const found = this.ports.orchestrator.status({
+				task: Number(taskMatch[1]),
+			});
+			if (found === undefined) this.task(Number(taskMatch[1]));
+			return {
+				message: subjectText(found!, undefined, now),
+				data: subjectJson(found!, undefined),
+			};
+		}
 		const isItem =
-			/^https?:\/\//iu.test(ref.trim()) ||
-			/^[\w.-]+\/[\w.-]+#\d+$/u.test(ref.trim());
+			/^https?:\/\//iu.test(typed) || /^[\w.-]+\/[\w.-]+#\d+$/u.test(typed);
 		if (isItem) {
 			const found = this.ports.orchestrator.status({ item: ref });
 			if (found === undefined) {
@@ -2287,18 +2094,14 @@ export class TellService {
 				const why =
 					github.assigned === undefined
 						? "the registered Projects have not been read (yet)"
-						: `it is not an open item of the registered Projects (${String(github.assigned)} assigned to me there)`;
+						: `it is not an open item of the registered Projects, nor linked by an open task (${String(github.assigned)} assigned to me there)`;
 				throw new Error(
-					`DevHub has not read ${ref}: ${why}. Only the Issues and pull requests on [orchestrator.github] projects are read, while an orchestrator runs. ${githubPollingLine(this.ports.orchestrator.board())}`,
+					`DevHub has not read ${ref}: ${why}. Only the Issues and pull requests on [orchestrator.github] projects, and those open tasks link, are read, while an orchestrator runs. ${githubPollingLine(this.ports.orchestrator.board())}`,
 				);
 			}
-			const memo = this.itemMemo(ref);
 			return {
-				message: withMemoLine(
-					subjectText(found, undefined, now),
-					memo && this.memoText(memo),
-				),
-				data: { ...subjectJson(found, undefined), memo: this.memoData(memo) },
+				message: subjectText(found, undefined, now),
+				data: subjectJson(found, undefined),
 			};
 		}
 		const agent = this.agent(ref);
@@ -2310,16 +2113,9 @@ export class TellService {
 		const workspace = this.ports
 			.workspaces()
 			.find((one) => one.agents.some((each) => each.id === agent.id));
-		const memo = this.ports.orchestrator.memoAbout?.(`agent ${agent.id}`);
 		return {
-			message: withMemoLine(
-				subjectText(found, workspace?.review, now),
-				memo && this.memoText(memo),
-			),
-			data: {
-				...subjectJson(found, workspace?.review ?? null),
-				memo: this.memoData(memo),
-			},
+			message: subjectText(found, workspace?.review, now),
+			data: subjectJson(found, workspace?.review ?? null),
 		};
 	}
 
@@ -2757,31 +2553,6 @@ export class TellService {
 		};
 	}
 
-	/**
-	 * `agent keep A --note TEXT`: an unsettled managed agent left as it is,
-	 * for the reason given, until its facts change; `--clear` ends it.
-	 */
-	private keep(name: string, note: string | undefined): TellAnswer {
-		const agent = this.agent(name);
-		if (note === undefined) {
-			const was = this.ports.orchestrator.unkeep(agent.id);
-			return {
-				message: was
-					? `${agent.name} (${agent.id}) is no longer kept: it is said again while it needs action.`
-					: `${agent.name} (${agent.id}) was not kept.`,
-				data: { agentId: agent.id, kept: null },
-			};
-		}
-		const kept = this.ports.orchestrator.keep(agent.id, note);
-		return {
-			message: `${agent.name} (${agent.id}) is kept as it is (${note}): not said again until its facts change.`,
-			data: {
-				agentId: agent.id,
-				kept: { note: kept.note, at: new Date(kept.at).toISOString() },
-			},
-		};
-	}
-
 	/** `--managed|--unmanaged`, which must be given; else a line in `missing`. */
 	private requiredManaged(
 		managed: boolean | undefined,
@@ -2818,6 +2589,12 @@ export class TellService {
 		const profile = this.requiredProfile(command.profile, missing);
 		this.requiredMode(profile, command.presentation, missing);
 		this.requiredManaged(command.managed, missing);
+		const task =
+			command.task === undefined ? undefined : this.task(command.task);
+		if (task?.status === "done")
+			missing.push(
+				`task #${String(task.id)} is done: bind new work to an open task (task new)`,
+			);
 		refuseMissing(missing);
 		const workspace = this.workspace(command.workspace!);
 		const agentId = await this.ports.createAgent(
@@ -2830,27 +2607,21 @@ export class TellService {
 		if (command.managed === true)
 			await this.ports.setAgentManaged(agentId, true);
 		await this.tag(agentId, command.meta);
-		if (command.prompt !== undefined) {
-			// A new agent for work that has a memo is given it with its prompt.
-			const url = command.meta?.find(
-				(pair) => pair.key === ISSUE_LINK_KEY,
-			)?.value;
-			const item = url === undefined ? undefined : itemOfUrl(url);
-			this.ports.queueText(
-				agentId,
-				this.withMemo(
-					command.prompt,
-					item === undefined ? undefined : itemKey(item.ref),
-				),
-			);
-		}
+		const bound =
+			task === undefined
+				? undefined
+				: this.ports.orchestrator.bindTask(task.id, [agentId]);
+		// A new agent for a task is given its memo with its prompt.
+		if (command.prompt !== undefined)
+			this.ports.queueText(agentId, withTaskMemo(command.prompt, bound));
 		return {
-			message: `Agent ${agentId} (${profile!.id}, ${command.presentation!.toUpperCase()}) is starting in ${workspace.root}${command.prompt === undefined ? "" : "; it is told the prompt once it is ready"}.`,
+			message: `Agent ${agentId} (${profile!.id}, ${command.presentation!.toUpperCase()}) is starting in ${workspace.root}${bound === undefined ? "" : `, bound to task=${String(bound.id)}`}${command.prompt === undefined ? "" : "; it is told the prompt once it is ready"}.`,
 			data: {
 				agentId,
 				workspaceId: workspace.id,
 				profile: profile!.id,
 				managed: command.managed === true,
+				task: bound?.id ?? null,
 			},
 		};
 	}
@@ -2907,6 +2678,14 @@ export class TellService {
 		}
 		if (command.name !== undefined && command.name.trim().length === 0)
 			missing.push("--name needs a name: leave it out for DevHub's own label");
+		if (command.editorOnly && command.task !== undefined)
+			missing.push("--task binds the agent, and --editor-only starts none");
+		const given =
+			command.task === undefined ? undefined : this.task(command.task);
+		if (given?.status === "done")
+			missing.push(
+				`task #${String(given.id)} is done: bind new work to an open task`,
+			);
 		refuseMissing(missing);
 		const assigned = await this.ports.assignIssue({
 			url: command.url,
@@ -2925,16 +2704,26 @@ export class TellService {
 			await this.ports.setAgentManaged(assigned.agentId, true);
 		if (assigned.agentId !== undefined)
 			await this.tag(assigned.agentId, command.meta);
-		if (command.prompt !== undefined && assigned.agentId !== undefined) {
-			const item = itemOfUrl(command.url);
+		// The task it works on: the one given, else (for the orchestrator's
+		// managed work) the open one linking the item, else a new one linked
+		// to it.
+		const task =
+			assigned.agentId === undefined ||
+			(given === undefined && command.managed !== true)
+				? undefined
+				: this.ports.orchestrator.bindTask(
+						(
+							given ??
+							this.taskLinking(command.url) ??
+							this.taskFor(command.url)
+						).id,
+						[assigned.agentId],
+					);
+		if (command.prompt !== undefined && assigned.agentId !== undefined)
 			this.ports.queueText(
 				assigned.agentId,
-				this.withMemo(
-					command.prompt,
-					item === undefined ? undefined : itemKey(item.ref),
-				),
+				withTaskMemo(command.prompt, task),
 			);
-		}
 		const workspace = this.ports
 			.workspaces()
 			.find((each) => each.id === assigned.workspaceId);
@@ -2947,10 +2736,32 @@ export class TellService {
 			message:
 				(assigned.agentId === undefined
 					? `Opened ${workspace?.root ?? "the workspace"} for ${command.url}.`
-					: `Agent ${assigned.agentId}${command.name === undefined ? "" : ` (${command.name.trim()})`} is taking ${command.url} in ${workspace?.root ?? "its workspace"}.`) +
+					: `Agent ${assigned.agentId}${command.name === undefined ? "" : ` (${command.name.trim()})`} is taking ${command.url} in ${workspace?.root ?? "its workspace"}, bound to ${task === undefined ? "no task" : taskLine(task)}.`) +
 				stale,
-			data: { ...assigned, root: workspace?.root },
+			data: { ...assigned, root: workspace?.root, task: task?.id ?? null },
 		};
+	}
+
+	/** The open task that links `url` (an Issue's or a pull request's). */
+	private taskLinking(url: string): TaskWire | undefined {
+		const key = itemLinkKey(url);
+		if (key === undefined) return undefined;
+		return this.ports.orchestrator
+			.tasks()
+			.filter((one) => one.status !== "done")
+			.find((one) => one.links.some((link) => itemLinkKey(link) === key));
+	}
+
+	/** A new task for an item: titled with its ref, linked to it, 処理中. */
+	private taskFor(url: string): TaskWire {
+		const ref = /github\.com\/([\w.-]+\/[\w.-]+)\/(?:issues|pull)\/(\d+)/u.exec(
+			url,
+		);
+		return this.ports.orchestrator.newTask({
+			title: ref === null ? url : `${ref[1]!}#${ref[2]!}`,
+			links: [url],
+			status: "in_progress",
+		});
 	}
 
 	/** The workspaces a `--workspace` can name, for a refusal. */
@@ -3458,17 +3269,28 @@ export class TellService {
 		const cache = agent.promptCache ?? usage?.promptCache;
 		const tokens = usage?.contextTokens;
 		const window = usage?.contextWindow;
-		const memo = this.ports.orchestrator.memoAbout?.(`agent ${agent.id}`);
+		const task = this.ports.orchestrator
+			.tasks()
+			.find(
+				(one) =>
+					one.status !== "done" &&
+					one.agents.some((bound) => bound.agentId === agent.id),
+			);
 		return {
-			memo:
-				memo === undefined
+			task:
+				task === undefined
 					? null
 					: {
-							subject:
-								this.ports.orchestrator.subjectToken?.(memo.subject) ??
-								memo.subject,
-							text: memo.text,
-							at: new Date(memo.at).toISOString(),
+							id: task.id,
+							title: task.title,
+							status: task.status,
+							memo:
+								task.memo === undefined
+									? null
+									: {
+											text: task.memo.text,
+											at: new Date(task.memo.at).toISOString(),
+										},
 						},
 			agentId: agent.id,
 			name: agent.name,
@@ -4040,226 +3862,63 @@ export class TellService {
 		return [...found].map(([root, worktree]) => ({ root, worktree }));
 	}
 
-	// --- memos and resuming the agent that did the work ---------------------------
-
-	/** The memo and work ports, or why this DevHub has none. */
-	private memoPorts(): Required<
-		Pick<
-			TellOrchestratorPorts,
-			| "resolveSubject"
-			| "subjectToken"
-			| "memo"
-			| "memos"
-			| "setMemo"
-			| "clearMemo"
-			| "workRecords"
-			| "resumeTarget"
-		>
-	> {
-		const o = this.ports.orchestrator;
-		if (
-			o.resolveSubject === undefined ||
-			o.subjectToken === undefined ||
-			o.memo === undefined ||
-			o.memos === undefined ||
-			o.setMemo === undefined ||
-			o.clearMemo === undefined ||
-			o.workRecords === undefined ||
-			o.resumeTarget === undefined
-		)
-			throw new Error("this DevHub keeps no memos.");
-		return o as never;
-	}
-
-	/** `ws=W`'s workspace, for the subject's lookup; undefined for any other text. */
-	private subjectPlace(text: string): TellSubjectPlace | undefined {
-		const match = /^ws=(.+)$/u.exec(text.trim());
-		if (match === null) return undefined;
-		const workspace = this.workspace(match[1]!);
-		return {
-			machine: workspace.machine,
-			folder: workspace.root,
-			agentIds: workspace.agents.map((agent) => agent.id),
-		};
-	}
-
-	private subject(text: string): TellSubject {
-		return this.memoPorts().resolveSubject(text, this.subjectPlace(text));
-	}
-
-	/** A note as a line says it: `memo (issue=…, 11/11 10:02): …`. */
-	private memoText(memo: Memo): string {
-		const token =
-			this.ports.orchestrator.subjectToken?.(memo.subject) ?? memo.subject;
-		return `memo (${token}, ${memoClock(memo.at)}): ${memoLine(memo)}`;
-	}
-
-	/** A note as `--json` carries it; null for none. */
-	private memoData(memo: Memo | undefined): Record<string, unknown> | null {
-		if (memo === undefined) return null;
-		return memoJson(
-			this.ports.orchestrator.subjectToken?.(memo.subject) ?? memo.subject,
-			memo,
-		);
-	}
-
-	/** The note `status <item>` shows: the item's, as `ref` names it. */
-	private itemMemo(ref: string): Memo | undefined {
-		const o = this.ports.orchestrator;
-		if (o.resolveSubject === undefined || o.memoAbout === undefined)
-			return undefined;
-		try {
-			return o.memoAbout(o.resolveSubject(ref).key);
-		} catch {
-			return undefined;
-		}
-	}
-
-	private setMemo(
-		command: Extract<TellCommand, { verb: "memo-set" }>,
-	): TellAnswer {
-		const ports = this.memoPorts();
-		const subject = this.subject(command.subject);
-		const memo = ports.setMemo(subject.key, command.text);
-		return {
-			message: `${subject.token}: noted. It shows in board, memo list and status (or escalation show), and goes with the --prompt of agent resume / issue assign / agent new.`,
-			data: memoJson(subject.token, memo),
-		};
-	}
-
-	private clearMemo(text: string): TellAnswer {
-		const subject = this.subject(text);
-		const had = this.memoPorts().clearMemo(subject.key);
-		return {
-			message: had
-				? `${subject.token}: its note is cleared.`
-				: `${subject.token} had no note.`,
-			data: { subject: subject.token, cleared: had },
-		};
-	}
-
-	private listMemos(): TellAnswer {
-		const ports = this.memoPorts();
-		const memos = ports.memos();
-		const work = ports.workRecords();
-		const token = (key: string) => ports.subjectToken(key);
-		const live = new Set(
-			this.ports
-				.workspaces()
-				.flatMap((workspace) => workspace.agents)
-				.map((agent) => agent.id),
-		);
-		return {
-			message: [
-				`memos (${String(memos.length)}, newest first):`,
-				...memos.map(
-					(memo) =>
-						`  ${token(memo.subject)}  ${memoClock(memo.at)}  ${memoLine(memo)}`,
-				),
-				`work (${String(work.length)}, the agent resume <subject> brings back is the last):`,
-				...work.map(
-					(record) =>
-						`  ${token(record.subject)}  ${record.agents
-							.map(
-								(agent) =>
-									`${agent.name} ${agent.agentId.slice(0, 8)} ${live.has(agent.agentId) ? "live" : agent.sessions.length === 0 ? "stopped, no session" : `stopped${agent.stoppedAt === undefined ? "" : ` ${memoClock(agent.stoppedAt)}`}, resumable`}${agent.machine === "local" ? "" : ` on ${agent.machine}`}`,
-							)
-							.join("; ")}`,
-				),
-			].join("\n"),
-			data: {
-				memos: memos.map((memo) => memoJson(token(memo.subject), memo)),
-				work: work.map((record) => ({
-					subject: token(record.subject),
-					key: record.subject,
-					url: record.url ?? null,
-					agents: record.agents.map((agent) => ({
-						...agent,
-						live: live.has(agent.agentId),
-					})),
-				})),
-			},
-		};
-	}
+	// --- resuming the agent that did the work -------------------------------------
 
 	/**
-	 * `prompt` with the subject's note after it, when it has one: what the
-	 * orchestrator meant to do next, so the agent picking the work up has it.
-	 */
-	private withMemo(prompt: string, key: string | undefined): string {
-		if (key === undefined) return prompt;
-		const o = this.ports.orchestrator;
-		const memo = o.memo?.(key);
-		if (memo === undefined) return prompt;
-		const token = o.subjectToken?.(key) ?? key;
-		return `${prompt}\n\n---\nDevHub より: この作業 (${token}) のオーケストレーターのメモ (${memoClock(memo.at)}):\n${memo.text}`;
-	}
-
-	/**
-	 * `agent resume`: the recorded agent of a subject, or a recorded agent
-	 * by id or name, on its latest session in its own folder; else a
-	 * session by its id, as before.
+	 * `agent resume`: a task's latest agent (`task=12`), or a task's agent by
+	 * id or name, on its latest session in its own folder, bound to the task
+	 * again; else a session by its id, as before.
 	 */
 	private async resumeAny(
 		command: Extract<TellCommand, { verb: "agent-resume" }>,
 	): Promise<TellAnswer> {
 		const o = this.ports.orchestrator;
-		const place =
-			command.workspace === undefined && command.folder === undefined
-				? this.subjectPlace(command.session)
-				: undefined;
 		const target =
 			command.workspace === undefined && command.folder === undefined
-				? o.resumeTarget?.(command.session, place)
+				? o.resumeTarget?.(command.session)
 				: undefined;
 		if (target === undefined) {
 			const answer = await this.resume(command);
-			const data = answer.data as {
-				agentId: string;
-				meta: Record<string, string>;
-			};
-			if (command.prompt !== undefined) {
-				const url = data.meta[ISSUE_LINK_KEY];
-				const item = url === undefined ? undefined : itemOfUrl(url);
-				this.ports.queueText(
-					data.agentId,
-					this.withMemo(
-						command.prompt,
-						item === undefined ? undefined : itemKey(item.ref),
-					),
-				);
-			}
+			const data = answer.data as { agentId: string };
+			if (command.prompt !== undefined)
+				this.ports.queueText(data.agentId, command.prompt);
 			return answer;
 		}
+		const token = `task=${String(target.task.id)}`;
 		if (target.live !== undefined)
 			return {
-				message: `${target.token}'s agent ${target.agent.name} (${target.live}) is open now: nothing to resume — talk to it with 'devhub --tell agent send ${target.live.slice(0, 8)} …'.`,
+				message: `${token}'s agent ${target.agent.name} (${target.live}) is open now: nothing to resume — talk to it with 'devhub --tell agent send ${target.live.slice(0, 8)} …'.`,
 				data: {
 					agentId: target.live,
-					subject: target.token,
+					task: target.task.id,
 					alreadyRunning: true,
 				},
 			};
 		const agent = target.agent;
 		const session = agent.sessions.at(-1);
-		if (session === undefined)
+		if (
+			session === undefined ||
+			agent.folder === undefined ||
+			agent.machine === undefined ||
+			agent.profileId === undefined
+		)
 			throw new Error(
-				`${target.token}'s agent ${agent.name} (${agent.agentId}) stopped before its CLI named a session, so there is no conversation to go on with: start a new agent for it.`,
+				`${token}'s agent ${agent.name} (${agent.agentId}) stopped before its CLI named a session, so there is no conversation to go on with: start a new agent for it (agent new --task ${String(target.task.id)}).`,
 			);
 		if (agent.kind !== "claude" && agent.kind !== "codex")
 			throw new Error(
-				`${target.token}'s agent ${agent.name} ran ${agent.kind}, whose sessions DevHub cannot resume: start a new agent for it.`,
+				`${token}'s agent ${agent.name} ran ${agent.kind ?? "a CLI"}, whose sessions DevHub cannot resume: start a new agent for it.`,
 			);
 		if (!this.ports.profiles().some((one) => one.id === agent.profileId))
 			throw new Error(
-				`${target.token}'s agent ${agent.name} ran the profile '${agent.profileId}', which is no longer configured: start a new agent for it, or resume session ${session} with --profile.`,
+				`${token}'s agent ${agent.name} ran the profile '${agent.profileId}', which is no longer configured: start a new agent for it, or resume session ${session} with --profile.`,
 			);
-		const where = await this.workPlace(agent);
+		const where = await this.workPlace(agent.folder, agent.machine);
 		const { sessions } = await this.pastSessions(where, agent.profileId);
 		const listed = sessions.find((one) => one.session.id === session);
 		if (listed === undefined)
 			throw new Error(
-				`${target.token}'s agent ${agent.name} ran session ${session} in ${agent.folder}${agent.machine === "local" ? "" : ` on ${agent.machine}`}, and its CLI no longer has it there (deleted, or pruned): there is no conversation to go on with. Start a new agent for it.`,
+				`${token}'s agent ${agent.name} ran session ${session} in ${agent.folder}${agent.machine === "local" ? "" : ` on ${agent.machine}`}, and its CLI no longer has it there (deleted, or pruned): there is no conversation to go on with. Start a new agent for it.`,
 			);
 		const answer = await this.resumeFound(
 			{ ...command, session, profile: agent.profileId },
@@ -4270,32 +3929,34 @@ export class TellService {
 		const data = answer.data as { agentId: string };
 		if (command.name === undefined && agent.named === true)
 			await this.ports.renameAgent(data.agentId, agent.name);
+		// The same conversation is the same agent: it takes the old entry's
+		// place on its task (`TaskStore.observe`, by its session). A done task
+		// stays done: the work goes on under the open task it is bound to.
+		const task =
+			target.task.status === "done"
+				? target.task
+				: o.bindTask(target.task.id, [data.agentId]);
 		if (command.prompt !== undefined)
-			this.ports.queueText(
-				data.agentId,
-				this.withMemo(command.prompt, target.key),
-			);
-		const memo = o.memo?.(target.key);
+			this.ports.queueText(data.agentId, withTaskMemo(command.prompt, task));
 		return {
-			message: `${answer.message}\nIt is ${target.token}'s agent ${agent.name} (was ${agent.agentId}), back on its conversation.${command.prompt === undefined ? "" : memo === undefined ? " It is told the prompt once it is ready." : " It is told the prompt, with the subject's note, once it is ready."}`,
+			message: `${answer.message}\nIt is ${token}'s agent ${agent.name} (was ${agent.agentId}), back on its conversation.${command.prompt === undefined ? "" : task.memo === undefined ? " It is told the prompt once it is ready." : " It is told the prompt, with the task's memo, once it is ready."}`,
 			data: {
 				...(answer.data as object),
-				subject: target.token,
+				task: task.id,
 				was: agent.agentId,
-				memo: memo === undefined ? null : memo.text,
+				memo: task.memo?.text ?? null,
 			},
 		};
 	}
 
-	/** Where a recorded agent's folder is to be resumed in: open, there, or gone. */
-	private async workPlace(agent: WorkAgent): Promise<SessionsWhere> {
-		const open = this.openAt(agent.folder, agent.machine);
+	/** Where a task agent's folder is to be resumed in: open, there, or gone. */
+	private async workPlace(
+		folder: string,
+		machine: string,
+	): Promise<SessionsWhere> {
+		const open = this.openAt(folder, machine);
 		if (open !== undefined) return { kind: "workspace", workspace: open };
-		return {
-			kind: "folder",
-			root: stripSlashes(agent.folder),
-			machine: agent.machine,
-		};
+		return { kind: "folder", root: stripSlashes(folder), machine };
 	}
 
 	/** `session meta`: a session's pairs, kept past its agent; set or unset one. */
@@ -4437,6 +4098,8 @@ export class TellService {
 					kind: "workspace",
 					workspace: this.workspace(link.workspace).id,
 				};
+			case "task":
+				return { kind: "task", id: this.task(link.id).id };
 			case "escalation":
 				return { kind: "escalation", id: this.escalation(link.id).id };
 			case "orchestrator":
@@ -4491,6 +4154,8 @@ export class TellService {
 					return { kind: "agent", agent: target };
 				case "workspace":
 					return { kind: "workspace", workspace: target };
+				case "task":
+					return { kind: "task", id: Number(target) };
 				case "escalation":
 					return { kind: "escalation", id: Number(target) };
 				case "orchestrator":
@@ -4553,12 +4218,6 @@ export function devhubLinksIn(markdown: string): readonly string[] {
 	))
 		found.push((match[1] ?? match[2])!);
 	return found;
-}
-
-function agentsText(one: EscalationWire): string {
-	return one.agents.length === 0
-		? ""
-		: `  (${one.agents.map((agent) => agent.name ?? agent.agentId).join(", ")})`;
 }
 
 /** A session's name in a line: its title, or the agent's name it ran under. */
@@ -4823,16 +4482,6 @@ function statusLines(state: TellAgentStatus, now: number): string[] {
 					...(state.invariant.needsAction === null
 						? []
 						: [`needs     action: ${state.invariant.needsAction}`]),
-					...(state.invariant.waiting === null
-						? []
-						: [
-								`waiting   in esc=${String(state.invariant.waiting.escalationId)}: ${state.invariant.waiting.trigger}`,
-							]),
-					...(state.invariant.kept === null
-						? []
-						: [
-								`kept      ${state.invariant.kept.note} (since ${state.invariant.kept.at})`,
-							]),
 				]),
 		...(Object.keys(state.meta).length === 0
 			? []
@@ -4869,10 +4518,15 @@ function statusLines(state: TellAgentStatus, now: number): string[] {
 					`cache     ${cache.cold === null ? "no cached prefix" : cache.cold ? "cold" : `warm until ${cache.expiresAt ?? "-"}`} (TTL ${String(cache.ttlSeconds)}s)${cache.hitRatio === null ? "" : `, hit ${String(Math.round(cache.hitRatio * 100))}%`}, ${String(cache.misses)} miss(es)${cache.autoCompactAt === null ? "" : `, compacted at ${cache.autoCompactAt}`}`,
 				]),
 		...(state.failure === null ? [] : [`failure   ${state.failure}`]),
-		...(state.memo === null
+		...(state.task === null
 			? []
 			: [
-					`memo      ${state.memo.subject}, ${memoClock(Date.parse(state.memo.at))}: ${state.memo.text.replace(/\s+/gu, " ")}`,
+					`task      task=${String(state.task.id)} ${STATUS_WORDS[state.task.status as TaskWire["status"]] ?? state.task.status} 「${state.task.title}」`,
+					...(state.task.memo === null
+						? []
+						: [
+								`memo      ${clockWords(Date.parse(state.task.memo.at))}: ${state.task.memo.text.replace(/\s+/gu, " ")}`,
+							]),
 				]),
 	];
 }
@@ -5516,7 +5170,7 @@ function itemJson(item: StatusItem): Record<string, unknown> {
 	};
 }
 
-/** `status --json`: one stable shape for an item and for an agent. */
+/** `status --json`: one stable shape for a task, an item and an agent. */
 function subjectJson(
 	found: SubjectStatus,
 	workspace: TellReview | null | undefined,
@@ -5538,38 +5192,34 @@ function subjectJson(
 		workspaceId: agent.workspaceId,
 		status: agent.status,
 		managed: agent.managed,
-		linked: agent.linked ?? null,
-		pendingIssue: agent.pendingIssue === true,
+		issue: agent.issue ?? null,
 		needsAction: agent.needsAction ?? null,
-		kept:
-			agent.kept === undefined
-				? null
-				: { note: agent.kept.note, at: iso(agent.kept.at) },
 	});
-	const escalations = found.escalations.map((one) => ({
-		id: one.id,
-		title: one.title,
-		state: one.state,
-		trigger: one.trigger ?? null,
-		dueAt: iso(one.dueAt),
-	}));
-	if (found.subject === "item")
-		return {
-			subject: "item",
-			item: itemJson(found.item),
-			needsAction,
-			agents: found.agents.map(agentJson),
-			escalations,
-		};
-	return {
-		subject: "agent",
-		agent: agentJson(found.agent),
-		item: found.item === undefined ? null : itemJson(found.item),
-		workspace: workspace ?? null,
-		needsAction,
-		waiting: found.waiting ?? null,
-		escalations,
-	};
+	switch (found.subject) {
+		case "task":
+			return {
+				subject: "task",
+				task: found.task,
+				needsAction,
+				items: found.items.map(itemJson),
+				agents: found.agents.map(agentJson),
+			};
+		case "item":
+			return {
+				subject: "item",
+				item: itemJson(found.item),
+				needsAction,
+				tasks: found.tasks,
+			};
+		case "agent":
+			return {
+				subject: "agent",
+				agent: agentJson(found.agent),
+				task: found.task ?? null,
+				workspace: workspace ?? null,
+				needsAction,
+			};
+	}
 }
 
 function itemLines(item: StatusItem): string[] {
@@ -5592,79 +5242,82 @@ function subjectText(
 			? "needs action: no"
 			: `needs action: ${found.needsAction.clause} (for ${span(now - found.needsAction.since)})`;
 	const agentLine = (agent: (typeof found & { subject: "agent" })["agent"]) =>
-		`${agent.name} (${agent.id}) ws=${agent.ws} ${agent.status}${agent.managed ? ", managed" : ""}${agent.needsAction === undefined ? "" : `, needs action: ${agent.needsAction}`}${agent.kept === undefined ? "" : `, kept: ${agent.kept.note}`}`;
-	const escalations =
-		found.escalations.length === 0
-			? ["escalations: none"]
-			: [
-					"escalations:",
-					...found.escalations.map(
-						(one) =>
-							`  #${String(one.id)} ${one.title}  ${one.state}${one.trigger === undefined ? "" : `  waiting on: ${one.trigger}`}${one.dueAt === undefined ? "" : ` [${new Date(one.dueAt).toISOString()}]`}`,
-					),
-				];
-	if (found.subject === "item")
-		return [
-			...itemLines(found.item),
-			needs,
-			found.agents.length === 0 ? "agents: none linked" : "agents:",
-			...found.agents.map((agent) => `  ${agentLine(agent)}`),
-			...escalations,
-		].join("\n");
-	const review = workspace;
-	return [
-		agentLine(found.agent),
-		`linked to ${found.agent.linked ?? (found.agent.pendingIssue === true ? "no item yet (issue=pending: its Issue is still to be filed)" : "no item")}`,
-		...(found.item === undefined ? [] : itemLines(found.item)),
-		...(review === undefined
-			? []
-			: [
-					`workspace  issue ${review.issue === null ? "none" : `#${String(review.issue.number)} ${review.issue.state}`}, pull request ${review.pullRequest === null ? "none" : `#${String(review.pullRequest.number)} ${review.pullRequest.draft ? "draft" : review.pullRequest.state}, review ${review.pullRequest.review}`}, unresolved ${review.conversations === null ? "-" : String(review.conversations.unresolved)}, checks ${review.checks === null ? "none" : review.checks.state}`,
-				]),
-		needs,
-		...(found.waiting === undefined
-			? []
-			: [
-					`waiting in esc=${String(found.waiting.escalationId)}: ${found.waiting.trigger}`,
-				]),
-		...escalations,
-	].join("\n");
+		`${agent.name} (${agent.id}) ws=${agent.ws} ${agent.status}${agent.managed ? ", managed" : ""}${agent.needsAction === undefined ? "" : `, needs action: ${agent.needsAction}`}`;
+	const taskRef = (task: { id: number; title: string; status: string }) =>
+		`task=${String(task.id)} ${STATUS_WORDS[task.status as TaskWire["status"]] ?? task.status} 「${task.title}」`;
+	switch (found.subject) {
+		case "task":
+			return [
+				taskLine(found.task),
+				...taskDetailLines(found.task, now),
+				needs,
+				...found.items.flatMap(itemLines),
+				...(found.agents.length === 0
+					? []
+					: [
+							"agents open:",
+							...found.agents.map((one) => `  ${agentLine(one)}`),
+						]),
+				...found.task.escalations.flatMap((one) =>
+					one.state === "open"
+						? [`open question: esc=${String(one.id)} 「${one.title}」`]
+						: [],
+				),
+			].join("\n");
+		case "item":
+			return [
+				...itemLines(found.item),
+				needs,
+				found.tasks.length === 0
+					? "tasks: none links it"
+					: `tasks: ${found.tasks.map(taskRef).join(", ")}`,
+			].join("\n");
+		case "agent": {
+			const review = workspace;
+			return [
+				agentLine(found.agent),
+				found.task === undefined
+					? "task: none (bind it to one: task bind T A)"
+					: `task: ${taskRef(found.task)}`,
+				...(found.agent.issue === undefined
+					? []
+					: [`started on ${found.agent.issue}`]),
+				...(review === undefined
+					? []
+					: [
+							`workspace  issue ${review.issue === null ? "none" : `#${String(review.issue.number)} ${review.issue.state}`}, pull request ${review.pullRequest === null ? "none" : `#${String(review.pullRequest.number)} ${review.pullRequest.draft ? "draft" : review.pullRequest.state}, review ${review.pullRequest.review}`}, unresolved ${review.conversations === null ? "-" : String(review.conversations.unresolved)}, checks ${review.checks === null ? "none" : review.checks.state}`,
+						]),
+				needs,
+			].join("\n");
+		}
+	}
 }
 
 /** `board`'s invariant part: every subject that needs action now, and why. */
-function needsActionLines(
-	board: OrchestratorBoardWire,
-	now: number,
-	noteUnder: (subject: string) => readonly string[] = () => [],
-): string[] {
+function needsActionLines(board: OrchestratorBoardWire, now: number): string[] {
 	const list = board.needsAction;
 	return [
 		`needs action (${String(list.length)}):`,
-		...list.flatMap((one) => [
-			`  ${one.line}  [${span(now - one.since)}${one.kept === undefined ? "" : `, kept: ${one.kept.note}`}]`,
-			...noteUnder(one.subject),
-		]),
+		...list.map((one) => `  ${one.line}  [${span(now - one.since)}]`),
 	];
 }
 
 /**
- * The item linkage (`issue=`), set by hand as `issue assign` writes it: the
- * URL of an Issue or a pull request, which is what the invariant compares —
- * or `pending` (`ISSUE_PENDING`), work whose Issue is still to be filed.
+ * The meta key `issue assign` writes (`issue=`), set by hand: the URL of an
+ * Issue or a pull request, the item the agent was started on.
  */
 function checkLinkMeta(
 	key: string | undefined,
 	value: string | undefined,
 ): void {
 	if (key !== ISSUE_LINK_KEY) return;
-	if (value === ISSUE_PENDING) return;
 	if (
 		!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+\/?$/u.test(
 			value?.trim() ?? "",
 		)
 	)
 		throw new Error(
-			`${ISSUE_LINK_KEY}= links the agent to an item: it takes the URL of an Issue or a pull request (https://github.com/OWNER/REPO/issues/N or …/pull/N), as 'issue assign' writes it, or ${ISSUE_PENDING} for work whose Issue is still to be filed; got ${JSON.stringify(value ?? "")}.`,
+			`${ISSUE_LINK_KEY}= names the item the agent was started on: the URL of an Issue or a pull request (https://github.com/OWNER/REPO/issues/N or …/pull/N), as 'issue assign' writes it; got ${JSON.stringify(value ?? "")}. Work with no Issue yet is a task with no link (task new; agent new --task).`,
 		);
 }
 
@@ -5673,55 +5326,119 @@ function invariantOf(
 	standing: TellStanding | undefined,
 ): TellAgentStatus["invariant"] {
 	if (standing === undefined) return null;
+	const breach = standing.breach ?? standing.taskBreach;
 	return {
 		settled: standing.settled,
-		needsAction:
-			standing.breach === undefined ? null : breachWords(standing.breach),
-		waiting: standing.waiting ?? null,
-		kept:
-			standing.kept === undefined
-				? null
-				: {
-						note: standing.kept.note,
-						at: new Date(standing.kept.at).toISOString(),
-					},
+		needsAction: breach === undefined ? null : breachWords(breach),
+		task: standing.task ?? null,
 	};
 }
 
-/** The ranking a command gives, as the port takes it. */
-function rankOf(command: {
-	readonly priority?: "high" | "normal" | "low";
-	readonly effort?: "quick" | "normal" | "deep";
-	readonly rankNote?: string;
-}): TellEscalationRank {
-	return {
-		...(command.priority === undefined ? {} : { priority: command.priority }),
-		...(command.effort === undefined ? {} : { effort: command.effort }),
-		...(command.rankNote === undefined ? {} : { note: command.rankNote }),
-	};
+const STATUS_WORDS: Readonly<Record<TaskWire["status"], string>> = {
+	answer: "回答待ち",
+	in_progress: "処理中",
+	waiting: "待機",
+	done: "完了",
+};
+
+/** `task=12 処理中 「…」 [high] △ idle`: a task on one line. */
+function taskLine(task: TaskWire): string {
+	return [
+		`task=${String(task.id)}`,
+		STATUS_WORDS[task.status],
+		`「${task.title}」`,
+		...(task.priority === "normal" ? [] : [`[${task.priority}]`]),
+		...(task.needsAction === undefined ? [] : [`△ ${task.needsAction}`]),
+	].join(" ");
 }
 
-/** `priority high, effort quick: blocks the release`. */
-function rankText(one: EscalationWire): string {
-	return `priority ${one.priority ?? "normal"}, effort ${one.effort ?? "normal"}${one.rankNote === undefined ? "" : `: ${one.rankNote}`}`;
+function agentsLine(task: TaskWire): string {
+	return task.agents.length === 0
+		? "none"
+		: task.agents
+				.map(
+					(one) =>
+						`${one.name} (${one.agentId.slice(0, 8)}, ${one.live ? (one.status ?? "open") : one.resumable ? "stopped, resumable" : "stopped"})`,
+				)
+				.join(", ");
 }
 
-/** `escalation show`'s line for a note (an entry with a `kind`). */
-function noteLine(entry: EscalationWire["entries"][number]): string {
-	const at = new Date(entry.at).toISOString();
-	const note = entry.markdown === "" ? "" : `: ${entry.markdown}`;
-	switch (entry.kind) {
-		case "direct":
-			return `--- the person talked to ${entry.agent ?? "an agent"} directly, ${at} (read it: devhub --tell agent read ${entry.agent ?? "<agent>"})`;
-		case "resumed":
-			return `--- ${entry.agent ?? "an agent"} went back to work, ${at}: no longer waiting for an answer`;
-		case "taken":
-			return `--- moved to in_progress (not an answer), ${at}${note}`;
-		case "wait":
-			return `--- waiting on: ${entry.markdown}${entry.dueAt === undefined ? "" : ` (at ${new Date(entry.dueAt).toISOString()})`}, since ${at}`;
-		default:
-			return `--- held in in_progress by the orchestrator, ${at}${note}`;
-	}
+function memoLineOf(memo: {
+	readonly text: string;
+	readonly at: number;
+}): string {
+	return `memo (${clockWords(memo.at)}): ${memo.text.replace(/\s+/gu, " ").trim()}`;
+}
+
+/** `M/D HH:MM`, in local time. */
+function clockWords(at: number): string {
+	const date = new Date(at);
+	const pad = (n: number) => String(n).padStart(2, "0");
+	return `${String(date.getMonth() + 1)}/${String(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** A task's links, agents, wait, memo and staleness, a line each. */
+function taskDetailLines(task: TaskWire, now: number): string[] {
+	return [
+		...(task.links.length === 0
+			? []
+			: [
+					`links: ${task.links.map((link) => (task.linkLabels?.[link] === undefined ? link : `${link} (${task.linkLabels[link]!})`)).join(" ")}`,
+				]),
+		`agents: ${agentsLine(task)}`,
+		...(task.status === "waiting" || task.waitNote !== undefined
+			? task.waitNote === undefined && task.checkAt === undefined
+				? []
+				: [
+						`waits for: ${task.waitNote ?? "(no note)"}${task.checkAt === undefined ? "" : `  [check at ${new Date(task.checkAt).toISOString()}${task.checkAt <= now ? ", passed" : ""}]`}`,
+					]
+			: []),
+		...(task.memo === undefined ? [] : [memoLineOf(task.memo)]),
+		...(task.priorityNote === undefined
+			? []
+			: [`priority note: ${task.priorityNote}`]),
+		...(task.request === undefined
+			? []
+			: [
+					`the person's request${task.request.sentAt === undefined ? " (not delivered yet)" : ""}: ${task.request.text.replace(/\s+/gu, " ").slice(0, 200)}`,
+				]),
+		...(task.mayBeStale === undefined
+			? []
+			: [
+					`may be stale: ${task.mayBeStale.reasons.join("; ")} — task done, task link / unlink, or a memo saying why it goes on`,
+				]),
+		...(task.done === undefined
+			? []
+			: [
+					`done ${new Date(task.done.at).toISOString()}${task.done.note === undefined ? "" : `: ${task.done.note}`}`,
+				]),
+	];
+}
+
+/** An escalation, its question and its answer, as `escalation show` prints it. */
+function escalationLines(one: EscalationWire): string[] {
+	return [
+		`#${String(one.id)} ${one.title}  [${one.state}]`,
+		...(one.links.length === 0 ? [] : [`links: ${one.links.join(" ")}`]),
+		`--- the question, ${new Date(one.question.at).toISOString()}`,
+		one.question.markdown,
+		...(one.question.options === undefined
+			? []
+			: [
+					`options: ${one.question.options.map((option) => JSON.stringify(option)).join(", ")}`,
+				]),
+		...(one.answer === undefined
+			? []
+			: [
+					`--- the person's answer, ${new Date(one.answer.at).toISOString()}${one.answer.option === undefined ? "" : ` (option ${JSON.stringify(one.answer.option)})`}`,
+					one.answer.markdown,
+				]),
+		...(one.withdrawn === undefined
+			? []
+			: [
+					`--- withdrawn ${new Date(one.withdrawn.at).toISOString()}${one.withdrawn.note === undefined ? "" : `: ${one.withdrawn.note}`}`,
+				]),
+	];
 }
 
 /**
@@ -5766,16 +5483,8 @@ function posixBasename(path: string): string {
 	return path.slice(path.lastIndexOf("/") + 1);
 }
 
-function memoJson(token: string, memo: Memo): Record<string, unknown> {
-	return {
-		subject: token,
-		key: memo.subject,
-		text: memo.text,
-		at: new Date(memo.at).toISOString(),
-	};
-}
-
-/** `status`'s text with its subject's note at the end, when there is one. */
-function withMemoLine(text: string, memo: string | undefined): string {
-	return memo === undefined ? text : `${text}\n${memo}`;
+/** A prompt with its task's memo after it, whole, when the task has one. */
+function withTaskMemo(prompt: string, task: TaskWire | undefined): string {
+	if (task?.memo === undefined) return prompt;
+	return `${prompt}\n\n---\nDevHub より: このタスク (task=${String(task.id)}「${task.title}」) のオーケストレーターのメモ (${clockWords(task.memo.at)}):\n${task.memo.text}`;
 }
