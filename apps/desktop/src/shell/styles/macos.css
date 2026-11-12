@@ -635,6 +635,32 @@
   max-height: min(520px, 76vh);
 }
 
+/* A confirmation (`cancelRow`): a few rows that are the answers, and words
+   about the question around them. In a short window it is the words that give
+   way — the question under the title and the note under the list scroll in
+   their own bands — and never the rows: a list squeezed to one row hides the
+   answer that does something under the one that does nothing, and the sheet
+   can then only be cancelled. An ordinary picker is the other way round: its
+   list is the long part, and it scrolls. */
+.picker.is-confirmation > .picker-body {
+  flex: none;
+}
+
+.picker.is-confirmation .picker-results {
+  overflow-y: visible;
+}
+
+.picker.is-confirmation > .picker-header,
+.picker.is-confirmation > .picker-footer {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.picker.is-confirmation > .picker-search {
+  flex: none;
+}
+
 /* Not `* + *`: a sibling rule whose right-hand side is `*` makes Blink
    restyle every child of any parent a child is inserted into or removed
    from, on every page that loads this sheet — a GUI Agent's transcript of

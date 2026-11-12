@@ -645,7 +645,10 @@ export function Picker({
       }}
     >
       <section
-        className="mac-sheet picker"
+        // A confirmation's answers are the question: when the sheet is too
+        // short for everything, its words give way (they scroll) and its
+        // rows never do. See `.picker.is-confirmation` in `macos.css`.
+        className={`mac-sheet picker${cancelRow === undefined ? "" : " is-confirmation"}`}
         role="dialog"
         aria-modal="true"
         // Named by the heading that is now on screen rather than by a label
