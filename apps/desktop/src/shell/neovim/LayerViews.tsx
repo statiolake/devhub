@@ -44,6 +44,7 @@ import type { OverPart } from "./painter";
 import { createPortal } from "react-dom";
 import type { GridBox } from "./redraw";
 import { formatKeys } from "../../model/keyNotation";
+import { activeGuide, guideX } from "./viewTree";
 
 interface Cell {
   readonly width: number;
@@ -162,16 +163,23 @@ function GuiView({
     });
   };
 
-  // Keep the focused item in sight, moving as little as possible.
+  // Keep the focused item in sight, moving as little as possible — below
+  // the sticky items held at the top (a sticky one is always in sight).
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const item = boxes()[focusedRef.current];
-    if (!item) return;
+    const all = boxes();
+    const index = focusedRef.current;
+    const item = all[index];
+    if (!item || content.items[index]?.sticky === true) return;
+    let inset = 0;
+    content.items.forEach((it, i) => {
+      if (it.sticky === true && i < index) inset += all[i]?.height ?? 0;
+    });
     el.scrollTop = revealScroll(
       el.scrollTop,
-      el.clientHeight,
-      item.top,
+      Math.max(0, el.clientHeight - inset),
+      item.top - inset,
       item.height,
     );
   });
@@ -179,10 +187,21 @@ function GuiView({
   const theme = themeFor(host, content.hl, () => undefined);
   const ring = ringColor(content.hl, theme.fg);
   const cursorLine = content.hl.get("CursorLine")?.bg;
-  const click = (line: number, action: number | null) => {
-    host.lua("_layers_click", ["view", content.id, place.win, line, action]);
+  const click = (line: number, action: number | null, clicks = 1) => {
+    host.lua("_layers_click", [
+      "view",
+      content.id,
+      place.win,
+      line,
+      action,
+      clicks,
+    ]);
     host.refocus();
   };
+  const indent = content.indent;
+  const guide =
+    indent !== undefined ? activeGuide(content.items, focused) : undefined;
+  const visual = place.visual;
 
   const style: CSSProperties = {
     left: box.col * cell.width,
@@ -200,6 +219,12 @@ function GuiView({
         : `color-mix(in srgb, ${rgbCss(theme.fg)} 8%, transparent)`,
     ["--nvim-muted" as string]:
       fgOf(content.hl, "Comment") ?? rgbCss(theme.fg, 0.55),
+    ["--nvim-visual" as string]: (() => {
+      const v = content.hl.get("Visual")?.bg;
+      return v !== undefined
+        ? rgbCss(v)
+        : `color-mix(in srgb, ${rgbCss(theme.fg)} 16%, transparent)`;
+    })(),
   };
   return (
     <div
@@ -246,6 +271,21 @@ function GuiView({
             item.node !== undefined &&
             (item.node.type === "stack" || item.node.type === "hstack") &&
             item.node.card === true;
+          const depth = indent !== undefined ? (item.depth ?? 0) : 0;
+          const selected =
+            visual !== undefined &&
+            item.line >= visual[0] &&
+            item.line <= visual[1];
+          const itemStyle: CSSProperties = {
+            ...(indent !== undefined
+              ? {
+                  paddingLeft: `calc(var(--nvim-view-pad) + ${String(depth * indent)}px)`,
+                }
+              : {}),
+            ...(content.rowHeight !== undefined
+              ? { minHeight: content.rowHeight }
+              : {}),
+          };
           return (
             <div
               key={item.line}
@@ -253,15 +293,37 @@ function GuiView({
                 "nvim-view-item",
                 index === focused ? "nvim-view-focused" : "",
                 isCard ? "nvim-view-card" : "",
+                selected ? "nvim-view-selected" : "",
+                item.sticky === true ? "nvim-view-sticky" : "",
+                content.rowHeight !== undefined ? "nvim-view-row" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
+              style={itemStyle}
               data-line={item.line}
               onMouseDown={(event) => {
                 event.preventDefault();
-                click(item.line, null);
+                click(item.line, null, event.detail > 1 ? 2 : 1);
               }}
             >
+              {indent !== undefined
+                ? Array.from({ length: depth }, (_, level) => (
+                    <span
+                      key={`g${String(level)}`}
+                      className={
+                        guide !== undefined &&
+                        guide.level === level &&
+                        index >= guide.from &&
+                        index <= guide.to
+                          ? "nvim-view-guide nvim-view-guide-active"
+                          : "nvim-view-guide"
+                      }
+                      style={{
+                        left: `calc(var(--nvim-view-pad) + ${String(guideX(level, indent))}px)`,
+                      }}
+                    />
+                  ))
+                : null}
               {item.heading ? (
                 <div className="nvim-view-heading">
                   <ComponentTree node={item.heading} theme={theme} />

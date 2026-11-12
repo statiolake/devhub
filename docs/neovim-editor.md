@@ -1090,7 +1090,19 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   the wheel scrolls the list and moves the cursor to the nearest item in
   sight when its item leaves (`wheelFocus`). An edit to the buffer
   (`on_lines`) or `view:update()` draws it again; `keys` is a hint line at
-  the bottom. A view covers its window's grid, cursor included.
+  the bottom. A view covers its window's grid, cursor included. A click's
+  count goes to `on_click(lnum, clicks)` (2 for a double click). Visual
+  mode in its window draws the lines selected (`Visual`'s ground): the
+  place carries them (`visual`), for a plugin whose keys work on a range.
+- **A tree** (`gui.view{ indent = px, row_height = px }`) — the same view,
+  its items `{ node, depth }`: DevHub indents each by its depth and draws
+  the guides down the rows, one hairline per level, the focused row's
+  level stronger over the run of its siblings (`viewTree.ts`); an item
+  with `sticky = true` stays at the top while the rows scroll under it,
+  and the focus is kept in sight below it; `row_height` is each item's
+  least height, its content centred (a dense list). The plugin keeps the
+  tree — DevHub knows only depths — so a file tree's plugin (nvim-tree,
+  through `nvim-tree-ui.devhub`) keeps its own keys and actions.
 - **A framed view** (`gui.view{ frame = … }`) — the same view drawn in a
   frame over a float instead of over its window: a picker's frontend,
   whoever's picker it is. The plugin lays out Neovim windows and DevHub

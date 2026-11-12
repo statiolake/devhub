@@ -32,6 +32,10 @@ export interface ViewItem {
   /** Drawn above the item, not an item (a file's name over its matches). */
   readonly heading?: ComponentNode | undefined;
   readonly text: string;
+  /** In a tree (`ViewContent.indent`), how deep the row is: 0 at the top. */
+  readonly depth?: number | undefined;
+  /** Held at the top while the items scroll under it (a tree's root). */
+  readonly sticky?: boolean | undefined;
 }
 
 export interface ViewContent {
@@ -42,6 +46,13 @@ export interface ViewContent {
   readonly keys: readonly (readonly [string, string])[];
   /** Drawn in a frame over a float rather than over its windows. */
   readonly frame?: ViewFrame | undefined;
+  /**
+   * A tree: pixels per level of an item's `depth`. Each item is indented by
+   * its depth and the guides run down the rows, one per level.
+   */
+  readonly indent?: number | undefined;
+  /** Every item at least this tall (pixels), its content centred: a dense list. */
+  readonly rowHeight?: number | undefined;
 }
 
 export interface InlineContent {
@@ -57,6 +68,8 @@ export interface ViewPlace {
   /** The cursor's line in that window: the focused item. */
   readonly cursor: number;
   readonly current: boolean;
+  /** Visual mode in that window: the first and last lines selected. */
+  readonly visual?: readonly [number, number] | undefined;
 }
 
 /**
@@ -217,6 +230,11 @@ function int(r: Rec, key: string): number | undefined {
   return typeof v === "number" && Number.isInteger(v) ? v : undefined;
 }
 
+function num(r: Rec, key: string): number | undefined {
+  const v = r[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
 function ints<K extends string>(
   r: Rec,
   keys: readonly K[],
@@ -237,6 +255,7 @@ function without<T>(map: ReadonlyMap<number, T>, id: number): Map<number, T> {
 }
 
 const MAX_ITEMS = 5000;
+const MAX_DEPTH = 64;
 
 function viewContent(id: number, p: Rec): ViewContent {
   const items = luaList(p["items"])
@@ -247,20 +266,33 @@ function viewContent(id: number, p: Rec): ViewContent {
       if (!r || line === undefined || line < 1) return [];
       const text = typeof r["text"] === "string" ? r["text"] : "";
       const heading = parseNode(r["heading"]);
+      const depth = int(r, "depth");
       return [
         {
           line,
           node: parseNode(r["node"]),
           text,
           ...(heading ? { heading } : {}),
+          ...(depth !== undefined && depth >= 0
+            ? { depth: Math.min(depth, MAX_DEPTH) }
+            : {}),
+          ...(r["sticky"] === true ? { sticky: true } : {}),
         },
       ];
     })
     .sort((a, b) => a.line - b.line);
   const frame = viewFrame(p["frame"]);
+  const indent = num(p, "indent");
+  const rowHeight = num(p, "row_height");
   return {
     id,
     items,
+    ...(indent !== undefined && indent > 0
+      ? { indent: Math.min(indent, 64) }
+      : {}),
+    ...(rowHeight !== undefined && rowHeight > 0
+      ? { rowHeight: Math.min(rowHeight, 200) }
+      : {}),
     hl: parseHlTable(p["hl"]),
     keys: keyList(p["keys"]),
     ...(frame ? { frame } : {}),
@@ -465,7 +497,24 @@ export function applyLayerEvent(
         placedViews: luaList(p["views"]).flatMap((v) => {
           const r = rec(v);
           const n = r ? ints(r, ["id", "win", "cursor"] as const) : undefined;
-          return r && n ? [{ ...n, current: r["current"] === true }] : [];
+          if (!r || !n) return [];
+          const [from, to] = luaList(r["visual"]);
+          const visual =
+            typeof from === "number" &&
+            typeof to === "number" &&
+            Number.isInteger(from) &&
+            Number.isInteger(to) &&
+            from >= 1 &&
+            to >= from
+              ? ([from, to] as const)
+              : undefined;
+          return [
+            {
+              ...n,
+              current: r["current"] === true,
+              ...(visual ? { visual } : {}),
+            },
+          ];
         }),
         placedInlines: luaList(p["inlines"]).flatMap((v) => {
           const r = rec(v);

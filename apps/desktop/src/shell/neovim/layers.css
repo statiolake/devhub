@@ -22,10 +22,46 @@
 }
 
 .nvim-view-item {
+  --nvim-view-pad: 6px;
   position: relative;
   margin: 0 6px;
-  padding: 0 6px;
+  padding: 0 var(--nvim-view-pad);
   border-radius: 6px;
+}
+
+/* A dense list (row_height): each row at least that tall, its content centred. */
+.nvim-view-item.nvim-view-row {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* Visual mode's lines: the selection's ground, under the focus. */
+.nvim-view-selected:not(.nvim-view-card) {
+  background: var(--nvim-visual);
+}
+
+/* Held at the top while the rows scroll under it, in the view's ground. */
+.nvim-view-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--nvim-ground);
+}
+
+/* A tree's guides: one hairline per level down the row, so a run of rows
+   draws one line; the focused row's level is drawn stronger. */
+.nvim-view-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, currentcolor 13%, transparent);
+  pointer-events: none;
+}
+
+.nvim-view-guide-active {
+  background: color-mix(in srgb, currentcolor 38%, transparent);
 }
 
 .nvim-view-item.nvim-view-card {

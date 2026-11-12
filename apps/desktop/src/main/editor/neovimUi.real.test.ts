@@ -1339,6 +1339,61 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 				"ONE",
 			"the edit",
 		);
+		// A double click reaches the view's on_click as two clicks.
+		await h.ui.request("nvim_exec_lua", [
+			"local M = require('devhub_gui'); local id, win = ...; M._layers_click('view', id, win, 3, nil, 2)",
+			[view.id, placed.win],
+		]);
+		expect(
+			await h.ui.request("nvim_exec_lua", ["return _G.clicked", []]),
+		).toEqual(["badge2", "item2", "item3"]);
+		// Visual mode over it: the lines selected go with its place.
+		await h.ui.request("nvim_input", ["ggVj"]);
+		await waitFor(() => {
+			const v = list(last("layers")?.["views"])[0] as
+				| { visual?: unknown }
+				| undefined;
+			return JSON.stringify(v?.visual) === "[1,2]";
+		}, "the visual lines");
+		await h.ui.request("nvim_input", ["<Esc>"]);
+		await waitFor(
+			() =>
+				(list(last("layers")?.["views"])[0] as { visual?: unknown })?.visual ===
+				undefined,
+			"no visual lines after it",
+		);
+		// A tree: an item's depth and stickiness, the view's indent and row
+		// height go to the page.
+		await h.ui.request("nvim_exec_lua", [
+			`local gui = require('devhub_gui')
+			local buf = vim.api.nvim_create_buf(false, true)
+			vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'root', 'src', 'a.ts' })
+			_G.tree = gui.view{ buf = buf, win = 'vsplit', indent = 16, row_height = 22,
+				items = function(lnum, line)
+					return { node = { type = 'text', text = line }, depth = math.max(lnum - 2, 0), sticky = lnum == 1 }
+				end }`,
+			[],
+		]);
+		await waitFor(
+			() => (last("view") as { indent?: number } | undefined)?.indent === 16,
+			"the tree view",
+		);
+		const tree = last("view") as {
+			row_height: number;
+			items: { line: number; depth?: number; sticky?: boolean }[];
+		};
+		expect(tree.row_height).toBe(22);
+		expect(tree.items.map((i) => [i.line, i.depth, i.sticky ?? false])).toEqual(
+			[
+				[1, 0, true],
+				[2, 0, false],
+				[3, 1, false],
+			],
+		);
+		await h.ui.request("nvim_exec_lua", [
+			"_G.tree:close(); vim.cmd('close')",
+			[],
+		]);
 
 		// An inline card under line 2 of a fresh window: two rows at first, as
 		// many as the page measures after.

@@ -23,6 +23,44 @@ describe("buffer-backed GUI layers on the page", () => {
     expect(applyLayerEvent(state, "view_clear", { id: 3 }).views.size).toBe(0);
   });
 
+  it("keeps a tree view's depths, sticky items, indent and row height", () => {
+    const state = applyLayerEvent(NO_LAYERS, "view", {
+      id: 4,
+      indent: 16,
+      row_height: 22,
+      items: [
+        { line: 1, text: "root", depth: 0, sticky: true },
+        { line: 2, text: "src", depth: 1 },
+        { line: 3, text: "deep", depth: 900 },
+        { line: 4, text: "bad", depth: -1 },
+      ],
+    });
+    const view = state.views.get(4);
+    expect(view?.indent).toBe(16);
+    expect(view?.rowHeight).toBe(22);
+    expect(view?.items.map((i) => [i.line, i.depth, i.sticky])).toEqual([
+      [1, 0, true],
+      [2, 1, undefined],
+      [3, 64, undefined],
+      [4, undefined, undefined],
+    ]);
+    const plain = applyLayerEvent(NO_LAYERS, "view", { id: 5, items: [] });
+    expect(plain.views.get(5)?.indent).toBeUndefined();
+  });
+
+  it("keeps a view's visual lines from its place", () => {
+    const state = applyLayerEvent(NO_LAYERS, "layers", {
+      views: [
+        { id: 3, win: 1000, cursor: 4, current: true, visual: [2, 4] },
+        { id: 4, win: 1001, cursor: 1, current: false, visual: [3, 1] },
+      ],
+    });
+    expect(state.placedViews).toEqual([
+      { id: 3, win: 1000, cursor: 4, current: true, visual: [2, 4] },
+      { id: 4, win: 1001, cursor: 1, current: false },
+    ]);
+  });
+
   it("keeps a card only with a node", () => {
     let state = applyLayerEvent(NO_LAYERS, "inline", {
       id: 1,

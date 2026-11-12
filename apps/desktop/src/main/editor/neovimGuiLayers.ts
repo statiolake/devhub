@@ -209,13 +209,20 @@ local function render_view(view)
     end
     -- An item is a component, or { node = component, heading = component }:
     -- a heading is drawn above the item and is not an item.
-    local heading
-    if type(node) == "table" and node.type == nil and (node.node ~= nil or node.heading ~= nil) then
-      node, heading = node.node, node.heading
+    -- In a tree (view.indent), { node, depth } is a row that deep: DevHub
+    -- indents it and draws the guides down the rows. sticky = true keeps
+    -- it at the top while the rows scroll under it (a root's name).
+    local heading, depth, sticky
+    if type(node) == "table" and node.type == nil
+      and (node.node ~= nil or node.heading ~= nil or node.depth ~= nil) then
+      local item = node
+      node, heading, sticky = item.node, item.heading, item.sticky == true
+      if type(item.depth) == "number" and item.depth >= 0 then depth = math.floor(item.depth) end
     end
     local s = node ~= nil and serialize(node, actions, hls, 0) or nil
     local h = heading ~= nil and serialize(heading, actions, hls, 0) or nil
-    table.insert(items, { line = lnum, node = s, heading = h, text = lines[lnum] })
+    table.insert(items, { line = lnum, node = s, heading = h, text = lines[lnum], depth = depth,
+      sticky = sticky or nil })
   end
   local frame
   if view.frame then
@@ -227,7 +234,8 @@ local function render_view(view)
       placeholder = f.placeholder }
   end
   M._actions["view:" .. view.id] = actions
-  event("view", { id = view.id, items = items, hl = hl_table(hls), keys = keys_list(view.keys), frame = frame })
+  event("view", { id = view.id, items = items, hl = hl_table(hls), keys = keys_list(view.keys), frame = frame,
+    indent = view.indent, row_height = view.row_height })
 end
 
 local render_pending = {}
@@ -269,7 +277,10 @@ end
 --- item per line, over every window that shows the buffer (an item may be
 --- { node, heading }: a heading above it that is not an item). win: a
 --- window, or 'vsplit' | 'split' | 'float' | 'current' to open one.
---- on_click(lnum, clicks).
+--- on_click(lnum, clicks). A tree: indent = pixels per level and an item
+--- { node, depth } (DevHub indents it and draws the guides down the rows;
+--- sticky = true holds an item at the top); row_height = each item's least
+--- height. Visual mode in the window draws its lines selected.
 --- frame = { win, query = { win, placeholder? }, preview = { win, title? },
 --- title?, status? }: the view is drawn in a frame over the float win instead
 --- of over its window (a hidden window showing buf, whose cursor line is the
@@ -282,7 +293,9 @@ function M.view(opts)
   opts = opts or {}
   local buf = buf_of(opts.buf)
   local view = { id = next_id(), buf = buf, items = opts.items, on_click = opts.on_click, keys = opts.keys,
-    on_scroll = opts.on_scroll, on_rows = opts.on_rows }
+    on_scroll = opts.on_scroll, on_rows = opts.on_rows,
+    indent = type(opts.indent) == "number" and opts.indent > 0 and opts.indent or nil,
+    row_height = type(opts.row_height) == "number" and opts.row_height > 0 and opts.row_height or nil }
   if type(opts.frame) == "table" then
     local f = opts.frame
     local frame_win = win_of(f.win)
@@ -906,8 +919,17 @@ function M._place_layers()
       end
     else
       for _, win in ipairs(tab_windows(view.buf)) do
-        table.insert(views, { id = id, win = win, cursor = vim.api.nvim_win_get_cursor(win)[1],
-          current = win == current })
+        local entry = { id = id, win = win, cursor = vim.api.nvim_win_get_cursor(win)[1],
+          current = win == current }
+        -- Visual mode in it: the lines selected, every item between.
+        if win == current then
+          local mode = vim.fn.mode()
+          if mode == "v" or mode == "V" or mode == "\22" then
+            local a, b = vim.fn.line("v"), entry.cursor
+            entry.visual = { math.min(a, b), math.max(a, b) }
+          end
+        end
+        table.insert(views, entry)
       end
     end
   end
@@ -973,7 +995,7 @@ end
 
 --- A click on the page: the cursor goes to the item (or the card's line) in
 --- that window, then the node's on_click (or the view's) runs.
-function M._layers_click(kind, id, win, line, action)
+function M._layers_click(kind, id, win, line, action, clicks)
   local owner = kind == "view" and M._views[id] or kind == "popup" and M._popups[id] or M._inlines[id]
   if not owner then return end
   if kind ~= "popup" and win and vim.api.nvim_win_is_valid(win) then
@@ -989,7 +1011,7 @@ function M._layers_click(kind, id, win, line, action)
   if fn then
     ok, err = pcall(fn, line)
   elseif kind == "view" and owner.on_click then
-    ok, err = pcall(owner.on_click, line)
+    ok, err = pcall(owner.on_click, line, clicks or 1)
   end
   if not ok then vim.notify("devhub gui: " .. tostring(err), vim.log.levels.ERROR) end
 end
