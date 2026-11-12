@@ -40,14 +40,14 @@ describe("[orchestrator] settings", () => {
   it("reads events, [orchestrator.github] and [[orchestrator.timers]]", () => {
     const config = interpretConfig({
       orchestrator: {
-        events: ["escalation.*", "!escalation.human_direct", "needs_action"],
+        events: ["escalation.*", "!task.human_direct", "needs_action"],
         github: { projects: ["my-org/7"], interval: "2m" },
         timers: [{ name: "tick", interval: "5m" }],
       },
     });
     expect(config.orchestrator.events).toEqual([
       "escalation.*",
-      "!escalation.human_direct",
+      "!task.human_direct",
       "needs_action",
     ]);
     expect(config.orchestrator.github).toEqual({
@@ -60,7 +60,7 @@ describe("[orchestrator] settings", () => {
     expect(orchestratorProblem(config.orchestrator)).toBeUndefined();
     // And writes them back as tables.
     expect(configDocument(config)["orchestrator"]).toMatchObject({
-      events: ["escalation.*", "!escalation.human_direct", "needs_action"],
+      events: ["escalation.*", "!task.human_direct", "needs_action"],
       github: { projects: ["my-org/7"], interval: "2m" },
       timers: [{ name: "tick", interval: "5m" }],
     });
@@ -185,16 +185,12 @@ describe("[orchestrator] settings", () => {
   });
 
   it("filters by the last matching pattern, and always lets init through", () => {
-    const patterns = [
-      "escalation.*",
-      "!escalation.human_direct",
-      "needs_action",
-    ];
+    const patterns = ["task.*", "!task.human_direct", "needs_action"];
     expect(eventAllowed("escalation_answered", patterns)).toBe(false);
-    expect(eventAllowed("escalation.stalled", patterns)).toBe(true);
-    expect(eventAllowed("escalation.human_direct", patterns)).toBe(false);
+    expect(eventAllowed("task.changed", patterns)).toBe(true);
+    expect(eventAllowed("task.human_direct", patterns)).toBe(false);
     expect(eventAllowed("needs_action", patterns)).toBe(true);
-    expect(eventAllowed("waiting.changed", patterns)).toBe(false);
+    expect(eventAllowed("triage", patterns)).toBe(false);
     expect(eventAllowed("init", [])).toBe(true);
     expect(eventAllowed("custom.deploy", ["*"])).toBe(true);
     expect(eventPatternProblem("timer.*")).toBe(false);

@@ -959,9 +959,9 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
   "appearance.terminal_theme":
     "the terminal wears the theme `appearance.theme` names; for colours of your own, write them as a `[themes.<name>]` table and name it there",
   "orchestrator.wait_reminder_interval":
-    "there is no 待機中 reminder any more: a waiting escalation comes back as `waiting.changed`, when its `--at` time comes or when what it waits on changes; a `needs_action` subject that stays so is on every delivery (`orchestrator.delivery_interval`)",
+    "there is no reminder of waits any more: a 待機 task comes back as `task.changed`, when its `--check-at` time comes or when what it waits on changes; a `needs_action` subject that stays so is on every delivery (`orchestrator.delivery_interval`)",
   "orchestrator.reminder_interval":
-    "there is one cadence: every delivery (`orchestrator.delivery_interval`, 5m by default) carries each `needs_action` subject that needs action then and is not kept (`agent keep`)",
+    "there is one cadence: every delivery (`orchestrator.delivery_interval`, 5m by default) carries each `needs_action` subject that needs action then",
   "general.workbench":
     "DevHub has no VS Code any more: every Workspace's editor is its Neovim, drawn over its terminal",
   "general.editor":

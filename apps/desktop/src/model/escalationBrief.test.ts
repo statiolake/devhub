@@ -78,31 +78,16 @@ describe("an escalation's brief", () => {
         title: "ログインの修正を出すか",
         body: BODY,
         links: [],
-        asks: true,
-        first: true,
       }),
     ).toEqual([]);
     const problems = briefProblems({
       title: "PR 1234 をマージしてよいか",
       body: "いいですか?",
       links: [],
-      asks: true,
-      first: true,
     });
     expect(problems).toHaveLength(3);
     expect(problems[0]).toMatch(/title refers to PR 1234/u);
-    // A follow-up: the decision only.
-    expect(
-      briefProblems({ body: "どう?", links: [], asks: true, first: false }),
-    ).toHaveLength(1);
-    // A wait: no decision.
-    expect(
-      briefProblems({
-        body: "deploy 待ち",
-        links: [],
-        asks: false,
-        first: false,
-      }),
-    ).toEqual([]);
+    // A follow-up is a question of its own: both sections, again.
+    expect(briefProblems({ body: "どう?", links: [] })).toHaveLength(2);
   });
 });

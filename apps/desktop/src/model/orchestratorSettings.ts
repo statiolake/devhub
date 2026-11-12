@@ -2,7 +2,7 @@
  * `[orchestrator]` in `settings.toml`: where the orchestrator agent runs, how
  * the window starts it, and what it is told when something happens.
  *
- * DevHub gives the orchestrator a mechanism — the board, escalations, events —
+ * DevHub gives the orchestrator a mechanism — tasks, escalations, events —
  * and no rules of its own. What the orchestrator *does* is the person's: a
  * skill in `root` (`.claude/skills/…`, `AGENTS.md`), or whatever `event_prompt`
  * invokes. See `docs/orchestrator.md`.
@@ -34,7 +34,7 @@ export interface OrchestratorConfig {
   readonly init_prompt: string | undefined;
   /**
    * Which events reach the orchestrator, as patterns over their type:
-   * `escalation.*`, `needs_action`, `*`; a pattern starting with `!` takes
+   * `task.*`, `needs_action`, `*`; a pattern starting with `!` takes
    * matching types back out. `init` always goes. See `eventAllowed`.
    */
   readonly events: readonly string[];
@@ -46,7 +46,7 @@ export interface OrchestratorConfig {
   readonly usage_thresholds: readonly number[];
   /**
    * The most often a batch of events goes to the orchestrator: `5m`. The
-   * person's words (an answer, a message to an escalation's agent) are not
+   * person's words (an answer, a message to a task's agent) are not
    * batched and go at once. Every delivery carries each `needs_action`
    * subject that needs action then (not kept), so it is also how often an
    * unresolved one is said again.
@@ -106,9 +106,13 @@ export const RETIRED_EVENT_TYPES: Readonly<Record<string, string>> = {
   "escalation.stalled":
     "an agent stopped with nothing settling it is a `needs_action` subject now",
   "escalation.waiting_reminder":
-    "a 待機中 escalation that may be ready — its `--at` time came, or what it is about moved — is `waiting.changed`",
+    "a 待機 task that may be ready — its `--check-at` came, or what it is about moved — is `task.changed`",
   "escalation.wait_due":
-    "a 待機中 escalation whose `--at` time came is `waiting.changed` (`— due`)",
+    "a 待機 task whose `--check-at` came is `task.changed` (`— due`)",
+  "waiting.changed":
+    "waiting is a task's now: a 待機 task that may be ready is `task.changed`",
+  "escalation.human_direct":
+    "the person's words to an agent of a task with an open question are `task.human_direct`",
   "github.assigned":
     "an open Issue assigned to you with nobody on it is `needs_action`",
   "github.unattended":

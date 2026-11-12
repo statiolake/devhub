@@ -155,7 +155,8 @@ const PLACES: LinkPlaces = {
       agents: [],
     },
   ],
-  escalations: [{ id: 12, title: "列追加", state: "needs_answer" }],
+  tasks: [{ id: 3, title: "列追加の作業", status: "answer" }],
+  escalations: [{ id: 12, taskId: 3, title: "列追加", state: "open" }],
   orchestrator: true,
 };
 

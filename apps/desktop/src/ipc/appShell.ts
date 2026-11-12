@@ -627,21 +627,21 @@ export interface AppErrorWire {
 }
 /**
  * What the Orchestrator screen's left pane shows, as a place in Back and
- * Forward: the board, the Files tab's tree, an escalation read over the
+ * Forward: the board, the Files tab's tree, a task read over the
  * board, or a file read over the tree. Part of a history entry whenever the
  * Orchestrator row is selected (`model/orchestratorView.ts`).
  */
 export type OrchestratorPlaceWire =
 	| { readonly kind: "board" }
 	| { readonly kind: "files" }
-	| { readonly kind: "escalation"; readonly id: number }
+	| { readonly kind: "task"; readonly id: number }
 	| { readonly kind: "file"; readonly path: string };
 
 /**
  * The model's word on the Orchestrator pane, in the snapshot.
  *
  * `seq` moves only when the *model* moved the pane — Back or Forward onto an
- * entry with another view, a `devhub:escalation` link — never for what the
+ * entry with another view, a `devhub:task` link — never for what the
  * pane said it drew itself, so the pane follows `seq`, not `view`, and a
  * report of its own never comes back to it as an order. `arrived` says
  * which way, for the stack's motion: back slides in from the leading edge.
@@ -688,8 +688,8 @@ export type AppIntentWire =
 	/**
 	 * The Orchestrator pane shows `view`, selecting the Orchestrator row if it
 	 * is not. `reason: "explicit"` is a navigation — a card opened, a
-	 * `devhub:escalation` link, a file opened — and pushes an entry; absent
-	 * writes the entry in place (a tab, an escalation that left the board).
+	 * `devhub:task` link, a file opened — and pushes an entry; absent
+	 * writes the entry in place (a tab, a task that left the board).
 	 * `drawn` says the pane already shows it, so `seq` does not move.
 	 */
 	| {
@@ -699,7 +699,7 @@ export type AppIntentWire =
 			readonly drawn?: boolean;
 	  }
 	/**
-	 * An escalation's (or a file's) own way back to the board (or the tree):
+	 * A task's (or a file's) own way back to the board (or the tree):
 	 * Back, when Back leads there; otherwise a navigation there.
 	 */
 	| { readonly type: "leave_orchestrator_view"; readonly drawn?: boolean }

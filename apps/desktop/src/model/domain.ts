@@ -718,9 +718,9 @@ export function agentAtPrompt(status: AgentStatus): boolean {
  *
  * **One rule for "is it done yet".** The other half is `agentTurnDone`. What
  * the person is told ("Finished", `agentNotifications.ts`), what the
- * orchestrator's invariant counts as working (`invariant.ts`) and whether an
- * escalation has stalled (停滞 on the board) all go by
- * these two, so none of them says "done" while background work runs.
+ * orchestrator's invariant counts as working (`invariant.ts`, a 処理中
+ * task with none of its agents at work is `idle`) all go by these two, so
+ * neither says "done" while background work runs.
  */
 export function agentAtWork(status: string): boolean {
   return status === "working" || status === "background";

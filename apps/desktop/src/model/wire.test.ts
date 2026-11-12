@@ -841,13 +841,13 @@ describe("the Orchestrator pane's intents", () => {
     expect(
       intentFromWire({
         type: "show_orchestrator_view",
-        view: { kind: "escalation", id: 3 },
+        view: { kind: "task", id: 3 },
         reason: "explicit",
         drawn: true,
       }),
     ).toEqual({
       type: "show_orchestrator_view",
-      view: { kind: "escalation", id: 3 },
+      view: { kind: "task", id: 3 },
       reason: "explicit",
       drawn: true,
     });
@@ -864,8 +864,8 @@ describe("the Orchestrator pane's intents", () => {
 
   it("refuses a view that names nothing", () => {
     for (const view of [
-      { kind: "escalation", id: 0 },
-      { kind: "escalation", id: 1.5 },
+      { kind: "task", id: 0 },
+      { kind: "task", id: 1.5 },
       { kind: "file", path: "" },
       { kind: "tab" },
     ])

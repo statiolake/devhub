@@ -1,8 +1,8 @@
 /**
  * `devhub:` links: a place inside DevHub, written the way a URL is.
  *
- * The orchestrator (and any agent) links to an agent, a workspace, a file, an
- * escalation, the Orchestrator screen or a session the same way it links to
+ * The orchestrator (and any agent) links to an agent, a workspace, a file, a
+ * task, an escalation, the Orchestrator screen or a session the same way it links to
  * a web page — in an escalation's `--link`, in a Markdown body, in a chat
  * answer — and DevHub draws it as a chip that goes there. This module is the
  * one place the syntax is read and written; the CLI checks a link against
@@ -17,7 +17,8 @@
  * | `devhub:agent/<id or unique prefix>`   | an agent (≥ 4 characters of its id)    |
  * | `devhub:workspace/<id or name>`        | a workspace                            |
  * | `devhub:file/<absolute path>[:L[:C]]`  | a file, at line L, column C            |
- * | `devhub:escalation/<id>`               | an escalation on the board             |
+ * | `devhub:task/<id>`                     | a task on the board                    |
+ * | `devhub:escalation/<id>`               | an escalation: its task, on the board  |
  * | `devhub:orchestrator`                  | the Orchestrator screen                |
  * | `devhub:session/<session id>`          | the agent running that session         |
  *
@@ -36,6 +37,7 @@ export type DevhubLinkKind =
   | "agent"
   | "workspace"
   | "file"
+  | "task"
   | "escalation"
   | "orchestrator"
   | "session";
@@ -50,6 +52,7 @@ export type DevhubLink =
       readonly line?: number;
       readonly column?: number;
     }
+  | { readonly kind: "task"; readonly id: number }
   | { readonly kind: "escalation"; readonly id: number }
   | { readonly kind: "orchestrator" }
   | { readonly kind: "session"; readonly session: string };
@@ -63,6 +66,7 @@ export const DEVHUB_LINK_FORMS: readonly string[] = [
   "devhub:agent/<agent id, or a unique prefix of 4+ characters>",
   "devhub:workspace/<workspace id or name>",
   "devhub:file/<absolute path, without its leading />[:line[:column]]",
+  "devhub:task/<id>",
   "devhub:escalation/<id>",
   "devhub:orchestrator",
   "devhub:session/<session id>",
@@ -148,7 +152,11 @@ function parseOrThrow(text: string): DevhubLink {
     return { kind: "orchestrator" };
   }
   if (rest === undefined || rest === "") {
-    if (["agent", "workspace", "file", "escalation", "session"].includes(kind))
+    if (
+      ["agent", "workspace", "file", "task", "escalation", "session"].includes(
+        kind,
+      )
+    )
       throw new LinkProblem(`devhub:${kind}/ needs what it names after the /.`);
     throw new LinkProblem(`devhub:${kind} is not a kind of devhub: link.`);
   }
@@ -173,6 +181,12 @@ function parseOrThrow(text: string): DevhubLink {
     }
     case "file":
       return parseFile(rest);
+    case "task": {
+      const match = /^(?:%23|#|t|T)?(\d{1,9})$/u.exec(rest);
+      const id = match === null ? 0 : Number(match[1]);
+      if (id < 1) throw new LinkProblem("devhub:task/ takes a task id (12).");
+      return { kind: "task", id };
+    }
     case "escalation": {
       const match = /^(?:%23|#|e|E)?(\d{1,9})$/u.exec(rest);
       const id = match === null ? 0 : Number(match[1]);
@@ -228,6 +242,8 @@ export function formatDevhubLink(link: DevhubLink): string {
           : `:${String(link.line)}${link.column === undefined ? "" : `:${String(link.column)}`}`;
       return `${DEVHUB_SCHEME}file/${path}${at}`;
     }
+    case "task":
+      return `${DEVHUB_SCHEME}task/${String(link.id)}`;
     case "escalation":
       return `${DEVHUB_SCHEME}escalation/${String(link.id)}`;
     case "orchestrator":
@@ -267,14 +283,22 @@ export interface LinkableWorkspace {
   readonly agents: readonly LinkableAgent[];
 }
 
+export interface LinkableTask {
+  readonly id: number;
+  readonly title: string;
+  readonly status: string;
+}
+
 export interface LinkableEscalation {
   readonly id: number;
+  readonly taskId: number;
   readonly title: string;
   readonly state: string;
 }
 
 export interface LinkPlaces {
   readonly workspaces: readonly LinkableWorkspace[];
+  readonly tasks: readonly LinkableTask[];
   readonly escalations: readonly LinkableEscalation[];
   /** Whether there is an Orchestrator row to go to. */
   readonly orchestrator: boolean;
@@ -295,7 +319,13 @@ export type ResolvedLink =
       /** The open Workspace whose root is the file's nearest ancestor. */
       readonly workspace: LinkableWorkspace;
     }
-  | { readonly kind: "escalation"; readonly escalation: LinkableEscalation }
+  | { readonly kind: "task"; readonly task: LinkableTask }
+  | {
+      readonly kind: "escalation";
+      readonly escalation: LinkableEscalation;
+      /** Its task: where it is read. */
+      readonly task: LinkableTask;
+    }
   | { readonly kind: "orchestrator" }
   /** Resolved later, by asking main which agent runs it. */
   | { readonly kind: "session"; readonly session: string };
@@ -394,11 +424,21 @@ export function resolveDevhubLink(
         ? { found: false, why: "no open workspace holds this file" }
         : { found: true, target: { ...link, workspace } };
     }
+    case "task": {
+      const task = places.tasks.find((one) => one.id === link.id);
+      return task === undefined
+        ? { found: false, why: "there is no such task" }
+        : { found: true, target: { kind: "task", task } };
+    }
     case "escalation": {
       const escalation = places.escalations.find((one) => one.id === link.id);
-      return escalation === undefined
+      const task =
+        escalation === undefined
+          ? undefined
+          : places.tasks.find((one) => one.id === escalation.taskId);
+      return escalation === undefined || task === undefined
         ? { found: false, why: "there is no such escalation" }
-        : { found: true, target: { kind: "escalation", escalation } };
+        : { found: true, target: { kind: "escalation", escalation, task } };
     }
     case "orchestrator":
       return places.orchestrator

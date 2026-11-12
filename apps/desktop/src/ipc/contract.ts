@@ -541,103 +541,122 @@ export interface RepositoryStatusWire {
 
 /** One subject that breaks the invariant, as the board carries it. */
 export interface NeedsActionWire {
-	/** An Issue or a pull request item, or a managed agent. */
-	readonly kind: "issue" | "pr" | "agent";
-	/** `item <url>` or `agent <id>`. */
+	/** An open task, an Issue or a pull request item, or a managed agent. */
+	readonly kind: "task" | "issue" | "pr" | "agent";
+	/** `task <id>`, `item <url>` or `agent <id>`. */
 	readonly key: string;
-	/** The dispatcher's subject: `item owner/repo#N`, `agent <id>`. */
+	/** The dispatcher's subject: `task 12`, `item owner/repo#N`, `agent <id>`. */
 	readonly subject: string;
-	/** The last triage's priority for it (`orchestrator priority set`). */
-	readonly priority?: "high" | "normal" | "low";
 	/** Its words, as `needs_action` says them (without the `[type]`). */
 	readonly line: string;
-	/** The clause it fails: `no_agent`, `outside_population (closed)`. */
+	/** The clause it fails: `no_agent`, `idle`, `no_task`. */
 	readonly clause: string;
 	/** Since when it has needed action (ms since the epoch). */
 	readonly since: number;
-	/** `agent keep`: left as it is, and why. */
-	readonly kept?: { readonly note: string; readonly at: number };
 }
 
 /** An agent's standing for its row: see `OrchestratorBoardWire.agentStates`. */
 export interface AgentOrchestrationWire {
-	readonly waiting?: {
-		readonly escalationId: number;
-		readonly trigger: string;
+	/** The open task it is bound to. */
+	readonly task?: {
+		readonly id: number;
+		readonly title: string;
+		readonly status: TaskStatusWire;
 	};
-	/** Managed, needing action and not kept: the clause it fails. */
-	readonly needsAction?: string;
-	readonly kept?: { readonly note: string; readonly at: number };
-}
-
-/** One entry of an escalation's thread. See `model/escalations.ts`. */
-export interface EscalationEntryWire {
-	readonly role: "orchestrator" | "human";
-	readonly markdown: string;
-	/** ms since the epoch. */
-	readonly at: number;
-	readonly options?: readonly string[];
 	/**
-	 * A note, not a question or an answer (`model/escalations.ts`):
-	 * `direct` / `resumed`, `agent` went working; `taken`, an old
-	 * 対応中にする (read, never written any more); `held`, the orchestrator's `escalation hold` /
-	 * `resume` (`markdown` their optional note); `wait`, the orchestrator's
-	 * `escalation wait` (`markdown` the trigger, `dueAt` its time).
+	 * Needs action — its task's clause (`idle`, `no_agent`), or its own
+	 * (`no_task`, a managed agent bound to no open task).
 	 */
-	readonly kind?: "direct" | "resumed" | "taken" | "held" | "wait";
-	readonly agent?: string;
-	readonly dueAt?: number;
+	readonly needsAction?: string;
 }
 
-/** An agent an escalation is about, as the board names it. */
-export interface BoardAgentRefWire {
-	readonly agentId: string;
-	/** Its name now; absent when DevHub has no such agent any more. */
-	readonly name?: string;
-	readonly workspaceLabel?: string;
-	/** Its Sidebar status, while it is there. */
-	readonly status?: string;
-}
+/** A task's status, as the board files it (`model/tasks.ts`). */
+export type TaskStatusWire = "answer" | "in_progress" | "waiting" | "done";
 
+/** One question to the person, and their answer. See `model/escalations.ts`. */
 export interface EscalationWire {
 	readonly id: number;
+	readonly taskId: number;
 	readonly title: string;
-	readonly state: "needs_answer" | "in_progress" | "waiting" | "closed";
-	readonly entries: readonly EscalationEntryWire[];
-	readonly agents: readonly BoardAgentRefWire[];
-	readonly workspaceId?: string;
+	readonly state: "open" | "answered" | "withdrawn";
+	readonly question: {
+		readonly markdown: string;
+		/** ms since the epoch. */
+		readonly at: number;
+		readonly options?: readonly string[];
+	};
+	readonly answer?: {
+		readonly markdown: string;
+		readonly at: number;
+		readonly option?: string;
+	};
+	readonly withdrawn?: { readonly at: number; readonly note?: string };
 	readonly links: readonly string[];
 	/** What a link is, in a line (`--link URL=LABEL`), by the link. */
 	readonly linkLabels?: Readonly<Record<string, string>>;
 	readonly createdAt: number;
+}
+
+/** An agent bound to a task, as the board names it. */
+export interface TaskAgentWire {
+	readonly agentId: string;
+	readonly name: string;
+	/** Open in the window now. */
+	readonly live: boolean;
+	/** Its Sidebar status, while it is open. */
+	readonly status?: string;
+	readonly workspaceId?: string;
+	readonly workspaceLabel?: string;
+	/** Stopped, with a Claude or Codex session to go on with. */
+	readonly resumable: boolean;
+	readonly stoppedAt?: number;
+	readonly profileId?: string;
+	readonly kind?: string;
+	readonly machine?: string;
+	readonly folder?: string;
+	readonly branch?: string;
+	/** The CLI session it last ran. */
+	readonly session?: string;
+}
+
+/** A task, as the board and `--tell` carry it. See `model/tasks.ts`. */
+export interface TaskWire {
+	readonly id: number;
+	readonly title: string;
+	/** 回答待ち (`answer`, derived from an open escalation), 処理中, 待機, done. */
+	readonly status: TaskStatusWire;
+	/** 待機: what it waits for, and when to look again. */
+	readonly waitNote?: string;
+	readonly checkAt?: number;
+	readonly links: readonly string[];
+	readonly linkLabels?: Readonly<Record<string, string>>;
+	/** Oldest first; the last is the one `agent resume task=N` brings back. */
+	readonly agents: readonly TaskAgentWire[];
+	/** The orchestrator's one note: what is next. */
+	readonly memo?: { readonly text: string; readonly at: number };
+	readonly priority: "high" | "normal" | "low";
+	readonly priorityNote?: string;
+	/** Made from the person's request: their words; `sentAt` once delivered. */
+	readonly request?: {
+		readonly text: string;
+		readonly at: number;
+		readonly sentAt?: number;
+	};
+	readonly createdAt: number;
 	readonly updatedAt: number;
-	/** Since when it has been in `state`: the last entry, or the close. */
-	readonly stateSince: number;
-	readonly closed?: { readonly at: number; readonly note?: string };
+	readonly done?: { readonly at: number; readonly note?: string };
+	/** 要対応: the clause it fails (`idle`, `no_agent`); absent when settled. */
+	readonly needsAction?: string;
 	/**
-	 * The orchestrator's ranking: how much it matters (`high` blocks several
-	 * agents or a deadline), how quick it is to answer (`quick`: under about
-	 * a minute, from the escalation alone), and why, in a line. Main always
-	 * fills the first two (absent reads as `normal`).
-	 */
-	readonly priority?: "high" | "normal" | "low";
-	readonly effort?: "quick" | "normal" | "deep";
-	readonly rankNote?: string;
-	/**
-	 * 停滞: 対応中, and none of its agents has worked since then, for longer
-	 * than the grace (marked on the board). Absent otherwise.
-	 */
-	readonly stalledSince?: number;
-	/**
-	 * May no longer match reality, as DevHub sees it (`staleness.ts`): a
-	 * linked pull request merged or closed, a linked Issue closed, an agent
-	 * gone or in another lane, a newer escalation about the same subject.
-	 * Since when, and why, in words. Open ones only; absent otherwise.
+	 * May no longer match reality (`staleness.ts`): a linked pull request
+	 * merged or closed, a linked Issue closed. Open tasks only.
 	 */
 	readonly mayBeStale?: {
 		readonly since: number;
 		readonly reasons: readonly string[];
 	};
+	/** Its escalations, oldest first: the open ones, then its past Q&A. */
+	readonly escalations: readonly EscalationWire[];
 }
 
 /**
@@ -667,65 +686,13 @@ export interface OrchestratorNextDeliveryWire {
 		| { readonly kind: "nobody" };
 }
 
-/**
- * A request the person sent the orchestrator from the board's +
- * (`main/orchestrator/requests.ts`): `held` while off, `sent` once
- * delivered, `filed` once the orchestrator said where it filed it.
- */
-export interface OrchestratorRequestWire {
-	readonly id: number;
-	readonly text: string;
-	readonly at: number;
-	readonly state: "held" | "sent" | "filed";
-	readonly filed?: { readonly at: number; readonly note?: string };
-	readonly priority?: "high" | "normal" | "low";
-}
-
 /** The Orchestrator's mode, as the board and the commands say it. */
 export type OrchestratorModeWire = "full" | "saving" | "off";
 
 /**
- * The Orchestrator screen's board: the three lanes, the orchestrator, and
- * whether its events are paused. Pushed whenever any of it moves.
+ * The Orchestrator screen's board: the tasks by status, the orchestrator,
+ * and its mode. Pushed whenever any of it moves.
  */
-/** One subject's memo — its one note, the next step — as the board shows it. */
-export interface OrchestratorMemoWire {
-	/** The key: `item OWNER/REPO#N`, `agent <id>`, `esc N`, `req N`. */
-	readonly subject: string;
-	/** As the command line names it: `issue=acme/app#12`, `agent=…`. */
-	readonly token: string;
-	/** Plain text, light Markdown at most. */
-	readonly text: string;
-	/** When it was last set. */
-	readonly at: number;
-}
-
-/** One subject's work: the agents that did it, as the board shows them. */
-export interface OrchestratorWorkWire {
-	readonly subject: string;
-	readonly token: string;
-	readonly url?: string;
-	/** Oldest first; the last is the one `agent resume <subject>` brings back. */
-	readonly agents: readonly {
-		readonly agentId: string;
-		readonly name: string;
-		readonly profileId: string;
-		readonly kind: string;
-		readonly machine: string;
-		readonly folder: string;
-		readonly branch?: string;
-		/** The CLI session it last ran. */
-		readonly session?: string;
-		/** Open in the window now. */
-		readonly live: boolean;
-		/** Stopped, with a Claude or Codex session to go on with. */
-		readonly resumable: boolean;
-		readonly stoppedAt?: number;
-		/** The open Workspace at its folder, if one is. */
-		readonly workspaceId?: string;
-	}[];
-}
-
 export interface OrchestratorBoardWire {
 	readonly revision: number;
 	/** The orchestrator agent, while one is assigned. */
@@ -759,25 +726,8 @@ export interface OrchestratorBoardWire {
 		readonly threshold: number;
 		readonly resetsAt?: number;
 	};
-	/** The tasks in progress (the Sidebar's 対応中): saving's gate reads it. */
+	/** The tasks 処理中: saving's gate reads it. */
 	readonly inProgressTasks?: number;
-	/** The person's requests: open ones oldest first, then the last few filed. */
-	readonly requests?: readonly OrchestratorRequestWire[];
-	/** The last triage's priority of each agent that has one, by agent id. */
-	readonly agentPriorities?: Readonly<
-		Record<string, "high" | "normal" | "low">
-	>;
-	/**
-	 * The orchestrator's memos, one note per subject
-	 * (`main/orchestrator/memos.ts`), most recently set first: read-only on
-	 * the board.
-	 */
-	readonly memos?: readonly OrchestratorMemoWire[];
-	/**
-	 * Who worked on what (`main/orchestrator/work.ts`), most recently seen
-	 * first: each subject's agents, live or stopped and resumable.
-	 */
-	readonly work?: readonly OrchestratorWorkWire[];
 	/** When the last triage went to the orchestrator, and when the next is due. */
 	readonly triage?: { readonly lastAt?: number; readonly nextAt?: number };
 	/**
@@ -843,28 +793,23 @@ export interface OrchestratorBoardWire {
 	};
 	/**
 	 * The subjects that break the invariant now (`main/orchestrator/
-	 * invariant.ts`): open items (Issues, pull requests) of mine nothing
-	 * settles, managed agents nothing settles. Each as its `needs_action`
-	 * line names it, with the clause it fails.
+	 * invariant.ts`): open tasks nobody is moving, items of mine and managed
+	 * agents with no task. Each as its `needs_action` line names it.
 	 */
 	readonly needsAction: readonly NeedsActionWire[];
 	/**
-	 * What the escalations and the invariant say of each agent, for its row:
-	 * one of a 待機中 escalation's agents (and what it waits on), needing
-	 * action, or kept as it is by the orchestrator (and why). Absent for an
-	 * agent with none of these.
+	 * Each agent's task, and whether it needs action, for its row. Absent
+	 * for an agent with neither.
 	 */
 	readonly agentStates: Readonly<Record<string, AgentOrchestrationWire>>;
-	/** Oldest question first. */
-	readonly needsAnswer: readonly EscalationWire[];
-	/** Answered longest ago first. */
-	readonly inProgress: readonly EscalationWire[];
-	/** 待機中: the soonest `dueAt` first (none after), then the oldest wait. */
-	readonly waiting: readonly EscalationWire[];
-	/** Most recently closed first; the last few only. */
-	readonly closed: readonly EscalationWire[];
-	/** How long a 対応中 one stands with no agent working before it is 停滞. */
-	readonly graceMs: number;
+	/** 回答待ち: priority first, then the oldest open question. */
+	readonly answer: readonly TaskWire[];
+	/** 処理中: priority first, then the longest untouched. */
+	readonly inProgress: readonly TaskWire[];
+	/** 待機: the soonest `checkAt` first (none after), then the oldest. */
+	readonly waiting: readonly TaskWire[];
+	/** Done: most recently completed first; the last few only. */
+	readonly done: readonly TaskWire[];
 }
 
 export const EMPTY_BOARD: OrchestratorBoardWire = {
@@ -876,11 +821,10 @@ export const EMPTY_BOARD: OrchestratorBoardWire = {
 	github: { state: "idle" },
 	needsAction: [],
 	agentStates: {},
-	needsAnswer: [],
+	answer: [],
 	inProgress: [],
 	waiting: [],
-	closed: [],
-	graceMs: 60_000,
+	done: [],
 };
 
 /** The board, read and kept current. The Sidebar's row and the Agents page. */
@@ -974,25 +918,25 @@ export interface OrchestratorActionsBridge {
 	startOrchestrator(): Promise<void>;
 	/** Full, saving or off (`main/orchestrator/mode.ts`): the person's choice. */
 	setOrchestratorMode(mode: OrchestratorModeWire): Promise<void>;
-	/** The board's +: a request to the orchestrator, in the person's words. */
+	/** The board's +: a 待機 task from the person's words, sent to the orchestrator. */
 	sendOrchestratorRequest(text: string): Promise<void>;
 	/** `Cmd+Q +` / the palette: open the board's request composer. */
 	onOpenOrchestratorRequest(listener: () => void): () => void;
 	/**
 	 * What the left pane is showing, for the window's title: main names the
 	 * window (`main/shell/shellTitle.ts`), so the page says only which
-	 * escalation or file — an id or a path, never a body.
+	 * task or file — an id or a path, never a body.
 	 */
 	reportOrchestratorView(view: OrchestratorViewWire): void;
 }
 
 /**
  * What the Orchestrator screen's left pane shows: the board (or the Files
- * tab's tree), an escalation read over the board, or a file over the tree.
+ * tab's tree), a task read over the board, or a file over the tree.
  */
 export type OrchestratorViewWire =
 	| { readonly kind: "board" }
-	| { readonly kind: "escalation"; readonly id: number }
+	| { readonly kind: "task"; readonly id: number }
 	| { readonly kind: "file"; readonly path: string };
 
 /**

@@ -1093,7 +1093,7 @@ describe("Back and Forward over the Orchestrator pane", () => {
   const A = { kind: "workspace", workspaceId: WS_A } as const;
   const ORCH = { kind: "orchestrator" } as const;
   const BOARD = { kind: "board" } as const;
-  const esc = (id: number) => ({ kind: "escalation", id }) as const;
+  const esc = (id: number) => ({ kind: "task", id }) as const;
 
   function on(model: AppModel) {
     return {
@@ -1226,11 +1226,11 @@ describe("Back and Forward over the Orchestrator pane", () => {
     expect(on(model)).toEqual({ context: ORCH, view: { kind: "files" } });
   });
 
-  it("skips an escalation that is no longer on the board, as it does a closed Agent", () => {
+  it("skips a task that is no longer on the board, as it does a closed Agent", () => {
     const model = orchestratorModel();
     const gone = new Set<number>();
     model.setOrchestratorViewExists(
-      (view) => view.kind !== "escalation" || !gone.has(view.id),
+      (view) => view.kind !== "task" || !gone.has(view.id),
     );
     model.selectContext(ORCH, "full", "explicit");
     model.showOrchestratorView(esc(1), "explicit", true);

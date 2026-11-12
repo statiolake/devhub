@@ -5,7 +5,7 @@
  *
  * The body is free Markdown with a few named sections
  * (`docs/orchestrator.md`, "Writing an escalation"). Two of them are
- * required of a question, and the command line refuses one without them
+ * required of every escalation — each is one question, read cold — and the command line refuses one without them
  * (`tell/service.ts`), so the rule is kept rather than only stated:
  *
  * - **決めてほしいこと** — the one decision or confirmation asked for, and
@@ -99,7 +99,7 @@ export function decisionOf(markdown: string): string | undefined {
 interface NumberReference {
   readonly text: string;
   readonly number: string;
-  /** `#12` alone may be an escalation, a PR or an Issue. */
+  /** `#12` alone may be a task, an escalation, a PR or an Issue. */
   readonly hashOnly: boolean;
 }
 
@@ -132,7 +132,10 @@ export function bareReferences(
 ): readonly string[] {
   const bare = numberReferences(text).filter(({ number, hashOnly }) => {
     const github = new RegExp(`/(?:pull|issues)/${number}(?!\\d)`, "u");
-    const escalation = new RegExp(`^devhub:escalation/${number}$`, "u");
+    const escalation = new RegExp(
+      `^devhub:(?:escalation|task)/${number}$`,
+      "u",
+    );
     return !urls.some(
       (url) => github.test(url) || (hashOnly && escalation.test(url)),
     );
@@ -151,10 +154,6 @@ export interface BriefRequest {
   readonly title?: string;
   readonly body: string;
   readonly links: readonly string[];
-  /** A question (`new`, `ask`), not a wait: it must say what is asked. */
-  readonly asks: boolean;
-  /** The first question (`new`): it must also say why it is held. */
-  readonly first: boolean;
 }
 
 /**
@@ -170,14 +169,11 @@ export function briefProblems(request: BriefRequest): readonly string[] {
         `the title refers to ${numbered.map((one) => one.text).join(", ")} by number. Say in words what is to be decided, for someone who has never heard of it (not 「PR 1234 をマージしてよいか」 but 「決済リトライのタイムアウト延長 (30s→60s) をマージしてよいか」); the PR or Issue goes in --link.`,
       );
   }
-  if (
-    request.asks &&
-    sectionText(request.body, DECISION_HEADINGS) === undefined
-  )
+  if (sectionText(request.body, DECISION_HEADINGS) === undefined)
     problems.push(
       "the body has no '## 決めてほしいこと' section: the one decision or confirmation asked of the person, as a question, with its options.",
     );
-  if (request.first && sectionText(request.body, REASON_HEADINGS) === undefined)
+  if (sectionText(request.body, REASON_HEADINGS) === undefined)
     problems.push(
       "the body has no '## 人に聞く理由' section: why you hold this for the person instead of deciding it yourself.",
     );

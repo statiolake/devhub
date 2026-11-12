@@ -3,13 +3,13 @@
  * and Forward.
  *
  * The Orchestrator row is one selection, but the pane on it is a small stack
- * of its own — the board (or the Files tab's tree) with an escalation (or a
- * file) pushed over it — and opening an escalation is going somewhere, the
+ * of its own — the board (or the Files tab's tree) with a task (or a
+ * file) pushed over it — and opening a task is going somewhere, the
  * way following a link is. So a history entry on the Orchestrator row is the
- * selection *and* this view (`AppModel`), and Back from an escalation is the
+ * selection *and* this view (`AppModel`), and Back from a task is the
  * board it was opened from.
  *
- * Only identity is here: which escalation, which file. How the place looked —
+ * Only identity is here: which task, which file. How the place looked —
  * the board's scroll, its folded lanes, the tab — is per entry and kept by
  * the page (`shell/agents/orchestratorHistory.ts`), as a browser keeps scroll
  * per entry rather than in the URL.
@@ -31,20 +31,20 @@ export function sameOrchestratorView(
     case "board":
     case "files":
       return right.kind === left.kind;
-    case "escalation":
-      return right.kind === "escalation" && right.id === left.id;
+    case "task":
+      return right.kind === "task" && right.id === left.id;
     case "file":
       return right.kind === "file" && right.path === left.path;
   }
 }
 
 /**
- * The page under a view pushed over one: the board under an escalation, the
+ * The page under a view pushed over one: the board under a task, the
  * tree under a file. A page under is its own parent.
  */
 export function parentView(view: OrchestratorView): OrchestratorView {
   switch (view.kind) {
-    case "escalation":
+    case "task":
       return BOARD_VIEW;
     case "file":
       return { kind: "files" };
@@ -64,11 +64,11 @@ export function orchestratorPlace(
       return BOARD_VIEW;
     case "files":
       return { kind: "files" };
-    case "escalation":
+    case "task":
       return typeof view["id"] === "number" &&
         Number.isSafeInteger(view["id"]) &&
         view["id"] > 0
-        ? { kind: "escalation", id: view["id"] }
+        ? { kind: "task", id: view["id"] }
         : undefined;
     case "file":
       return typeof view["path"] === "string" && view["path"] !== ""
