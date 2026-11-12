@@ -195,7 +195,7 @@ describe("the person's words", () => {
 		expect(dispatcher.held()).toHaveLength(1);
 	});
 
-	it("are held by a pause, and go first, each alone, on resume", async () => {
+	it("go while off, each alone, as in full; a request is held, and goes first on resume", async () => {
 		const { dispatcher, sent } = world();
 		dispatcher.pause();
 		dispatcher.dispatch(needsActionIssue());
@@ -207,11 +207,14 @@ describe("the person's words", () => {
 				agents: [],
 				answers: [{ text }],
 			});
-		expect(sent).toEqual([]);
-		await dispatcher.resume();
+		dispatcher.dispatch({ type: "request", requestId: 4, text: "依頼" });
 		expect(sent).toEqual([
 			"esc=3「t」 への人の回答:\n一つ目",
 			"esc=3「t」 への人の回答:\n二つ目",
+		]);
+		await dispatcher.resume();
+		expect(sent.slice(2)).toEqual([
+			expect.stringMatching(/^req=4 人からの依頼 .*\n依頼$/u),
 			expect.stringContaining("[needs_action] issue=acme/app#123"),
 		]);
 	});
@@ -458,19 +461,22 @@ describe("the preview", () => {
 		expect(dispatcher.preview()).toEqual({ human: [], events: [], more: 0 });
 	});
 
-	it("while paused: the person's words each alone, then the batch, as resume sends them", () => {
+	it("while paused: the person's held requests each alone, then the batch, as resume sends them", () => {
 		const { dispatcher, sent } = world({
 			standing: () => [needsActionIssue()],
 		});
 		dispatcher.pause();
 		dispatcher.dispatch(answer("一つ目"));
-		dispatcher.dispatch(answer("二つ目"));
+		expect(sent).toEqual(["esc=3「t」 への人の回答:\n一つ目"]);
+		sent.length = 0;
+		dispatcher.dispatch({ type: "request", requestId: 1, text: "一つ目" });
+		dispatcher.dispatch({ type: "request", requestId: 2, text: "二つ目" });
 		dispatcher.dispatch({ type: "custom.x", text: "y" });
 		const preview = dispatcher.preview();
 		expect(preview.when).toEqual({ kind: "paused" });
 		expect(preview.human).toEqual([
-			"esc=3「t」 への人の回答:\n一つ目",
-			"esc=3「t」 への人の回答:\n二つ目",
+			expect.stringMatching(/^req=1 .*\n一つ目$/u),
+			expect.stringMatching(/^req=2 .*\n二つ目$/u),
 		]);
 		expect(sent).toEqual([]);
 		dispatcher.resume();

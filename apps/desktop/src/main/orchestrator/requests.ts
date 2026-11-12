@@ -4,7 +4,7 @@
  * "Requests".
  *
  * A request is the person's words, delivered at once as their own message
- * (the `request` event, like an answer: held only while off), and kept here
+ * (the `request` event: held while off, unlike an answer, which goes), and kept here
  * so the board shows it from the moment it is sent:
  *
  * - **送信待ち** (`held`): the mode is off, so it waits to be delivered;

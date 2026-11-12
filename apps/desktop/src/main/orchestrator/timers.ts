@@ -9,12 +9,12 @@
  *
  * Every timer is explicit — the person's settings ones and the
  * orchestrator's `timer set` ones (`source`) alike — and the dispatcher
- * sends it on time, in every mode but off (`mode.ts`, `SAVING_CLASSES`):
+ * sends it on time, in full and saving (`mode.ts`, `SAVING_CLASSES`):
  * what it has the orchestrator do (read Slack, look at a thread) touches
- * other people.
- *
- * At most one `timer.elapsed` per timer is ever pending: the dispatcher
- * folds the next into the one already waiting (`events.ts`, `merge`).
+ * other people. Off turns the timers off: they stay armed on their
+ * schedule here, and the dispatcher drops each firing while off (`events.ts`,
+ * `offDrops`), so turning on sends nothing about the ones missed and the
+ * next goes on its time.
  */
 
 import {

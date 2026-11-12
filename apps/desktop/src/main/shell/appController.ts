@@ -8342,6 +8342,7 @@ export class AppController {
 				events: (last) => orchestrator().eventLog(last),
 				emit: (type, text) => orchestrator().emit(type, text),
 				timers: () => orchestrator().timers.list(),
+				expiredWhileOff: () => orchestrator().expiredWhileOff(),
 				setTimer: (name, interval) => orchestrator().timers.set(name, interval),
 				clearTimer: (name) => orchestrator().timers.clear(name),
 				// `focus orchestrator`: the one command here that takes the window.

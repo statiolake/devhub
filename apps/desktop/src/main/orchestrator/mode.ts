@@ -17,8 +17,14 @@
  *   requests, `init` and `triage` are never held, and an explicit timer —
  *   `[[orchestrator.timers]]`, `orchestrator timer set` — or a wait's `--at`
  *   goes at its time, alone, as in full (`onTime`).
- * - **off** holds everything, the person's words too, and GitHub is not
- *   polled: what the Events switch's off was.
+ * - **off** holds everything else, the person's requests too, and GitHub
+ *   is not polled: what the Events switch's off was. Two exceptions:
+ *   the person's answers to escalations (`escalation_answered`,
+ *   `escalation.human_direct`) are delivered as in full — someone answered,
+ *   and the work waits on it; and the timers are off — a timer
+ *   (`[[orchestrator.timers]]`, `timer set`) or a wait's `--at` that comes
+ *   due while off is dropped, not sent when the mode turns on
+ *   (`events.ts`: `isAnswer`, `offDrops`).
  *
  * **Off at every launch.** Nothing of the mode is written anywhere: a DevHub
  * that starts is off until the person turns it on (or starts an
@@ -89,7 +95,7 @@ export const SAVING_BUSY_TASKS = 2;
  *   words — in full and saving alike, never batched, never held by the
  *   interval or for triage (`onTime`). What it wakes the orchestrator for
  *   (reading Slack, a thread, someone else's work) has consequences
- *   outside;
+ *   outside. Off drops it instead: the timers are off with the mode;
  * - `never_held` — the person's words, their requests, a start (`init`) and
  *   a `triage`: they go as in full. A batch carrying `init` or `triage`
  *   takes everything pending and standing with it;

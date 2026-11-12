@@ -934,7 +934,8 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    the mode, or choose one: full delivers
                                    every delivery_interval; saving 3x as
                                    rarely, and nothing while 2+ tasks are in
-                                   progress; off holds everything (every
+                                   progress; off holds everything but the
+                                   person's answers, and drops timers (every
                                    launch starts off). Full switches to saving
                                    by itself at saving_threshold (80%) of a
                                    plan window, and back when it resets

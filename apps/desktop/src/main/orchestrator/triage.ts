@@ -28,7 +28,8 @@
  * which takes everything pending and standing with it — or until the mode
  * is full. The person's words, requests, `init` and `triage` are never held
  * by it, and the timers (`[[orchestrator.timers]]`, `timer set`) and a
- * wait's `--at` go on time.
+ * wait's `--at` go on time. Off has no triage, holds the rest but the
+ * person's answers, and drops the timers as they fire.
  */
 
 import {

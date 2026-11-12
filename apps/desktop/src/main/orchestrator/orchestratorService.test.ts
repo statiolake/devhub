@@ -239,24 +239,22 @@ describe("the person's answer", () => {
 		expect(run.read).toEqual([[ORCH, one.id, 2]]);
 	});
 
-	it("is held by a pause and goes first on resume", async () => {
+	it("is delivered while off, as in full", () => {
 		const run = world();
 		const one = run.service.raise({ title: "t", markdown: "?" });
 		run.service.events.pause();
 		run.service.answer(one.id, "はい");
-		expect(run.sent).toEqual([]);
-		await run.service.events.resume();
 		expect(run.sent).toEqual(["esc=1「t」 への人の回答:\nはい"]);
+		expect(run.read).toEqual([[ORCH, one.id, 2]]);
 	});
 
-	it("is on the board's next delivery while paused, as resume sends it", () => {
+	it("leaves a request on the board's next delivery while paused, as resume sends it", () => {
 		const run = world();
-		const one = run.service.raise({ title: "t", markdown: "?" });
 		run.service.events.pause();
-		run.service.answer(one.id, "はい");
+		run.service.request("はい");
 		const next = run.service.wire().nextDelivery;
 		expect(next).toEqual({
-			human: ["esc=1「t」 への人の回答:\nはい"],
+			human: [expect.stringMatching(/^req=1 .*\nはい$/u)],
 			lines: 0,
 			more: 0,
 			when: { kind: "paused" },
@@ -298,7 +296,7 @@ describe("停滞 on the board", () => {
 describe("待機中 (escalation wait)", () => {
 	const HOUR = 3_600_000;
 
-	it("says waiting.changed due once when --at passes, and drops it once it left 待機中", async () => {
+	it("says waiting.changed due once when --at passes, and drops one that comes while off", async () => {
 		const run = world();
 		const one = run.service.raise({ title: "再開", markdown: "?" });
 		run.service.wait(one.id, {
@@ -318,9 +316,20 @@ describe("待機中 (escalation wait)", () => {
 		run.service.events.pause();
 		run.service.wait(two.id, { trigger: "x", dueAt: run.clock.now - 1 });
 		expect(run.of("waiting.changed")).toHaveLength(2);
-		run.service.resume(two.id, undefined);
+		// Off: the timers are off, its time is dropped, not sent on resume.
+		expect(run.of("waiting.changed")[1]).toMatchObject({
+			fate: "dropped",
+			reason: "off",
+		});
 		await run.service.events.resume();
-		expect(run.of("waiting.changed")[1]!.fate).toBe("dropped-stale");
+		expect(
+			run.sent.filter((text) => text.includes("[waiting.changed]")),
+		).toHaveLength(1);
+		expect(run.service.expiredWhileOff()).toMatchObject([
+			{ escalationId: two.id },
+		]);
+		run.service.resume(two.id, undefined);
+		expect(run.service.expiredWhileOff()).toEqual([]);
 	});
 
 	it("leaves 待機中 when an agent of it goes working, but not on a maintenance turn", () => {

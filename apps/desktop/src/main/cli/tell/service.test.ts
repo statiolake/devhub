@@ -361,6 +361,7 @@ class FakePorts implements TellPorts {
 		events: (last) => this.service.eventLog(last),
 		emit: (type, text) => this.service.emit(type, text),
 		timers: () => this.service.timers.list(),
+		expiredWhileOff: () => this.service.expiredWhileOff(),
 		setTimer: (name, interval) => this.service.timers.set(name, interval),
 		clearTimer: (name) => this.service.timers.clear(name),
 		focus: () => {
@@ -4783,6 +4784,7 @@ describe("the Orchestrator row from the command line", () => {
 				"emit",
 				"escalations",
 				"events",
+				"expiredWhileOff",
 				"fileRequest",
 				"focus",
 				"hold",
@@ -4861,15 +4863,9 @@ describe("the Orchestrator row from the command line", () => {
 		const { service, ports } = orchestrated();
 		ports.service.observe();
 		ports.service.raise({ title: "決めて", markdown: "A or B?" });
-		// Held: the answer has not reached the orchestrator, so it is unread.
+		// Delivered with the answer in it, off included: that is the reading.
 		ports.service.events.pause();
 		ports.service.answer(1, "A");
-		ports.clock.now += 120_000;
-		ports.service.observe();
-		const unread = await viaSocket(service, ["--json", "board"], coordinator);
-		expect(unread.message).not.toContain("停滞");
-		// Delivered with the answer in it: that is the reading.
-		await ports.service.events.resume();
 		ports.clock.now += 59_000;
 		ports.service.observe();
 		const soon = await viaSocket(service, ["--json", "board"], coordinator);
@@ -5154,12 +5150,17 @@ describe("the Orchestrator row from the command line", () => {
 		);
 	});
 
-	it("pauses events and delivers the held ones on resume: the person's words each alone, the rest as one", async () => {
+	it("pauses events and delivers the held ones on resume: a request alone, the rest as one; an answer goes while paused", async () => {
 		const { service, ports } = orchestrated();
 		ports.delivered = [];
 		await viaSocket(service, ["orchestrator", "pause"], undefined);
 		ports.service.raise({ title: "one", markdown: "x" });
 		ports.service.answer(1, "a");
+		expect(ports.delivered.map(([, text]) => text)).toEqual([
+			"esc=1「one」 への人の回答:\na",
+		]);
+		ports.delivered = [];
+		ports.service.request("b");
 		ports.service.emit("custom.deploy", "staging");
 		ports.service.emit("custom.build", "done");
 		expect(ports.delivered).toEqual([]);
@@ -5171,7 +5172,7 @@ describe("the Orchestrator row from the command line", () => {
 		);
 		expect(resumed.data).toMatchObject({ delivered: 3 });
 		expect(ports.delivered.map(([, text]) => text)).toEqual([
-			"esc=1「one」 への人の回答:\na",
+			expect.stringMatching(/^req=1 人からの依頼 .*\nb$/u),
 			expect.stringMatching(/\[custom\.deploy\][^]*\[custom\.build\]/u),
 		]);
 	});
@@ -5269,6 +5270,27 @@ describe("the Orchestrator row from the command line", () => {
 				"-",
 			]),
 		).toMatchObject({ command: { verb: "orchestrator-emit", text: "-" } });
+	});
+
+	it("lists a wait's --at that came while off as expired while off", async () => {
+		const { service, ports } = orchestrated();
+		const one = ports.service.raise({ title: "リリース後", markdown: "?" });
+		ports.service.wait(one.id, {
+			trigger: "15:00",
+			dueAt: ports.clock.now + 60_000,
+		});
+		ports.service.events.pause();
+		ports.clock.now += 61_000;
+		ports.service.observe();
+		const listed = await viaSocket(
+			service,
+			["orchestrator", "timer", "list"],
+			undefined,
+		);
+		expect(listed.message).toMatch(
+			/Expired while off[^]*esc=1 「リリース後」 {2}wait --at \S+ {2}expired while off/u,
+		);
+		expect(listed.data).toMatchObject({ expired: [{ escalationId: 1 }] });
 	});
 
 	it("lists, sets and clears timers for the session", async () => {

@@ -13,7 +13,8 @@
  *    its own whose text is what they typed, under one line naming the
  *    escalation (`humanMessage`) — never inside an event line or the
  *    `event_prompt` template, so the orchestrator reads it as the person's
- *    own input. Only a pause holds them;
+ *    own input. Nothing holds them, off included (`isAnswer`); with no
+ *    orchestrator running they wait for one. A request waits while off;
  * 3. keeps the rest **pending** as action items, not a history: **one line
  *    per subject** (`subjectOf`: an item, an agent, an escalation, a timer,
  *    a usage window, a custom type and text). A newer statement about a
@@ -21,8 +22,9 @@
  *    a line says how the subject stands now, not what happened to it;
  * 3a. sends **the orchestrator's own wake-ups** (`onTime`: a `timer set`
  *    timer, a wait's `due`) at once, each its one line as a message of its
- *    own — not batched, not held by the interval or saving; only a pause
- *    holds them;
+ *    own — not batched, not held by the interval or saving. Off turns them
+ *    off: one that comes due while off is dropped (`offDrops`), not sent
+ *    later;
  * 4. just before delivery, drops what no longer needs attention (`relevant`:
  *    a wait no longer waiting, a usage window reset) as `dropped-stale`;
  * 5. delivers everything pending, and **the invariant's `needs_action`
@@ -49,9 +51,13 @@
  * `triage` takes everything; the person's words are never batches. `off` is
  * the pause below.
  *
- * **Paused** (`off`) holds everything, the person's words too, and the sources that
- * cost something (GitHub) are suspended (`paused`); `resume` sends at once
- * the person's words, then everything else — pending and standing — as one
+ * **Paused** (`off`) holds everything but the person's answers
+ * (`escalation_answered`, `escalation.human_direct`: they go as in full),
+ * the person's requests included, and the sources that cost something
+ * (GitHub) are suspended (`paused`). The timers are off too: a
+ * `timer.elapsed`, or a wait's `due`, that comes while off is dropped
+ * (`dropped`, reason `off`), never sent later. `resume` sends at once the
+ * held requests, then everything else — pending and standing — as one
  * message, whatever the interval, the orchestrator's turn or the pickup
  * wait; the interval counts from there. The sources start again alongside:
  * what their catch-up finds goes with the next delivery.
@@ -62,7 +68,8 @@
  *
  * With no orchestrator assigned there is nobody to tell, and an
  * event is dropped (and kept in the log as dropped): the next start's `init`
- * sends it to the board anyway.
+ * sends it to the board anyway. The person's answers are not: they wait
+ * until one runs (and a request is kept by `requests.ts` for the same).
  *
  * Every event, whatever came of it, is kept in a short log (`log`) for
  * `devhub --tell orchestrator events`.
@@ -321,6 +328,35 @@ export function isHumanInput(
 		event.type === "escalation.human_direct" ||
 		event.type === "request"
 	);
+}
+
+/**
+ * The person's answer to an escalation: their words about work they were
+ * asked about, delivered in every mode, off included — someone answered, so
+ * the work they unblock goes on.
+ */
+export function isAnswer(event: OrchestratorEvent): boolean {
+	return (
+		event.type === "escalation_answered" ||
+		event.type === "escalation.human_direct"
+	);
+}
+
+/**
+ * Off turns the timers off: what is left of `event` while off, or undefined
+ * when off drops it whole. A `timer.elapsed` (the settings' and `timer set`'s
+ * alike) is dropped: the next firing is on its schedule. A wait's `due` is
+ * dropped from a `waiting.changed` (its `subjects_changed`, a state change,
+ * waits as everything does while off).
+ */
+export function offDrops(
+	event: OrchestratorEvent,
+): OrchestratorEvent | undefined {
+	if (event.type === "timer.elapsed") return undefined;
+	if (event.type !== "waiting.changed" || !event.reasons.includes("due"))
+		return event;
+	const reasons = event.reasons.filter((one) => one !== "due");
+	return reasons.length === 0 ? undefined : { ...event, reasons };
 }
 
 // --- the line ----------------------------------------------------------------
@@ -632,7 +668,7 @@ export interface EventLogEntry {
 	/** When it went out (delivered), or was folded into `into` (coalesced). */
 	settledAt?: number;
 	into?: number;
-	/** Why it was dropped-stale. */
+	/** Why it was dropped-stale, or dropped (`off`: the timers are off). */
 	reason?: string;
 }
 
@@ -731,7 +767,10 @@ export class EventDispatcher {
 	#mode: OrchestratorMode;
 	/** Pending, one line per subject, in the order the subjects came up. */
 	readonly #lines: PendingLine[] = [];
-	/** The person's words, held by a pause. */
+	/**
+	 * The person's words that wait: a request while off, an answer until an
+	 * orchestrator runs.
+	 */
 	readonly #human: EventLogEntry[] = [];
 	readonly #log: EventLogEntry[] = [];
 	#seq = 0;
@@ -751,7 +790,7 @@ export class EventDispatcher {
 		return (this.delivery.now ?? Date.now)();
 	}
 
-	/** Off: everything is held. */
+	/** Off: everything is held but the person's answers; timers are dropped. */
 	get paused(): boolean {
 		return this.#mode === "off";
 	}
@@ -789,7 +828,8 @@ export class EventDispatcher {
 		if (this.#log.length > EVENT_LOG_SIZE)
 			this.#log.splice(0, this.#log.length - EVENT_LOG_SIZE);
 		const orchestrator = this.delivery.orchestrator();
-		if (orchestrator === undefined) {
+		// An answer waits for an orchestrator to start; the rest has nobody.
+		if (orchestrator === undefined && !isAnswer(event)) {
 			entry.fate = "dropped";
 			this.delivery.log?.(
 				`[devhub] orchestrator event ${event.type} dropped: no orchestrator is assigned`,
@@ -801,12 +841,27 @@ export class EventDispatcher {
 			return entry;
 		}
 		if (isHumanInput(event)) {
-			if (this.paused) this.#human.push(entry);
+			if (orchestrator === undefined || this.#waits(event))
+				this.#human.push(entry);
 			else this.#sendHuman(orchestrator, entry);
 			this.delivery.changed?.();
 			return entry;
 		}
-		const subject = subjectOf(event);
+		// Only an answer came this far with nobody to tell.
+		if (orchestrator === undefined) return entry;
+		// Off: the timers are off too. What comes due now is not sent later.
+		if (this.paused) {
+			const left = offDrops(event);
+			if (left === undefined) {
+				entry.fate = "dropped";
+				entry.reason = "off";
+				entry.settledAt = entry.at;
+				this.delivery.changed?.();
+				return entry;
+			}
+			(entry as { event: OrchestratorEvent }).event = left;
+		}
+		const subject = subjectOf(entry.event);
 		const line = this.#lines.find((one) => one.subject === subject);
 		if (line === undefined) this.#lines.push({ subject, entry });
 		else {
@@ -816,7 +871,7 @@ export class EventDispatcher {
 			earlier.settledAt = entry.at;
 			(entry as { event: OrchestratorEvent }).event = merge(
 				earlier.event,
-				event,
+				entry.event,
 			);
 			line.entry = entry;
 		}
@@ -860,6 +915,11 @@ export class EventDispatcher {
 		this.delivery.delivered?.([entry.event]);
 	}
 
+	/** Whether the person's words wait now: a request, while off. */
+	#waits(event: OrchestratorEvent): boolean {
+		return this.paused && !isAnswer(event);
+	}
+
 	/** The person's words, now, as messages of their own. */
 	#sendHuman(agentId: string, entry: EventLogEntry): void {
 		const event = entry.event;
@@ -871,7 +931,7 @@ export class EventDispatcher {
 		this.delivery.delivered?.([event]);
 	}
 
-	/** Off: hold everything. */
+	/** Off: see `setMode`. */
 	pause(): void {
 		this.setMode("off");
 	}
@@ -882,7 +942,8 @@ export class EventDispatcher {
 	}
 
 	/**
-	 * Go to `mode`. Into off: hold everything. Out of off: stop holding, and
+	 * Go to `mode`. Into off: hold everything but the person's answers, and
+	 * drop the timers as they fire. Out of off: stop holding, and
 	 * deliver at once — the person's held words, then what is pending and
 	 * what needs action now as one message, with no batch window, interval,
 	 * pickup wait or turn to wait for: the person asked for them (in saving,
@@ -917,12 +978,21 @@ export class EventDispatcher {
 		return count - this.#lines.length - this.#human.length + standing;
 	}
 
-	#releaseHuman(): void {
+	/**
+	 * The person's words that may go now: to the orchestrator, once one
+	 * runs; a request not while off.
+	 */
+	#releaseHuman(): number {
 		const agentId = this.delivery.orchestrator();
-		for (const entry of this.#human.splice(0)) {
-			if (agentId === undefined) entry.fate = "dropped";
-			else this.#sendHuman(agentId, entry);
+		if (agentId === undefined) return 0;
+		let sent = 0;
+		for (const entry of [...this.#human]) {
+			if (this.#waits(entry.event)) continue;
+			this.#human.splice(this.#human.indexOf(entry), 1);
+			this.#sendHuman(agentId, entry);
+			sent += 1;
 		}
+		return sent;
 	}
 
 	/** The pending lines that no longer need attention: nothing is changed. */
@@ -1034,8 +1104,11 @@ export class EventDispatcher {
 	#flush(force: boolean): number {
 		this.#timer?.cancel();
 		this.#timer = undefined;
-		if (this.paused) return 0;
-		if (this.#human.length > 0) this.#releaseHuman();
+		const released = this.#human.length > 0 ? this.#releaseHuman() : 0;
+		if (this.paused) {
+			if (released > 0) this.delivery.changed?.();
+			return 0;
+		}
 		const agentId = this.delivery.orchestrator();
 		if (agentId === undefined) {
 			if (this.#lines.length === 0) return 0;

@@ -632,7 +632,7 @@ describe("saving's dispatcher: the work in progress is never held", () => {
 		expect(run.events.held()).toEqual([]);
 	});
 
-	it("sends a wait's time on time too, and holds it only while off", () => {
+	it("sends a wait's time on time too, and drops a timer that fires while off", () => {
 		const run = savingRun({ tasks: 2 });
 		run.events.dispatch({ type: "custom.x", text: "batch" });
 		run.events.dispatch({
@@ -651,15 +651,16 @@ describe("saving's dispatcher: the work in progress is never held", () => {
 		});
 		expect(run.sent[1]).toBe("[waiting.changed] esc=4 — due");
 		run.events.setMode("off");
-		run.events.dispatch({
+		const fired = run.events.dispatch({
 			type: "timer.elapsed",
 			name: "slack",
 			interval: "30m",
 			source: "session",
 		});
+		expect(fired).toMatchObject({ fate: "dropped", reason: "off" });
 		expect(run.sent).toHaveLength(2);
 		run.events.setMode("saving");
-		expect(run.sent[2]).toContain("[timer.elapsed] slack");
+		expect(run.sent.join("\n")).not.toContain("[timer.elapsed] slack");
 	});
 
 	it("delivers a wait that may be ready, low and with 3 in progress", () => {
@@ -672,6 +673,116 @@ describe("saving's dispatcher: the work in progress is never held", () => {
 		});
 		run.advance(1_000);
 		expect(run.sent).toEqual(["[waiting.changed] esc=4 — subjects_changed"]);
+	});
+});
+
+describe("off: the timers are off, the person's answers go", () => {
+	const settingsTimer: OrchestratorEvent = {
+		type: "timer.elapsed",
+		name: "slack",
+		interval: "30m",
+		source: "settings",
+	};
+
+	it("drops a settings timer that fires while off, logged, and sends nothing of it on turning on", () => {
+		const run = dispatcher("off", { n: 0 });
+		const entry = run.events.dispatch(settingsTimer);
+		expect(entry).toMatchObject({ fate: "dropped", reason: "off" });
+		expect(run.events.held()).toEqual([]);
+		expect(run.events.recent(1)[0]).toBe(entry);
+		run.events.setMode("full");
+		expect(run.sent.join("\n")).not.toContain("timer.elapsed");
+		// On, the next firing goes on its time, alone.
+		run.events.dispatch(settingsTimer);
+		expect(run.sent.at(-1)).toBe("[timer.elapsed] slack");
+	});
+
+	it("drops a wait's due while off, keeping what moved about its subjects", () => {
+		const run = dispatcher("off", { n: 0 });
+		expect(
+			run.events.dispatch({
+				type: "waiting.changed",
+				escalationId: 4,
+				reasons: ["due"],
+				waitSince: 1,
+			}),
+		).toMatchObject({ fate: "dropped", reason: "off" });
+		run.events.dispatch({
+			type: "waiting.changed",
+			escalationId: 5,
+			reasons: ["due", "subjects_changed"],
+			waitSince: 1,
+		});
+		expect(run.events.held()).toEqual([
+			{
+				type: "waiting.changed",
+				escalationId: 5,
+				reasons: ["subjects_changed"],
+				waitSince: 1,
+			},
+		]);
+	});
+
+	it("delivers the person's answers while off, as in full; a request waits for on", () => {
+		const run = dispatcher("off", { n: 0 });
+		run.events.dispatch({
+			type: "escalation_answered",
+			escalationId: 1,
+			title: "t",
+			agents: [],
+			answers: [{ text: "はい" }],
+		});
+		run.events.dispatch({
+			type: "escalation.human_direct",
+			escalationId: 2,
+			title: "u",
+			agent: { id: "w", name: "worker" },
+			messages: [{ text: "こちらで進めて" }],
+		});
+		run.events.dispatch({ type: "request", requestId: 3, text: "調べて" });
+		run.events.dispatch({ type: "custom.x", text: "y" });
+		expect(run.sent).toEqual([
+			"esc=1「t」 への人の回答:\nはい",
+			expect.stringContaining("こちらで進めて"),
+		]);
+		expect(run.events.held().map((one) => one.type)).toEqual([
+			"request",
+			"custom.x",
+		]);
+		run.events.setMode("full");
+		expect(run.sent[2]).toContain("req=3");
+		expect(run.sent[3]).toContain("[custom.x]");
+	});
+
+	it("keeps an answer with no orchestrator running until one starts, off or on", () => {
+		const who: { id: string | undefined } = { id: undefined };
+		const sent: string[] = [];
+		const events = new EventDispatcher({
+			mode: "off",
+			orchestrator: () => who.id,
+			settings: () => ({
+				event_prompt: "{EVENT}",
+				init_prompt: undefined,
+				events: ["*"],
+				delivery_interval: "5m",
+			}),
+			deliver: (_agent, text) => sent.push(text),
+		});
+		const entry = events.dispatch({
+			type: "escalation_answered",
+			escalationId: 1,
+			title: "t",
+			agents: [],
+			answers: [{ text: "はい" }],
+		});
+		expect(entry.fate).toBe("pending");
+		expect(events.dispatch(settingsTimer).fate).toBe("dropped");
+		events.flush();
+		expect(sent).toEqual([]);
+		who.id = "orch";
+		events.flush();
+		expect(sent).toEqual(["esc=1「t」 への人の回答:\nはい"]);
+		expect(entry.fate).toBe("delivered");
 	});
 });
 
@@ -745,6 +856,37 @@ describe("the service's mode", () => {
 		(settings as { saving_threshold: number }).saving_threshold = 90;
 		run.settingsChanged();
 		expect(run.mode).toBe("full");
+	});
+
+	it("drops a wait's --at that comes while off, and lists it as expired while its wait stands", () => {
+		const { run, sent, clock } = service("full");
+		run.assign("orch");
+		const one = run.raise({ title: "リリース後に確認", markdown: "?" });
+		run.wait(one.id, { trigger: "15:00 に", dueAt: NOW + HOUR });
+		run.setMode("off");
+		sent.length = 0;
+		clock.now = NOW + HOUR + 1_000;
+		run.observe();
+		const due = run
+			.eventLog(200)
+			.filter((entry) => entry.type === "waiting.changed");
+		expect(due).toMatchObject([{ fate: "dropped" }]);
+		expect(run.expiredWhileOff()).toEqual([
+			{
+				escalationId: one.id,
+				title: "リリース後に確認",
+				waitSince: expect.any(Number),
+				dueAt: NOW + HOUR,
+				droppedAt: NOW + HOUR + 1_000,
+			},
+		]);
+		run.setMode("full");
+		run.observe();
+		expect(sent.join("\n")).not.toContain("— due");
+		// Still listed while the wait stands; gone once it is off its wait.
+		expect(run.expiredWhileOff()).toHaveLength(1);
+		run.resume(one.id, undefined);
+		expect(run.expiredWhileOff()).toEqual([]);
 	});
 
 	it("never turns an off one on, whatever the readout", () => {

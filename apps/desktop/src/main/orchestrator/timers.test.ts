@@ -153,8 +153,9 @@ describe("the orchestrator's timers", () => {
 		expect(dispatcher.held()).toEqual([]);
 	});
 
-	it("keep at most one pending event each while off", () => {
+	it("are off while off: each firing is dropped, logged, nothing is sent on turning on, and the next goes on schedule", () => {
 		const time = clock();
+		const sent: string[] = [];
 		const dispatcher = new EventDispatcher({
 			mode: "off",
 			orchestrator: () => "orch",
@@ -164,33 +165,34 @@ describe("the orchestrator's timers", () => {
 				events: ["timer.*"],
 				delivery_interval: "5m",
 			}),
-			deliver: () => undefined,
-			busy: () => true,
+			deliver: (_agent, text) => sent.push(text),
 		});
 		const timers = new OrchestratorTimers({
-			defaults: () => [
-				{ name: "tick", interval: "10s" },
-				{ name: "sweep", interval: "20s" },
-			],
+			defaults: () => [{ name: "slack", interval: "1m" }],
 			dispatch: (event) => dispatcher.dispatch(event),
 			now: time.now,
 			setTimer: time.setTimer,
 		});
 		timers.sync();
-		time.advance(100_000);
-		expect(dispatcher.held()).toEqual([
-			{
-				type: "timer.elapsed",
-				name: "tick",
-				interval: "10s",
-				source: "settings",
-			},
-			{
-				type: "timer.elapsed",
-				name: "sweep",
-				interval: "20s",
-				source: "settings",
-			},
+		timers.set("thread", "2m");
+		time.advance(150_000);
+		expect(dispatcher.held()).toEqual([]);
+		expect(
+			dispatcher.recent(10).map((entry) => [entry.fate, entry.reason]),
+		).toEqual([
+			["dropped", "off"],
+			["dropped", "off"],
+			["dropped", "off"],
 		]);
+		dispatcher.setMode("full");
+		expect(sent).toEqual([]);
+		// Still armed, on its schedule: the next minute, not at once.
+		expect(timers.list().find((one) => one.name === "slack")?.nextAt).toBe(
+			180_000,
+		);
+		time.advance(29_000);
+		expect(sent).toEqual([]);
+		time.advance(1_000);
+		expect(sent).toEqual(["[timer.elapsed] slack"]);
 	});
 });

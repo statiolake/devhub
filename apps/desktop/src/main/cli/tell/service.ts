@@ -749,6 +749,11 @@ export interface TellOrchestratorPorts {
 	/** A `custom.*` event, as any source dispatches one. */
 	emit(type: string, text: string): TellEventEntry;
 	timers(): readonly TellTimer[];
+	/**
+	 * The one-shot wake-ups (a wait's `--at`) that came due while off and
+	 * were dropped, while their wait stands. Absent: none.
+	 */
+	expiredWhileOff?(): readonly TellExpiredWake[];
 	/** For this session; refused with the rule it breaks. */
 	setTimer(name: string, interval: string): TellTimer;
 	/** Off for this session; false when no such timer runs. */
@@ -866,6 +871,16 @@ export interface TellTimer {
 	readonly source: "settings" | "session";
 	/** ms since the epoch. */
 	readonly nextAt: number;
+}
+
+/** A wait's `--at` that came while off: dropped, not sent later. */
+export interface TellExpiredWake {
+	readonly escalationId: number;
+	readonly title: string;
+	readonly waitSince: number;
+	/** ms since the epoch. */
+	readonly dueAt: number;
+	readonly droppedAt: number;
 }
 
 /** Which Agent is asking, from its pane's `DEVHUB_ORIGIN`. */
@@ -1983,17 +1998,27 @@ export class TellService {
 
 	private timerList(): TellAnswer {
 		const timers = this.ports.orchestrator.timers();
+		const expired = this.ports.orchestrator.expiredWhileOff?.() ?? [];
+		const lines =
+			timers.length === 0
+				? [
+						"No timers. 'orchestrator timer set NAME INTERVAL' starts one; [[orchestrator.timers]] are the defaults.",
+					]
+				: timers.map(
+						(timer) =>
+							`${timer.name}  every ${timer.interval}  (${timer.source})  next ${new Date(timer.nextAt).toISOString()}`,
+					);
+		if (expired.length > 0)
+			lines.push(
+				"Expired while off (dropped, not sent later; the wait still stands):",
+				...expired.map(
+					(one) =>
+						`  esc=${String(one.escalationId)} 「${one.title}」  wait --at ${new Date(one.dueAt).toISOString()}  expired while off`,
+				),
+			);
 		return {
-			message:
-				timers.length === 0
-					? "No timers. 'orchestrator timer set NAME INTERVAL' starts one; [[orchestrator.timers]] are the defaults."
-					: timers
-							.map(
-								(timer) =>
-									`${timer.name}  every ${timer.interval}  (${timer.source})  next ${new Date(timer.nextAt).toISOString()}`,
-							)
-							.join("\n"),
-			data: { timers },
+			message: lines.join("\n"),
+			data: { timers, expired },
 		};
 	}
 

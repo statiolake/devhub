@@ -381,6 +381,18 @@ export interface EventLogView {
 	readonly event: Record<string, unknown>;
 }
 
+/** A one-shot wake-up dropped because it came due while off. */
+export interface ExpiredWake {
+	readonly escalationId: number;
+	readonly title: string;
+	/** The wait it was for: its entry's time. */
+	readonly waitSince: number;
+	/** The `--at` it was given. */
+	readonly dueAt: number;
+	/** When DevHub saw it come, while off. */
+	readonly droppedAt: number;
+}
+
 export class OrchestratorService {
 	readonly events: EventDispatcher;
 	/** `[[orchestrator.timers]]`, and `orchestrator timer` for this session. */
@@ -407,6 +419,13 @@ export class OrchestratorService {
 	readonly #read = new Map<number, { entries: number; at: number }>();
 	/** `escalationId@waitSince`, once told: one `due` per wait. */
 	readonly #dueTold = new Set<string>();
+	/**
+	 * The waits whose `--at` came while off, per escalation: dropped, not
+	 * sent later (the timers are off with the mode), and listed by
+	 * `orchestrator timer list` as expired while off for as long as that
+	 * wait stands (`expiredWhileOff`).
+	 */
+	readonly #expired = new Map<number, ExpiredWake>();
 	/** The invariant's subjects, their time, and the agents kept as they are. */
 	readonly #invariant: InvariantWatch;
 	/** The agents the invariant was last read with. */
@@ -1574,13 +1593,38 @@ export class OrchestratorService {
 			const key = `${String(one.id)}@${String(wait.at)}`;
 			if (this.#dueTold.has(key)) continue;
 			this.#dueTold.add(key);
-			this.events.dispatch({
+			const entry = this.events.dispatch({
 				type: "waiting.changed",
 				escalationId: one.id,
 				reasons: ["due"],
 				waitSince: wait.at,
 			});
+			if (entry.fate === "dropped" && entry.reason === "off")
+				this.#expired.set(one.id, {
+					escalationId: one.id,
+					title: one.title,
+					waitSince: wait.at,
+					dueAt: wait.dueAt,
+					droppedAt: now,
+				});
 		}
+	}
+
+	/**
+	 * The one-shot wake-ups that came due while off and were dropped: a
+	 * 待機中 escalation's `--at`, for as long as that wait stands (answered,
+	 * resumed, waiting anew or closed: gone). Oldest due first.
+	 */
+	expiredWhileOff(): readonly ExpiredWake[] {
+		for (const [id, one] of [...this.#expired]) {
+			const escalation = this.ports.store.get(id);
+			if (
+				escalation === undefined ||
+				currentWait(escalation)?.at !== one.waitSince
+			)
+				this.#expired.delete(id);
+		}
+		return [...this.#expired.values()].sort((a, b) => a.dueAt - b.dueAt);
 	}
 
 	/** The settings moved: what is read and delivered follows them now. */

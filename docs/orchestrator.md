@@ -998,10 +998,11 @@ the escalation (and the agent) and whose rest is the person's text exactly as
 typed, unquoted and uncut. The orchestrator reads it as the person's own
 input: an auto-mode approval classifier treats text quoted inside a prompt
 template conservatively and may refuse the external writes the person just
-asked for. Several answers are several messages. Only a pause holds them (a
-resume sends them first, each alone, before the batch); a busy orchestrator
-does not: the message is queued and taken when its turn ends, like the
-person's composer. Delivering an answer is the orchestrator's reading of it
+asked for. Several answers are several messages. Nothing holds them, off
+included: someone answered, and the work they unblock goes on. With no
+orchestrator running they wait, in order, until one starts (as a request
+does). A busy orchestrator does not hold them either: the message is queued
+and taken when its turn ends, like the person's composer. Delivering an answer is the orchestrator's reading of it
 (`acknowledged`: `agent wait --any` no longer reports it; 停滞's clock starts).
 A message whose text could not be read says so and where to read it
 (`agent read A --since …`).
@@ -1021,7 +1022,7 @@ A message whose text could not be read says so and where to read it
 - **Timers and waits' times go on time** (`[[orchestrator.timers]]`, a
   `timer set` timer, a wait's `--at`): each as a message of its own when it comes, not with a
   batch and not held by the interval (see "Saving: state changes and
-  nudges"); only off holds them.
+  nudges"). Off turns them off: one that comes due while off is dropped.
 - **Held only by a foreground turn**: the orchestrator `working`, or a
   message of ours still queued for it (`busy` in the controller). Its own
   background work — shells, tasks, subagents it started (`background`) — does
@@ -1038,9 +1039,11 @@ A message whose text could not be read says so and where to read it
   with nothing to carry is not sent. `orchestrator events` logs each line
   as it goes (`delivered`).
 - **Paused** (the mode **off**: `orchestrator mode off` or `pause`, the board's Off): everything
-  is held, the person's words too, and GitHub is not polled; pausing sends
-  nothing. **Turning on delivers at once** (full or saving: `orchestrator
-mode full`, `resume`, the board's Full or Saving): the person's held words, each alone, then what is pending and the
+  is held but the person's answers, their requests too, and GitHub is not
+  polled; pausing sends nothing. The timers are off with it: a timer or a
+  wait's `--at` that comes due while off is dropped (`dropped`, reason
+  `off`), never sent later. **Turning on delivers at once** (full or saving: `orchestrator
+mode full`, `resume`, the board's Full or Saving): the person's held requests, each alone, then what is pending and the
   `needs_action` lines that stand now as one message — also when nothing
   was pending but some subject needs action — whatever the interval, the
   orchestrator's turn or the pickup wait; the interval then counts from
@@ -1060,7 +1063,8 @@ mode full`, `resume`, the board's Full or Saving): the person's held words, each
   scheduled.
 - **Kept in a log**: `orchestrator events` lists the last ones and what came
   of each (`delivered`, `pending`, `filtered`, `coalesced` into which,
-  `dropped-stale`, `overflow`, `dropped` with no orchestrator).
+  `dropped-stale`, `overflow`, `dropped` with no orchestrator, or with
+  reason `off` for a timer that came due while off).
 
 ### Modes: full, saving, off
 
@@ -1078,7 +1082,7 @@ beside it when saving came by itself, and its card says why.
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **full**   | everything, as described above: a batch at most every `delivery_interval`, each carrying every `needs_action` subject again (what "on" was)                                                                                                                                                                      |
 | **saving** | the same, more rarely: at most every **3 ×** `delivery_interval` (`SAVING_INTERVAL_FACTOR`). **State changes** about the work always go; **nudges** go only when high, and while 2 or more tasks are in progress only about those tasks (below). The person's words, requests, `init` and `triage` go as in full |
-| **off**    | nothing: everything is held, the person's words too, and GitHub is not polled (what "off" was)                                                                                                                                                                                                                   |
+| **off**    | the person's answers (`escalation_answered`, `escalation.human_direct`), as in full; everything else is held, requests too, and GitHub is not polled. Timers are off: one that comes due (a wait's `--at` too) is dropped, not sent on turning on                                                                |
 
 - **A batch** is the pending lines and the standing `needs_action` lines,
   the message that has the orchestrator act on its agents (or itself). In
@@ -1131,8 +1135,8 @@ waiting on the orchestrator. So it tells two kinds of line apart
   held by the interval, the pickup wait, the priority gate or the tasks in
   progress, in full and saving alike (`onTime`). What the orchestrator
   wakes for often touches other people (a Slack thread, someone's
-  question), so a late wake-up has consequences outside DevHub. Only off
-  holds it (below).
+  question), so a late wake-up has consequences outside DevHub. Off drops
+  it (below).
 
 - **A state change** — something happened to work in progress, or to work
   waiting on the orchestrator: an agent finished its turn or stopped, is on
@@ -1191,11 +1195,21 @@ Every kind of line the dispatcher handles, explicitly:
   does not sit waiting for the orchestrator.
 - **The preview** shows only what would go; with nothing to send and lines
   waiting it says `saving: N reminders wait for the next triage`.
-- **Off holds the wake-ups too.** Off holds everything: a timer keeps
-  firing while off, and its `timer.elapsed` waits pending (one line per
-  timer: a timer that fired several times is one line), as does a wait's
-  `due`; turning on sends them with the rest, in the one batch. A wake-up
-  that came while off is late by as long as it was off.
+- **Off turns the timers off.** A timer keeps its schedule while off, but
+  each firing is dropped (`orchestrator events`: `dropped`, reason `off`),
+  and turning on sends nothing about the ones missed: the next firing goes
+  on its time — the settings' timers and `timer set`'s alike, which repeat.
+  A wait's `--at` is one-shot: one that came while off is dropped as well
+  (not re-armed, not sent on turning on), and `orchestrator timer list`
+  shows it under **Expired while off** (escalation, title, its time) for as
+  long as that wait stands, so the orchestrator can see it missed it and
+  look at the escalation itself. A wake-up for something outside DevHub (a
+  Slack thread at 15:00) is worth little hours late, and the person turned
+  the orchestrator off. What moved about a wait's subjects
+  (`subjects_changed`) is a state change, and waits like everything else.
+- **The person's answers go while off.** `escalation_answered` and
+  `escalation.human_direct` are delivered as in full: an answer is what the
+  work was waiting for. Their requests (the board's +) still wait for on.
 
 **The automatic switch.** While the mode is **full** and any plan window of
 the usage readout — Claude's 5-hour or weekly, Codex's when it is read —
@@ -1280,8 +1294,8 @@ sends it, Esc closes it and gives the keyboard back to the +.
 
 - **It is the person's words**: a `request` event, delivered at once as its
   own message (`req=3 人からの依頼 (…):` and, on the next line, the text as
-  typed), like an answer — held only while the mode is off, and never by
-  saving's gates. One sent with no orchestrator running waits for one, and
+  typed) — held while the mode is off (unlike an answer, which goes), and
+  never by saving's gates. One sent with no orchestrator running waits for one, and
   goes once it starts, as do the ones kept from before a
   restart.
 - **It is on the board at once**, in a **依頼** lane above 要回答 (there only
@@ -1559,7 +1573,7 @@ devhub --tell memo set SUBJECT -|TEXT | list | clear SUBJECT   # a subject's one
 devhub --tell orchestrator pause | resume          # mode off (GitHub polling suspended) / mode full (delivers at once, as one message)
 devhub --tell orchestrator events [--last N] [--json]   # recent events and what came of them
 devhub --tell orchestrator emit --type custom.NAME --text TEXT|-
-devhub --tell orchestrator timer list | set NAME INTERVAL | clear NAME   # for this session
+devhub --tell orchestrator timer list | set NAME INTERVAL | clear NAME   # for this session; list also shows waits' --at expired while off
 devhub --tell usage [--json]                        # each CLI's plan windows (%, reset), as the Sidebar has them, with their age
 devhub --tell focus orchestrator                    # the only one that changes the screen
 ```
