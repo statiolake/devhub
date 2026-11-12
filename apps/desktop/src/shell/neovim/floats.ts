@@ -605,6 +605,33 @@ export function hugClip(
 }
 
 /**
+ * The shape a page's frame gives a bare float it claimed (`claimFloats`):
+ * the cells of the float its frame is round (`framedBy`), `radius` round
+ * at every corner, in CSS pixels — or `undefined` for a float no page
+ * frames, or whose frame float is not on screen. A framed view's line runs
+ * round that shape, just outside the frame float's cells; its windows'
+ * cells are square, so each is cut by the shape (`hugClip`), or their
+ * corners would cover the line where it bends in.
+ */
+export function claimedShape(
+  box: GridBox,
+  boxes: readonly GridBox[],
+  cell: { readonly width: number; readonly height: number },
+  radius: number,
+): FrameShape | undefined {
+  if (box.bare !== true || box.framedBy === undefined) return undefined;
+  const frame = boxes.find((b) => b.float && b.win === box.framedBy);
+  if (!frame) return undefined;
+  return {
+    x: frame.col * cell.width,
+    y: frame.row * cell.height,
+    w: frame.width * cell.width,
+    h: frame.height * cell.height,
+    radii: { tl: radius, tr: radius, br: radius, bl: radius },
+  };
+}
+
+/**
  * Where the right edge of a framed menu with a scrollbar beside it is, in
  * cells of grid 1, or `undefined` when it has none. blink.cmp and nvim-cmp
  * draw a menu's scrollbar as one-column floats on the menu's last column

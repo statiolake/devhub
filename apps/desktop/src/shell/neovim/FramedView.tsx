@@ -307,7 +307,10 @@ function FrameParts({
   );
   // The frame's windows are bare (`claimFloats`): its line and shadow are
   // the page's, under the grids round the frame float, so the preview's
-  // cells over the frame never hide them.
+  // cells over the frame never hide them. The line is round at the
+  // corners, bending in over the frame float's cells there: the panel is
+  // as round, and the painter cuts the windows' cells at the same shape
+  // (`claimedShape`), so nothing square covers it.
   const edge = (
     <div
       className="nvim-view-frame-edge"

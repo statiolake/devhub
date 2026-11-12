@@ -471,19 +471,23 @@ export class NeovimEditor {
     return this.boxes;
   }
 
-  /** The windows a page draws the chrome of (`claimFloats`). */
-  private claimed: ReadonlySet<number> = new Set();
+  /**
+   * The windows a page draws the chrome of, each with the window of the
+   * float its frame is round (`claimFloats`).
+   */
+  private claimed: ReadonlyMap<number, number> = new Map();
 
   /**
    * Claim the floats of these windows for the page (a framed view's): the
-   * painter draws them bare, as their cells, from the next paint.
+   * painter draws them bare, as their cells cut at the rounded frame of
+   * the float each maps to, from the next paint.
    */
-  claimWindows(wins: ReadonlySet<number>): void {
+  claimWindows(wins: ReadonlyMap<number, number>): void {
     const same =
       wins.size === this.claimed.size &&
-      [...wins].every((w) => this.claimed.has(w));
+      [...wins].every(([w, frame]) => this.claimed.get(w) === frame);
     if (same) return;
-    this.claimed = new Set(wins);
+    this.claimed = new Map(wins);
     this.pending.layout = true;
     if (this.frame === 0) {
       this.frame = requestAnimationFrame(() => {

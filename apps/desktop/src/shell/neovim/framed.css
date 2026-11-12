@@ -6,9 +6,13 @@
  * window between the parts is Neovim's cells, over the frame.
  */
 
+/* Round as its edge: square, its ground would cover the line where the
+   edge bends in at a corner (the frame's windows are cut the same way,
+   `claimedShape`). */
 .nvim-view-frame {
   position: absolute;
   overflow: hidden;
+  border-radius: var(--float-radius, 4px);
   background: var(--float-ground, var(--frame-ground));
   color: var(--float-ink, var(--frame-ink));
   font: var(--nvim-ui-size, 12px) / 1.45 var(--nvim-ui-font);

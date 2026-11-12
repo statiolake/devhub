@@ -1111,7 +1111,11 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   their cells bare, with none of a float's frame, padding or shadow, and
   the frame draws its own line and shadow round the frame float (a
   `shadow` part under its grid, not cut by it), so the preview's cells
-  never cover the title above them or the hint row. snacks is
+  never cover the title above them or the hint row. That line is round at
+  the corners, where it bends in over the frame float's cells: the page's
+  panel is as round, and the painter cuts each claimed window's cells at
+  the frame float's rounded shape (`claimedShape`), or their square
+  corners would cover the line's arc there. snacks is
   drawn this way by
   [snacks-ui.devhub](https://github.com/statiolake/snacks-ui.devhub),
   outside devhub.nvim (`native-picker.md`).

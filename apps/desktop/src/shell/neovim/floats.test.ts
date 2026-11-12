@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
+  claimedShape,
   floatClusters,
   framePieces,
   hugClip,
@@ -9,7 +11,7 @@ import {
   withRightLine,
 } from "./floats";
 import { frameGeometry } from "./frame";
-import type { GridBox } from "./redraw";
+import { claimFloats, type GridBox } from "./redraw";
 
 const float = (
   grid: number,
@@ -196,5 +198,74 @@ describe("a float without a border, its frame on its cells", () => {
     const inside = insideLines(m, geo(menu).widths);
     expect(inside.y + inside.h).toBe(11 * 16);
     expect(inside.x).toBe(m.x + geo(menu).widths.left);
+  });
+});
+
+describe("a framed view's windows, cut at its frame (`claimedShape`)", () => {
+  // snacks-ui.devhub's picker as DevHub drew it: the frame float (the
+  // layout's root box, no border) and the preview over it at its right
+  // edge, both claimed by the page. The page's line runs just outside the
+  // frame float's cells, round at the corners; the bare canvases were
+  // square, their corner cells over the line where it bends in, so each
+  // corner lost its arc once the claim landed (the painter's own rounded
+  // frame, drawn until then, was right).
+  const cell = { width: 8, height: 15 };
+  const root = float(2, 1, 7, 54, 25, { win: 1001, z: 50 });
+  const preview = float(3, 3, 37, 24, 21, { win: 1003, z: 51 });
+  const other = float(4, 30, 0, 10, 3, { win: 1004 });
+  const boxes = claimFloats(
+    [root, preview, other],
+    new Map([
+      [1001, 1001],
+      [1003, 1001],
+    ]),
+  );
+  const [rootBox, previewBox, otherBox] = boxes as [GridBox, GridBox, GridBox];
+
+  it("is the frame float's cells, round at every corner", () => {
+    const want = {
+      x: 7 * 8,
+      y: 1 * 15,
+      w: 54 * 8,
+      h: 25 * 15,
+      radii: { tl: 4, tr: 4, br: 4, bl: 4 },
+    };
+    expect(claimedShape(rootBox, boxes, cell, 4)).toEqual(want);
+    // A window of the frame inside it is cut at the frame's corners too,
+    // not its own: the preview at the right edge reaches them.
+    expect(claimedShape(previewBox, boxes, cell, 4)).toEqual(want);
+  });
+
+  it("cuts the frame float's canvas round, in its own coordinates", () => {
+    const shape = claimedShape(rootBox, boxes, cell, 4);
+    expect(shape).toBeDefined();
+    if (!shape) return;
+    // The canvas at the frame float's cells: the path starts 4px in, and
+    // every corner is an arc of radius 4.
+    const clip = hugClip(shape, { x: 7 * 8, y: 15 });
+    expect(clip.startsWith('path("M4 0L428 0A4 4 0 0 1 432 4')).toBe(true);
+    expect(clip.match(/A4 4 0 0 1/g)).toHaveLength(4);
+  });
+
+  it("leaves a float no page claimed, or one whose frame is gone, alone", () => {
+    expect(claimedShape(otherBox, boxes, cell, 4)).toBeUndefined();
+    expect(claimedShape(previewBox, [previewBox], cell, 4)).toBeUndefined();
+  });
+
+  it("is as round as the panel and the line the page draws", () => {
+    const css = readFileSync(
+      new URL("./framed.css", import.meta.url),
+      "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
+    const radiusOf = (selector: string) =>
+      new RegExp(
+        `${selector.replace(/[.-]/g, "\\$&")}\\s*\\{[^}]*border-radius:\\s*([^;]+);`,
+      ).exec(css)?.[1];
+    // The edge's line bends in at the corners: a square panel's ground
+    // would cover it there.
+    expect(radiusOf(".nvim-view-frame")).toBe("var(--float-radius, 4px)");
+    expect(radiusOf(".nvim-view-frame-edge")).toBe(
+      radiusOf(".nvim-view-frame"),
+    );
   });
 });

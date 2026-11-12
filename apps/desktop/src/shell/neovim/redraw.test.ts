@@ -476,12 +476,20 @@ describe("claimFloats", () => {
 
   it("makes the floats of claimed windows bare, and nothing else", () => {
     const boxes = [box(2, 1000, false), box(3, 1001, true), box(4, 1002, true)];
-    const out = claimFloats(boxes, new Set([1000, 1001]));
+    const out = claimFloats(
+      boxes,
+      new Map([
+        [1000, 1001],
+        [1001, 1001],
+      ]),
+    );
     // A window that is not a float is never bare: its pane is Neovim's.
     expect(out.map((b) => b.bare === true)).toEqual([false, true, false]);
+    // A claimed float knows the float its page's frame is round.
+    expect(out[1]?.framedBy).toBe(1001);
     // Unclaimed floats keep their frame, padding and shadow.
     expect(out[2]).toBe(boxes[2]);
-    expect(claimFloats(boxes, new Set())).toEqual(boxes);
+    expect(claimFloats(boxes, new Map())).toEqual(boxes);
   });
 });
 

@@ -1102,24 +1102,34 @@ export interface GridBox {
    * panel of DevHub's round it.
    */
   readonly bare?: boolean;
+  /**
+   * A bare float a page frames with others (a framed view's windows): the
+   * window of the float the page's frame is round. Its rounded shape cuts
+   * this float's cells (`claimedShape`), as the page's frame and line are
+   * round at its corners.
+   */
+  readonly framedBy?: number;
 }
 
 /**
  * The boxes, with the floats whose windows `claimed` names bare: a page
  * draws their chrome (a framed `gui.view`'s frame, query, list and
  * preview windows), so the painter draws their cells and no frame,
- * padding or shadow of its own, as for a tmux popup.
+ * padding or shadow of its own, as for a tmux popup. `claimed` maps each
+ * window to the window of the float its page's frame is round
+ * (`framedBy`).
  */
 export function claimFloats(
   boxes: readonly GridBox[],
-  claimed: ReadonlySet<number>,
+  claimed: ReadonlyMap<number, number>,
 ): GridBox[] {
   if (claimed.size === 0) return [...boxes];
-  return boxes.map((b) =>
-    b.float && b.win !== undefined && claimed.has(b.win)
-      ? { ...b, bare: true }
-      : b,
-  );
+  return boxes.map((b) => {
+    const frame = b.win !== undefined ? claimed.get(b.win) : undefined;
+    return b.float && frame !== undefined
+      ? { ...b, bare: true, framedBy: frame }
+      : b;
+  });
 }
 
 /**

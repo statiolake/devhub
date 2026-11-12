@@ -44,6 +44,7 @@ import {
 import { placeDecor, wordsOf, type Decor } from "./decor";
 import {
   floatClusters,
+  claimedShape,
   cutClip,
   frameCuts,
   hugClip,
@@ -1269,6 +1270,13 @@ export class GridPainter {
       const part = scrollbars.get(box.grid);
       const cut = cuts.get(box.grid);
       const hug = hugs.get(box.grid);
+      // A framed view's window: cut at its page's rounded frame.
+      const claimed = claimedShape(
+        box,
+        shown,
+        this.metrics,
+        this.floatRadius(),
+      );
       canvas.style.clipPath =
         part === "thumb"
           ? this.thumbClip()
@@ -1284,7 +1292,12 @@ export class GridPainter {
                     x: (box.col + crop.left) * this.metrics.width,
                     y: (box.row + crop.top) * this.metrics.height,
                   })
-                : "";
+                : claimed !== undefined
+                  ? hugClip(claimed, {
+                      x: (box.col + crop.left) * this.metrics.width - bleed.l,
+                      y: (box.row + crop.top) * this.metrics.height - bleed.t,
+                    })
+                  : "";
       // A blank blended float (a picker's or a dialog's backdrop) is one
       // tint over everything: a layer of its colour, no bitmap to paint.
       const backdrop = box.float ? this.backdropOf(state, box) : undefined;

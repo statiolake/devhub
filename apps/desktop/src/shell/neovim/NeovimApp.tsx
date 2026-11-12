@@ -560,10 +560,15 @@ export function NeovimSurface({
     release();
   }, [settings, appearance, release]);
 
-  // A framed view's windows are drawn bare: the frame is the view's chrome.
+  // A framed view's windows are drawn bare: the frame is the view's chrome,
+  // and their cells are cut at its rounded corners (`claimedShape`).
   useEffect(() => {
     editorRef.current?.claimWindows(
-      new Set(layers.placedFrames.flatMap((frame) => frame.wins)),
+      new Map(
+        layers.placedFrames.flatMap((frame) =>
+          frame.wins.map((win) => [win, frame.win] as const),
+        ),
+      ),
     );
   }, [layers.placedFrames]);
 
