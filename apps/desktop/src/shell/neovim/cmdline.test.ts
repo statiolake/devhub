@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cmdlineLayout, textCells } from "./cmdline";
+import { cmdlineByteCell, cmdlineLayout, textCells } from "./cmdline";
 
 const at = (
   text: string,
@@ -111,5 +111,16 @@ describe("the command line on cells", () => {
     expect(textCells("Name: ")).toBe(6);
     expect(textCells("名前: ")).toBe(6);
     expect(textCells(":")).toBe(1);
+  });
+
+  it("finds the cell of a byte of the text, for what lines up with it", () => {
+    const line = { content: [[0, "e 漢字/ab"]] as const, indent: 0 };
+    expect(cmdlineByteCell(line, 40, 0)).toEqual({ row: 0, col: 0 });
+    // after "e " and the two wide characters (3 bytes, 2 cells each)
+    expect(cmdlineByteCell(line, 40, 8)).toEqual({ row: 0, col: 6 });
+    expect(cmdlineByteCell(line, 40, 9)).toEqual({ row: 0, col: 7 });
+    // past the end: the cell after the text; wrapped: its row's cell
+    expect(cmdlineByteCell(line, 40, 99)).toEqual({ row: 0, col: 9 });
+    expect(cmdlineByteCell(line, 4, 9)).toEqual({ row: 1, col: 3 });
   });
 });

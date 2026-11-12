@@ -58,7 +58,12 @@ import {
   type MsgChunk,
   type NeovimUiState,
 } from "./redraw";
-import { cmdlineLayout, cmdlineLead, textCells } from "./cmdline";
+import {
+  cmdlineByteCell,
+  cmdlineLayout,
+  cmdlineLead,
+  textCells,
+} from "./cmdline";
 import { routeMessages } from "./messages";
 import {
   ICON_FAMILY,
@@ -72,7 +77,13 @@ import {
 import { CompletionMenu } from "../completion/CompletionMenu";
 import { TabStrip } from "./TabStrip";
 import { InlineImages, Toasts } from "./DecorationViews";
-import { GuiViews, InlineCards, Popups, type LayerHost } from "./LayerViews";
+import {
+  GuiViews,
+  InlineCards,
+  Popups,
+  type CmdlineAnchor,
+  type LayerHost,
+} from "./LayerViews";
 import { GuiFrames } from "./FramedView";
 import {
   LAYER_EVENTS,
@@ -823,6 +834,19 @@ export function NeovimSurface({
         }
       : undefined;
 
+  // The command line's box, for popups anchored to it (`anchor = 'cmdline'`).
+  const typed = nvim?.cmdline.at(-1);
+  let cmdlineAnchor: CmdlineAnchor | undefined;
+  if (typed && editor && cell) {
+    const place = editor.cmdlinePlace();
+    cmdlineAnchor = {
+      top: place.top,
+      height: place.height,
+      x: (byte) =>
+        (place.col + cmdlineByteCell(typed, place.cols, byte).col) * cell.width,
+    };
+  }
+
   return (
     <div
       className="neovim-surface"
@@ -981,6 +1005,7 @@ export function NeovimSurface({
                   layers={layers}
                   host={layerHost}
                   area={editor.areaSize()}
+                  cmdline={cmdlineAnchor}
                 />
               </>
             ) : null}

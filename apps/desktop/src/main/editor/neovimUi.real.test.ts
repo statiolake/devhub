@@ -1151,6 +1151,66 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		h.ui.client.close();
 	});
 
+	it("puts a popup against the command line's box, and closes it with the command line", async () => {
+		const h = await attached(60, 20);
+		const waitFor = async (check: () => boolean, what: string) => {
+			const deadline = Date.now() + 3_000;
+			while (!check()) {
+				if (Date.now() > deadline)
+					throw new Error(`timed out waiting for ${what}`);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+		};
+		const all = (kind: string) => h.gui.events.filter((e) => e.kind === kind);
+		const last = (kind: string) =>
+			all(kind).at(-1)?.payload as Record<string, unknown> | undefined;
+		const popups = (): Record<string, unknown>[] => {
+			const v = last("layers")?.["popups"];
+			return Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
+		};
+		const lua = (code: string) => h.ui.request("nvim_exec_lua", [code, []]);
+		expect(await lua("return require('devhub_gui').popup_cmdline")).toBe(true);
+		// No command line: nothing to stand on.
+		expect(
+			await lua(
+				"return require('devhub_gui').popup{ anchor = 'cmdline', component = { type = 'text', text = 'x' } } == nil",
+			),
+		).toBe(true);
+		await h.ui.request("nvim_input", [":echo abcdef"]);
+		await waitFor(() => h.state.cmdline.length > 0, "the command line");
+		await lua(`_G.closed = 0
+			_G.cp = require('devhub_gui').popup{ anchor = { cmdline = 5 }, close_on = {},
+				component = { type = 'text', text = 'abcdef', anchor = true },
+				on_close = function() _G.closed = _G.closed + 1 end }
+			_G.cp:focus()`);
+		await waitFor(() => popups().length === 1, "the popup placed");
+		// The byte it is lined up with; the page knows where the box is.
+		expect(popups()[0]).toMatchObject({ cmdline: 5, focused: false });
+		expect(popups()[0]?.["win"]).toBeUndefined();
+		// Up from the command line, as Neovim's wildmenu.
+		expect(last("popup")).toMatchObject({ placement: "above" });
+		// Past the text: its end.
+		await lua(
+			"_G.far = require('devhub_gui').popup{ anchor = { cmdline = 99 }, placement = 'below', close_on = {}, component = { type = 'text', text = 'y' } }",
+		);
+		await waitFor(() => popups().length === 2, "the second placed");
+		expect(popups().map((p) => p["cmdline"])).toEqual(
+			expect.arrayContaining([5, 11]),
+		);
+		expect(last("popup")).toMatchObject({ placement: "below" });
+		// Typing keeps it; leaving the command line closes both.
+		await h.ui.request("nvim_input", ["g"]);
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(all("popup_clear")).toHaveLength(0);
+		await h.ui.request("nvim_input", ["<Esc>"]);
+		await waitFor(() => all("popup_clear").length === 2, "closed");
+		expect(await lua("return { _G.closed, _G.cp:is_open() }")).toEqual([
+			1,
+			false,
+		]);
+		h.ui.client.close();
+	});
+
 	it("keeps a popup where it was when text goes in at its anchor", async () => {
 		const h = await attached(60, 20);
 		const waitFor = async (check: () => boolean, what: string) => {

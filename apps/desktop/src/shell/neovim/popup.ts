@@ -23,7 +23,11 @@ export const POPUP_GAP = 2;
 export const POPUP_MARGIN = 4;
 
 export function placePopup(input: {
-  /** The anchor cell's top-left, and the cell's height. */
+  /**
+   * The anchor cell's top-left, and the cell's height — or the command
+   * line's box (`anchor = 'cmdline'`): its top, and its whole height, so
+   * the popup is above or under it and never over it.
+   */
   readonly anchor: { readonly x: number; readonly y: number };
   readonly cellHeight: number;
   /** The content's size at the popup's width. */

@@ -562,7 +562,8 @@ local function popup_unmap(p)
 end
 
 local function popup_focus(p, on)
-  if not M._popups[p.id] or (p.focused == true) == (on ~= false) then return end
+  -- A popup on the command line has no buffer to map its keys on.
+  if not M._popups[p.id] or p.cmdline or (p.focused == true) == (on ~= false) then return end
   p.focused = on ~= false
   if p.focused then
     if not vim.api.nvim_buf_is_valid(p.buf) then return end
@@ -579,8 +580,8 @@ local function popup_focus(p, on)
   schedule_place()
 end
 
---- gui.popup{ anchor = 'cursor' | { buf, lnum, col }, placement = 'below' |
---- 'above' | 'auto', component, max_width?, max_height?, min_width? (cells),
+--- gui.popup{ anchor = 'cursor' | { buf, lnum, col } | 'cmdline' | { cmdline = col },
+--- placement = 'below' | 'above' | 'auto', component, max_width?, max_height?, min_width? (cells),
 --- close_on = { events }, keys = { [lhs] = fn(handle) }, text?, on_close? }: a popup
 --- DevHub draws at a buffer position (a hover), with no Neovim window: it
 --- follows the position as the window scrolls, flips above when there is no
@@ -593,11 +594,26 @@ end
 --- :pane(name, children) (a stack{ pane = name }'s content, alone), :focus(),
 --- :scroll(n | 'half' | '-half' | 'page' | '-page' | 'top' | 'bottom', pane?)
 --- (a stack{ pane = name } inside, or the popup), :close(), :is_open().
+--- anchor = 'cmdline' (or { cmdline = col }, a 0-based byte of the command
+--- line's text) puts it against DevHub's command-line box instead: above it
+--- (placement 'below': under it) and never over it, its anchored node over
+--- that byte's cell; it follows the box and closes with the command line.
+--- Nil when no command line is being typed.
+-- What devhub.nvim's gui.has_cmdline_popup() asks: this DevHub takes
+-- anchor = 'cmdline'.
+M.popup_cmdline = true
 function M.popup(opts)
   opts = opts or {}
   local win = vim.api.nvim_get_current_win()
   local buf, lnum, col
-  if type(opts.anchor) == "table" then
+  local cmdline = opts.anchor == "cmdline"
+    or (type(opts.anchor) == "table" and opts.anchor.cmdline ~= nil)
+  if cmdline then
+    if vim.fn.getcmdtype() == "" then return nil end
+    local at = type(opts.anchor) == "table" and tonumber(opts.anchor.cmdline) or 0
+    col = math.max(0, math.min(math.floor(at), #vim.fn.getcmdline()))
+    win = nil
+  elseif type(opts.anchor) == "table" then
     buf = buf_of(opts.anchor.buf or opts.anchor[1])
     lnum = opts.anchor.lnum or opts.anchor[2] or 1
     col = opts.anchor.col or opts.anchor[3] or 0
@@ -610,20 +626,29 @@ function M.popup(opts)
     local cursor = vim.api.nvim_win_get_cursor(win)
     lnum, col = cursor[1], cursor[2]
   end
-  local count = vim.api.nvim_buf_line_count(buf)
-  lnum = math.max(1, math.min(lnum, count))
-  local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
-  col = math.max(0, math.min(col, #line))
+  if not cmdline then
+    local count = vim.api.nvim_buf_line_count(buf)
+    lnum = math.max(1, math.min(lnum, count))
+    local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
+    col = math.max(0, math.min(col, #line))
+  end
+  local placement = (opts.placement == "above" or opts.placement == "auto") and opts.placement or "below"
+  if cmdline then
+    -- As Neovim's own wildmenu: up from the command line.
+    placement = opts.placement == "below" and "below" or "above"
+  end
   local p = { id = next_id(), buf = buf, win = win, component = opts.component, text = opts.text,
-    placement = (opts.placement == "above" or opts.placement == "auto") and opts.placement or "below",
+    cmdline = cmdline or nil, col = cmdline and col or nil, placement = placement,
     max_width = type(opts.max_width) == "number" and opts.max_width or nil,
     max_height = type(opts.max_height) == "number" and opts.max_height or nil,
     min_width = type(opts.min_width) == "number" and opts.min_width or nil,
     keys = opts.keys, on_close = opts.on_close }
   -- Left gravity: text put in at the anchor (typing at the cursor, a
   -- completion's preview) goes after it, and the popup stays where it was.
-  p.mark = vim.api.nvim_buf_set_extmark(buf, ns, lnum - 1, col, { right_gravity = false })
-  p.at = vim.api.nvim_win_get_cursor(win)
+  if not cmdline then
+    p.mark = vim.api.nvim_buf_set_extmark(buf, ns, lnum - 1, col, { right_gravity = false })
+    p.at = vim.api.nvim_win_get_cursor(win)
+  end
   M._popups[p.id] = p
   local handle = { id = p.id, buf = buf, win = win }
   p.handle = handle
@@ -677,14 +702,14 @@ function M.popup(opts)
   function handle.close() M.popup_close(p.id) end
   function handle.is_open() return M._popups[p.id] == p end
   p.group = vim.api.nvim_create_augroup("devhub_gui_popup_" .. p.id, { clear = true })
-  local events = type(opts.close_on) == "table" and opts.close_on or CLOSE_ON
+  local events = type(opts.close_on) == "table" and opts.close_on or (cmdline and {} or CLOSE_ON)
   for _, ev in ipairs(events) do
     local buffer_event = ev:match("^Cursor") or ev:match("^Insert") or ev:match("^Buf")
     pcall(vim.api.nvim_create_autocmd, ev, { group = p.group, buffer = buffer_event and buf or nil,
       callback = function()
         -- A CursorMoved still owed for a move before the popup opened is
         -- not a move; the focused popup's own keys move nothing.
-        if ev:match("^CursorMoved") and vim.api.nvim_get_current_win() == win then
+        if ev:match("^CursorMoved") and win and vim.api.nvim_get_current_win() == win then
           local now = vim.api.nvim_win_get_cursor(win)
           if now[1] == p.at[1] and now[2] == p.at[2] then return end
         end
@@ -692,8 +717,13 @@ function M.popup(opts)
         return true
       end })
   end
-  vim.api.nvim_create_autocmd({ "WinClosed" }, { group = p.group, pattern = tostring(win),
-    callback = function() M.popup_close(p.id) return true end })
+  if cmdline then
+    vim.api.nvim_create_autocmd("CmdlineLeave", { group = p.group,
+      callback = function() M.popup_close(p.id) return true end })
+  else
+    vim.api.nvim_create_autocmd({ "WinClosed" }, { group = p.group, pattern = tostring(win),
+      callback = function() M.popup_close(p.id) return true end })
+  end
   send_popup(p)
   schedule_place()
   return handle
@@ -707,7 +737,7 @@ function M.popup_close(id)
   M._actions["popup:" .. id] = nil
   popup_unmap(p)
   pcall(vim.api.nvim_del_augroup_by_id, p.group)
-  pcall(vim.api.nvim_buf_del_extmark, p.buf, ns, p.mark)
+  if p.mark then pcall(vim.api.nvim_buf_del_extmark, p.buf, ns, p.mark) end
   event("popup_clear", { id = id })
   schedule_place()
   if type(p.on_close) == "function" then pcall(p.on_close, p.handle) end
@@ -912,9 +942,20 @@ function M._place_layers()
     end
   end
   local tab = vim.api.nvim_get_current_tabpage()
+  local typing = vim.fn.getcmdtype() ~= ""
   for id, p in pairs(M._popups) do
-    local ok, pos = pcall(vim.api.nvim_buf_get_extmark_by_id, p.buf, ns, p.mark, {})
-    if not ok or not pos[1] or not vim.api.nvim_win_is_valid(p.win) then
+    local ok, pos
+    if not p.cmdline then
+      ok, pos = pcall(vim.api.nvim_buf_get_extmark_by_id, p.buf, ns, p.mark, {})
+    end
+    if p.cmdline then
+      -- Against the command line's box: the page knows where it is.
+      if typing then
+        table.insert(popups, { id = id, cmdline = p.col, focused = false })
+      else
+        M.popup_close(id)
+      end
+    elseif not ok or not pos[1] or not vim.api.nvim_win_is_valid(p.win) then
       M.popup_close(id)
     elseif vim.api.nvim_win_get_tabpage(p.win) == tab and vim.api.nvim_win_get_buf(p.win) == p.buf then
       local info = vim.fn.getwininfo(p.win)[1]

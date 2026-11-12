@@ -135,3 +135,23 @@ export function cmdlineLead(
 export function wrappedRows(text: string, width: number): number {
   return Math.max(1, Math.ceil(textCells(text) / Math.max(1, width)));
 }
+
+/**
+ * The cell of the character at a byte of the text (0-based; the first at
+ * or after it, the cell after the text past its end), laid out as
+ * `cmdlineLayout` lays the text: where something lined up with that byte
+ * (a completion's word, `gui.popup{ anchor = { cmdline = col } }`) goes.
+ */
+export function cmdlineByteCell(
+  line: {
+    readonly content: Chunks;
+    readonly indent: number;
+  },
+  width: number,
+  byte: number,
+): { readonly row: number; readonly col: number } {
+  return cmdlineLayout(
+    { content: line.content, indent: line.indent, pos: Math.max(0, byte) },
+    width,
+  ).caret;
+}

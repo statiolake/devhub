@@ -98,10 +98,16 @@ export interface PopupContent {
   readonly maxHeight: number | undefined;
 }
 
-/** A popup's anchor: its cell, from its window's top-left. */
+/**
+ * A popup's anchor: its cell, from its window's top-left — or, for one
+ * anchored to the command line (`anchor = 'cmdline'`), the byte of the
+ * command line's text it is lined up with (`cmdline`; `win`, `row` and
+ * `col` are then 0): the page knows where the box and that byte's cell are.
+ */
 export interface PopupPlace {
   readonly id: number;
   readonly win: number;
+  readonly cmdline?: number;
   readonly row: number;
   /** As an inline card's (`riders.ts`). */
   readonly base: number;
@@ -474,8 +480,22 @@ export function applyLayerEvent(
           const n = r ? ints(r, ["id", "width", "full"] as const) : undefined;
           return n && n.width > 0 ? [n] : [];
         }),
-        placedPopups: luaList(p["popups"]).flatMap((v) => {
+        placedPopups: luaList(p["popups"]).flatMap((v): PopupPlace[] => {
           const r = rec(v);
+          const id = r ? int(r, "id") : undefined;
+          const byte = r ? int(r, "cmdline") : undefined;
+          if (id !== undefined && byte !== undefined)
+            return [
+              {
+                id,
+                win: 0,
+                row: 0,
+                col: 0,
+                base: 0,
+                cmdline: Math.max(0, byte),
+                focused: false,
+              },
+            ];
           const n = r
             ? ints(r, ["id", "win", "row", "col"] as const)
             : undefined;

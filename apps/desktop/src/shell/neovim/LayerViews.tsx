@@ -491,30 +491,60 @@ function InlineCard({
  * scrolls; taller content scrolls inside, with a fade at the clipped edge.
  * Neovim keeps the keys: a focused popup scrolls as Lua asks (j/k, <C-d>,
  * gg/G: `popupScrolls`); the wheel scrolls it here.
+ *
+ * A popup anchored to the command line (`anchor = 'cmdline'`) stands on
+ * DevHub's command-line box instead of a cell: above it (or under it), never
+ * over it — the box, its padding and line are its anchor's "cell" — its
+ * anchored node over the cell of the text's byte it names, following the
+ * box as it moves or grows; not drawn while no command line is shown.
  */
 export function Popups({
   layers,
   host,
   area,
+  cmdline,
 }: {
   readonly layers: Layers;
   readonly host: LayerHost;
   /** The editor's size, in pixels. */
   readonly area: { readonly width: number; readonly height: number };
+  /**
+   * The command line's box (editor pixels) and where a byte of its text
+   * is across, while one is shown.
+   */
+  readonly cmdline?: CmdlineAnchor | undefined;
 }) {
   useRide(host);
+  const { cell } = host;
   return (
     <>
       {layers.placedPopups.map((place) => {
         const content = layers.popups.get(place.id);
-        const box = host.boxes.find((b) => b.win === place.win);
-        if (!content || !box) return null;
+        if (!content) return null;
+        let anchor: PopupAnchor;
+        if (place.cmdline !== undefined) {
+          if (!cmdline) return null;
+          anchor = {
+            x: cmdline.x(place.cmdline),
+            y: cmdline.top,
+            height: cmdline.height,
+          };
+        } else {
+          const box = host.boxes.find((b) => b.win === place.win);
+          if (!box) return null;
+          anchor = {
+            x: (box.col + place.col) * cell.width,
+            y: (box.row + place.row) * cell.height,
+            height: cell.height,
+            ride: { win: place.win, base: place.base },
+          };
+        }
         return (
           <Popup
             key={place.id}
             content={content}
             place={place}
-            box={box}
+            anchor={anchor}
             host={host}
             area={area}
             scroll={layers.popupScrolls.get(place.id)}
@@ -523,6 +553,26 @@ export function Popups({
       })}
     </>
   );
+}
+
+/** The command line's box, for a popup anchored to it. */
+export interface CmdlineAnchor {
+  /** The box's top and height, in the editor's pixels. */
+  readonly top: number;
+  readonly height: number;
+  /** Where the cell of the text's byte `byte` (0-based) starts across. */
+  readonly x: (byte: number) => number;
+}
+
+/**
+ * What a popup stands on, in the editor's pixels: a cell (`height` the
+ * cell's, riding its window's text) or the command line's box.
+ */
+interface PopupAnchor {
+  readonly x: number;
+  readonly y: number;
+  readonly height: number;
+  readonly ride?: { readonly win: number; readonly base: number };
 }
 
 /**
@@ -574,14 +624,14 @@ export const POPUP_COLOURING_HOLD_MS = 400;
 function Popup({
   content,
   place,
-  box,
+  anchor,
   host,
   area,
   scroll,
 }: {
   readonly content: PopupContent;
   readonly place: PopupPlace;
-  readonly box: GridBox;
+  readonly anchor: PopupAnchor;
   readonly host: LayerHost;
   readonly area: { readonly width: number; readonly height: number };
   readonly scroll: PopupScroll | undefined;
@@ -674,14 +724,11 @@ function Popup({
     content.minWidth !== undefined
       ? Math.min(content.minWidth * cell.width, maxWidth)
       : undefined;
-  const anchorY = (box.row + place.row) * cell.height;
+  const anchorY = anchor.y;
   const layout = size
     ? placePopup({
-        anchor: {
-          x: (box.col + place.col) * cell.width - anchorDx,
-          y: anchorY,
-        },
-        cellHeight: cell.height,
+        anchor: { x: anchor.x - anchorDx, y: anchorY },
+        cellHeight: anchor.height,
         size,
         area,
         placement: content.placement,
@@ -707,9 +754,13 @@ function Popup({
     <div
       ref={root}
       className={`nvim-popup${place.focused ? " nvim-popup-focused" : ""}`}
-      data-ride-win={place.win}
-      data-ride-base={place.base}
-      data-ride-cut={`anchor:${String(anchorY - (layout?.top ?? 0))}`}
+      data-ride-win={anchor.ride?.win}
+      data-ride-base={anchor.ride?.base}
+      data-ride-cut={
+        anchor.ride
+          ? `anchor:${String(anchorY - (layout?.top ?? 0))}`
+          : undefined
+      }
       style={{
         left: layout?.left ?? 0,
         top: layout?.top ?? 0,

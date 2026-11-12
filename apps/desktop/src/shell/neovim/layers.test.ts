@@ -91,10 +91,13 @@ describe("buffer-backed GUI layers on the page", () => {
       popups: [
         { id: 4, win: 1000, row: 3, base: 0, col: 7, focused: true },
         { id: 5 },
+        // on the command line: the byte it lines up with
+        { id: 6, cmdline: 4, focused: false },
       ],
     });
     expect(state.placedPopups).toEqual([
       { id: 4, win: 1000, row: 3, base: 0, col: 7, focused: true },
+      { id: 6, win: 0, row: 0, col: 0, base: 0, cmdline: 4, focused: false },
     ]);
     state = applyLayerEvent(state, "popup_scroll", {
       id: 4,

@@ -1069,6 +1069,8 @@ local menu = gui.popup{ anchor = { buf, lnum, col }, min_width = 36, close_on = 
       ui.hstack{ ui.badge('f', { size = 'sm' }), ui.text('useState', { anchor = true, mono = true }) } },
     ui.stack{ pane = 'doc', max_height = 240, ui.md(doc) } } }
 menu:select(2); menu:pane('doc', ui.md(other)); menu:scroll(4, 'doc') -- the index; a pane alone
+local wild = gui.popup{ anchor = { cmdline = vim.fn.getcmdpos() - 1 }, close_on = {}, -- on the command line's box
+  component = ui.stack{ ui.stack{ band = 'PmenuSel', ui.text('restart', { anchor = true }) } } }
 local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },            -- a framed view: a picker
   items = function(lnum, line) return ui.text(line) end,                             -- or { node, heading }
   on_click = function(lnum, clicks) end, on_scroll = function(rows) end, on_rows = function(rows) end,
@@ -1170,6 +1172,25 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   `anchor = true` (the first) is lined up with the anchor's column: the
   popup moves left by the node's offset from its edge (`anchorOffset`), so
   a menu's words start under the word being typed.
+
+  A popup may stand on the **command line** instead: `anchor = 'cmdline'`,
+  or `{ cmdline = col }` with `col` a 0-based byte of the command line's
+  text (`getcmdline()`; `getcmdpos() - 1`, or where a completion's word
+  starts). DevHub draws the command line itself (`ext_cmdline`, in its box:
+  `cmdlinePlace`), so the popup's "cell" is the whole box, its padding and
+  line included: it goes above the box (`placement = 'below'` puts it
+  under), or on the other side when that has the room and this one does
+  not, and is never over it (`placePopup` with the box's top and height).
+  Its anchored node is over the cell that byte is drawn on (`cmdline.ts`'s
+  `cmdlineByteCell`, the layout the box draws its text with: wide
+  characters, the indent). Neovim sends only the byte (`layers`' entry
+  `{ id, cmdline = col }`); the page puts it against the box where it is
+  now, so it follows the box as it moves or grows (a wrapped line, a
+  prompt) and is not drawn while no command line is shown. It closes when
+  the command line does (`CmdlineLeave`); `close_on` defaults to nothing,
+  and it has no keys to be given (`:focus()` does nothing: the command line
+  has them). Outside a command line `gui.popup` answers nil. blink-ui.devhub
+  draws blink.cmp's command-line menu this way.
   `ui.badge(text, { size = 'sm' })` is a badge as tall as a dense row's
   text.
 
