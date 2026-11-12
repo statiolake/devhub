@@ -408,6 +408,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     devhub --tell session meta ID set state done
     devhub --tell agent resume ID --name "123 login fix"
     devhub --tell agent resume task=7 --prompt "レビューの指摘 2 件に対応して"
+    devhub --tell agent resume task=7 --model opus --prompt "原因がまだ分からないので、もう一度調べて"
     devhub --tell task new --title "500 エラーの原因調査" --status in_progress
     devhub --tell task link 9 https://github.com/OWNER/REPO/issues/140=起票した Issue
     devhub --tell task unlink 9 https://github.com/OWNER/REPO/issues/140
@@ -421,6 +422,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     devhub --tell task show 9
     devhub --tell task list
     devhub --tell agent new --workspace W --profile claude --gui --managed --task 9 --meta parent=ORCH --prompt -
+    devhub --tell agent new --workspace W --profile claude --gui --managed --task 9 --model haiku --meta parent=ORCH --prompt "CI の失敗ログを読んで要約して"
     devhub --tell --json sessions --all --meta parent=ORCH
     devhub --tell profiles
     devhub --tell issue actions
@@ -457,7 +459,8 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
    (\`[orchestrator.github] projects\`)。
 2. 既存のスキル: solve-task、generate-pr、request-review など、エージェントに
    渡すスキルやプロンプトはあるか。Issue action (\`issue actions\`) はどれを使うか。
-   プロファイル (\`profiles\`) と GUI / TUI。
+   プロファイル (\`profiles\`) と GUI / TUI。モデルの使い分け (\`--model haiku|sonnet|opus\`。
+   既定の選び方は憲章の 10) に、チームとしての上書きがあるか (例: レビューは必ず opus)。
 3. レビューと完了: 誰が何をレビューするか。「完了」とは何か (マージ? デプロイ?)。
    完了したエージェントやワークスペースをどうするか。
 4. 自律の範囲: 憲章の 7 (取り消せる判断は自分で決める、取り消せない・外に届く判断は聞く) の上で、

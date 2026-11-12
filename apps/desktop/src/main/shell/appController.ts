@@ -576,6 +576,11 @@ import {
 	taskManagerWindowIsFocused,
 } from "./taskManagerWindow.js";
 import { takeTaskReading } from "./taskManagerReading.js";
+import {
+	modelKindProblem,
+	modelOf,
+	withModel,
+} from "../../model/agentModel.js";
 import type {
 	TaskRevealWire,
 	TaskSnapshotWire,
@@ -1055,6 +1060,9 @@ export class AppController {
 			restore: (agentId, meta, managed) => {
 				this.restoreSessionMeta(parseAgentId(agentId), meta, managed);
 			},
+			profileArgs: (profileId) =>
+				this.config.agentProfiles.find((profile) => profile.id === profileId)
+					?.args,
 		});
 		if (sessionMeta.refused !== undefined) {
 			this.noteStartupFailure(
@@ -3160,6 +3168,7 @@ export class AppController {
 	private async resumeSessionElsewhere(
 		request: ResumeElsewhereWire,
 		focus?: IntentFocus,
+		model?: string,
 	): Promise<AppOutcomeWire> {
 		if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(request.session)) {
 			throw workspaceFailure(`${request.session} is not a session id.`);
@@ -3200,6 +3209,7 @@ export class AppController {
 				: { agentPresentation: agentPresentation(request.presentation) }),
 			resume: sessionId(request.session),
 			...(focus === undefined ? {} : { focus }),
+			...(model === undefined ? {} : { model }),
 		});
 		return outcomeWire(
 			settled,
@@ -5321,6 +5331,7 @@ export class AppController {
 					effect.profileId,
 					effect.extraArgs,
 					effect.resume,
+					effect.model,
 				);
 				return;
 			case "inspect_workspace":
@@ -5751,6 +5762,7 @@ export class AppController {
 		profileId: string,
 		extraArgs: readonly string[],
 		resume: string | undefined,
+		model?: string,
 	): Promise<void> {
 		this.accept({
 			type: "profile_resolution_completed",
@@ -5761,6 +5773,7 @@ export class AppController {
 				profileId,
 				extraArgs,
 				resume,
+				model,
 			),
 		});
 	}
@@ -5770,6 +5783,7 @@ export class AppController {
 		profileId: string,
 		extraArgs: readonly string[],
 		resume: string | undefined,
+		model?: string,
 	): Promise<AgentProfileResolution> {
 		const workspace = this.coordinator.model.workspace(workspaceId);
 		if (!workspace) {
@@ -5779,7 +5793,13 @@ export class AppController {
 				detail: "The workspace this Agent belongs to is no longer open.",
 			};
 		}
-		return this.profileOn(workspace.location, profileId, extraArgs, resume);
+		return this.profileOn(
+			workspace.location,
+			profileId,
+			extraArgs,
+			resume,
+			model,
+		);
 	}
 
 	/**
@@ -5791,6 +5811,7 @@ export class AppController {
 		profileId: string,
 		extraArgs: readonly string[],
 		resume: string | undefined,
+		model?: string,
 	): Promise<
 		| Extract<AgentProfileResolution, { kind: "resolved" }>
 		| {
@@ -5820,9 +5841,32 @@ export class AppController {
 				detail: `“${configured.display_name}” is a ${configured.kind} profile, which has no sessions to resume.`,
 			};
 		}
+		const kindProblem =
+			model === undefined
+				? undefined
+				: modelKindProblem(configured.kind, configured.id);
+		// A resumed session goes on on the model it ran on, when it was given
+		// one over its profile's (`session-meta.json`): every way back to it —
+		// the picker, `agent resume`, Reopen Closed, Continue in GUI — keeps it.
+		if (
+			model === undefined &&
+			resume !== undefined &&
+			configured.kind === "claude"
+		)
+			model = this.sessionMeta.index.of("claude", resume)?.model;
+		if (kindProblem !== undefined) {
+			return {
+				kind: "failed",
+				code: "agent_profile_unavailable",
+				detail: kindProblem,
+			};
+		}
 		// A resumed launch picks its session in place of any the profile's own
-		// arguments pick (`withSession`), so its record says exactly one.
-		const args = [...configured.args, ...extraArgs];
+		// arguments pick (`withSession`), so its record says exactly one; a
+		// launch that chose a model, its model in place of the profile's
+		// (`withModel`).
+		const given = [...configured.args, ...extraArgs];
+		const args = model === undefined ? given : withModel(given, model);
 		const resolved = await resolveAgentProfile(
 			runtimeFor(location),
 			{
@@ -7801,6 +7845,7 @@ export class AppController {
 				const kind = agent.profile.kind;
 				if (kind !== "claude" && kind !== "codex") return [];
 				const session = this.sessionMeta.sessionKnown(agent.id);
+				const model = this.sessionMeta.modelOf(agent);
 				return [
 					{
 						agentId: agent.id,
@@ -7808,6 +7853,7 @@ export class AppController {
 						named: agent.named,
 						profileId: agent.profile.id,
 						kind,
+						...(model === undefined ? {} : { model }),
 						presentation: agent.presentation === "gui" ? "gui" : "tui",
 						machine: location.kind === "ssh" ? `ssh:${location.host}` : "local",
 						folder: location.path,
@@ -8243,6 +8289,7 @@ export class AppController {
 					kind: profile.kind,
 					presentation: profile.presentation,
 					presentations: [...profile.presentations],
+					...(profile.model === undefined ? {} : { model: profile.model }),
 				})),
 			profileProblem: async (profileId, workspaceId) => {
 				const location =
@@ -8298,7 +8345,7 @@ export class AppController {
 					managed,
 				);
 			},
-			createAgent: async (workspaceId, profileId, presentation) => {
+			createAgent: async (workspaceId, profileId, presentation, model) => {
 				const before = this.modelAgentIds();
 				await this.dispatchAwaiting({
 					type: "create_agent",
@@ -8306,6 +8353,7 @@ export class AppController {
 					profileId: agentProfileId(profileId),
 					presentation: "full",
 					focus: "none",
+					...(model === undefined ? {} : { model }),
 					...(presentation === undefined
 						? {}
 						: { agentPresentation: agentPresentation(presentation) }),
@@ -8587,7 +8635,7 @@ export class AppController {
 					await this.listingContext(runtime, place.path, profile.kind),
 				);
 			},
-			resumeSession: async (workspaceId, profileId, session) => {
+			resumeSession: async (workspaceId, profileId, session, model) => {
 				const workspace = this.cliWorkspace(workspaceId);
 				const before = this.modelAgentIds();
 				// The agent picker's two ways on (`AgentProfilePicker`): another
@@ -8604,6 +8652,7 @@ export class AppController {
 							presentation: "gui",
 						},
 						"none",
+						model,
 					);
 				} else {
 					await this.dispatchAwaiting({
@@ -8614,6 +8663,7 @@ export class AppController {
 						agentPresentation: agentPresentation("gui"),
 						resume: sessionId(session.id),
 						focus: "none",
+						...(model === undefined ? {} : { model }),
 					});
 				}
 				const created = newAgent(before);
@@ -8636,7 +8686,7 @@ export class AppController {
 					await this.listingContext(runtime, place.path, profile.kind),
 				);
 			},
-			resumeSessionIn: async (folder, machine, profileId, session) => {
+			resumeSessionIn: async (folder, machine, profileId, session, model) => {
 				const place = tellPlace(folder, machine);
 				const before = this.modelAgentIds();
 				if (session.worktree !== undefined) {
@@ -8652,6 +8702,7 @@ export class AppController {
 							presentation: "gui",
 						},
 						"none",
+						model,
 					);
 				} else {
 					// An Agent asking, not a person: the folder in the Sidebar,
@@ -8667,6 +8718,7 @@ export class AppController {
 						agentPresentation: agentPresentation("gui"),
 						resume: sessionId(session.id),
 						focus: "none",
+						...(model === undefined ? {} : { model }),
 					});
 				}
 				const created = newAgent(before);
@@ -8781,6 +8833,25 @@ export class AppController {
 		return workspace.id;
 	}
 
+	/**
+	 * An Agent's model and its profile's own, for `--tell agents` (absent:
+	 * its arguments name none), to tell a chosen one from the default.
+	 */
+	private agentModels(
+		profileId: string,
+		model: string | undefined,
+	): { readonly model?: string; readonly profileModel?: string } {
+		const configured = this.config.agentProfiles.find(
+			(profile) => profile.id === profileId,
+		);
+		const own =
+			configured?.kind === "claude" ? modelOf(configured.args) : undefined;
+		return {
+			...(model === undefined ? {} : { model }),
+			...(own === undefined ? {} : { profileModel: own }),
+		};
+	}
+
 	/** The open Workspaces as `--tell workspaces` reports them. */
 	private tellWorkspaces(): readonly TellWorkspace[] {
 		const snapshot = this.snapshot();
@@ -8849,6 +8920,7 @@ export class AppController {
 					promptCache: agent.promptCache,
 					meta: agent.meta ?? {},
 					managed: agent.managed === true,
+					...this.agentModels(agent.profileId, agent.model),
 				})),
 			};
 		});
@@ -8932,6 +9004,7 @@ export class AppController {
 				review: false,
 				focus: "none",
 				...(request.managed === undefined ? {} : { managed: request.managed }),
+				...(request.model === undefined ? {} : { model: request.model }),
 			},
 		);
 		const agent = this.coordinator.model.workspaces
@@ -9306,6 +9379,7 @@ export class AppController {
 				? {}
 				: { resume: sessionId(request.resume) }),
 			...(quiet ? { focus: "none" as const } : {}),
+			...(how.model === undefined ? {} : { model: how.model }),
 		});
 		const started = (): Agent | undefined =>
 			this.coordinator.model.workspaces
@@ -10385,6 +10459,8 @@ interface IssuePromptHow {
 	readonly focus?: IntentFocus;
 	/** The orchestrator's side asked: a folder it opens is managed. */
 	readonly managed?: true;
+	/** `issue assign --model`: the model over the profile's own (`agentModel.ts`). */
+	readonly model?: string;
 }
 
 let current: AppController | undefined;

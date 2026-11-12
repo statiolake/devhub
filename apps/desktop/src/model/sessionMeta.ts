@@ -22,6 +22,7 @@
  */
 
 import { checkedMeta, type AgentMeta } from "./agentMeta.js";
+import { modelProblem } from "./agentModel.js";
 import type { SessionNameKind } from "./sessionNames.js";
 
 /** How many sessions' metadata is remembered. The least recently written goes first. */
@@ -35,10 +36,15 @@ export interface SessionMetaRecord {
   readonly kind: SessionNameKind;
   /** Claude's session id, Codex's thread id. */
   readonly session: string;
-  /** The pairs the Agent had; empty only when it was `managed`. */
+  /** The pairs the Agent had; empty only when it was `managed` or chose a `model`. */
   readonly meta: AgentMeta;
   /** The Agent was under the orchestrator's management (`Agent.managed`). */
   readonly managed?: true;
+  /**
+   * The model the Agent ran on over its profile's own (`agentModel.ts`):
+   * what a resume of the session is started on again.
+   */
+  readonly model?: string;
   /** The name the Agent had when this was written. */
   readonly name?: string;
   /** That name was given by a person (`Agent.named`), not DevHub's label. */
@@ -77,13 +83,16 @@ export function rememberSessionMeta(
 ): readonly SessionMetaRecord[] {
   const earlier = sessionMetaOf(records, record.kind, record.session);
   const empty =
-    Object.keys(record.meta).length === 0 && record.managed !== true;
+    Object.keys(record.meta).length === 0 &&
+    record.managed !== true &&
+    record.model === undefined;
   if (earlier === undefined && empty) return records;
   if (
     earlier !== undefined &&
     !empty &&
     sameMeta(earlier.meta, record.meta) &&
     (earlier.managed ?? false) === (record.managed ?? false) &&
+    earlier.model === record.model &&
     earlier.name === record.name &&
     (earlier.named ?? false) === (record.named ?? false)
   )
@@ -123,6 +132,7 @@ export function encodeSessionMeta(
       session: record.session,
       meta: record.meta,
       ...(record.managed === true ? { managed: true } : {}),
+      ...(record.model === undefined ? {} : { model: record.model }),
       ...(record.name === undefined ? {} : { name: record.name }),
       ...(record.named === true ? { named: true } : {}),
       at: record.at,
@@ -164,10 +174,8 @@ export function decodeSessionMeta(
 
 function decodeRecord(entry: unknown): SessionMetaRecord | undefined {
   if (typeof entry !== "object" || entry === null) return undefined;
-  const { kind, session, meta, managed, name, named, at } = entry as Record<
-    string,
-    unknown
-  >;
+  const { kind, session, meta, managed, model, name, named, at } =
+    entry as Record<string, unknown>;
   if (kind !== "claude" && kind !== "codex") return undefined;
   if (typeof session !== "string" || !SESSION_ID.test(session))
     return undefined;
@@ -186,12 +194,22 @@ function decodeRecord(entry: unknown): SessionMetaRecord | undefined {
     // Not a swallow: an entry that does not read is left out, as the doc says.
     return undefined;
   }
-  if (Object.keys(checked).length === 0 && managed !== true) return undefined;
+  const chosen =
+    typeof model === "string" && modelProblem(model) === undefined
+      ? model
+      : undefined;
+  if (
+    Object.keys(checked).length === 0 &&
+    managed !== true &&
+    chosen === undefined
+  )
+    return undefined;
   return {
     kind,
     session,
     meta: checked,
     ...(managed === true ? { managed: true } : {}),
+    ...(chosen === undefined ? {} : { model: chosen }),
     ...(name === undefined ? {} : { name }),
     ...(named === true ? { named: true } : {}),
     at,

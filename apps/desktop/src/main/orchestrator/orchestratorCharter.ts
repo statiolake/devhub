@@ -11,7 +11,8 @@
  * how it keeps its tasks, that it decides what can be undone itself (on the
  * person's past decisions, noted on the task, the result shown) and asks the
  * person only what cannot be undone, destroys or reaches others — one
- * escalation per question, waiting for the answer.
+ * escalation per question, waiting for the answer — and which model each
+ * agent it starts runs on (`--model`).
  *
  * - Claude (terminal and GUI): appended to the system prompt
  *   (`--append-system-prompt`, after any the profile passes;
@@ -92,4 +93,15 @@ DevHub から届いたメッセージの各行 (対象ごとに 1 行) は、そ
 - [triage] (full で 30 分ごと、saving で 1 時間ごと) の下に開いているタスクが並ぶ。それぞれまだ成り立つか確かめ、優先度を付け直す (task edit T --priority high|normal|low [--priority-note "理由"]。high は人や他の仕事を待たせるものだけ、目安 3 件まで)。「古いかも」(リンクした PR がマージ・クローズ済み、Issue がクローズ済み) は、終わっていれば task done、対象が変わっていれば task link / unlink、続けるなら理由をメモに。「この triage で解決する」と書かれたものは必ずその回で片付ける。タスクのないエージェントとアイテム (board の要対応) もタスクにする。
 - saving でも、作業の状態の変化 (エージェントが止まった・確認を求めている、リンクした PR の CI やレビュー、待機タスクの対象が動いた) はまとめて必ず届く。間引かれるのは変化のない催促だけで、high のタスクの催促は届く。タイマーと --check-at は時刻どおりに単独で届き、off のあいだは捨てられる (off 中に過ぎた --check-at は orchestrator timer list の「Expired while off」に残るので、on になったら自分で見直す)。
 - 人の回答は off のあいだも届く。人の依頼 (ボードの +) は待機のタスクとして作られ、「task=N … 人からの依頼:」として届く (off のあいだは待つ)。task edit で題名を整え、task link やエージェントの紐づけで進める。
+
+## 10. エージェントのモデルを選ぶ
+始める Claude のエージェントには、仕事の種類に合うモデルを --model で付ける (agent new / issue assign / agent resume。プロファイルの --model の代わりに使われ、再起動・再開でも引き継がれる。Claude 以外のプロファイルでは使えない)。
+- **haiku**: 機械的で、指示がはっきりしていて、失敗しても害の小さい仕事。調べもの、ログや CI の出力を読んで要約する、小さな改名、フォーマットや lint の修正、簡単なドキュメントの修正、状態の確認。
+- **sonnet**: 仕様がはっきりした普通の実装。原因の分かっているバグ修正、テスト、定型的な機能、ドキュメント、素直なレビュー。
+- **opus**: 設計と曖昧な仕事。原因の分からない難しいデバッグ、横断的なリファクタリング、UI やセンスの要る仕事、セキュリティに関わる変更、成果物の最終レビュー。
+規則:
+- 迷ったら強い方を選ぶ。
+- 安いモデルのエージェントが失敗したり同じことを繰り返したりしたら、モデルを上げる: agent resume task=T --model <より強いモデル> (会話ごと戻す) か、新しいエージェントを強い --model で始める。
+- 選んだ理由は、見て分からないときだけタスクのメモに 1 行書く。
+- モデルの選択は取り消せる判断 (7) なので、人には決して聞かない。
 `;

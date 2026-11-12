@@ -8,6 +8,7 @@
  */
 
 import { metaKeyProblem, metaValueProblem } from "./agentMeta.js";
+import { modelOf } from "./agentModel.js";
 import {
   agentId as parseAgentId,
   agentProfileId as parseAgentProfileId,
@@ -234,6 +235,7 @@ export function agentProfilesWire(
     kind: profile.kind,
     presentation: profile.presentation,
     presentations: presentationsFor(profile.kind),
+    ...claudeModel(profile),
   }));
   return {
     sequence,
@@ -351,6 +353,13 @@ function agentControlStateWire(
   }
 }
 
+/** A Claude profile's (or Agent's) `--model`, as a wire's `model` (`agentModel.ts`). */
+function claudeModel(profile: AgentProfile): { readonly model?: string } {
+  if (profile.kind !== "claude") return {};
+  const model = modelOf(profile.args);
+  return model === undefined ? {} : { model };
+}
+
 function agentWire(agent: AgentSnapshot): AgentWire {
   return {
     id: agent.id,
@@ -362,6 +371,7 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     ...(agent.named ? { named: true } : {}),
     ...(Object.keys(agent.meta).length === 0 ? {} : { meta: agent.meta }),
     ...(agent.managed ? { managed: true } : {}),
+    ...claudeModel(agent.profile),
     ordinal: agent.ordinal,
     status: agent.status,
     runtimeHealth: agent.runtimeHealth,

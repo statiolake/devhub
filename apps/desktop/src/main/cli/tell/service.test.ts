@@ -478,9 +478,14 @@ class FakePorts implements TellPorts {
 		);
 		return Promise.resolve();
 	}
-	createAgent(workspaceId: string, profileId: string, presentation?: string) {
+	createAgent(
+		workspaceId: string,
+		profileId: string,
+		presentation?: string,
+		model?: string,
+	) {
 		this.calls.push(
-			`create ${workspaceId} ${profileId} ${presentation ?? "-"}`,
+			`create ${workspaceId} ${profileId} ${presentation ?? "-"}${model === undefined ? "" : ` model ${model}`}`,
 		);
 		return Promise.resolve("new-agent");
 	}
@@ -646,8 +651,11 @@ class FakePorts implements TellPorts {
 		workspaceId: string,
 		profileId: string,
 		session: TellPastSession,
+		model?: string,
 	) {
-		this.calls.push(`resume ${workspaceId} ${profileId} ${session.id}`);
+		this.calls.push(
+			`resume ${workspaceId} ${profileId} ${session.id}${model === undefined ? "" : ` model ${model}`}`,
+		);
 		return Promise.resolve("resumed-agent");
 	}
 	/** Listings of folders by `${scope} ${folder} ${profile}`. */
@@ -668,10 +676,11 @@ class FakePorts implements TellPorts {
 		machine: string,
 		profileId: string,
 		session: TellPastSession,
+		model?: string,
 	) {
 		const worktree = session.worktree;
 		this.calls.push(
-			`resume-in ${machine}:${folder} ${profileId} ${session.id}${worktree === undefined ? "" : ` worktree ${worktree.root}${worktree.present ? "" : " (gone)"}`}`,
+			`resume-in ${machine}:${folder} ${profileId} ${session.id}${worktree === undefined ? "" : ` worktree ${worktree.root}${worktree.present ? "" : " (gone)"}`}${model === undefined ? "" : ` model ${model}`}`,
 		);
 		// As the app does: the folder (or worktree) opens as an unselected
 		// workspace in the Sidebar, with the new agent in it.
@@ -1009,6 +1018,7 @@ describe("devhub --tell, in the app", () => {
 			agentId: "new-agent",
 			workspaceId: "w1",
 			profile: "codex",
+			model: null,
 			managed: true,
 			task: null,
 		});
@@ -2344,6 +2354,8 @@ describe("agent status", () => {
 			presentation: "gui",
 			meta: {},
 			managed: false,
+			model: null,
+			profileModel: null,
 			workspace: { id: "w1", name: "app", root: "/src/app" },
 			status: "waiting",
 			statusSince: "1970-01-01T00:01:30.000Z",
@@ -5603,5 +5615,187 @@ describe("a task's memo, and resuming the agent that did the work", () => {
 		expect(ports.queued.at(-1)![1]).toContain("前回: 再試行で直すと決めた");
 		const id = (made.data as { agentId: string }).agentId;
 		expect(ports.service.taskOfAgent(id)?.id).toBe(1);
+	});
+
+	// --- the model of an agent (`model/agentModel.ts`) ---------------------
+
+	it("starts a Claude agent on the model asked for, and says it", async () => {
+		const { service, ports } = setup();
+		const made = await viaSocket(
+			service,
+			[
+				"--json",
+				"agent",
+				"new",
+				"--workspace",
+				"w1",
+				"--profile",
+				"claude",
+				"--gui",
+				"--managed",
+				"--model",
+				"haiku",
+			],
+			self,
+		);
+		expect(ports.calls).toContain("create w1 claude gui model haiku");
+		expect(made.message).toContain("(claude, GUI, model haiku)");
+		expect(made.data).toMatchObject({ model: "haiku" });
+		const assigned = await viaSocket(
+			service,
+			[
+				"issue",
+				"assign",
+				ISSUE,
+				"--repo",
+				"/src/r",
+				"--root",
+				"--profile",
+				"claude",
+				"--gui",
+				"--action",
+				"none",
+				"--managed",
+				"--model",
+				"claude-sonnet-4-5",
+			],
+			self,
+		);
+		expect(assigned.message).toContain("is taking");
+		expect(ports.calls.find((call) => call.startsWith("assign "))).toContain(
+			'"model":"claude-sonnet-4-5"',
+		);
+	});
+
+	it("refuses --model for a profile that is not Claude's, starting nothing", async () => {
+		const { service, ports } = setup();
+		for (const argv of [
+			[
+				"agent",
+				"new",
+				"--workspace",
+				"w1",
+				"--profile",
+				"codex",
+				"--gui",
+				"--managed",
+				"--model",
+				"sonnet",
+			],
+			[
+				"issue",
+				"assign",
+				ISSUE,
+				"--repo",
+				"/src/r",
+				"--root",
+				"--profile",
+				"cursor",
+				"--tui",
+				"--action",
+				"none",
+				"--managed",
+				"--model",
+				"opus",
+			],
+		])
+			await expect(viaSocket(service, argv, self)).rejects.toThrow(
+				/--model is for Claude profiles: '(codex|cursor)' runs (codex|cursor)/u,
+			);
+		await expect(
+			viaSocket(
+				service,
+				[
+					"issue",
+					"assign",
+					ISSUE,
+					"--repo",
+					"/src/r",
+					"--root",
+					"--editor-only",
+					"--model",
+					"opus",
+				],
+				self,
+			),
+		).rejects.toThrow(/--model is about the agent/u);
+		expect(
+			ports.calls.filter(
+				(call) => call.startsWith("create") || call.startsWith("assign"),
+			),
+		).toEqual([]);
+	});
+
+	it("resumes on the model the session ran on, or the stronger one asked for", async () => {
+		const { service, ports } = setup();
+		worked(ports);
+		ports.paths.set("/src/app_128", "directory");
+		ports.pastIn.set("here /src/app_128 claude", [
+			{ ...PAST.claude![0]!, cwd: "/src/app_128", model: "haiku" },
+		]);
+		// Without --model: main starts it on the session's own (no override
+		// passed), and the answer says which.
+		const kept = await viaSocket(
+			service,
+			["--json", "agent", "resume", "task=1"],
+			self,
+		);
+		expect(ports.calls).toContain(
+			"resume-in local:/src/app_128 claude c1aa-0001 model haiku",
+		);
+		expect(kept.data).toMatchObject({ model: "haiku" });
+		// Escalated: --model wins over what it ran on.
+		const other = setup();
+		worked(other.ports);
+		other.ports.paths.set("/src/app_128", "directory");
+		other.ports.pastIn.set("here /src/app_128 claude", [
+			{ ...PAST.claude![0]!, cwd: "/src/app_128", model: "haiku" },
+		]);
+		const stronger = await viaSocket(
+			other.service,
+			["--json", "agent", "resume", "task=1", "--model", "opus"],
+			self,
+		);
+		expect(other.ports.calls).toContain(
+			"resume-in local:/src/app_128 claude c1aa-0001 model opus",
+		);
+		expect(stronger.message).toContain("(claude, model opus)");
+		// A Codex session cannot be given one.
+		const codex = setup();
+		codex.ports.past.set("codex", PAST["codex"]!);
+		await expect(
+			viaSocket(
+				codex.service,
+				[
+					"agent",
+					"resume",
+					"x1dd-0001",
+					"--workspace",
+					"w1",
+					"--model",
+					"haiku",
+				],
+				self,
+			),
+		).rejects.toThrow(/--model is for Claude profiles: 'codex'/u);
+		expect(
+			codex.ports.calls.filter((call) => call.startsWith("resume")),
+		).toEqual([]);
+	});
+
+	it("shows an agent's model, and whether it is the profile's, in agents and agent status", async () => {
+		const { service, ports } = setup();
+		withAgent(ports, "aaaa1111-0000", { model: "haiku", profileModel: "opus" });
+		const list = await viaSocket(service, ["agents"], self);
+		expect(list.message).toContain("model haiku");
+		const status = await viaSocket(
+			service,
+			["--json", "agent", "status", "aaaa"],
+			self,
+		);
+		expect(status.message).toContain(
+			"\nmodel     haiku, chosen over the profile's opus (--model)",
+		);
+		expect(status.data).toMatchObject({ model: "haiku", profileModel: "opus" });
 	});
 });

@@ -72,6 +72,7 @@ import {
   agentNote,
   agentRowFacts,
   agentTooltipFacts,
+  chosenModel,
   issueLabel,
   checksBadge,
   hasUnresolvedConversations,
@@ -691,9 +692,12 @@ function AgentRowItem({
    * A named Agent's name is already leading, so what follows it is
    * the other thing: what it is doing.
    */
-  const profileName = agentProfiles.find(
+  const agentProfile = agentProfiles.find(
     (profile) => profile.id === agent.profileId,
-  )?.displayName;
+  );
+  const profileName = agentProfile?.displayName;
+  // Its model, only where its launch chose one over the profile's own.
+  const model = chosenModel(agent, agentProfile);
   const naming = agent.named
     ? agent.activity
     : agent.activity && agent.displayName !== profileName
@@ -732,7 +736,9 @@ function AgentRowItem({
         // the tooltip is about in either state, so the row is what
         // it is anchored on.
         data-tooltip-lines={JSON.stringify([
-          ...tooltipLines(agentTooltipFacts(agent, agentStates[agent.id])),
+          ...tooltipLines(
+            agentTooltipFacts(agent, agentStates[agent.id], model),
+          ),
           ...(merged?.tooltip ?? []),
         ])}
         // The prompt cache's line is a countdown, composed when the
@@ -776,11 +782,7 @@ function AgentRowItem({
             data-tree-item-id={`agent:${agent.id}`}
             tabIndex={agentSelected ? 0 : -1}
             aria-current={agentSelected ? "page" : undefined}
-            aria-label={
-              merged === undefined
-                ? agentDescription
-                : `${agentDescription}, ${merged.description}`
-            }
+            aria-label={`${agentDescription}${model === undefined ? "" : `, model ${model}`}${merged === undefined ? "" : `, ${merged.description}`}`}
             disabled={agent.controlState.kind === "stopping"}
             // Option-click opens the Agent beside its workbench; a
             // plain click gives it the whole content area. The same
@@ -802,6 +804,9 @@ function AgentRowItem({
             <span className="row-text">
               <span className="row-label">{leading}</span>
               {naming ? <span className="row-name">{naming}</span> : null}
+              {model === undefined ? null : (
+                <span className="row-model">{model}</span>
+              )}
               {note ? <span className="row-note">{note}</span> : null}
               {merged?.reference === undefined ? null : (
                 <span className="row-name row-reference">

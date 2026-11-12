@@ -877,6 +877,9 @@ function TaskCard({
                   />
                 )}
                 {agent.name}
+                {agent.model === undefined ? null : (
+                  <span className="orchestrator-chip-sub">{agent.model}</span>
+                )}
               </span>
             ))}
         </span>
@@ -1060,6 +1063,14 @@ function TaskView({
                   />
                 )}
                 {agent.name}
+                {agent.model === undefined ? null : (
+                  <span
+                    className="orchestrator-chip-sub"
+                    title="The model it was given over its profile's own"
+                  >
+                    {agent.model}
+                  </span>
+                )}
                 {agent.live ? null : (
                   <span className="orchestrator-chip-sub">
                     {agent.resumable ? "停止 · 再開できる" : "停止"}

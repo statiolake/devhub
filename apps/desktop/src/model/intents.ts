@@ -449,6 +449,12 @@ export type UserIntent =
        * CLI is told, so this is the id alone.
        */
       readonly resume?: string;
+      /**
+       * The model the Agent runs on, over its profile's own (`agentModel.ts`):
+       * a Claude profile only. Main puts it in the snapshot as its one
+       * `--model`.
+       */
+      readonly model?: string;
       /** `"none"`: start it without selecting it (`IntentFocus`). */
       readonly focus?: IntentFocus;
     }

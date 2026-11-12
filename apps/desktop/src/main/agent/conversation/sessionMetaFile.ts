@@ -95,12 +95,14 @@ export class SessionMetaFile {
 		meta: AgentMeta,
 		name?: { readonly name: string; readonly named: boolean },
 		managed = false,
+		model?: string,
 	): boolean {
 		const next = rememberSessionMeta(this.#records, {
 			kind,
 			session,
 			meta,
 			...(managed ? { managed: true as const } : {}),
+			...(model === undefined ? {} : { model }),
 			...(name === undefined
 				? {}
 				: { name: name.name, ...(name.named ? { named: true } : {}) }),

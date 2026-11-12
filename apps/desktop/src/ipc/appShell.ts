@@ -65,6 +65,11 @@ export interface AgentProfileWire {
 	 * another one, without a second copy of the rule about which kinds have it.
 	 */
 	readonly presentations: readonly AgentPresentationWire[];
+	/**
+	 * A Claude profile's own `--model` (`model/agentModel.ts`); absent when its
+	 * arguments name none, or it is not Claude's.
+	 */
+	readonly model?: string;
 }
 export type AgentProfilesAvailabilityWire =
 	| "available"
@@ -156,6 +161,12 @@ export interface AgentWire {
 	readonly meta?: Readonly<Record<string, string>>;
 	/** Under the orchestrator's management (`Agent.managed`); absent is not. */
 	readonly managed?: true;
+	/**
+	 * The model a Claude Agent was started on, as its arguments name it
+	 * (`--model`): its profile's own, or the one its launch chose over it
+	 * (`model/agentModel.ts`). Absent when they name none.
+	 */
+	readonly model?: string;
 	readonly id: string;
 	readonly ordinal: number;
 	readonly profileId: string;

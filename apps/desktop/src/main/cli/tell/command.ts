@@ -23,6 +23,7 @@ import {
 	metaValueProblem,
 	parseMetaPair,
 } from "../../../model/agentMeta.js";
+import { modelProblem } from "../../../model/agentModel.js";
 
 export type AgentWaitUntil = "idle" | "waiting" | "any";
 
@@ -153,6 +154,8 @@ export type TellCommand =
 			readonly managed?: boolean;
 			/** `--task T`: bound to that task from the start. */
 			readonly task?: number;
+			/** `--model`: the model over the profile's own (`model/agentModel.ts`). */
+			readonly model?: string;
 	  }
 	| {
 			/** `agent manage` / `agent unmanage`: the orchestrator's managed flag. */
@@ -193,6 +196,8 @@ export type TellCommand =
 			 * on disk. Absent: a failed fetch stops the assignment.
 			 */
 			readonly offline?: boolean;
+			/** `--model`, as `agent new --model`. */
+			readonly model?: string;
 	  }
 	| {
 			readonly verb: "agent-read";
@@ -295,6 +300,11 @@ export type TellCommand =
 			readonly folder?: string;
 			readonly profile?: string;
 			readonly name?: string;
+			/**
+			 * `--model`: the model it goes on on. Absent: the one it ran on
+			 * (`session-meta.json`), else its profile's.
+			 */
+			readonly model?: string;
 	  }
 	| {
 			/** The asking Agent's own terminal, opened or shown. */
@@ -569,7 +579,7 @@ agents
                                    --json has each one's full 'agent status'
                                    as state. --meta keeps only the agents
                                    carrying every pair given
-  agent status <a>                 one agent in detail: kind, profile,
+  agent status <a>                 one agent in detail: kind, profile, model,
                                    workspace, status and since when, turn,
                                    last activity, open questions and
                                    permission prompts, entries you have not
@@ -581,6 +591,7 @@ agents
                                    'status <a>'
   agent new --workspace <w> --profile <p> --gui|--tui --managed|--unmanaged
             [--name <n>] [--prompt <text>|-] [--meta KEY=VALUE]... [--task <t>]
+            [--model haiku|sonnet|opus|<id>]
                                    start an agent (Cmd+Q c) and, with
                                    --prompt, tell it something once it is up
                                    (without: an idle agent). --managed puts
@@ -589,7 +600,12 @@ agents
                                    settled); --unmanaged leaves it out, as
                                    the window's New Agent does. --task binds
                                    it to that task from the start, and
-                                   --prompt carries the task's memo after it
+                                   --prompt carries the task's memo after it.
+                                   --model runs it on that model in place of
+                                   any --model in the profile's arguments
+                                   (Claude profiles only; an alias or a full
+                                   id, passed through); kept across restarts
+                                   and resumes, shown in 'agents'
   agent manage <a>                 put an agent under the orchestrator's
   agent unmanage <a>               management, or take it out (kept across
                                    restarts and resumes; shown in 'agents',
@@ -674,8 +690,8 @@ agents
                                    Kept for the 500 most recently changed
                                    sessions, 180 days each
   agent resume <session> [--workspace <w> | --folder <path>] [--profile <p>]
-               [--name <n>] [--prompt <text>|-]
-  agent resume task=<t>|<agent> [--prompt <text>|-]
+               [--name <n>] [--prompt <text>|-] [--model <m>]
+  agent resume task=<t>|<agent> [--prompt <text>|-] [--model <m>]
                                    bring back the latest agent bound to a
                                    task (task=12) or a task's stopped agent
                                    by its id or name, on its latest session,
@@ -702,7 +718,10 @@ agents
                                    when two profiles run the session's CLI.
                                    Always GUI: there is no --tui here. The
                                    new agent gets the session's metadata and
-                                   given name back (--name: yours instead)
+                                   given name back (--name: yours instead).
+                                   Either form goes on on the model the
+                                   session ran on; --model: that one instead
+                                   (a stronger one, when a cheaper one fails)
 
 issues
   issue actions                    the Issue actions Assign Issue offers: id,
@@ -711,7 +730,7 @@ issues
                --profile <p> --gui|--tui --action <id>|none
                --managed|--unmanaged
                [--name <n>] [--prompt <text>|-] [--meta KEY=VALUE]...
-               [--task <t>] [--offline]              (all but [] required)
+               [--task <t>] [--offline] [--model <m>] (all but [] required)
   issue assign <url> --repo <path> --branch <name>|--root --editor-only
                [--offline]
                                    hand an Issue or pull request to a new
@@ -723,8 +742,8 @@ issues
                                    --action none tells the agent nothing;
                                    otherwise the action's wording is sent as
                                    its first message (no review sheet).
-                                   --managed / --unmanaged as 'agent new'.
-                                   The agent is bound to --task, else to
+                                   --managed / --unmanaged and --model as
+                                   'agent new'. The agent is bound to --task, else to
                                    the open task that links the item, else
                                    to a new task linked to it (said in the
                                    answer); its meta issue=<URL> names the
@@ -1280,6 +1299,7 @@ function parseVerb(args: readonly string[]): TellCommand {
 					"--meta",
 					"--name",
 					"--task",
+					"--model",
 				],
 				switches: [
 					"--root",
@@ -1307,6 +1327,7 @@ function parseVerb(args: readonly string[]): TellCommand {
 				name: one(flags, "--name"),
 				managed: managedFlag(flags),
 				task: taskFlag(flags),
+				model: modelFlag(flags),
 			};
 			return {
 				verb: "issue-assign",
@@ -1479,6 +1500,15 @@ function taskId(text: string | undefined): number {
 }
 
 /** `--task T`, when given. */
+/** `--model <name>`, checked to be a model name (`model/agentModel.ts`). */
+function modelFlag(flags: Flags): string | undefined {
+	const value = one(flags, "--model")?.trim();
+	if (value === undefined) return undefined;
+	const problem = modelProblem(value);
+	if (problem !== undefined) throw new Refusal(`${problem}.`);
+	return value;
+}
+
 function taskFlag(flags: Flags): number | undefined {
 	const value = one(flags, "--task");
 	return value === undefined ? undefined : taskId(value);
@@ -1925,6 +1955,7 @@ function parseAgent(
 					"--prompt",
 					"--meta",
 					"--task",
+					"--model",
 				],
 				switches: ["--gui", "--tui", "--managed", "--unmanaged"],
 			});
@@ -1940,6 +1971,7 @@ function parseAgent(
 					meta: metaPairs(flags),
 					managed: managedFlag(flags),
 					task: taskFlag(flags),
+					model: modelFlag(flags),
 				}),
 			};
 		}
@@ -2037,7 +2069,14 @@ function parseAgent(
 		}
 		case "resume": {
 			const flags = readFlags(rest, {
-				values: ["--workspace", "--folder", "--profile", "--name", "--prompt"],
+				values: [
+					"--workspace",
+					"--folder",
+					"--profile",
+					"--name",
+					"--prompt",
+					"--model",
+				],
 				switches: [],
 			});
 			const [session] = positionals(flags, ["<session|agent|subject>"]);
@@ -2049,6 +2088,7 @@ function parseAgent(
 					profile: one(flags, "--profile"),
 					name: one(flags, "--name"),
 					prompt: one(flags, "--prompt"),
+					model: modelFlag(flags),
 				}),
 			};
 		}

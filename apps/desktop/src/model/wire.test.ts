@@ -60,7 +60,12 @@ function agent(controlState: AgentControlState): AgentSnapshot {
   return {
     id: "11111111-1111-4111-8111-111111111111",
     workspaceId: "22222222-2222-4222-8222-222222222222",
-    profile: { id: "claude", kind: "claude", displayName: "Claude" },
+    profile: {
+      id: "claude",
+      kind: "claude",
+      displayName: "Claude",
+      args: [],
+    },
     profileId: "claude",
     profileKind: "claude",
     profileDisplayName: "Claude",
@@ -525,6 +530,34 @@ describe("how an Agent is shown, across the wire", () => {
         presentations: ["tui"],
       },
     ]);
+  });
+
+  it("says the model a Claude Agent's arguments name, and none when they name none", () => {
+    const base = agent({ kind: "running" });
+    const shown = snapshotWire(
+      snapshotOf([
+        workspace({ kind: "available" }, [
+          {
+            ...base,
+            profile: {
+              ...base.profile,
+              args: ["--model", "haiku"],
+            } as unknown as AgentSnapshot["profile"],
+          },
+        ]),
+      ]),
+      "ready",
+      () => undefined,
+      () => undefined,
+    );
+    expect(shown.workspaces[0]!.agents[0]!.model).toBe("haiku");
+    const none = snapshotWire(
+      snapshotOf([workspace({ kind: "available" }, [base])]),
+      "ready",
+      () => undefined,
+      () => undefined,
+    );
+    expect(none.workspaces[0]!.agents[0]).not.toHaveProperty("model");
   });
 
   it("says how each Agent was launched", () => {

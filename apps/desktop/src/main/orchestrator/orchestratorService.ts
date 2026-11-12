@@ -1306,6 +1306,7 @@ export class OrchestratorService {
 					? {}
 					: { profileId: agent.profileId }),
 				...(agent.kind === undefined ? {} : { kind: agent.kind }),
+				...(agent.model === undefined ? {} : { model: agent.model }),
 				...(agent.machine === undefined ? {} : { machine: agent.machine }),
 				...(agent.folder === undefined ? {} : { folder: agent.folder }),
 				...(agent.branch === undefined ? {} : { branch: agent.branch }),

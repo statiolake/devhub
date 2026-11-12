@@ -91,6 +91,8 @@ export interface TaskAgent {
   readonly profileId?: string;
   /** The CLI: only Claude's and Codex's sessions are resumed. */
   readonly kind?: string;
+  /** The model it ran on over its profile's own (`agentModel.ts`). */
+  readonly model?: string;
   readonly presentation?: "gui" | "tui";
   /** `local`, or `ssh:<host>`. */
   readonly machine?: string;
@@ -434,6 +436,8 @@ export interface LiveTaskAgent {
   readonly named: boolean;
   readonly profileId: string;
   readonly kind: string;
+  /** The model it was given over its profile's own (`agentModel.ts`). */
+  readonly model?: string;
   readonly presentation: "gui" | "tui";
   readonly machine: string;
   readonly folder: string;
@@ -467,6 +471,7 @@ export function observedAgent(
     ...(live.named ? { named: true } : {}),
     profileId: live.profileId,
     kind: live.kind,
+    ...(live.model === undefined ? {} : { model: live.model }),
     presentation: live.presentation,
     machine: live.machine,
     folder: live.folder,
@@ -531,6 +536,7 @@ function agentFrom(value: unknown, where: string): TaskAgent {
     ...(value["named"] === true ? { named: true } : {}),
     ...text("profileId"),
     ...text("kind"),
+    ...text("model"),
     ...(presentation === "gui" || presentation === "tui"
       ? { presentation }
       : {}),

@@ -81,6 +81,8 @@ export interface PastSession {
 	readonly meta?: Readonly<Record<string, string>>;
 	/** The Agent that ran it (or runs it) is under the orchestrator's management. */
 	readonly managed?: true;
+	/** The model it ran on over its profile's own (`model/agentModel.ts`). */
+	readonly model?: string;
 	/** The Agent running it now, if one is. */
 	readonly liveAgentId?: string;
 }
@@ -109,6 +111,7 @@ export interface ListingContext {
 		| {
 				readonly meta?: Readonly<Record<string, string>>;
 				readonly managed?: boolean;
+				readonly model?: string;
 				readonly liveAgentId?: string;
 		  }
 		| undefined;
@@ -284,6 +287,7 @@ export async function listPastSessions(
 				? {}
 				: { meta: known.meta }),
 			...(known?.managed === true ? { managed: true as const } : {}),
+			...(known?.model === undefined ? {} : { model: known.model }),
 			...(known?.liveAgentId === undefined
 				? {}
 				: { liveAgentId: known.liveAgentId }),

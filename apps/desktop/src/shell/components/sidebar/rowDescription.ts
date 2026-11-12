@@ -77,6 +77,21 @@ export interface RowFact {
   readonly qualifierCopyAfter?: string;
 }
 
+/**
+ * The model an Agent was started on when its launch chose it over its
+ * profile's own (`--model`, `model/agentModel.ts`); undefined when it runs
+ * the profile's. The row's quiet badge: a model is worth a word only where
+ * it is not the one its profile would have given it.
+ */
+export function chosenModel(
+  agent: Pick<AgentSnapshot, "model">,
+  profile: { readonly model?: string } | undefined,
+): string | undefined {
+  return agent.model === undefined || agent.model === profile?.model
+    ? undefined
+    : agent.model;
+}
+
 /** A URL as a tooltip link, when it is a GitHub page; nothing otherwise. */
 function gitHubHref(url: string): { readonly href?: string } {
   return isGitHubPage(url) ? { href: url } : {};
@@ -721,6 +736,8 @@ export function agentRowDescription(
 export function agentTooltipFacts(
   agent: AgentSnapshot,
   orchestration?: AgentOrchestrationWire,
+  /** The model it was given over its profile's own (`chosenModel`). */
+  model?: string,
 ): RowFact[] {
   const unread = unreadShows(agent.status, agent.unread);
   return said([
@@ -732,6 +749,9 @@ export function agentTooltipFacts(
     agent.named === true && agent.activity !== undefined
       ? { text: agent.activity, style: "muted" }
       : undefined,
+    model === undefined
+      ? undefined
+      : { text: `Model: ${model}`, style: "muted" },
     agent.managed === true
       ? {
           icon: "orchestrator",

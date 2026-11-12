@@ -66,6 +66,46 @@ function keeper(sessions: Record<string, string> = {}) {
 }
 
 describe("SessionMetaKeeper", () => {
+	it("writes down the model an agent was given over its profile's, and only that", async () => {
+		const made = new SessionMetaKeeper(SessionMetaFile.load(path).index, {
+			agents: () => agents,
+			sessionOf: (agentId) =>
+				Promise.resolve({ a1: "c-1", a2: "c-2" }[agentId]),
+			restore: () => undefined,
+			profileArgs: () => ["--model", "opus"],
+		});
+		let agents: KeptAgent[] = [
+			// Chosen over the profile's opus: kept, with nothing else to keep.
+			agent(
+				"a1",
+				{},
+				{
+					profile: { id: "claude", kind: "claude", args: ["--model", "haiku"] },
+				},
+			),
+			// The profile's own: nothing to write down.
+			agent(
+				"a2",
+				{},
+				{
+					profile: { id: "claude", kind: "claude", args: ["--model", "opus"] },
+				},
+			),
+		];
+		made.sweep();
+		await made.settled();
+		expect(made.index.of("claude", "c-1")).toMatchObject({ model: "haiku" });
+		expect(made.index.of("claude", "c-2")).toBeUndefined();
+		expect(made.known("claude").get("c-1")).toMatchObject({ model: "haiku" });
+		// Closed: still there, for whoever resumes it (read again from disk).
+		made.closed(agents[0]!, "c-1");
+		agents = [];
+		made.sweep();
+		expect(SessionMetaFile.load(path).index.of("claude", "c-1")).toMatchObject({
+			model: "haiku",
+		});
+	});
+
 	it("keeps a stopped and then closed agent's metadata with its session", async () => {
 		const { keeper: kept, set } = keeper({ a1: "c-1" });
 		set([

@@ -73,6 +73,37 @@ describe("session metadata", () => {
     );
   });
 
+  it("keeps the model a session ran on, alone too, and drops one that is not a name", () => {
+    const records = rememberSessionMeta([], {
+      kind: "claude",
+      session: "c-9",
+      meta: {},
+      model: "haiku",
+      at: 5,
+    });
+    expect(records).toHaveLength(1);
+    const text = encodeSessionMeta(records);
+    expect(decodeSessionMeta(JSON.parse(text), 6)).toEqual(records);
+    // A changed model is a change; the same one is not.
+    expect(
+      rememberSessionMeta(records, { ...records[0]!, model: "opus", at: 6 }),
+    ).not.toBe(records);
+    expect(rememberSessionMeta(records, { ...records[0]!, at: 6 })).toBe(
+      records,
+    );
+    expect(
+      decodeSessionMeta(
+        {
+          version: 1,
+          sessions: [
+            { kind: "claude", session: "c-1", meta: {}, model: "-p", at: 1 },
+          ],
+        },
+        2,
+      ),
+    ).toEqual([]);
+  });
+
   it("reads back what it wrote, and leaves out an entry that does not read", () => {
     const records: SessionMetaRecord[] = [
       {

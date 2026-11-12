@@ -1290,6 +1290,37 @@ open now (nothing to resume: `agent send`); it stopped before its CLI named
 a session; it ran a CLI DevHub cannot resume, or a profile that is gone;
 its CLI no longer has the session in that folder.
 
+### Choosing the model
+
+An agent the orchestrator starts runs on the model its work needs, not
+always the profile's (often the strongest and dearest): `agent new`, `issue
+assign` and `agent resume` take `--model <name>` — Claude's aliases
+`haiku`, `sonnet`, `opus`, or a full model id, passed through as it is
+(`model/agentModel.ts`). Only a Claude profile takes it; any other kind is
+refused, saying so, before anything starts (Codex has a `--model` of its
+own, but not these names, and a GUI Codex agent's model is chosen over its
+app-server: no mapping is safe).
+
+The model goes into the agent's profile snapshot as Claude's one
+`--model`, **in place of** any `--model` the profile's arguments carry
+(never a second one beside it). So a restart of DevHub and Restart Session,
+which start the snapshot again, keep it. It is also written down under the
+agent's CLI session in `session-meta.json` (beside its metadata and
+management) whenever it differs from the profile's own, and a launch that
+resumes that session — `agent resume` (by session or `task=T`), the picker's
+earlier sessions, Reopen Closed, Continue in GUI / in terminal — is started
+on it again; the task keeps it too (`TaskAgent.model`). `agent resume
+--model` is the one way to change it: a stronger model for an agent that
+failed or looped on a cheaper one.
+
+It is shown where the agent is: `agents` (`model <m>`), `agent status` (its
+model, and whether it is the profile's or chosen over it; `--json`
+`model` and `profileModel`), `profiles` (each Claude profile's own
+`model`). In the window a quiet badge follows an agent row's words — and a
+word after the agent's chip on the board — only when its model differs from
+its profile's; the row's tooltip says `Model: <m>`. The charter (10, below)
+says which model fits which work.
+
 ### Memos
 
 Each task has one short memo: what the orchestrator means to do next with
@@ -1462,7 +1493,8 @@ devhub --tell escalation list [--state open|answered|withdrawn] [--task T] [--js
 devhub --tell escalation withdraw ID [--note TEXT]  # the question no longer stands
 devhub --tell attachment add FILE[=CAPTION]...      # a worker hands pictures over: an id each, for --attach
 devhub --tell link agent A | workspace W | file PATH[:L[:C]] | task T | escalation ID | orchestrator | session S   # a devhub: link
-devhub --tell agent resume task=T|AGENT [--prompt -|TEXT]   # bring back the task's agent, on its conversation (see "Resuming")
+devhub --tell agent resume task=T|AGENT [--prompt -|TEXT] [--model M]   # bring back the task's agent, on its conversation (see "Resuming")
+devhub --tell agent new … --model haiku|sonnet|opus|ID   # the agent's model over the profile's (Claude only; see "Choosing the model")
 devhub --tell orchestrator start --root PATH --profile P --gui|--tui [--prompt -|TEXT]
 devhub --tell orchestrator status [--json]          # its agent, state, task counts, mode, GitHub polling
 devhub --tell orchestrator stop | restart           # Stop Agent / Restart Session on it
@@ -1607,6 +1639,18 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
    about three), the maybe-stale ones resolved, tasks given to the work
    that has none; what saving still delivers and what off drops; the
    person's request is a 待機 task to retitle and take forward.
+10. **Choosing each agent's model** (see "Choosing the model"): `--model
+   haiku` for mechanical, well-specified, low-risk work (lookups, reading
+   and summarising logs or CI output, small renames, format or lint fixes,
+   simple doc edits, checking a status); `sonnet` for ordinary
+   implementation with a clear spec (a bug with a known cause, tests,
+   routine features, docs, straightforward reviews); `opus` for design and
+   ambiguous work (hard debugging with an unknown cause, cross-cutting
+   refactors, UI and taste, security-sensitive changes, the final review of
+   a deliverable). The stronger one when unsure; a cheaper agent that fails
+   or loops is resumed or restarted on a stronger `--model`; the choice is
+   noted in a line of the memo only when it is not obvious; and it is a
+   reversible decision (7), never asked.
 
 How it is given: Claude (terminal and GUI) gets it appended to the system
 prompt — `--append-system-prompt`, after the profile's own, which is kept

@@ -1143,6 +1143,18 @@ describe("a profile that could not be resolved", () => {
       presentation: "full",
     });
     expect(driver.drainEffects()[0]?.kind).toBe("resolve_agent_profile");
+    // A model chosen for the launch goes to main with the profile, which
+    // puts it in the snapshot's arguments (`agentModel.ts`).
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+      model: "haiku",
+    });
+    const chosen = driver.drainEffects()[0];
+    if (chosen?.kind !== "resolve_agent_profile") throw new Error("unexpected");
+    expect(chosen.model).toBe("haiku");
   });
 });
 

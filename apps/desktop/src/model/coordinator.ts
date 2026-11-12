@@ -130,6 +130,8 @@ export type Effect =
        * way the profile's CLI is told, after `extraArgs`.
        */
       readonly resume: string | undefined;
+      /** The model over the profile's own, if the launch chose one (`agentModel.ts`). */
+      readonly model?: string;
     }
   | {
       readonly kind: "generate_confirmation_id";
@@ -784,6 +786,7 @@ export class AppCoordinator {
           intent.agentPresentation,
           intent.resume,
           id,
+          intent.model,
         );
       case "continue_agent":
         // Refused before anything is asked: a question about a continue that
@@ -1112,6 +1115,7 @@ export class AppCoordinator {
     agentPresentation: AgentPresentation | undefined,
     resume: string | undefined,
     id: OperationId,
+    model?: string,
   ): IntentOutcome {
     const workspace = this.model.workspace(workspaceId);
     if (!workspace) {
@@ -1136,6 +1140,7 @@ export class AppCoordinator {
       profileId,
       extraArgs,
       resume,
+      ...(model === undefined ? {} : { model }),
     });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }

@@ -56,6 +56,7 @@ import {
 import type { TellAttachment } from "./command.js";
 import type { TaskAgent } from "../../../model/tasks.js";
 import { pollTimes } from "../../../model/orchestratorSettings.js";
+import { modelKindProblem } from "../../../model/agentModel.js";
 import {
 	TELL_USAGE,
 	type AgentWaitUntil,
@@ -87,6 +88,14 @@ export interface TellAgent {
 	readonly meta: Readonly<Record<string, string>>;
 	/** Under the orchestrator's management (`Agent.managed`). */
 	readonly managed: boolean;
+	/**
+	 * The model it runs on, as its arguments name it (`--model`): its
+	 * profile's own or one chosen over it (`model/agentModel.ts`). Absent:
+	 * they name none, and the CLI picks.
+	 */
+	readonly model?: string;
+	/** Its profile's own `--model`, as configured now; absent: none. */
+	readonly profileModel?: string;
 }
 
 /** An agent profile, as the agent picker offers it. */
@@ -99,6 +108,8 @@ export interface TellProfile {
 	readonly presentation: "gui" | "tui";
 	/** Every mode its kind has. */
 	readonly presentations: readonly ("gui" | "tui")[];
+	/** A Claude profile's own `--model`; absent: its arguments name none. */
+	readonly model?: string;
 }
 
 /** An Issue action, as Assign Issue offers it. */
@@ -324,6 +335,8 @@ export interface IssueAssignRequest {
 	 * a folder this opens is managed (`Workspace.managed`).
 	 */
 	readonly managed?: true;
+	/** `--model`: the model over the profile's own (`model/agentModel.ts`). */
+	readonly model?: string;
 }
 
 /**
@@ -457,10 +470,12 @@ export interface TellPorts {
 		managed?: true,
 	): Promise<string>;
 	/** Start an Agent; answers its id. */
+	/** Start an Agent; answers its id. `model`: over the profile's own. */
 	createAgent(
 		workspaceId: string,
 		profileId: string,
 		presentation: "gui" | "tui" | undefined,
+		model?: string,
 	): Promise<string>;
 	renameAgent(agentId: string, name: string): Promise<void>;
 	/** Back to the label DevHub gives it (`reset_agent_name`). */
@@ -580,6 +595,8 @@ export interface TellPorts {
 		workspaceId: string,
 		profileId: string,
 		session: TellPastSession,
+		/** Absent: the model the session ran on, else the profile's. */
+		model?: string,
 	): Promise<string>;
 	/**
 	 * The agent picker's listing for `folder` on `machine`, whether or not a
@@ -603,6 +620,8 @@ export interface TellPorts {
 		machine: string,
 		profileId: string,
 		session: TellPastSession,
+		/** As `resumeSession`'s. */
+		model?: string,
 	): Promise<string>;
 	/** What `path` is on `machine`: a folder, a file, or nothing. */
 	pathKind(
@@ -1078,6 +1097,10 @@ export interface TellAgentStatus {
 	readonly meta: Readonly<Record<string, string>>;
 	/** Under the orchestrator's management (`agent manage`, `--managed`). */
 	readonly managed: boolean;
+	/** The model it runs on (`--model`); null: its arguments name none. */
+	readonly model: string | null;
+	/** Its profile's own `--model`; null: none. */
+	readonly profileModel: string | null;
 	/**
 	 * How it stands against the invariant: settled or not, the clause it
 	 * (or its task) fails as its `needs_action` line says it, and the open
@@ -2422,6 +2445,7 @@ export class TellService {
 					: `ctx ${String(state.context.percent)}%`,
 				state.failure === null ? undefined : "failed",
 				`in ${row.workspace}`,
+				row.model === undefined ? undefined : `model ${row.model}`,
 				row.managed ? "managed" : undefined,
 				metaWords(row.meta),
 				row.activity === undefined ? undefined : `— ${row.activity}`,
@@ -2476,6 +2500,7 @@ export class TellService {
 									row.name,
 									row.kind,
 									`${row.presentations.map((one) => `--${one}`).join(" ")} (window default: ${row.presentation.toUpperCase()})`,
+									...(row.model === undefined ? [] : [`model ${row.model}`]),
 									row.unavailable === null
 										? "available"
 										: `unavailable: ${row.unavailable}`,
@@ -2568,6 +2593,17 @@ export class TellService {
 		};
 	}
 
+	/** A `--model` the profile cannot take, as a line in `missing` (`agentModel.ts`). */
+	private modelFits(
+		profile: TellProfile | undefined,
+		model: string | undefined,
+		missing: string[],
+	): void {
+		if (model === undefined || profile === undefined) return;
+		const problem = modelKindProblem(profile.kind, profile.id);
+		if (problem !== undefined) missing.push(problem);
+	}
+
 	/** `--managed|--unmanaged`, which must be given; else a line in `missing`. */
 	private requiredManaged(
 		managed: boolean | undefined,
@@ -2604,6 +2640,7 @@ export class TellService {
 		const profile = this.requiredProfile(command.profile, missing);
 		this.requiredMode(profile, command.presentation, missing);
 		this.requiredManaged(command.managed, missing);
+		this.modelFits(profile, command.model, missing);
 		const task =
 			command.task === undefined ? undefined : this.task(command.task);
 		if (task?.status === "done")
@@ -2616,6 +2653,7 @@ export class TellService {
 			workspace.id,
 			profile!.id,
 			command.presentation,
+			command.model,
 		);
 		if (command.name !== undefined)
 			await this.ports.renameAgent(agentId, command.name);
@@ -2630,11 +2668,12 @@ export class TellService {
 		if (command.prompt !== undefined)
 			this.ports.queueText(agentId, withTaskMemo(command.prompt, bound));
 		return {
-			message: `Agent ${agentId} (${profile!.id}, ${command.presentation!.toUpperCase()}) is starting in ${workspace.root}${bound === undefined ? "" : `, bound to task=${String(bound.id)}`}${command.prompt === undefined ? "" : "; it is told the prompt once it is ready"}.`,
+			message: `Agent ${agentId} (${profile!.id}, ${command.presentation!.toUpperCase()}${command.model === undefined ? "" : `, model ${command.model}`}) is starting in ${workspace.root}${bound === undefined ? "" : `, bound to task=${String(bound.id)}`}${command.prompt === undefined ? "" : "; it is told the prompt once it is ready"}.`,
 			data: {
 				agentId,
 				workspaceId: workspace.id,
 				profile: profile!.id,
+				model: command.model ?? profile!.model ?? null,
 				managed: command.managed === true,
 				task: bound?.id ?? null,
 			},
@@ -2667,6 +2706,7 @@ export class TellService {
 				command.prompt === undefined ? undefined : "--prompt",
 				command.name === undefined ? undefined : "--name",
 				command.managed === undefined ? undefined : "--managed/--unmanaged",
+				command.model === undefined ? undefined : "--model",
 			].filter((flag) => flag !== undefined);
 			if (extra.length > 0)
 				missing.push(
@@ -2676,6 +2716,7 @@ export class TellService {
 			profile = this.requiredProfile(command.profile, missing);
 			this.requiredMode(profile, command.presentation, missing);
 			this.requiredManaged(command.managed, missing);
+			this.modelFits(profile, command.model, missing);
 			const actions = this.ports.issueActions();
 			const choices = [...actions.map((one) => one.id), NO_ACTION].join(", ");
 			if (command.action === undefined)
@@ -2714,6 +2755,7 @@ export class TellService {
 			...(command.name === undefined ? {} : { name: command.name.trim() }),
 			offline: command.offline === true,
 			...(this.callerIsOrchestratorSide() ? { managed: true as const } : {}),
+			...(command.model === undefined ? {} : { model: command.model }),
 		});
 		if (assigned.agentId !== undefined && command.managed === true)
 			await this.ports.setAgentManaged(assigned.agentId, true);
@@ -3314,6 +3356,8 @@ export class TellService {
 			presentation: agent.presentation,
 			meta: agent.meta,
 			managed: agent.managed,
+			model: agent.model ?? null,
+			profileModel: agent.profileModel ?? null,
 			workspace: {
 				id: workspace.id,
 				name: workspace.scratch ? "Scratch" : workspace.name,
@@ -3692,7 +3736,21 @@ export class TellService {
 					`--profile is required: session ${session.id} is a ${kind ?? "?"} session, and ${same.join(", ")} all run ${kind ?? "it"} (see devhub --tell profiles)`,
 				);
 		}
-		const agentId = await this.resumeWhere(where, profile, session);
+		// Its model: the one asked for, else the one it ran on (main reads
+		// that from the session's record), else the profile's.
+		if (command.model !== undefined) {
+			const kind =
+				this.ports.profiles().find((one) => one.id === profile)?.kind ?? "?";
+			const problem = modelKindProblem(kind, profile);
+			if (problem !== undefined) throw new Error(problem);
+		}
+		const agentId = await this.resumeWhere(
+			where,
+			profile,
+			session,
+			command.model,
+		);
+		const model = command.model ?? session.model;
 		// The name and the pairs it had go on with it, as the window gives
 		// them back; --name is the caller's own.
 		const name = command.name ?? session.agentName;
@@ -3714,7 +3772,7 @@ export class TellService {
 			sessionFolder(where, session) ??
 			"";
 		return {
-			message: `Agent ${agentId} (${profile}) is going on with ${JSON.stringify(sessionTitle(session))} (${session.id}) in ${root}${Object.keys(meta).length === 0 ? "" : `, with ${metaWords(meta) ?? ""}`}.`,
+			message: `Agent ${agentId} (${profile}${model === undefined ? "" : `, model ${model}`}) is going on with ${JSON.stringify(sessionTitle(session))} (${session.id}) in ${root}${Object.keys(meta).length === 0 ? "" : `, with ${metaWords(meta) ?? ""}`}.`,
 			data: {
 				agentId,
 				session: session.id,
@@ -3724,6 +3782,7 @@ export class TellService {
 				name: name ?? null,
 				meta,
 				managed: session.managed === true,
+				model: model ?? null,
 			},
 		};
 	}
@@ -3773,6 +3832,7 @@ export class TellService {
 		where: SessionsWhere,
 		profile: string,
 		session: TellPastSession,
+		model?: string,
 	): Promise<string> {
 		const workspace =
 			where.kind === "workspace"
@@ -3785,13 +3845,14 @@ export class TellService {
 				workspace !== undefined &&
 				(where.kind !== "all" || session.worktree !== undefined)
 			)
-				return this.ports.resumeSession(workspace.id, profile, session);
+				return this.ports.resumeSession(workspace.id, profile, session, model);
 			if (where.kind === "folder")
 				return this.ports.resumeSessionIn(
 					where.root,
 					where.machine,
 					profile,
 					session,
+					model,
 				);
 		}
 		const machine =
@@ -3804,10 +3865,10 @@ export class TellService {
 		const here = { ...session, resumableHere: true, worktree: undefined };
 		const open = this.openAt(folder, machine);
 		if (open !== undefined)
-			return this.ports.resumeSession(open.id, profile, here);
+			return this.ports.resumeSession(open.id, profile, here, model);
 		const kind = await this.ports.pathKind(folder, machine);
 		if (kind === "directory")
-			return this.ports.resumeSessionIn(folder, machine, profile, here);
+			return this.ports.resumeSessionIn(folder, machine, profile, here, model);
 		if (kind === "file")
 			throw new Error(
 				`session ${session.id} ran in ${folder}, which is now a file: there is no folder to resume it in.`,
@@ -3828,11 +3889,17 @@ export class TellService {
 			throw new Error(
 				`session ${session.id} ran in ${clone!.worktree}, which no longer exists, and it did not record which branch it was on, so there is no worktree to make again for it.`,
 			);
-		return this.ports.resumeSessionIn(clone!.root, machine, profile, {
-			...session,
-			resumableHere: false,
-			worktree: { root: clone!.worktree, branch, present: false },
-		});
+		return this.ports.resumeSessionIn(
+			clone!.root,
+			machine,
+			profile,
+			{
+				...session,
+				resumableHere: false,
+				worktree: { root: clone!.worktree, branch, present: false },
+			},
+			model,
+		);
 	}
 
 	/**
@@ -3935,8 +4002,15 @@ export class TellService {
 			throw new Error(
 				`${token}'s agent ${agent.name} ran session ${session} in ${agent.folder}${agent.machine === "local" ? "" : ` on ${agent.machine}`}, and its CLI no longer has it there (deleted, or pruned): there is no conversation to go on with. Start a new agent for it.`,
 			);
+		// The model it ran on, when its session's record has none: the task's.
+		const model = command.model ?? listed.session.model ?? agent.model;
 		const answer = await this.resumeFound(
-			{ ...command, session, profile: agent.profileId },
+			{
+				...command,
+				session,
+				profile: agent.profileId,
+				...(model === undefined ? {} : { model }),
+			},
 			where,
 			agent.profileId,
 			listed.session,
@@ -4479,6 +4553,14 @@ const ASKS_IN_THE_WINDOW: Readonly<Record<string, string>> = {
 	open_command_palette: "Run 'commands' and 'run <command-id>'.",
 };
 
+/** `agent status`'s model line: the model, and whether it is the profile's. */
+function modelLine(model: string | null, profile: string | null): string {
+	if (model === null)
+		return `the CLI's own (its arguments name none; the profile's now: ${String(profile)})`;
+	if (model === profile) return `${model} (the profile's)`;
+	return `${model}, chosen over the profile's ${profile ?? "default"} (--model)`;
+}
+
 function statusLines(state: TellAgentStatus, now: number): string[] {
 	const since =
 		state.statusSince === null
@@ -4488,6 +4570,9 @@ function statusLines(state: TellAgentStatus, now: number): string[] {
 	return [
 		`${state.name} (${state.agentId})  ${state.kind}/${state.presentation}, profile ${state.profile}, in ${state.workspace.name} (${state.workspace.root})`,
 		`status    ${state.status}${since}${state.turn === null ? "" : `, turn ${state.turn}`}${state.control === "running" ? "" : `, ${state.control}`}`,
+		...(state.model === null && state.profileModel === null
+			? []
+			: [`model     ${modelLine(state.model, state.profileModel)}`]),
 		...(state.managed
 			? ["managed   yes: under the orchestrator's management"]
 			: []),

@@ -612,6 +612,8 @@ export interface TaskAgentWire {
 	readonly stoppedAt?: number;
 	readonly profileId?: string;
 	readonly kind?: string;
+	/** The model it ran on over its profile's own (`model/agentModel.ts`). */
+	readonly model?: string;
 	readonly machine?: string;
 	readonly folder?: string;
 	readonly branch?: string;

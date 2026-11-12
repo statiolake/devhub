@@ -168,6 +168,31 @@ describe("devhub --tell's arguments", () => {
 		);
 	});
 
+	it("reads --model on agent new, issue assign and agent resume", () => {
+		expect(told("agent", "new", "--model", "haiku")).toEqual({
+			verb: "agent-new",
+			model: "haiku",
+		});
+		expect(
+			told("issue", "assign", "u", "--model", "claude-sonnet-4-5[1m]"),
+		).toMatchObject({ verb: "issue-assign", model: "claude-sonnet-4-5[1m]" });
+		expect(told("agent", "resume", "task=3", "--model", "opus")).toEqual({
+			verb: "agent-resume",
+			session: "task=3",
+			model: "opus",
+		});
+		// Absent: nothing said, so a resume keeps the model it ran on.
+		expect(told("agent", "resume", "task=3")).toEqual({
+			verb: "agent-resume",
+			session: "task=3",
+		});
+		expect(refusal("agent", "new", "--model", "two words")).toMatch(
+			/--model takes a model name: haiku, sonnet, opus, or a full model id/u,
+		);
+		expect(refusal("agent", "new", "--model", "-x")).toMatch(/--model/u);
+		expect(TELL_USAGE).toContain("[--model haiku|sonnet|opus|<id>]");
+	});
+
 	it("reads agent new and issue assign with --task", () => {
 		expect(
 			told("agent", "new", "--workspace", "w", "--managed", "--task", "task=4"),

@@ -21,13 +21,18 @@
 
 import { NO_META, withMeta, type AgentMeta } from "../../model/agentMeta.js";
 import type { SessionNameKind } from "../../model/sessionNames.js";
+import { modelOverride } from "../../model/agentModel.js";
 import { resumedSession } from "../agent/conversation/resume.js";
 import type { SessionMetaFile } from "../agent/conversation/sessionMetaFile.js";
 
 /** What the keeper reads of an Agent; the model's `Agent` is one. */
 export interface KeptAgent {
 	readonly id: string;
-	readonly profile: { readonly kind: string; readonly args: readonly string[] };
+	readonly profile: {
+		readonly id?: string;
+		readonly kind: string;
+		readonly args: readonly string[];
+	};
 	readonly presentation: string;
 	readonly meta: AgentMeta;
 	/** Under the orchestrator's management (`Agent.managed`). */
@@ -43,11 +48,18 @@ export interface SessionMetaKeeperPorts {
 	sessionOf(agentId: string): Promise<string | undefined>;
 	/** Give an Agent these pairs and its managed flag (after the save that found them). */
 	restore(agentId: string, meta: AgentMeta, managed: boolean): void;
+	/**
+	 * The configured profile's own arguments, to tell the model an Agent was
+	 * given over them (`modelOverride`); undefined: no such profile now.
+	 */
+	profileArgs?(profileId: string): readonly string[] | undefined;
 }
 
 export interface KnownSession {
 	readonly meta?: AgentMeta;
 	readonly managed?: boolean;
+	/** The model it ran on over its profile's own (`model/agentModel.ts`). */
+	readonly model?: string;
 	/** The Agent running it now. */
 	readonly liveAgentId?: string;
 }
@@ -74,6 +86,17 @@ export class SessionMetaKeeper {
 			if (!this.#swept.has(agentId)) this.#swept.set(agentId, undefined);
 	}
 
+	/** The model `agent` was given over its profile's own, if it was given one. */
+	modelOf(agent: KeptAgent): string | undefined {
+		if (agent.profile.kind !== "claude") return undefined;
+		return modelOverride(
+			agent.profile.args,
+			agent.profile.id === undefined
+				? undefined
+				: this.ports.profileArgs?.(agent.profile.id),
+		);
+	}
+
 	sweep(): void {
 		const agents = this.ports.agents();
 		for (const agent of agents) {
@@ -94,13 +117,13 @@ export class SessionMetaKeeper {
 					const managed = record.managed === true;
 					this.#swept.set(
 						agent.id,
-						signature(record.meta, { ...agent, managed }),
+						signature(record.meta, { ...agent, managed }, this.modelOf(agent)),
 					);
 					this.ports.restore(agent.id, record.meta, managed);
 					continue;
 				}
 			}
-			const now = signature(agent.meta, agent);
+			const now = signature(agent.meta, agent, this.modelOf(agent));
 			if (seen && this.#swept.get(agent.id) === now) continue;
 			this.#swept.set(agent.id, now);
 			const known = this.#sessions.get(agent.id)?.session;
@@ -109,7 +132,12 @@ export class SessionMetaKeeper {
 				continue;
 			}
 			// Nothing to write down yet, and no session asked for.
-			if (Object.keys(agent.meta).length === 0 && !agent.managed) continue;
+			if (
+				Object.keys(agent.meta).length === 0 &&
+				!agent.managed &&
+				this.modelOf(agent) === undefined
+			)
+				continue;
 			const agentId = agent.id;
 			this.#track(
 				this.ports.sessionOf(agentId).then((session) => {
@@ -140,6 +168,7 @@ export class SessionMetaKeeper {
 			agent.meta,
 			{ name: agent.displayName, named: agent.named },
 			agent.managed,
+			this.modelOf(agent),
 		);
 	}
 
@@ -163,7 +192,10 @@ export class SessionMetaKeeper {
 		)
 			return undefined;
 		const managed = record.managed === true;
-		this.#swept.set(agent.id, signature(record.meta, { ...agent, managed }));
+		this.#swept.set(
+			agent.id,
+			signature(record.meta, { ...agent, managed }, this.modelOf(agent)),
+		);
 		return { meta: record.meta, managed };
 	}
 
@@ -180,6 +212,7 @@ export class SessionMetaKeeper {
 				known.set(record.session, {
 					meta: record.meta,
 					...(record.managed === true ? { managed: true } : {}),
+					...(record.model === undefined ? {} : { model: record.model }),
 				});
 		const agents = new Map(
 			this.ports.agents().map((agent) => [agent.id, agent] as const),
@@ -187,9 +220,11 @@ export class SessionMetaKeeper {
 		for (const [agentId, place] of this.#sessions) {
 			const agent = agents.get(agentId);
 			if (agent === undefined || place.kind !== kind) continue;
+			const model = this.modelOf(agent);
 			known.set(place.session, {
 				meta: agent.meta,
 				...(agent.managed ? { managed: true } : {}),
+				...(model === undefined ? {} : { model }),
 				liveAgentId: agent.id,
 			});
 		}
@@ -240,7 +275,14 @@ export class SessionMetaKeeper {
 				: given === undefined
 					? undefined
 					: { name: given, named: true };
-		this.index.remember(cli, session, meta, name, record?.managed === true);
+		this.index.remember(
+			cli,
+			session,
+			meta,
+			name,
+			record?.managed === true,
+			record?.model,
+		);
 		return meta;
 	}
 
@@ -269,6 +311,7 @@ export class SessionMetaKeeper {
 			agent.meta,
 			{ name: agent.displayName, named: agent.named },
 			agent.managed,
+			this.modelOf(agent),
 		);
 	}
 }
@@ -281,6 +324,13 @@ function cliKind(kind: string): SessionNameKind | undefined {
 function signature(
 	meta: AgentMeta,
 	agent: Pick<KeptAgent, "displayName" | "named" | "managed">,
+	model?: string,
 ): string {
-	return JSON.stringify([meta, agent.displayName, agent.named, agent.managed]);
+	return JSON.stringify([
+		meta,
+		agent.displayName,
+		agent.named,
+		agent.managed,
+		model ?? null,
+	]);
 }
