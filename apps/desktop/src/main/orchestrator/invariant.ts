@@ -1,63 +1,40 @@
 /**
- * The invariant DevHub holds the orchestrator to, and the subjects that break
- * it: what `needs_action` and `waiting.changed` say (`docs/orchestrator.md`,
- * "The invariant").
+ * The invariant DevHub holds the orchestrator to, and the subjects that
+ * break it: what `needs_action` and `task.changed` say
+ * (`docs/orchestrator.md`, "The invariant").
  *
- * **The population** is every open item of the registered Projects
- * (`[orchestrator.github] projects`) assigned to the viewer — an Issue or a
- * pull request card, one thing here (`githubItems.ts`). With no Project
- * registered it is empty. For each of them exactly one of these holds, or
- * it **needs action**:
+ * Everything is said about **tasks** (`model/tasks.ts`). Every open task
+ * is, in exactly one way, settled:
  *
- * - (a) an agent linked to it is working (status `working` or `background`,
- *   not stopping);
- * - (b) a 要回答 (`needs_answer`) escalation is about it (its agent stopped,
- *   waiting for the person);
- * - (c) a 待機中 (`waiting`) escalation is about it (an explicit condition).
+ * - 回答待ち: an escalation on it is open — waiting for the person;
+ * - 待機: parked by the orchestrator on purpose, with what it waits for;
+ * - 処理中 and one of its bound agents at work (`working` or `background`,
+ *   not stopping; a maintenance turn is not work).
  *
- * An item one of whose linked agents is not managed is the person's own,
- * and left out.
+ * Otherwise it **needs action** (要対応, a flag on the task, not a status):
+ * `no_agent` (処理中 with no bound agent open) or `idle` (its bound agents
+ * all stopped).
  *
- * **Every managed agent** (the orchestrator is never one) is working, or is
- * one of the agents of a 要回答 or 待機中 escalation; one that is neither
- * needs action. So does one whose item is outside the population — closed,
- * not assigned to the viewer, on no registered Project — or that has no item
- * at all,
- * whatever it is doing: for that reason alone. One whose Issue is still to
- * be written (meta `issue=pending`, `ISSUE_PENDING`: the investigation an
- * Issue is filed from) has no item yet by its own account, and is held to
- * the first rule only, until it is linked. While the population is not
- * known (GitHub is not read, or not in full yet), only the first rule is
- * applied to agents, and no item is said.
+ * Work outside tasks is said so it gets one:
  *
- * **Linked**, the one rule: an agent is linked to the item its meta `issue=`
- * names, by URL. DevHub writes that pair itself when `issue assign` (or the
- * window's Assign Issue) starts the agent on an Issue or a pull request, and
- * `agent meta` / `--meta` set it by hand too, as that URL. The branch a
- * Workspace is on does not link anything.
+ * - **a managed agent** (the orchestrator is never one) bound to no open
+ *   task: `no_task`, whatever it is doing — the charter asks the
+ *   orchestrator to give it a task, or stop it;
+ * - **an item of the population** — an open Issue or pull request of the
+ *   registered Projects (`[orchestrator.github] projects`) assigned to the
+ *   viewer (`githubItems.ts`) — that no open task links: `no_task`. One an
+ *   agent the person started is on (meta `issue=` naming it, an unmanaged
+ *   agent) is the person's own, and left out.
  *
- * **About an item**, for an escalation: one of its links is the item's URL,
- * or one of its agents — `--agent`, a `devhub:agent/` link, the agents of a
- * `devhub:workspace/` link or of its `--workspace` — is linked to it.
- *
- * A line names the subject and the clause it fails (`Breach`), never its
- * state: the state is read with `devhub --tell status` (`statusOf` here is
- * what it is built from). What the subject's state is still matters here, as
- * `facts`: a keeping ends when they change.
- *
- * `InvariantWatch` holds the last reading: every delivery carries one
- * `needs_action` line per subject that needs action then (`due`), whatever
- * was said before — the orchestrator is nagged every `delivery_interval`
- * while it stays so. An agent the orchestrator chose to keep as it is
- * (`agent keep A --note`) is left out while its state stays what it was
- * when it was kept; keepings are kept on disk (`keptFile.ts`), and judged
- * again once the state is known again. A 待機中 escalation whose subjects'
- * facts change is said (`waiting.changed`): what it waits on may have come.
+ * A line names the subject and the clause, never its state: the state is
+ * `devhub --tell task show` / `status`. The state still matters here, as
+ * `facts`: saving tells a line with something new from one said again by
+ * them, and a 待機 task whose facts move — its linked items (state, pull
+ * request, review, checks), its agents — is said as `task.changed`.
  */
 
-import { agentByIdOrPrefix, parseDevhubLink } from "../../model/devhubLink.js";
 import { agentAtWork } from "../../model/domain.js";
-import type { EscalationState } from "../../model/escalations.js";
+import type { TaskStatus } from "../../model/tasks.js";
 import {
 	breachWords,
 	needsActionWords,
@@ -66,35 +43,16 @@ import {
 	type Breach,
 	type EventAgent,
 	type EventItem,
+	type EventTask,
 	type OrchestratorEvent,
-	type OutsideReason,
 } from "./events.js";
-import type { KeptStore } from "./keptFile.js";
 
 /**
- * The meta key the item linkage is kept under: written by DevHub when `issue
- * assign` (or Assign Issue) starts an agent on an Issue or a pull request;
- * `agent meta` and `--meta` may set it too, to an item URL only
- * (`cli/tell/service.ts`).
+ * The meta key `issue assign` (and Assign Issue) writes with the item an
+ * agent was started on, by URL: what the Sidebar and the person read. The
+ * invariant reads it only to leave the person's own work out.
  */
 export const ISSUE_LINK_KEY = "issue";
-
-/**
- * The one value of `issue=` that is not an item's URL: the agent's work has
- * no Issue yet — it is the investigation an Issue is to be written from —
- * and one is to be filed and linked (`agent meta A set issue <URL>`, which
- * replaces it). Such a managed agent is held to the status rule only, not
- * `outside_population (no_item)`.
- */
-export const ISSUE_PENDING = "pending";
-
-/** An agent's meta `issue=` as the invariant reads it: a URL, or pending. */
-export function issueLinkOf(
-	value: string | undefined,
-): Pick<InvariantAgent, "issue" | "issuePending"> {
-	if (value === undefined) return {};
-	return value === ISSUE_PENDING ? { issuePending: true } : { issue: value };
-}
 
 /** A pull request's state, as `status` gives it. */
 export interface PullFacts {
@@ -114,8 +72,8 @@ export interface PullFacts {
 
 /**
  * An item — an Issue or a pull request, one thing here — as last read: one
- * assigned to the viewer on a registered Project, or one an agent is linked
- * to (then possibly closed, unassigned, or on no registered Project).
+ * assigned to the viewer on a registered Project, or one a task links (then
+ * possibly closed, unassigned, or on no registered Project).
  */
 export interface ItemFacts {
 	readonly item: EventItem;
@@ -145,86 +103,68 @@ export interface InvariantAgent {
 	/** working, background, waiting, idle, error, unknown. */
 	readonly status: string;
 	readonly stopping: boolean;
-	/** The item it is linked to: its meta `issue=`, an item's URL. */
+	/** Its meta `issue=`: the item it was started on. */
 	readonly issue?: string;
-	/** Its meta `issue=pending`: no Issue yet, one to be filed (`ISSUE_PENDING`). */
-	readonly issuePending?: boolean;
 	/** Its Workspace's pull request, as the Sidebar has it. */
 	readonly pull?: PullFacts;
 }
 
-export interface InvariantEscalation {
+/** An open task, as the invariant reads it. */
+export interface InvariantTask {
 	readonly id: number;
 	readonly title: string;
-	readonly state: EscalationState;
-	/** URLs and `devhub:` links. */
+	/** Derived: `answer` while an escalation on it is open. */
+	readonly status: Exclude<TaskStatus, "done">;
 	readonly links: readonly string[];
+	/** Its bound agents, by id (open or not). */
 	readonly agents: readonly string[];
-	readonly workspaceId?: string;
-	/** A 待機中 one's trigger, when its wait began, and its time. */
-	readonly trigger?: string;
-	readonly waitSince?: number;
-	readonly dueAt?: number;
+	/** Its open escalations, by id. */
+	readonly escalations: readonly number[];
 }
 
 export interface InvariantInput {
 	/**
-	 * Every item on the registered Projects as last read; undefined while the
-	 * population is not known (GitHub not read, or not every Project in full
-	 * yet). Empty with no Project registered: the population is empty.
+	 * Every item on the registered Projects as last read, and the ones tasks
+	 * link; undefined while the population is not known (GitHub not read, or
+	 * not in full yet). Empty with no Project registered.
 	 */
 	readonly items: readonly ItemFacts[] | undefined;
 	/** Every agent but the orchestrator. */
 	readonly agents: readonly InvariantAgent[];
-	/** The open escalations. */
-	readonly escalations: readonly InvariantEscalation[];
+	/** The open tasks. */
+	readonly tasks: readonly InvariantTask[];
 }
 
 /** One subject that breaks the invariant now. */
 export interface NeedsActionSubject {
-	/** `item <url key>` or `agent <id>`: the subject. */
+	/** `task <id>`, `item <url key>` or `agent <id>`. */
 	readonly key: string;
-	/** An Issue or a pull request item, or a managed agent. */
-	readonly kind: "issue" | "pr" | "agent";
+	readonly kind: "task" | "issue" | "pr" | "agent";
+	readonly task?: EventTask;
 	readonly item?: EventItem;
 	readonly agent?: EventAgent;
 	readonly ws?: string;
 	/** The clause it fails: what its line says. */
 	readonly breach: Breach;
-	/** Its state, `key=value`: not said, but a change says it again. */
+	/** Its state, `key=value`: not said, but a change is new. */
 	readonly facts: readonly string[];
-	/**
-	 * An agent's state as a keeping holds it: its status, its item's, its
-	 * escalations — not its Workspace's pull request, which a restart reads
-	 * again later than the rest.
-	 */
-	readonly keepFacts?: readonly string[];
 }
 
-/** A 待機中 escalation and the facts of what it is about. */
-export interface WaitingSubject {
-	readonly escalationId: number;
-	readonly waitSince: number;
-	/** Its subjects' facts: a change is `waiting.changed`. */
+/** A 待機 task and the facts of what it is about. */
+export interface WaitingTask {
+	readonly taskId: number;
 	readonly facts: readonly string[];
 }
 
 /** How an agent stands, for its row, `agent status` and `status`. */
 export interface AgentStanding {
 	readonly settled: boolean;
-	/** The clause it fails (managed agents only). */
+	/** The clause it fails, when it is its own subject (`no_task`). */
 	readonly breach?: Breach;
-	/** The 待機中 escalation it is one of the agents of, and its trigger. */
-	readonly waiting?: {
-		readonly escalationId: number;
-		readonly trigger: string;
-	};
-	/** The item it is linked to, as last read; absent when not known. */
-	readonly item?: ItemFacts;
-	/** The open escalations it is one of the agents of. */
-	readonly escalations: readonly number[];
-	/** Its state as facts (managed agents): a change ends a keeping. */
-	readonly facts?: readonly string[];
+	/** The open task it is bound to. */
+	readonly task?: number;
+	/** That task's clause, when the task needs action. */
+	readonly taskBreach?: Breach;
 }
 
 /** How an item stands, for `status`. */
@@ -232,20 +172,20 @@ export interface ItemStanding {
 	readonly key: string;
 	readonly facts: ItemFacts;
 	readonly inPopulation: boolean;
-	/** The agents linked to it. */
-	readonly agents: readonly string[];
-	/** The open escalations about it. */
-	readonly escalations: readonly number[];
-	/** The clause it fails, when it is in the population and needs action. */
+	/** The open tasks that link it. */
+	readonly tasks: readonly number[];
+	/** The clause it fails, when it is in the population and needs a task. */
 	readonly breach?: Breach;
 }
 
 export interface InvariantReading {
 	readonly needsAction: readonly NeedsActionSubject[];
-	readonly waiting: readonly WaitingSubject[];
+	readonly waiting: readonly WaitingTask[];
 	readonly agents: ReadonlyMap<string, AgentStanding>;
 	/** Every item read, by its URL key. */
 	readonly items: ReadonlyMap<string, ItemStanding>;
+	/** Each open task's clause, when it needs action. */
+	readonly tasks: ReadonlyMap<number, Breach>;
 	/** The population is known (GitHub's items read in full). */
 	readonly known: boolean;
 }
@@ -259,68 +199,20 @@ export function issueUrlKey(url: string): string {
 		.toLowerCase();
 }
 
-function linked(agent: InvariantAgent, item: EventItem): boolean {
-	return (
-		agent.issue !== undefined &&
-		item.url !== undefined &&
-		issueUrlKey(agent.issue) === issueUrlKey(item.url)
+/**
+ * An Issue's or pull request's link key: its URL without what follows its
+ * number (`/files`, `#issuecomment-…`). Undefined for any other link.
+ */
+export function itemLinkKey(link: string): string | undefined {
+	const item = /^https?:\/\/[^/]+\/[^/]+\/[^/]+\/(?:pull|issues)\/\d+/iu.exec(
+		link.trim(),
 	);
+	return item === null ? undefined : issueUrlKey(item[0]);
 }
 
 /** At work, by the one rule (`agentAtWork`), and not stopping. */
 function atWork(agent: InvariantAgent): boolean {
 	return !agent.stopping && agentAtWork(agent.status);
-}
-
-/** The agents an escalation names: `--agent`, `devhub:` links, its Workspace's. */
-function escalationAgents(
-	escalation: InvariantEscalation,
-	agents: readonly InvariantAgent[],
-): InvariantAgent[] {
-	const out = new Set<InvariantAgent>();
-	for (const id of escalation.agents) {
-		const agent = agents.find((one) => one.id === id);
-		if (agent !== undefined) out.add(agent);
-	}
-	const inWorkspace = (name: string) =>
-		agents.filter(
-			(one) =>
-				one.workspaceId === name ||
-				one.ws === name ||
-				one.workspaceLabel === name,
-		);
-	for (const link of escalation.links) {
-		const parsed = parseDevhubLink(link);
-		if (!parsed.ok) continue;
-		if (parsed.link.kind === "agent") {
-			const agent = agentByIdOrPrefix(parsed.link.agent, agents);
-			if (agent !== undefined) out.add(agent);
-		} else if (parsed.link.kind === "workspace")
-			for (const agent of inWorkspace(parsed.link.workspace)) out.add(agent);
-	}
-	if (escalation.workspaceId !== undefined)
-		for (const agent of inWorkspace(escalation.workspaceId)) out.add(agent);
-	return [...out];
-}
-
-/** Whether the escalation is about the item: see the module's comment. */
-export function escalationAbout(
-	escalation: InvariantEscalation,
-	item: EventItem,
-	agents: readonly InvariantAgent[],
-): boolean {
-	if (
-		item.url !== undefined &&
-		escalation.links.some(
-			(link) =>
-				/^https?:\/\//iu.test(link.trim()) &&
-				issueUrlKey(link) === issueUrlKey(item.url!),
-		)
-	)
-		return true;
-	return escalationAgents(escalation, agents).some((agent) =>
-		linked(agent, item),
-	);
 }
 
 /** `repo#123`: the repository and the number. */
@@ -355,72 +247,89 @@ function itemFacts(item: ItemFacts): string[] {
 	];
 }
 
-function escalationFacts(
-	escalations: readonly InvariantEscalation[],
-): string[] {
-	return escalations.length === 0
-		? ["esc=none"]
-		: [
-				`esc=${escalations
-					.map((one) => `${String(one.id)}:${one.state}`)
-					.join(",")}`,
-			];
-}
-
 function inPopulation(item: ItemFacts): boolean {
-	return outsideReason(item) === undefined;
+	return item.state === "open" && item.assignedToMe && item.projects.length > 0;
 }
-
-/**
- * Why an item is outside the population, as `outside_population` says it:
- * an item read only because an agent is linked to it may be on no
- * registered Project (`projects` empty).
- */
-function outsideReason(item: ItemFacts): OutsideReason | undefined {
-	if (item.state !== "open") return "closed";
-	if (!item.assignedToMe) return "unassigned";
-	if (item.projects.length === 0) return "not_in_project";
-	return undefined;
-}
-
-const parkedState = (one: InvariantEscalation) =>
-	one.state === "needs_answer" || one.state === "waiting";
 
 /** The invariant, read off one moment's state. */
 export function readInvariant(input: InvariantInput): InvariantReading {
-	const { items, agents, escalations } = input;
+	const { items, agents, tasks } = input;
 	const needsAction: NeedsActionSubject[] = [];
 	const standings = new Map<string, AgentStanding>();
 	const itemStandings = new Map<string, ItemStanding>();
-	const about = (agent: InvariantAgent) =>
-		escalations.filter((one) => escalationAgents(one, agents).includes(agent));
+	const taskBreaches = new Map<number, Breach>();
 	const byKey = new Map<string, ItemFacts>();
 	for (const one of items ?? [])
 		if (one.item.url !== undefined) {
 			const key = issueUrlKey(one.item.url);
 			if (!byKey.has(key)) byKey.set(key, one);
 		}
-	// The items.
+	const agentById = new Map(agents.map((one) => [one.id, one]));
+	const taskOf = new Map<string, InvariantTask>();
+	for (const task of tasks)
+		for (const id of task.agents) if (!taskOf.has(id)) taskOf.set(id, task);
+	const linkedItems = (task: InvariantTask) =>
+		task.links.flatMap((link) => {
+			const key = itemLinkKey(link);
+			const item = key === undefined ? undefined : byKey.get(key);
+			return item === undefined ? [] : [item];
+		});
+	const facts = (task: InvariantTask, on: readonly InvariantAgent[]) => [
+		`status=${task.status}`,
+		`agents=${on.length === 0 ? "none" : on.map((agent) => `${shortId(agent.id)}:${agent.stopping ? "stopping" : agent.status}`).join(",")}`,
+		...linkedItems(task).flatMap((item) => [
+			itemToken(item.kind, item.item),
+			...itemFacts(item),
+		]),
+		...on.flatMap((agent) =>
+			agent.pull === undefined
+				? []
+				: [`ws=${agent.ws}`, ...pullFacts(agent.pull)],
+		),
+		`esc=${task.escalations.length === 0 ? "none" : task.escalations.join(",")}`,
+	];
+	// The tasks.
+	const waiting: WaitingTask[] = [];
+	for (const task of tasks) {
+		const on = task.agents.flatMap((id) => {
+			const agent = agentById.get(id);
+			return agent === undefined ? [] : [agent];
+		});
+		if (task.status === "waiting")
+			waiting.push({ taskId: task.id, facts: facts(task, on) });
+		if (task.status !== "in_progress" || on.some(atWork)) continue;
+		const breach: Breach = { clause: on.length === 0 ? "no_agent" : "idle" };
+		taskBreaches.set(task.id, breach);
+		needsAction.push({
+			key: `task ${String(task.id)}`,
+			kind: "task",
+			task: { id: task.id, title: task.title },
+			...(on[0] === undefined ? {} : { ws: on[0].ws }),
+			breach,
+			facts: facts(task, on),
+		});
+	}
+	// The items: in the population, and no open task links them.
 	for (const [key, item] of byKey) {
-		const on = agents.filter((agent) => linked(agent, item.item));
-		const its = escalations.filter((one) =>
-			escalationAbout(one, item.item, agents),
-		);
+		const linking = tasks
+			.filter((task) => task.links.some((link) => itemLinkKey(link) === key))
+			.map((task) => task.id);
 		const population = inPopulation(item);
-		const settled =
-			!population ||
-			on.some((agent) => !agent.managed) ||
-			on.some(atWork) ||
-			its.some(parkedState);
-		const breach: Breach | undefined = settled
-			? undefined
-			: { clause: on.length === 0 ? "no_agent" : "idle_no_escalation" };
+		const own = agents.some(
+			(agent) =>
+				!agent.managed &&
+				agent.issue !== undefined &&
+				issueUrlKey(agent.issue) === key,
+		);
+		const breach: Breach | undefined =
+			population && linking.length === 0 && !own
+				? { clause: "no_task" }
+				: undefined;
 		itemStandings.set(key, {
 			key,
 			facts: item,
 			inPopulation: population,
-			agents: on.map((agent) => agent.id),
-			escalations: its.map((one) => one.id),
+			tasks: linking,
 			...(breach === undefined ? {} : { breach }),
 		});
 		if (breach === undefined) continue;
@@ -428,102 +337,35 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 			key: `item ${key}`,
 			kind: item.kind,
 			item: item.item,
-			...(on[0] === undefined ? {} : { ws: on[0].ws }),
 			breach,
-			facts: [
-				...itemFacts(item),
-				`agents=${on.length === 0 ? "none" : on.map((agent) => `${shortId(agent.id)}:${agent.status}`).join(",")}`,
-				...escalationFacts(its),
-			],
+			facts: itemFacts(item),
 		});
 	}
 	// The agents.
 	for (const agent of agents) {
-		const mine = about(agent);
-		const waitingIn = mine.find((one) => one.state === "waiting");
-		const item =
-			agent.issue === undefined
-				? undefined
-				: byKey.get(issueUrlKey(agent.issue));
-		const common = {
-			...(waitingIn === undefined
-				? {}
-				: {
-						waiting: {
-							escalationId: waitingIn.id,
-							trigger: waitingIn.trigger ?? "",
-						},
-					}),
-			...(item === undefined ? {} : { item }),
-			escalations: mine.map((one) => one.id),
-		};
-		if (!agent.managed) {
-			standings.set(agent.id, { settled: true, ...common });
+		const task = taskOf.get(agent.id);
+		const taskBreach =
+			task === undefined ? undefined : taskBreaches.get(task.id);
+		if (!agent.managed || task !== undefined) {
+			standings.set(agent.id, {
+				settled: taskBreach === undefined,
+				...(task === undefined ? {} : { task: task.id }),
+				...(taskBreach === undefined ? {} : { taskBreach }),
+			});
 			continue;
 		}
-		const outside: OutsideReason | undefined =
-			items === undefined
-				? undefined
-				: agent.issue === undefined
-					? agent.issuePending === true
-						? undefined
-						: "no_item"
-					: item === undefined
-						? "not_in_project"
-						: outsideReason(item);
-		const breach: Breach | undefined =
-			outside !== undefined
-				? { clause: "outside_population", outside }
-				: atWork(agent) || mine.some(parkedState)
-					? undefined
-					: { clause: "idle_no_escalation" };
-		const keepFacts = [
-			`status=${agent.stopping ? "stopping" : agent.status}`,
-			`issue=${agent.issue ?? (agent.issuePending === true ? ISSUE_PENDING : "none")}`,
-			...(item === undefined ? [] : itemFacts(item)),
-			...escalationFacts(mine),
-		];
-		const facts = [
-			...keepFacts,
-			...(item === undefined ? pullFacts(agent.pull) : []),
-		];
-		standings.set(agent.id, {
-			settled: breach === undefined,
-			...(breach === undefined ? {} : { breach }),
-			facts,
-			...common,
-		});
-		if (breach === undefined) continue;
+		const breach: Breach = { clause: "no_task" };
+		standings.set(agent.id, { settled: false, breach });
 		needsAction.push({
 			key: `agent ${agent.id}`,
 			kind: "agent",
 			agent: { id: agent.id, name: agent.name },
 			ws: agent.ws,
 			breach,
-			facts,
-			keepFacts,
-		});
-	}
-	// The 待機中 escalations, and the facts of what they are about.
-	const waiting: WaitingSubject[] = [];
-	for (const one of escalations) {
-		if (one.state !== "waiting") continue;
-		const facts: string[] = [];
-		for (const item of byKey.values())
-			if (escalationAbout(one, item.item, agents))
-				facts.push(itemToken(item.kind, item.item), ...itemFacts(item));
-		for (const agent of escalationAgents(one, agents))
-			facts.push(
-				`agent=${shortId(agent.id)}`,
-				`status=${agent.status}`,
-				...(agent.issue !== undefined && byKey.has(issueUrlKey(agent.issue))
-					? []
-					: pullFacts(agent.pull)),
-			);
-		waiting.push({
-			escalationId: one.id,
-			waitSince: one.waitSince ?? 0,
-			facts,
+			facts: [
+				`status=${agent.stopping ? "stopping" : agent.status}`,
+				...pullFacts(agent.pull),
+			],
 		});
 	}
 	return {
@@ -531,6 +373,7 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 		waiting,
 		agents: standings,
 		items: itemStandings,
+		tasks: taskBreaches,
 		known: items !== undefined,
 	};
 }
@@ -556,35 +399,23 @@ export function findItem(
 
 // --- the watch ---------------------------------------------------------------
 
-/** An agent the orchestrator chose to keep as it is, and why. */
-export interface KeptAgent {
-	readonly note: string;
-	readonly at: number;
-	/** Its facts when it was kept: a change ends the keeping. */
-	readonly facts: string;
-}
-
 /** A subject that needs action now, as the board and `status` show it. */
 export interface NeedsActionView {
 	readonly key: string;
-	/** The dispatcher's subject for it (`subjectOf`): what a priority is kept under. */
+	/** The dispatcher's subject for it (`subjectOf`). */
 	readonly subject: string;
-	readonly kind: "issue" | "pr" | "agent";
+	readonly kind: "task" | "issue" | "pr" | "agent";
 	/** Its words, as its `needs_action` line has them, without the `[type]`. */
 	readonly line: string;
-	/** The clause it fails: `no_agent`, `outside_population (closed)`. */
+	/** The clause it fails: `idle`, `no_task`. */
 	readonly clause: string;
 	/** Since when it has needed action, as DevHub saw it. */
 	readonly since: number;
-	/** `agent keep`: why it is left as it is. */
-	readonly kept?: { readonly note: string; readonly at: number };
 }
 
 export interface InvariantWatchPorts {
 	readonly dispatch: (event: OrchestratorEvent) => void;
 	readonly now: () => number;
-	/** Where the keepings are kept across restarts; absent: in memory only. */
-	readonly kept?: KeptStore;
 }
 
 /** The event a subject is said as. */
@@ -592,61 +423,39 @@ function eventOf(subject: NeedsActionSubject): OrchestratorEvent {
 	return {
 		type: "needs_action",
 		subject:
-			subject.kind !== "agent"
-				? { kind: subject.kind, item: subject.item! }
-				: { kind: "agent", agent: subject.agent! },
+			subject.kind === "task"
+				? { kind: "task", task: subject.task! }
+				: subject.kind === "agent"
+					? { kind: "agent", agent: subject.agent! }
+					: { kind: subject.kind, item: subject.item! },
 		...(subject.ws === undefined ? {} : { ws: subject.ws }),
 		breach: subject.breach,
 	};
 }
 
-/** What a keeping holds an agent to: its clause and its state. */
-function keepPrint(subject: NeedsActionSubject): string {
-	return [
-		breachWords(subject.breach),
-		...(subject.keepFacts ?? subject.facts),
-	].join(" ");
-}
-
 export class InvariantWatch {
 	/** Since when each subject has needed action (for `status` and the board). */
 	readonly #since = new Map<string, number>();
-	/** By `agent <id>`; kept on disk when the ports say where. */
-	readonly #kept = new Map<string, KeptAgent>();
-	/** Each 待機中 escalation's facts as last seen. */
+	/** Each 待機 task's facts as last seen. */
 	readonly #waiting = new Map<number, string>();
 	#reading: InvariantReading = {
 		needsAction: [],
 		waiting: [],
 		agents: new Map(),
 		items: new Map(),
+		tasks: new Map(),
 		known: false,
 	};
 
-	constructor(private readonly ports: InvariantWatchPorts) {
-		for (const [agentId, kept] of ports.kept?.load() ?? [])
-			this.#kept.set(`agent ${agentId}`, kept);
-	}
-
-	#saveKept(): void {
-		this.ports.kept?.save(
-			new Map(
-				[...this.#kept].map(([key, kept]) => [
-					key.slice("agent ".length),
-					kept,
-				]),
-			),
-		);
-	}
+	constructor(private readonly ports: InvariantWatchPorts) {}
 
 	get reading(): InvariantReading {
 		return this.#reading;
 	}
 
 	/**
-	 * A new reading: the keepings are judged, and each 待機中 escalation
-	 * whose subjects moved is said. `speak` false: nothing is said (no
-	 * orchestrator).
+	 * A new reading: each 待機 task whose facts moved is said. `speak`
+	 * false: nothing is said (no orchestrator).
 	 */
 	observe(reading: InvariantReading, speak: boolean): void {
 		const now = this.ports.now();
@@ -654,62 +463,35 @@ export class InvariantWatch {
 		const keys = new Set(reading.needsAction.map((one) => one.key));
 		for (const key of [...this.#since.keys()])
 			if (!keys.has(key)) this.#since.delete(key);
-		let keptMoved = false;
-		for (const [key, kept] of [...this.#kept]) {
-			// Not judged before the state is known again: GitHub's items not
-			// read yet, or the agent not read yet (a restart, a resume).
-			const agentId = key.slice("agent ".length);
-			const standing = reading.agents.get(agentId);
-			if (
-				!reading.known ||
-				standing?.facts?.includes("status=unknown") === true
-			)
-				continue;
-			const subject = reading.needsAction.find((one) => one.key === key);
-			// Settled, gone, or its state moved: the keeping is over.
-			if (subject === undefined || keepPrint(subject) !== kept.facts) {
-				this.#kept.delete(key);
-				keptMoved = true;
-			}
-		}
-		if (keptMoved) this.#saveKept();
 		for (const subject of reading.needsAction)
 			if (!this.#since.has(subject.key)) this.#since.set(subject.key, now);
-		const open = new Set(reading.waiting.map((one) => one.escalationId));
+		const open = new Set(reading.waiting.map((one) => one.taskId));
 		for (const id of [...this.#waiting.keys()])
 			if (!open.has(id)) this.#waiting.delete(id);
 		for (const one of reading.waiting) {
 			const facts = one.facts.join(" ");
-			const before = this.#waiting.get(one.escalationId);
-			this.#waiting.set(one.escalationId, facts);
+			const before = this.#waiting.get(one.taskId);
+			this.#waiting.set(one.taskId, facts);
 			// The first look is where it stands: nothing has moved yet.
 			if (!speak || before === undefined || before === facts) continue;
 			this.ports.dispatch({
-				type: "waiting.changed",
-				escalationId: one.escalationId,
+				type: "task.changed",
+				taskId: one.taskId,
 				reasons: ["subjects_changed"],
-				waitSince: one.waitSince,
 			});
 		}
 	}
 
-	/**
-	 * What a delivery says of the invariant: one `needs_action` per subject
-	 * that needs action now and is not kept.
-	 */
+	/** What a delivery says of the invariant: one `needs_action` per subject. */
 	due(): readonly OrchestratorEvent[] {
-		return this.#reading.needsAction
-			.filter((subject) => !this.#kept.has(subject.key))
-			.map(eventOf);
+		return this.#reading.needsAction.map(eventOf);
 	}
 
 	/**
 	 * A `needs_action` line's state, for saving to tell a line with
 	 * something new from one said again (`EventDelivery.statePrint`): since
-	 * when its subject has needed action (a subject that settled and broke
-	 * again is new), its clause and its facts (its agents' status, its item's
-	 * and pull request's state, review, checks, its escalations). Undefined:
-	 * the subject does not need action now.
+	 * when its subject has needed action, its clause and its facts.
+	 * Undefined: the subject does not need action now.
 	 */
 	print(event: OrchestratorEvent): string | undefined {
 		if (event.type !== "needs_action") return undefined;
@@ -725,34 +507,6 @@ export class InvariantWatch {
 		].join(" ");
 	}
 
-	/**
-	 * `agent keep A --note`: leave a managed agent as it is, for `note`, until
-	 * its facts change. Refused for one that does not need action now.
-	 */
-	keep(agentId: string, note: string): KeptAgent {
-		const key = `agent ${agentId}`;
-		const subject = this.#reading.needsAction.find((one) => one.key === key);
-		if (subject === undefined)
-			throw new Error(
-				"that agent does not need action: there is nothing to keep (devhub --tell status shows how it stands).",
-			);
-		const kept = { note, at: this.ports.now(), facts: keepPrint(subject) };
-		this.#kept.set(key, kept);
-		this.#saveKept();
-		return kept;
-	}
-
-	/** `agent keep A --clear`: whether there was a keeping to end. */
-	unkeep(agentId: string): boolean {
-		const was = this.#kept.delete(`agent ${agentId}`);
-		if (was) this.#saveKept();
-		return was;
-	}
-
-	kept(agentId: string): KeptAgent | undefined {
-		return this.#kept.get(`agent ${agentId}`);
-	}
-
 	/** How an agent stands, as of the last reading. */
 	standing(agentId: string): AgentStanding | undefined {
 		return this.#reading.agents.get(agentId);
@@ -765,7 +519,6 @@ export class InvariantWatch {
 	}
 
 	#view(subject: NeedsActionSubject): NeedsActionView {
-		const kept = this.#kept.get(subject.key);
 		const event = eventOf(subject);
 		return {
 			key: subject.key,
@@ -774,7 +527,6 @@ export class InvariantWatch {
 			line: event.type === "needs_action" ? needsActionWords(event) : "",
 			clause: breachWords(subject.breach),
 			since: this.#since.get(subject.key) ?? this.ports.now(),
-			...(kept === undefined ? {} : { kept: { note: kept.note, at: kept.at } }),
 		};
 	}
 

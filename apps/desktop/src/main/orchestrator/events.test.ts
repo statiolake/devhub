@@ -22,15 +22,24 @@ const ISSUE = {
 	url: "https://github.com/acme/app/issues/123",
 };
 
-function needsActionIssue(
-	clause: "no_agent" | "idle_no_escalation" = "no_agent",
-): OrchestratorEvent {
+function needsActionIssue(): OrchestratorEvent {
 	return {
 		type: "needs_action",
 		subject: { kind: "issue", item: ISSUE },
-		breach: { clause },
+		breach: { clause: "no_task" },
 	};
 }
+
+function needsActionTask(): OrchestratorEvent {
+	return {
+		type: "needs_action",
+		subject: { kind: "task", task: { id: 7, title: "ログイン修正" } },
+		ws: "web",
+		breach: { clause: "idle" },
+	};
+}
+
+const TASK = { id: 7, title: "ログイン修正" };
 
 function world(
 	options: {
@@ -88,9 +97,12 @@ function world(
 
 describe("an event's line", () => {
 	const now = Date.UTC(2026, 10, 5, 3, 0);
-	it("names an item and the clause it fails, no state", () => {
+	it("names a task, an item and the clause it fails, no state", () => {
 		expect(eventLine(needsActionIssue(), now)).toBe(
-			"[needs_action] issue=acme/app#123 — no_agent",
+			"[needs_action] issue=acme/app#123 — no_task",
+		);
+		expect(eventLine(needsActionTask(), now)).toBe(
+			"[needs_action] task=7「ログイン修正」 ws=web — idle",
 		);
 		expect(
 			eventLine(
@@ -100,50 +112,68 @@ describe("an event's line", () => {
 						kind: "pr",
 						item: { ...ISSUE, number: 9, url: `${ISSUE.url}9` },
 					},
-					ws: "web",
-					breach: { clause: "idle_no_escalation" },
+					breach: { clause: "no_task" },
 				},
 				now,
 			),
-		).toBe("[needs_action] pr=acme/app#9 ws=web — idle_no_escalation");
+		).toBe("[needs_action] pr=acme/app#9 — no_task");
 	});
 
-	it("names an agent by the id --tell takes, and why it is outside", () => {
+	it("names an agent with no task by the id --tell takes", () => {
 		expect(
 			eventLine(
 				{
 					type: "needs_action",
 					subject: { kind: "agent", agent: AGENT },
 					ws: "api",
-					breach: { clause: "outside_population", outside: "closed" },
+					breach: { clause: "no_task" },
 				},
 				now,
 			),
-		).toBe(
-			"[needs_action] agent=a1b2c3d4 (API fix) ws=api — outside_population (closed)",
+		).toBe("[needs_action] agent=a1b2c3d4 (API fix) ws=api — no_task");
+	});
+
+	it("says which 待機 task may be ready and why, nothing more", () => {
+		const changed = {
+			type: "task.changed",
+			taskId: 12,
+			reasons: ["subjects_changed"],
+		} as const;
+		expect(eventLine(changed, now)).toBe(
+			"[task.changed] task=12 — subjects_changed",
+		);
+		const due = { ...changed, reasons: ["due"], checkAt: 5 } as const;
+		expect(eventLine(due, now)).toBe("[task.changed] task=12 — due");
+		// Both, for the same task, are one line saying both.
+		expect(eventLine(merge(changed, due), now)).toBe(
+			"[task.changed] task=12 — due, subjects_changed",
 		);
 	});
 
-	it("says which wait may be ready and why, nothing more", () => {
-		const changed = {
-			type: "waiting.changed",
-			escalationId: 12,
-			reasons: ["subjects_changed"],
-			waitSince: 5,
-		} as const;
-		expect(eventLine(changed, now)).toBe(
-			"[waiting.changed] esc=12 — subjects_changed",
-		);
-		const due = { ...changed, reasons: ["due"] } as const;
-		expect(eventLine(due, now)).toBe("[waiting.changed] esc=12 — due");
-		// Both, for the same wait, are one line saying both.
-		expect(eventLine(merge(changed, due), now)).toBe(
-			"[waiting.changed] esc=12 — due, subjects_changed",
-		);
-		// A new wait is a new statement.
-		expect(eventLine(merge(changed, { ...due, waitSince: 9 }), now)).toBe(
-			"[waiting.changed] esc=12 — due",
-		);
+	it("lists the open tasks under a triage, the stale ones with why", () => {
+		expect(
+			eventLine(
+				{
+					type: "triage",
+					tasks: [
+						{ id: 3, title: "A", status: "in_progress", priority: "high" },
+						{
+							id: 4,
+							title: "B",
+							status: "waiting",
+							stale: ["PR acme/app#9 はマージ済み"],
+							overdue: true,
+						},
+					],
+				},
+				now,
+			)
+				.split("\n")
+				.slice(1),
+		).toEqual([
+			"  task=3「A」 処理中 優先度=high",
+			"  task=4「B」 待機 — 古いかも: PR acme/app#9 はマージ済み (前回の triage から: この triage で解決する)",
+		]);
 	});
 
 	it("names ids the way --tell takes them", () => {
@@ -159,23 +189,25 @@ describe("the person's words", () => {
 		expect(
 			humanMessages({
 				type: "escalation_answered",
+				task: TASK,
 				escalationId: 12,
 				title: "本番DB",
 				agents: [AGENT],
 				answers: [{ text, option: "承認する" }],
 			}),
-		).toEqual([`esc=12「本番DB」 への人の回答 (選択肢「承認する」):\n${text}`]);
+		).toEqual([
+			`task=7「ログイン修正」 esc=12「本番DB」 への人の回答 (選択肢「承認する」):\n${text}`,
+		]);
 		expect(
 			humanMessages({
-				type: "escalation.human_direct",
-				escalationId: 12,
-				title: "本番DB",
+				type: "task.human_direct",
+				task: TASK,
 				agent: AGENT,
 				since: "e39",
 				messages: [{ text: "月曜の朝に流して" }],
 			}),
 		).toEqual([
-			"esc=12「本番DB」 agent=a1b2c3d4 に人が直接送ったメッセージ:\n月曜の朝に流して",
+			"task=7「ログイン修正」 agent=a1b2c3d4 に人が直接送ったメッセージ:\n月曜の朝に流して",
 		]);
 	});
 
@@ -185,12 +217,15 @@ describe("the person's words", () => {
 		state.busy = true;
 		dispatcher.dispatch({
 			type: "escalation_answered",
+			task: TASK,
 			escalationId: 3,
 			title: "t",
 			agents: [],
 			answers: [{ text: "はい" }],
 		});
-		expect(sent).toEqual(["esc=3「t」 への人の回答:\nはい"]);
+		expect(sent).toEqual([
+			"task=7「ログイン修正」 esc=3「t」 への人の回答:\nはい",
+		]);
 		expect(delivered.map((one) => one.type)).toEqual(["escalation_answered"]);
 		expect(dispatcher.held()).toHaveLength(1);
 	});
@@ -202,19 +237,24 @@ describe("the person's words", () => {
 		for (const text of ["一つ目", "二つ目"])
 			dispatcher.dispatch({
 				type: "escalation_answered",
+				task: TASK,
 				escalationId: 3,
 				title: "t",
 				agents: [],
 				answers: [{ text }],
 			});
-		dispatcher.dispatch({ type: "request", requestId: 4, text: "依頼" });
+		dispatcher.dispatch({
+			type: "request",
+			task: { id: 4, title: "依頼" },
+			text: "依頼",
+		});
 		expect(sent).toEqual([
-			"esc=3「t」 への人の回答:\n一つ目",
-			"esc=3「t」 への人の回答:\n二つ目",
+			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n一つ目",
+			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n二つ目",
 		]);
 		await dispatcher.resume();
 		expect(sent.slice(2)).toEqual([
-			expect.stringMatching(/^req=4 人からの依頼 .*\n依頼$/u),
+			expect.stringMatching(/^task=4「依頼」 人からの依頼 .*\n依頼$/u),
 			expect.stringContaining("[needs_action] issue=acme/app#123"),
 		]);
 	});
@@ -246,12 +286,15 @@ describe("the dispatcher", () => {
 
 	it("keeps one line per subject: the latest says how it stands", () => {
 		const { dispatcher, sent, state, advance } = world({ busy: true });
-		dispatcher.dispatch(needsActionIssue("no_agent"));
-		dispatcher.dispatch(needsActionIssue("idle_no_escalation"));
+		dispatcher.dispatch({
+			...needsActionTask(),
+			breach: { clause: "no_agent" },
+		} as OrchestratorEvent);
+		dispatcher.dispatch(needsActionTask());
 		state.busy = false;
 		advance(300);
 		expect(sent).toEqual([
-			"handle: [needs_action] issue=acme/app#123 — idle_no_escalation",
+			"handle: [needs_action] task=7「ログイン修正」 ws=web — idle",
 		]);
 	});
 
@@ -330,7 +373,7 @@ describe("the standing lines (needs_action)", () => {
 		// No grace: the first look delivers.
 		dispatcher.flush();
 		expect(sent).toEqual([
-			"handle: [needs_action] issue=acme/app#123 — no_agent",
+			"handle: [needs_action] issue=acme/app#123 — no_task",
 		]);
 		advance(60_000);
 		dispatcher.flush();
@@ -357,7 +400,7 @@ describe("the standing lines (needs_action)", () => {
 	it("goes with what is pending, as one message, and waits for a busy orchestrator", () => {
 		const { dispatcher, sent, state, advance } = world({
 			busy: true,
-			standing: () => [needsActionIssue("idle_no_escalation")],
+			standing: () => [needsActionTask()],
 		});
 		dispatcher.dispatch({ type: "custom.t", text: "t" });
 		advance(300);
@@ -365,7 +408,7 @@ describe("the standing lines (needs_action)", () => {
 		state.busy = false;
 		dispatcher.flush();
 		expect(sent).toEqual([
-			"handle: [custom.t] — t\n[needs_action] issue=acme/app#123 — idle_no_escalation",
+			"handle: [custom.t] — t\n[needs_action] task=7「ログイン修正」 ws=web — idle",
 		]);
 	});
 
@@ -414,6 +457,7 @@ describe("the message", () => {
 describe("the preview", () => {
 	const answer = (text: string): OrchestratorEvent => ({
 		type: "escalation_answered",
+		task: TASK,
 		escalationId: 3,
 		title: "t",
 		agents: [],
@@ -421,20 +465,20 @@ describe("the preview", () => {
 	});
 
 	it("is exactly what the next delivery sends, and changes nothing", () => {
-		const standing = [needsActionIssue("idle_no_escalation")];
+		const standing = [needsActionTask()];
 		const { dispatcher, sent, advance } = world({
 			standing: () => standing,
-			relevant: (event) => event.type !== "waiting.changed",
+			relevant: (event) => event.type !== "task.changed",
 		});
 		dispatcher.dispatch({ type: "init" });
 		advance(300);
 		sent.length = 0;
 		dispatcher.dispatch({ type: "custom.t", text: "t" });
 		dispatcher.dispatch({
-			type: "waiting.changed",
-			escalationId: 4,
+			type: "task.changed",
+			taskId: 4,
 			reasons: ["due"],
-			waitSince: 1,
+			checkAt: 1,
 		});
 		const log = dispatcher.recent(200).map((entry) => ({ ...entry }));
 		const held = dispatcher.held();
@@ -445,14 +489,14 @@ describe("the preview", () => {
 		expect(dispatcher.preview()).toEqual(preview);
 		expect(preview.human).toEqual([]);
 		expect(preview.batch).toBe(
-			"handle: [custom.t] — t\n[needs_action] issue=acme/app#123 — idle_no_escalation",
+			"handle: [custom.t] — t\n[needs_action] task=7「ログイン修正」 ws=web — idle",
 		);
 		// The interval since the init delivery holds it till then.
 		expect(preview.when).toEqual({ kind: "at", at: 1_000_300 + 300_000 });
 		advance(300_000);
 		expect(sent).toEqual([preview.batch]);
 		expect(dispatcher.preview()).toMatchObject({
-			batch: "handle: [needs_action] issue=acme/app#123 — idle_no_escalation",
+			batch: "handle: [needs_action] task=7「ログイン修正」 ws=web — idle",
 		});
 	});
 
@@ -467,16 +511,26 @@ describe("the preview", () => {
 		});
 		dispatcher.pause();
 		dispatcher.dispatch(answer("一つ目"));
-		expect(sent).toEqual(["esc=3「t」 への人の回答:\n一つ目"]);
+		expect(sent).toEqual([
+			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n一つ目",
+		]);
 		sent.length = 0;
-		dispatcher.dispatch({ type: "request", requestId: 1, text: "一つ目" });
-		dispatcher.dispatch({ type: "request", requestId: 2, text: "二つ目" });
+		dispatcher.dispatch({
+			type: "request",
+			task: { id: 1, title: "依頼" },
+			text: "一つ目",
+		});
+		dispatcher.dispatch({
+			type: "request",
+			task: { id: 2, title: "依頼" },
+			text: "二つ目",
+		});
 		dispatcher.dispatch({ type: "custom.x", text: "y" });
 		const preview = dispatcher.preview();
 		expect(preview.when).toEqual({ kind: "paused" });
 		expect(preview.human).toEqual([
-			expect.stringMatching(/^req=1 .*\n一つ目$/u),
-			expect.stringMatching(/^req=2 .*\n二つ目$/u),
+			expect.stringMatching(/^task=1「依頼」 .*\n一つ目$/u),
+			expect.stringMatching(/^task=2「依頼」 .*\n二つ目$/u),
 		]);
 		expect(sent).toEqual([]);
 		dispatcher.resume();
@@ -532,7 +586,7 @@ describe("turning events on", () => {
 		dispatcher.pause();
 		dispatcher.resume();
 		expect(sent).toEqual([
-			"handle: [needs_action] issue=acme/app#123 — no_agent",
+			"handle: [needs_action] issue=acme/app#123 — no_task",
 		]);
 	});
 

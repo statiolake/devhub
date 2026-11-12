@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ORCHESTRATOR } from "../../model/orchestratorSettings.js";
-import { EscalationStore } from "./escalationStore.js";
-import { escalationState } from "../../model/escalations.js";
+import { TaskStore } from "./taskStore.js";
 import type { InvariantAgent, ItemFacts } from "./invariant.js";
 import { OrchestratorService, type LiveAgent } from "./orchestratorService.js";
 
@@ -27,7 +26,7 @@ function world(
 ) {
 	const clock = { now: 1_000_000 };
 	const sent: string[] = [];
-	const read: [string, number, number][] = [];
+	const read: [string, number][] = [];
 	const state = { busy: false };
 	const agents: LiveAgent[] = [ORCH, WORKER, OTHER].map((id) => ({
 		id,
@@ -43,7 +42,7 @@ function world(
 		managed: new Set<string>(options.managed === true ? [WORKER] : []),
 		links: new Map<string, string>(),
 	};
-	const store = EscalationStore.inMemory();
+	const store = TaskStore.inMemory();
 	const cursor = options.cursor ?? { value: "e39" };
 	const service = new OrchestratorService({
 		store,
@@ -57,7 +56,7 @@ function world(
 		startProblem: () => undefined,
 		deliver: (_agent, text) => sent.push(text),
 		busy: () => state.busy,
-		acknowledged: (agentId, id, entries) => read.push([agentId, id, entries]),
+		acknowledged: (agentId, id) => read.push([agentId, id]),
 		publish: () => undefined,
 		personMessage: () =>
 			Promise.resolve({
@@ -85,7 +84,6 @@ function world(
 		// On, as the tests below were written; a launch starts off.
 		mode: "full",
 	});
-	service.setGrace(60_000);
 	service.assign(ORCH);
 	service.observe();
 	sent.length = 0;
@@ -132,342 +130,286 @@ function issue(overrides: Partial<ItemFacts> = {}): ItemFacts {
 	};
 }
 
-describe("an escalation's agent going back to work", () => {
-	it("moves a needs_answer one to in_progress on the person's own words, and sends their words at once", async () => {
+const BODY = "## 決めてほしいこと\nどうするか\n\n## 人に聞く理由\n本番";
+
+describe("a task", () => {
+	it("is born 待機, goes 処理中 when a bound agent works, and stays so when it stops: then it needs action", () => {
+		const run = world({ managed: true });
+		const task = run.service.newTask({ title: "ログイン修正" });
+		expect(run.service.statusOf(task)).toBe("waiting");
+		run.service.bindTask(task.id, [WORKER]);
+		run.status(WORKER, "working");
+		expect(run.service.statusOf(run.service.task(task.id)!)).toBe(
+			"in_progress",
+		);
+		expect(run.service.wire().inProgress.map((one) => one.id)).toEqual([
+			task.id,
+		]);
+		run.status(WORKER, "idle");
+		expect(run.service.taskWire(run.service.task(task.id)!).needsAction).toBe(
+			"idle",
+		);
+		// Past the pickup wait for the init the orchestrator was sent.
+		run.later(61_000);
+		expect(run.sent.join("\n")).toContain(
+			"[needs_action] task=1「ログイン修正」 ws=w — idle",
+		);
+	});
+
+	it("is 回答待ち exactly while a question on it is open; the answer makes it 処理中", () => {
+		const run = world();
+		const task = run.service.newTask({ title: "移行" });
+		run.service.setTaskStatus(task.id, "waiting", { note: "待つ" });
+		const one = run.service.raise({
+			taskId: task.id,
+			title: "本番DB",
+			markdown: BODY,
+			options: ["承認する", "見送る"],
+		});
+		expect(run.service.statusOf(run.service.task(task.id)!)).toBe("answer");
+		expect(run.service.wire().answer.map((t) => t.id)).toEqual([task.id]);
+		run.service.answer(one.id, "承認する");
+		const now = run.service.task(task.id)!;
+		expect(run.service.statusOf(now)).toBe("in_progress");
+		expect(now.waitNote).toBeUndefined();
+		expect(run.service.escalation(one.id)?.answer).toMatchObject({
+			markdown: "承認する",
+			option: "承認する",
+		});
+		// A follow-up is a new escalation, never the old one again.
+		expect(() => run.service.answer(one.id, "もう一度")).toThrow(/follow-up/u);
+		const two = run.service.raise({
+			taskId: task.id,
+			title: "追加",
+			markdown: BODY,
+		});
+		expect(two.id).toBe(one.id + 1);
+		expect(run.service.statusOf(run.service.task(task.id)!)).toBe("answer");
+		run.service.withdraw(two.id, "不要になった");
+		expect(run.service.statusOf(run.service.task(task.id)!)).toBe(
+			"in_progress",
+		);
+	});
+
+	it("never moves on a question by time: a 待機 task's --check-at only wakes the orchestrator", () => {
+		const run = world();
+		const task = run.service.newTask({ title: "移行" });
+		const one = run.service.raise({
+			taskId: task.id,
+			title: "q",
+			markdown: BODY,
+		});
+		run.later(30 * 24 * 3_600_000);
+		expect(run.service.escalation(one.id)?.answer).toBeUndefined();
+		expect(run.service.statusOf(run.service.task(task.id)!)).toBe("answer");
+	});
+
+	it("done withdraws a question still open on it, and leaves the board's open lanes", () => {
+		const run = world();
+		const task = run.service.newTask({ title: "移行" });
+		const one = run.service.raise({
+			taskId: task.id,
+			title: "q",
+			markdown: BODY,
+		});
+		run.service.completeTask(task.id, "やめた");
+		expect(run.service.escalation(one.id)?.withdrawn?.note).toBe(
+			"タスク完了で取り下げ",
+		);
+		expect(run.service.wire().done.map((t) => t.id)).toEqual([task.id]);
+		expect(() =>
+			run.service.raise({ taskId: task.id, title: "q", markdown: BODY }),
+		).toThrow(/is done/u);
+	});
+
+	it("binds an agent to one open task at a time; resume finds the task's latest", () => {
+		const run = world();
+		const a = run.service.newTask({ title: "A" });
+		const b = run.service.newTask({ title: "B" });
+		run.service.bindTask(a.id, [WORKER]);
+		run.service.bindTask(b.id, [WORKER]);
+		expect(run.service.task(a.id)!.agents).toEqual([]);
+		expect(run.service.taskOfAgent(WORKER)?.id).toBe(b.id);
+		expect(run.service.resumeTarget(`task=${String(b.id)}`)).toMatchObject({
+			task: { id: b.id },
+			agent: { agentId: WORKER },
+			live: WORKER,
+		});
+		expect(() => run.service.resumeTarget(`task=${String(a.id)}`)).toThrow(
+			/no agent has worked on task/u,
+		);
+		// A session id names no task's agent: the caller resumes it as a session.
+		expect(run.service.resumeTarget("ses-1234")).toBeUndefined();
+	});
+
+	it("keeps a stopped agent's sessions, and takes a resumed one in its place", () => {
+		const run = world();
+		const task = run.service.newTask({ title: "A" });
+		run.service.bindTask(task.id, [WORKER]);
+		const live = {
+			agentId: WORKER,
+			name: "fix",
+			named: true,
+			profileId: "claude",
+			kind: "claude",
+			presentation: "gui" as const,
+			machine: "local",
+			folder: "/w",
+			session: "s1",
+		};
+		run.service.observeWork([live]);
+		run.service.observeWork([]);
+		const stopped = run.service.task(task.id)!.agents[0]!;
+		expect(stopped).toMatchObject({ sessions: ["s1"], folder: "/w" });
+		expect(stopped.stoppedAt).toBeDefined();
+		run.service.observeWork([{ ...live, agentId: "new-id", session: "s1" }]);
+		expect(run.service.task(task.id)!.agents.map((one) => one.agentId)).toEqual(
+			["new-id"],
+		);
+	});
+});
+
+describe("the person's words", () => {
+	it("an answer goes at once as their own words, not in the template, and counts as read", () => {
+		const run = world({ prompt: "TEMPLATE {EVENT}" });
+		const task = run.service.newTask({ title: "移行" });
+		const one = run.service.raise({
+			taskId: task.id,
+			title: "本番DB",
+			markdown: BODY,
+		});
+		run.service.answer(one.id, "月曜に");
+		expect(run.sent).toEqual([
+			"task=1「移行」 esc=1「本番DB」 への人の回答:\n月曜に",
+		]);
+		expect(run.read).toEqual([[ORCH, one.id]]);
+	});
+
+	it("an answer goes while off, as in full", () => {
+		const run = world();
+		run.service.setMode("off");
+		const task = run.service.newTask({ title: "移行" });
+		const one = run.service.raise({
+			taskId: task.id,
+			title: "q",
+			markdown: BODY,
+		});
+		run.service.answer(one.id, "はい");
+		expect(run.sent).toEqual(["task=1「移行」 esc=1「q」 への人の回答:\nはい"]);
+	});
+
+	it("to an agent of a task with an open question, from its own composer, are told; the question stays open", async () => {
 		const run = world({
 			cursor: { value: "e39", text: "やっぱり staging だけで" },
 		});
+		const task = run.service.newTask({ title: "移行" });
+		run.service.bindTask(task.id, [WORKER]);
 		const one = run.service.raise({
-			title: "本番DBマイグレーション承認",
-			markdown: "?",
-			agents: [WORKER],
+			taskId: task.id,
+			title: "q",
+			markdown: BODY,
 		});
-		run.state.busy = true;
 		run.service.personSent(WORKER);
 		run.status(WORKER, "working");
-		const now = run.store.require(one.id);
-		expect(escalationState(now)).toBe("in_progress");
-		expect(now.entries.at(-1)).toMatchObject({
-			role: "human",
-			kind: "direct",
-			agent: WORKER,
-		});
 		await tick();
 		expect(run.sent).toEqual([
-			`esc=${String(one.id)}「本番DBマイグレーション承認」 agent=a1b2c3d4 に人が直接送ったメッセージ:\nやっぱり staging だけで`,
+			"task=1「移行」 agent=a1b2c3d4 に人が直接送ったメッセージ:\nやっぱり staging だけで",
 		]);
-		run.status(WORKER, "working");
-		expect(run.of("escalation.human_direct")).toHaveLength(1);
-		run.service.ask(one.id, "staging も?", undefined);
-		expect(escalationState(run.store.require(one.id))).toBe("needs_answer");
+		expect(run.service.escalation(one.id)?.answer).toBeUndefined();
+		expect(run.service.statusOf(run.service.task(task.id)!)).toBe("answer");
 	});
 
-	it("moves it for any other cause too, with a resumed note and no event", () => {
+	it("are not told for a maintenance turn, or for an agent the orchestrator set going", async () => {
 		const run = world();
-		const one = run.service.raise({
-			title: "t",
-			markdown: "?",
-			agents: [WORKER],
-		});
-		run.status(WORKER, "working");
-		expect(run.store.require(one.id).entries.at(-1)).toMatchObject({
-			kind: "resumed",
-			agent: WORKER,
-		});
-		expect(run.of("escalation.human_direct")).toHaveLength(0);
-	});
-
-	it("stays 要回答 through the CLI started again on its session (/resume, Restart Session, a wake)", () => {
-		const run = world();
-		const one = run.service.raise({
-			title: "t",
-			markdown: "?",
-			agents: [WORKER],
-		});
-		run.service.wait(one.id, { trigger: "x" });
-		// Its `rewinding` turn: working, and upkeep.
+		const task = run.service.newTask({ title: "移行" });
+		run.service.bindTask(task.id, [WORKER]);
+		run.service.raise({ taskId: task.id, title: "q", markdown: BODY });
+		run.service.personSent(WORKER);
 		run.status(WORKER, "working", true);
 		run.status(WORKER, "idle");
-		expect(escalationState(run.store.require(one.id))).toBe("waiting");
-	});
-
-	it("is not moved by a restart of DevHub: the replayed past, and what follows it, are not going back to work", () => {
-		// Restored mid-replay: first seen working, restoring.
-		const run = world({ worker: { status: "working", maintenance: true } });
-		const one = run.service.raise({
-			title: "t",
-			markdown: "?",
-			agents: [WORKER],
-		});
-		// The replay ends on a turn still running in the CLI.
 		run.status(WORKER, "working");
-		run.status(WORKER, "idle");
-		expect(escalationState(run.store.require(one.id))).toBe("needs_answer");
-		expect(run.store.require(one.id).entries).toHaveLength(1);
-		// A real turn after it is work again.
-		run.status(WORKER, "working");
-		expect(escalationState(run.store.require(one.id))).toBe("in_progress");
-	});
-
-	it("stays 要回答 through a keep-warm /compact: no note, no event", () => {
-		const run = world();
-		const one = run.service.raise({
-			title: "t",
-			markdown: "?",
-			agents: [WORKER],
-		});
-		run.status(WORKER, "working", true);
-		run.status(WORKER, "idle");
-		expect(escalationState(run.store.require(one.id))).toBe("needs_answer");
+		await tick();
+		expect(run.of("task.human_direct")).toEqual([]);
 	});
 });
 
-describe("the person's answer", () => {
-	it("goes at once as their own words, not in the template, and counts as read", () => {
-		const run = world({ prompt: "/make-progress {EVENT}" });
-		const one = run.service.raise({
-			title: "本番DBマイグレーション承認",
-			markdown: "流してよい?",
-			options: ["承認する", "来週にする"],
-			agents: [WORKER],
+describe("待機 with a time to look again", () => {
+	it("says task.changed due once when --check-at passes", () => {
+		const run = world();
+		const task = run.service.newTask({ title: "移行" });
+		run.service.setTaskStatus(task.id, "waiting", {
+			note: "15:00 に",
+			checkAt: run.clock.now + 60_000,
 		});
-		run.state.busy = true;
-		run.service.answer(one.id, "承認する");
-		expect(run.sent).toEqual([
-			"esc=1「本番DBマイグレーション承認」 への人の回答 (選択肢「承認する」):\n承認する",
+		run.later(59_000);
+		expect(run.of("task.changed")).toEqual([]);
+		run.later(2_000);
+		run.later(60_000);
+		expect(run.of("task.changed").map((entry) => entry.fate)).toEqual([
+			"delivered",
 		]);
-		expect(run.read).toEqual([[ORCH, one.id, 2]]);
+		expect(run.sent.join("\n")).toContain("[task.changed] task=1 — due");
 	});
 
-	it("is delivered while off, as in full", () => {
+	it("is left for 処理中 when a bound agent goes working, not on a maintenance turn", () => {
 		const run = world();
-		const one = run.service.raise({ title: "t", markdown: "?" });
-		run.service.events.pause();
-		run.service.answer(one.id, "はい");
-		expect(run.sent).toEqual(["esc=1「t」 への人の回答:\nはい"]);
-		expect(run.read).toEqual([[ORCH, one.id, 2]]);
-	});
-
-	it("leaves a request on the board's next delivery while paused, as resume sends it", () => {
-		const run = world();
-		run.service.events.pause();
-		run.service.request("はい");
-		const next = run.service.wire().nextDelivery;
-		expect(next).toEqual({
-			human: [expect.stringMatching(/^req=1 .*\nはい$/u)],
-			lines: 0,
-			more: 0,
-			when: { kind: "paused" },
-		});
-		expect(run.service.events.held()).toHaveLength(1);
-		run.service.events.resume();
-		expect(run.sent).toEqual(next?.human);
-		expect(run.service.wire().nextDelivery).toEqual({
-			human: [],
-			lines: 0,
-			more: 0,
-		});
-	});
-});
-
-describe("停滞 on the board", () => {
-	it("marks a 対応中 one none of whose agents works, past the grace, and says no event", () => {
-		const run = world();
-		const one = run.service.raise({
-			title: "t",
-			markdown: "?",
-			agents: [WORKER],
-		});
-		run.service.answer(one.id, "OK");
-		run.later(30_000);
-		expect(
-			run.service.toWire(run.store.require(one.id)).stalledSince,
-		).toBeUndefined();
-		run.later(31_000);
-		expect(
-			run.service.toWire(run.store.require(one.id)).stalledSince,
-		).toBeDefined();
-		expect(
-			run.service.events.recent(200).map((one) => one.event.type),
-		).not.toContain("escalation.stalled");
-	});
-});
-
-describe("待機中 (escalation wait)", () => {
-	const HOUR = 3_600_000;
-
-	it("says waiting.changed due once when --at passes, and drops one that comes while off", async () => {
-		const run = world();
-		const one = run.service.raise({ title: "再開", markdown: "?" });
-		run.service.wait(one.id, {
-			trigger: "11/10 以降に再開",
-			dueAt: run.clock.now + HOUR,
-		});
-		run.later(HOUR - 1000);
-		expect(run.of("waiting.changed")).toHaveLength(0);
-		run.later(2000);
-		run.later(HOUR);
-		expect(run.of("waiting.changed")).toHaveLength(1);
-		// The orchestrator's own wake-up: at its time, as a message alone.
-		expect(
-			run.sent.filter((text) => text.includes("[waiting.changed]")),
-		).toEqual(["[waiting.changed] esc=1 — due"]);
-		const two = run.service.raise({ title: "後で", markdown: "?" });
-		run.service.events.pause();
-		run.service.wait(two.id, { trigger: "x", dueAt: run.clock.now - 1 });
-		expect(run.of("waiting.changed")).toHaveLength(2);
-		// Off: the timers are off, its time is dropped, not sent on resume.
-		expect(run.of("waiting.changed")[1]).toMatchObject({
-			fate: "dropped",
-			reason: "off",
-		});
-		await run.service.events.resume();
-		expect(
-			run.sent.filter((text) => text.includes("[waiting.changed]")),
-		).toHaveLength(1);
-		expect(run.service.expiredWhileOff()).toMatchObject([
-			{ escalationId: two.id },
-		]);
-		run.service.resume(two.id, undefined);
-		expect(run.service.expiredWhileOff()).toEqual([]);
-	});
-
-	it("leaves 待機中 when an agent of it goes working, but not on a maintenance turn", () => {
-		const run = world();
-		const one = run.service.raise({
-			title: "t",
-			markdown: "?",
-			agents: [WORKER],
-		});
-		run.service.wait(one.id, { trigger: "x" });
+		const task = run.service.newTask({ title: "移行" });
+		run.service.bindTask(task.id, [WORKER]);
 		run.status(WORKER, "working", true);
-		expect(escalationState(run.store.require(one.id))).toBe("waiting");
+		expect(run.service.task(task.id)!.status).toBe("waiting");
 		run.status(WORKER, "idle");
 		run.status(WORKER, "working");
-		expect(escalationState(run.store.require(one.id))).toBe("in_progress");
+		expect(run.service.task(task.id)!.status).toBe("in_progress");
 	});
 });
 
 describe("the invariant", () => {
-	it("reads an escalation linked to the item at once: a 待機中 one about it stops no_agent", () => {
+	it("asks for a task for an item of mine no task links, and is settled by one", () => {
 		const run = world({ items: [issue()] });
 		run.later(61_000);
-		expect(run.sent).toEqual(["[needs_action] issue=acme/app#123 — no_agent"]);
-		const one = run.service.raise({ title: "待ち", markdown: "?" });
-		run.service.wait(one.id, { trigger: "B の返事" });
-		run.service.link(one.id, { links: [ISSUE_URL] });
-		expect(run.service.wire().needsAction).toEqual([]);
-		run.later(61_000);
-		expect(run.sent.filter((line) => line.includes("[needs_action]"))).toEqual([
-			"[needs_action] issue=acme/app#123 — no_agent",
-		]);
-	});
-
-	it("says an open item of mine nobody is on at once, and again at every delivery while it stays so", () => {
-		const run = world({ items: [issue()] });
-		// No grace: every delivery while it stands carries it — the start's
-		// with init, then one per delivery (each waits to see the last one
-		// taken, at most a minute here).
-		run.later(61_000);
-		expect(run.sent).toEqual(["[needs_action] issue=acme/app#123 — no_agent"]);
-		run.later(61_000);
-		expect(run.sent).toEqual([
-			"[needs_action] issue=acme/app#123 — no_agent",
-			"[needs_action] issue=acme/app#123 — no_agent",
-		]);
-		// The start's delivery (with init) carries it too: the invariant is
-		// read whenever the escalations change, so it is read before then.
-		expect(run.of("needs_action").map((one) => one.fate)).toEqual([
-			"delivered",
-			"delivered",
-			"delivered",
-		]);
-		expect(run.service.wire().needsAction).toEqual([
-			expect.objectContaining({
-				kind: "issue",
-				key: `item ${ISSUE_URL}`,
-				clause: "no_agent",
-			}),
-		]);
-	});
-
-	it("is settled by a working linked agent, and by a 待機中 escalation about the Issue", () => {
-		const run = world({ items: [issue()], managed: true });
-		run.invariant.links.set(WORKER, ISSUE_URL);
-		run.status(WORKER, "working");
-		run.later(120_000);
-		// Nothing needs action: nothing is sent at all.
-		expect(run.sent).toEqual([]);
-		const one = run.service.raise({
-			title: "t",
-			markdown: "?",
-			links: [ISSUE_URL],
-		});
-		run.service.wait(one.id, { trigger: "レビュー待ち" });
-		run.status(WORKER, "idle");
-		run.later(120_000);
-		// The Issue waits; the idle managed agent is on no escalation.
-		expect(run.sent.at(-1)).toBe(
-			"[needs_action] agent=a1b2c3d4 (agent a1) ws=w — idle_no_escalation",
+		expect(run.sent.join("\n")).toContain(
+			"[needs_action] issue=acme/app#123 — no_task",
 		);
-		expect(run.service.wire().agentStates[WORKER]?.needsAction).toBe(
-			"idle_no_escalation",
-		);
+		run.sent.length = 0;
+		const task = run.service.newTask({ title: "API整理", links: [ISSUE_URL] });
+		run.service.setTaskStatus(task.id, "waiting", { note: "後で" });
+		run.later(61_000);
+		expect(run.sent.join("\n")).not.toContain("acme/app#123");
 	});
 
-	it("shows a 待機中 escalation's agents as waiting, with the trigger", () => {
+	it("asks for a task for a managed agent on none, and shows it on its row", () => {
 		const run = world({ managed: true });
-		const one = run.service.raise({
-			title: "t",
-			markdown: "?",
-			agents: [WORKER],
-		});
-		run.service.wait(one.id, { trigger: "Bob の返事" });
 		expect(run.service.wire().agentStates[WORKER]).toEqual({
-			waiting: { escalationId: one.id, trigger: "Bob の返事" },
+			needsAction: "no_task",
+		});
+		const task = run.service.newTask({ title: "A", status: "in_progress" });
+		run.service.bindTask(task.id, [WORKER]);
+		expect(run.service.wire().agentStates[WORKER]).toEqual({
+			task: { id: task.id, title: "A", status: "in_progress" },
+			needsAction: "idle",
+		});
+		expect(run.service.status({ agentId: WORKER })).toMatchObject({
+			subject: "agent",
+			task: { id: task.id },
+			needsAction: { clause: "idle" },
 		});
 	});
 
-	it("says a managed agent whose Issue is closed or not mine, and leaves out one kept with a reason until its facts change", () => {
-		const run = world({
-			items: [issue({ assignedToMe: false })],
-			managed: true,
-		});
-		run.invariant.links.set(WORKER, ISSUE_URL);
-		run.status(WORKER, "working");
-		run.later(61_000);
-		expect(run.of("needs_action").at(-1)?.event).toMatchObject({
-			breach: { clause: "outside_population", outside: "unassigned" },
-		});
-		const kept = run.service.keep(WORKER, "他チームの依頼で続ける");
-		expect(kept.note).toBe("他チームの依頼で続ける");
-		expect(run.service.standing(WORKER)?.kept?.note).toBe(
-			"他チームの依頼で続ける",
-		);
-		expect(run.service.wire().agentStates[WORKER]?.kept?.note).toBe(
-			"他チームの依頼で続ける",
-		);
-		const said = run.of("needs_action").length;
-		run.sent.length = 0;
-		for (let index = 0; index < 5; index += 1) run.later(61_000);
-		// Kept, and nothing else to say: no delivery at all.
-		expect(run.of("needs_action")).toHaveLength(said);
-		expect(run.sent).toEqual([]);
-		// Its Issue closed: the facts moved, it is said again.
-		run.invariant.items = [issue({ assignedToMe: false, state: "closed" })];
-		run.later(61_000);
-		expect(run.of("needs_action")).toHaveLength(said + 1);
-		expect(run.service.standing(WORKER)?.kept).toBeUndefined();
-	});
-
-	it("carries the standing lines beside what is pending, as one message", () => {
+	it("reads a task's whole state in one status call", () => {
 		const run = world({ items: [issue()] });
-		run.later(61_000);
-		run.sent.length = 0;
-		run.service.emit("custom.deploy", "staging");
-		run.later(61_000);
-		expect(run.sent).toEqual([
-			"[custom.deploy] — staging\n[needs_action] issue=acme/app#123 — no_agent",
-		]);
+		const task = run.service.newTask({
+			title: "API整理",
+			links: [ISSUE_URL],
+			memo: "CI が通ったら頼む",
+		});
+		expect(run.service.status({ task: task.id })).toMatchObject({
+			subject: "task",
+			task: { id: task.id, memo: { text: "CI が通ったら頼む" } },
+			items: [{ ref: "issue=acme/app#123", state: "open" }],
+		});
+		expect(run.service.status({ item: "acme/app#123" })).toMatchObject({
+			subject: "item",
+			tasks: [{ id: task.id, status: "waiting" }],
+		});
 	});
 });

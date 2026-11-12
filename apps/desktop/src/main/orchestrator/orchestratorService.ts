@@ -1,44 +1,29 @@
 /**
- * The Orchestrator row's main-process half: the escalations, the board, and
- * the events the orchestrator agent is told.
+ * The Orchestrator row's main-process half: the tasks, their escalations,
+ * the board, and the events the orchestrator agent is told.
  *
  * It owns no window and no agent. The controller hands it what it reads —
  * the agents as the Sidebar has them, the settings — and what it may do —
  * queue a message for an agent — and pushes the board to the pages whenever
  * it moves (`OrchestratorBoardWire`). The person's answer arrives from the
  * Agents page's bridge (`answer`), and that is the only door it has; the
- * `--tell` commands reach `raise`, `ask`, `close` and `link`, never `answer`.
+ * `--tell` commands reach the tasks and `raise` / `withdraw`, never
+ * `answer`.
  *
- * An escalation's agent going back to work is watched here too
- * (`#watchWorking`): a `needs_answer` escalation about it gets DevHub's note
- * and so moves to `in_progress` until the orchestrator asks again. When the
- * person set it going from that agent's own composer (`personSent`; not
- * `agent send`, not an event or a template), every open escalation about it
- * is told to the orchestrator (`escalation.human_direct`), since what was
- * said may answer or change it.
+ * Everything the orchestrator is told is about a **task** (`model/tasks.ts`):
+ * the invariant (`invariant.ts`) is read here on every projection, and
+ * every delivery carries the subjects that need action then (`standing`); a
+ * 待機 task whose subjects' facts moved is said (`task.changed`), and once
+ * per time when its `--check-at` came. An agent bound to a 待機 task going
+ * to work moves it to 処理中 (`TaskStore.agentWorking`): DevHub's
+ * bookkeeping, never a decision. When the person writes from an agent's
+ * own composer (`personSent`) to an agent of a task with an open question,
+ * the orchestrator is told (`task.human_direct`): what was said may answer
+ * or change it. Nothing ever proceeds by a deadline: an open question waits
+ * for the person.
  *
- * 停滞 is worked out here from live state (`#stalledNow`), for the board
- * only: an escalation in 対応中 that none of its agents is working on
- * (status `working` or `background`, not stopping) for longer than
- * `STALLED_GRACE_MS`. A stretch starts at the latest of: its last entry,
- * the last time one of its agents was seen working, the orchestrator's
- * reading of the answer (`acknowledge`), this service's first reading.
- * `escalation_answered` carries the answer itself, so its delivery is the
- * reading (`#deliveredRead`).
- *
- * The invariant (`invariant.ts`) is read here on every projection, and
- * every delivery carries its subjects that need action then (`standing`:
- * `needs_action`, the kept ones left out). 待機中 (`escalation wait`): a
- * waiting escalation that may be ready is said (`waiting.changed`) when its
- * subjects' facts moved, and once per wait when its time (`dueAt`) came. An
- * agent of one going working takes it out of 待機中 as it does out of 要回答.
- *
- * A maintenance turn (`isMaintenanceTurn`: a `/compact`, DevHub's keep-warm
- * one before the prompt cache goes cold or the person's) is not work: every
- * reading here goes by the status the agent had before it (`workStatus`), so
- * it writes no `resumed` / `direct` note, tells nothing, and does not end a
- * stalled stretch (停滞). A person's `/compact` is not
- * their words to the agent either: its mark goes with it.
+ * A maintenance turn (`isMaintenanceTurn`: a `/compact`) is not work: every
+ * reading here goes by the status the agent had before it (`workStatus`).
  */
 
 import type {
@@ -46,26 +31,31 @@ import type {
 	EscalationWire,
 	OrchestratorBoardWire,
 	OrchestratorNextDeliveryWire,
+	TaskAgentWire,
+	TaskWire,
+	UsageLimitsWire,
 } from "../../ipc/contract.js";
 import {
-	board,
-	effortOf,
 	escalationState,
 	isOpen,
-	priorityOf,
-	stateSince,
-	STALLED_GRACE_MS,
 	type Escalation,
-	type EscalationRank,
-	currentWait,
-	openOptions,
 	type NewEscalation,
-	type WaitRequest,
 } from "../../model/escalations.js";
+import {
+	byPriority,
+	priorityOf,
+	taskStatus,
+	type LiveTaskAgent,
+	type NewTask,
+	type StoredTaskStatus,
+	type Task,
+	type TaskAgent,
+	type TaskEdit,
+	type TaskStatus,
+} from "../../model/tasks.js";
 import type { OrchestratorConfig } from "../../model/orchestratorSettings.js";
 import { workStatus } from "../../model/conversation.js";
-import { agentAtWork } from "../../model/domain.js";
-import type { EscalationStore } from "./escalationStore.js";
+import type { TaskStore } from "./taskStore.js";
 import {
 	customTypeProblem,
 	EventDispatcher,
@@ -73,6 +63,7 @@ import {
 	eventJson,
 	type EventLogEntry,
 	type OrchestratorEvent,
+	type TriageTask,
 } from "./events.js";
 import {
 	InvariantWatch,
@@ -83,12 +74,11 @@ import {
 	type ItemFacts,
 	findItem,
 	issueUrlKey,
+	itemLinkKey,
 	itemToken,
 	type ItemStanding,
-	type KeptAgent,
 	type NeedsActionView,
 } from "./invariant.js";
-import type { KeptStore } from "./keptFile.js";
 import { OrchestratorTimers } from "./timers.js";
 import {
 	LAUNCH_MODE,
@@ -98,49 +88,13 @@ import {
 	type OrchestratorMode,
 	type UsageOver,
 } from "./mode.js";
-import type { LaneBoard, LaneId } from "../../ipc/orchestratorLanes.js";
 import {
 	staleReasons,
 	staleWords,
 	type StaleItem,
 	type StaleReason,
 } from "./staleness.js";
-import type { TriageEscalation } from "./events.js";
-import {
-	PriorityBook,
-	nextTriageAt,
-	subjectKey,
-	type Priority,
-	type PriorityEntry,
-	type PriorityStorage,
-	type SubjectRef,
-} from "./triage.js";
-import {
-	RequestBook,
-	type PersonRequest,
-	type RequestStorage,
-} from "./requests.js";
-import type {
-	OrchestratorMemoWire,
-	OrchestratorWorkWire,
-	UsageLimitsWire,
-} from "../../ipc/contract.js";
-import { MemoBook, type Memo, type MemoStorage } from "./memos.js";
-import {
-	WorkBook,
-	workSubjectOf,
-	type LiveWorkAgent,
-	type WorkAgent,
-	type WorkRecord,
-	type WorkStorage,
-} from "./work.js";
-import {
-	itemKey,
-	itemOfUrl,
-	normalSubject,
-	readSubject,
-	subjectToken,
-} from "./subjects.js";
+import { nextTriageAt } from "./triage.js";
 import {
 	usageThresholdRelevant,
 	type UsageWindowNow,
@@ -159,7 +113,7 @@ export interface LiveAgent {
 }
 
 export interface OrchestratorServicePorts {
-	readonly store: EscalationStore;
+	readonly store: TaskStore;
 	readonly agents: () => readonly LiveAgent[];
 	readonly settings: () => OrchestratorConfig;
 	/** Why the window cannot start one now, in a sentence; undefined when it can. */
@@ -182,9 +136,8 @@ export interface OrchestratorServicePorts {
 	readonly github?: () => OrchestratorBoardWire["github"];
 	/**
 	 * What the invariant is read off (`invariant.ts`): the registered
-	 * Projects' items (undefined while not known in full) and every agent but
-	 * the orchestrator. Absent: no invariant is held
-	 * (tests).
+	 * Projects' items and the ones tasks link (undefined while not known in
+	 * full), and every agent. Absent: no invariant is held (tests).
 	 */
 	readonly invariant?: () => {
 		readonly items: readonly ItemFacts[] | undefined;
@@ -198,16 +151,11 @@ export interface OrchestratorServicePorts {
 		agentId: string,
 	) => Promise<PersonMessage | undefined> | PersonMessage | undefined;
 	/**
-	 * The orchestrator `agentId` has been delivered escalation `id`'s first
-	 * `entries` entries in an event (`escalation_answered`, carried whole):
-	 * as read as if it had run `escalation show` (`agent wait --any` stops
-	 * reporting the answer).
+	 * The orchestrator `agentId` has been delivered escalation `id`'s answer
+	 * in its event, whole: as read as if it had run `escalation show`
+	 * (`agent wait --any` stops reporting it).
 	 */
-	readonly acknowledged?: (
-		agentId: string,
-		id: number,
-		entries: number,
-	) => void;
+	readonly acknowledged?: (agentId: string, id: number) => void;
 	/**
 	 * A plan window as the usage readout has it now, for a pending
 	 * `usage.threshold` (`usageThresholds.ts`). Absent: not checked.
@@ -216,54 +164,24 @@ export interface OrchestratorServicePorts {
 		cli: string,
 		window: string,
 	) => UsageWindowNow | undefined;
-	/**
-	 * The mode it starts in (`mode.ts`). Absent: `LAUNCH_MODE`, off — what
-	 * every launch of DevHub starts in.
-	 */
+	/** The mode it starts in (`mode.ts`). Absent: `LAUNCH_MODE`, off. */
 	readonly mode?: OrchestratorMode;
-	/**
-	 * How many tasks are in progress, read off the board's lanes as the
-	 * Sidebar reads them (`inProgressCount`). Absent: none.
-	 */
-	readonly inProgress?: (board: LaneBoard) => number;
-	/**
-	 * The agents of the tasks in progress — of the items in the Sidebar's
-	 * 対応中 lane (`inProgressAgentIds`) — for saving's "the work in
-	 * progress is never held". Absent: none.
-	 */
-	readonly inProgressAgents?: (board: LaneBoard) => ReadonlySet<string>;
-	/**
-	 * Each agent under the Orchestrator row and the lane its item is in
-	 * (`agentLaneIds`): an escalation's agent in another lane may make it
-	 * stale (`staleness.ts`). Absent: none is there.
-	 */
-	readonly agentLanes?: (board: LaneBoard) => ReadonlyMap<string, LaneId>;
 	/** The mode moved: by the person, or by the usage readout. */
 	readonly modeChanged?: (
 		change: ModeChange,
 		auto: UsageOver | undefined,
 	) => void;
-	/** Where the triage's priorities are kept across restarts; absent: memory. */
-	readonly priorities?: PriorityStorage;
-	/** Where the person's requests are kept across restarts; absent: memory. */
-	readonly requests?: RequestStorage;
-	/** Where the memos are kept across restarts (`memos.ts`); absent: memory. */
-	readonly memos?: MemoStorage;
-	/** Where who-worked-on-what is kept across restarts (`work.ts`); absent: memory. */
-	readonly work?: WorkStorage;
-	/** The open Workspace at `folder` on `machine`, for the board's work rows. */
+	/** The open Workspace at `folder` on `machine`, for a stopped agent's chip. */
 	readonly workspaceAt?: (
 		machine: string,
 		folder: string,
 	) => string | undefined;
-	/** Where `agent keep`'s keepings are kept across restarts; absent: memory. */
-	readonly kept?: KeptStore;
 	readonly now?: () => number;
 	readonly setTimer?: (ms: number, run: () => void) => { cancel(): void };
 	readonly log?: (line: string) => void;
 }
 
-/** The person's last message to an agent, as `escalation.human_direct` carries it. */
+/** The person's last message to an agent, as `task.human_direct` carries it. */
 export interface PersonMessage {
 	readonly since?: string;
 	readonly text?: string;
@@ -278,9 +196,8 @@ export interface StatusItem {
 	readonly title?: string;
 	readonly state: "open" | "closed" | "merged";
 	readonly assigned: boolean;
-	/** Open and assigned to the viewer: held to the invariant. */
+	/** Open, assigned to the viewer, on a registered Project. */
 	readonly inPopulation: boolean;
-	/** Its lane on each watched Project it is on. */
 	readonly projects: readonly {
 		readonly project: string;
 		readonly lane: string | null;
@@ -298,49 +215,46 @@ export interface StatusAgent {
 	/** working, background, waiting, idle, error, unknown, stopping. */
 	readonly status: string;
 	readonly managed: boolean;
-	/** The item URL its meta `issue=` links it to. */
-	readonly linked?: string;
-	/** Its meta `issue=pending`: no Issue yet, one to be filed and linked. */
-	readonly pendingIssue?: boolean;
-	/** The clause it fails, when it does. */
+	/** Its meta `issue=`: the item it was started on. */
+	readonly issue?: string;
+	/** The clause it (or its task) fails, when it does. */
 	readonly needsAction?: string;
-	readonly kept?: { readonly note: string; readonly at: number };
 }
 
-export interface StatusEscalation {
+export interface StatusTaskRef {
 	readonly id: number;
 	readonly title: string;
-	readonly state: string;
-	readonly trigger?: string;
-	readonly dueAt?: number;
+	readonly status: TaskStatus;
 }
 
 export interface StatusNeedsAction {
 	readonly clause: string;
 	readonly line: string;
 	readonly since: number;
-	readonly kept?: { readonly note: string; readonly at: number };
 }
 
 /** One subject's whole state now: what `devhub --tell status` prints. */
 export type SubjectStatus =
 	| {
+			readonly subject: "task";
+			readonly task: TaskWire;
+			readonly needsAction?: StatusNeedsAction;
+			/** Its linked items, as DevHub read them. */
+			readonly items: readonly StatusItem[];
+			readonly agents: readonly StatusAgent[];
+	  }
+	| {
 			readonly subject: "item";
 			readonly item: StatusItem;
 			readonly needsAction?: StatusNeedsAction;
-			readonly agents: readonly StatusAgent[];
-			readonly escalations: readonly StatusEscalation[];
+			/** The open tasks that link it. */
+			readonly tasks: readonly StatusTaskRef[];
 	  }
 	| {
 			readonly subject: "agent";
 			readonly agent: StatusAgent;
-			readonly item?: StatusItem;
+			readonly task?: StatusTaskRef;
 			readonly needsAction?: StatusNeedsAction;
-			readonly waiting?: {
-				readonly escalationId: number;
-				readonly trigger: string;
-			};
-			readonly escalations: readonly StatusEscalation[];
 	  };
 
 function statusItem(item: ItemStanding): StatusItem {
@@ -359,16 +273,11 @@ function statusItem(item: ItemStanding): StatusItem {
 }
 
 function needsActionOf(view: NeedsActionView): StatusNeedsAction {
-	return {
-		clause: view.clause,
-		line: view.line,
-		since: view.since,
-		...(view.kept === undefined ? {} : { kept: view.kept }),
-	};
+	return { clause: view.clause, line: view.line, since: view.since };
 }
 
-/** How many closed escalations the board carries for its history. */
-const CLOSED_SHOWN = 30;
+/** How many done tasks the board carries for its history. */
+const DONE_SHOWN = 30;
 
 /** One event in the log, as `orchestrator events` shows it. */
 export interface EventLogView {
@@ -381,16 +290,30 @@ export interface EventLogView {
 	readonly event: Record<string, unknown>;
 }
 
-/** A one-shot wake-up dropped because it came due while off. */
+/** A task's `--check-at` dropped because it came while off. */
 export interface ExpiredWake {
-	readonly escalationId: number;
+	readonly taskId: number;
 	readonly title: string;
-	/** The wait it was for: its entry's time. */
-	readonly waitSince: number;
-	/** The `--at` it was given. */
-	readonly dueAt: number;
+	/** The `--check-at` it was given. */
+	readonly checkAt: number;
 	/** When DevHub saw it come, while off. */
 	readonly droppedAt: number;
+}
+
+/** A task's escalation as the board carries it. */
+export function escalationWire(one: Escalation): EscalationWire {
+	return {
+		id: one.id,
+		taskId: one.taskId,
+		title: one.title,
+		state: escalationState(one),
+		question: one.question,
+		...(one.answer === undefined ? {} : { answer: one.answer }),
+		...(one.withdrawn === undefined ? {} : { withdrawn: one.withdrawn }),
+		links: one.links,
+		...(one.linkLabels === undefined ? {} : { linkLabels: one.linkLabels }),
+		createdAt: one.createdAt,
+	};
 }
 
 export class OrchestratorService {
@@ -407,26 +330,11 @@ export class OrchestratorService {
 	readonly #status = new Map<string, string>();
 	#revision = 0;
 	#timer: { cancel(): void } | undefined;
-	#graceMs = STALLED_GRACE_MS;
-	/** The first reading: nothing before it was seen, so no stretch starts earlier. */
-	#startedAt: number | undefined;
-	/**
-	 * Per open escalation, the last time one of its agents was seen working
-	 * (or seen stop), and whether one was at the last reading.
-	 */
-	readonly #workedAt = new Map<number, { at: number; working: boolean }>();
-	/** Per escalation, how many entries the orchestrator has read, and when. */
-	readonly #read = new Map<number, { entries: number; at: number }>();
-	/** `escalationId@waitSince`, once told: one `due` per wait. */
+	/** `taskId@checkAt`, once told: one `due` per time. */
 	readonly #dueTold = new Set<string>();
-	/**
-	 * The waits whose `--at` came while off, per escalation: dropped, not
-	 * sent later (the timers are off with the mode), and listed by
-	 * `orchestrator timer list` as expired while off for as long as that
-	 * wait stands (`expiredWhileOff`).
-	 */
+	/** The check-back times that came while off, per task (`expiredWhileOff`). */
 	readonly #expired = new Map<number, ExpiredWake>();
-	/** The invariant's subjects, their time, and the agents kept as they are. */
+	/** The invariant's subjects and their time. */
 	readonly #invariant: InvariantWatch;
 	/** The agents the invariant was last read with. */
 	#invariantAgents: readonly InvariantAgent[] = [];
@@ -436,21 +344,13 @@ export class OrchestratorService {
 	#usage: UsageLimitsWire = { clis: [] };
 	/** A look at the readout when the window that made saving resets. */
 	#resetTimer: { cancel(): void } | undefined;
-	/** The orchestrator's ranking of the open work (`triage.ts`). */
-	readonly #priorities: PriorityBook;
-	/** The person's requests (`requests.ts`). */
-	readonly #requests: RequestBook;
-	/** The memos, per subject (`memos.ts`). */
-	readonly #memos: MemoBook;
-	/** Who worked on what, and their sessions (`work.ts`). */
-	readonly #work: WorkBook;
 	/** The requests handed to the dispatcher this run (held or delivered). */
 	readonly #queuedRequests = new Set<number>();
 	/** What the next triage is counted from: the last, or the mode going on. */
 	#triageAnchor: number | undefined;
 	/** When the last `triage` went out to the orchestrator. */
 	#triagedAt: number | undefined;
-	/** The open escalations that may be stale, since when, and why. */
+	/** The open tasks that may be stale, since when, and why. */
 	#stale = new Map<
 		number,
 		{ readonly since: number; readonly reasons: readonly StaleReason[] }
@@ -458,14 +358,10 @@ export class OrchestratorService {
 
 	constructor(private readonly ports: OrchestratorServicePorts) {
 		this.#mode = new OrchestratorModeControl(ports.mode ?? LAUNCH_MODE);
-		this.#priorities = new PriorityBook(ports.priorities);
-		this.#requests = new RequestBook(ports.requests);
-		this.#memos = new MemoBook(ports.memos);
-		this.#work = new WorkBook(ports.work);
 		this.events = new EventDispatcher({
 			high: (subject) => this.#isHigh(subject),
 			mode: this.#mode.mode,
-			inProgress: () => this.ports.inProgress?.(this.#laneBoard()) ?? 0,
+			inProgress: () => this.#inProgressTasks().length,
 			inProgressSubject: (subject) => this.#inProgressSubject(subject),
 			statePrint: (event) => this.#invariant.print(event),
 			orchestrator: () => this.orchestratorAgentId,
@@ -502,14 +398,17 @@ export class OrchestratorService {
 				this.events.dispatch(event);
 			},
 			now: () => this.#now(),
-			...(ports.kept === undefined ? {} : { kept: ports.kept }),
 		});
-		// An escalation linked, parked or closed changes what the invariant
-		// reads (`escalationAbout`): read it again, not on the next tick.
+		// A task linked, bound, parked or done changes what the invariant
+		// reads: read it again, not on the next tick.
 		ports.store.onChange(() => {
 			this.#watchInvariant();
 			this.publish();
 		});
+	}
+
+	#store(): TaskStore {
+		return this.ports.store;
 	}
 
 	// --- events ---------------------------------------------------------------
@@ -548,16 +447,14 @@ export class OrchestratorService {
 
 	/**
 	 * Whether a pending event still needs the orchestrator, by live state,
-	 * just before it goes: a wait no longer waiting, a window reset — these
-	 * need nothing any more.
+	 * just before it goes: a task no longer 待機, a window reset — these need
+	 * nothing any more.
 	 */
 	#relevant(event: OrchestratorEvent): boolean {
 		switch (event.type) {
-			case "waiting.changed": {
-				const one = this.ports.store
-					.all()
-					.find((escalation) => escalation.id === event.escalationId);
-				return one !== undefined && currentWait(one)?.at === event.waitSince;
+			case "task.changed": {
+				const task = this.#store().task(event.taskId);
+				return task !== undefined && this.statusOf(task) === "waiting";
 			}
 			case "usage.threshold":
 				return usageThresholdRelevant(
@@ -571,15 +468,10 @@ export class OrchestratorService {
 	}
 
 	get orchestratorAgentId(): string | undefined {
-		const id = this.ports.store.orchestratorAgentId;
+		const id = this.#store().orchestratorAgentId;
 		return id !== undefined && this.ports.agents().some((one) => one.id === id)
 			? id
 			: undefined;
-	}
-
-	/** For tests: a shorter grace. */
-	setGrace(ms: number): void {
-		this.#graceMs = ms;
 	}
 
 	// --- the mode: full, saving, off --------------------------------------------
@@ -602,541 +494,195 @@ export class OrchestratorService {
 		return this.#apply(changes);
 	}
 
-	// --- triage: priorities ------------------------------------------------------
+	// --- tasks ---------------------------------------------------------------------
 
-	/** A subject's priority now: an escalation's own, else the book's. */
-	priorityOf(subject: string): Priority | undefined {
-		const esc = /^esc (\d+)$/u.exec(subject);
-		if (esc !== null)
-			return this.ports.store.all().find((one) => one.id === Number(esc[1]))
-				?.priority;
-		return this.#priorities.get(subject)?.priority;
+	/** A task's status as the board files it: 回答待ち derived. */
+	statusOf(task: Task): TaskStatus {
+		return taskStatus(task, this.#store().escalationsOf(task.id));
 	}
 
-	/**
-	 * Whether a line's subject is one of the tasks in progress: an agent of
-	 * a 対応中 item, an item one of those agents is linked to, an escalation
-	 * 対応中 or one of whose agents is one of those.
-	 */
+	#inProgressTasks(): readonly Task[] {
+		return this.#store()
+			.tasks()
+			.filter((one) => this.statusOf(one) === "in_progress");
+	}
+
+	/** Whether a line's subject is a task in progress (処理中). */
 	#inProgressSubject(subject: string): boolean {
-		const agents = this.ports.inProgressAgents?.(this.#laneBoard());
-		if (agents === undefined) return false;
-		const match = /^(agent|item|esc) (.+)$/u.exec(subject);
+		const match = /^task (\d+)$/u.exec(subject);
 		if (match === null) return false;
-		const [, kind, rest] = match as unknown as [string, string, string];
-		if (kind === "agent") return agents.has(rest);
-		if (kind === "item")
-			return (
-				findItem(this.#invariant.reading, rest)?.agents.some((id) =>
-					agents.has(id),
-				) ?? false
-			);
-		const one = this.ports.store
-			.all()
-			.find((escalation) => String(escalation.id) === rest);
-		return (
-			one !== undefined &&
-			(escalationState(one) === "in_progress" ||
-				one.agents.some((id) => agents.has(id)))
-		);
+		const task = this.#store().task(Number(match[1]));
+		return task !== undefined && this.statusOf(task) === "in_progress";
 	}
 
 	#isHigh(subject: string): boolean {
-		return this.priorityOf(subject) === "high";
+		const match = /^task (\d+)$/u.exec(subject);
+		if (match === null) return false;
+		return this.#store().task(Number(match[1]))?.priority === "high";
 	}
 
-	/**
-	 * `orchestrator priority set`: an escalation's is its rank; every other
-	 * subject's is kept in the book. An agent is named by its full id.
-	 */
-	setPriority(ref: SubjectRef, priority: Priority, note?: string): string {
-		if (ref.kind === "esc") {
-			this.rank(ref.id, { priority });
-			this.publish();
-			return `esc ${String(ref.id)}`;
-		}
-		if (ref.kind === "req" && this.#requests.get(ref.id) === undefined)
-			throw new Error(
-				`there is no request #${String(ref.id)}. Run 'devhub --tell orchestrator request list'.`,
-			);
-		const key = subjectKey(ref);
-		this.#priorities.set(key, {
-			priority,
-			at: this.#now(),
-			...(note === undefined || note === "" ? {} : { note }),
-		});
-		// A line now high may go in saving.
-		this.events.flush();
-		this.publish();
-		return key;
+	tasks(): readonly Task[] {
+		return this.#store().tasks();
 	}
 
-	clearPriority(ref: Exclude<SubjectRef, { kind: "esc" }>): boolean {
-		const had = this.#priorities.clear(subjectKey(ref));
-		if (had) this.publish();
-		return had;
+	task(id: number): Task | undefined {
+		return this.#store().task(id);
 	}
 
-	/** Every recorded priority, the escalations' included, newest first. */
-	priorities(): readonly (PriorityEntry & { readonly subject: string })[] {
-		const escalations = this.ports.store
-			.all()
-			.filter(isOpen)
-			.map((one) => ({
-				subject: `esc ${String(one.id)}`,
-				priority: one.priority ?? "normal",
-				at: one.updatedAt,
-			}));
-		const kept = [...this.#priorities.all()].map(([subject, entry]) => ({
-			subject,
-			...entry,
-		}));
-		return [...kept.reverse(), ...escalations];
+	requireTask(id: number): Task {
+		return this.#store().requireTask(id);
 	}
 
-	get triagedAt(): number | undefined {
-		return this.#triagedAt;
+	/** The open task an agent is bound to. */
+	taskOfAgent(agentId: string): Task | undefined {
+		return this.#store().taskOfAgent(agentId);
 	}
 
-	/** When the next triage is due; undefined while off or with no orchestrator. */
-	get nextTriageAt(): number | undefined {
-		if (this.orchestratorAgentId === undefined) return undefined;
-		return nextTriageAt(this.#mode.mode, this.#triageAnchor);
+	newTask(request: NewTask): Task {
+		return this.#store().createTask(request, this.#now());
 	}
 
-	/** Its time came: ask the orchestrator to rank the open work again. */
-	#announceTriage(now: number): void {
-		const due = this.nextTriageAt;
-		if (due === undefined || due > now) return;
-		this.#triageAnchor = now;
-		this.#observeStale();
-		const previous = this.#triagedAt;
-		const escalations: TriageEscalation[] = this.ports.store
-			.all()
-			.filter(isOpen)
-			.map((one) => {
-				const stale = this.#stale.get(one.id);
-				return {
-					id: one.id,
-					title: one.title,
-					state: escalationState(one) as TriageEscalation["state"],
-					...(stale === undefined
-						? {}
-						: {
-								stale: stale.reasons.map(staleWords),
-								...(previous !== undefined && stale.since <= previous
-									? { overdue: true }
-									: {}),
-							}),
-				};
-			});
-		this.events.dispatch({
-			type: "triage",
-			...(escalations.length === 0 ? {} : { escalations }),
-		});
+	editTask(id: number, edit: TaskEdit): Task {
+		const task = this.#store().edit(id, edit, this.#now());
+		// A task made high may let a nudge about it go in saving.
+		if (edit.priority !== undefined) this.events.flush();
+		return task;
 	}
 
-	// --- memos and the work agents did -------------------------------------------
-
-	/**
-	 * A subject as the command line names it, made a key: `issue=` / `pr=`
-	 * / a URL / `OWNER/REPO#N` (an item), `esc=N` and `req=N` (which must
-	 * exist), `agent=ID` (a unique prefix of an agent open now or recorded;
-	 * an agent whose work is an item's is that item), or `ws=W` (the work of
-	 * that Workspace: `workspace`, resolved by the caller).
-	 */
-	resolveSubject(
-		text: string,
-		workspace?: {
-			readonly machine: string;
-			readonly folder: string;
-			readonly agentIds: readonly string[];
-		},
-	): { readonly key: string; readonly token: string } {
-		const typed = readSubject(text);
-		if (typed === undefined)
-			throw new Error(
-				`a subject is issue=OWNER/REPO#N, pr=OWNER/REPO#N (or the item's URL), agent=ID, esc=N, req=N or ws=W, as the event lines name it; not ${JSON.stringify(text)}.`,
-			);
-		const made = (key: string) => ({ key, token: this.subjectTokenOf(key) });
-		switch (typed.kind) {
-			case "item":
-				return {
-					key: typed.key,
-					token: subjectToken(
-						typed.key,
-						typed.itemKind ?? this.#itemKindOf(typed.key),
-					),
-				};
-			case "esc": {
-				const id = Number(typed.key.slice(4));
-				if (!this.ports.store.all().some((one) => one.id === id))
-					throw new Error(
-						`there is no escalation #${String(id)}. Run 'devhub --tell escalation list'.`,
-					);
-				return made(typed.key);
-			}
-			case "req": {
-				const id = Number(typed.key.slice(4));
-				if (this.#requests.get(id) === undefined)
-					throw new Error(
-						`there is no request #${String(id)}. Run 'devhub --tell orchestrator request list'.`,
-					);
-				return made(typed.key);
-			}
-			case "agent":
-				return made(this.#agentWorkKey(this.#agentIdOf(typed.id)));
-			case "ws": {
-				if (workspace === undefined)
-					throw new Error(`ws=${typed.workspace}: no such workspace.`);
-				for (const agentId of workspace.agentIds) {
-					const key = this.#agentWorkKey(agentId);
-					if (this.#work.get(key) !== undefined || this.#memos.get(key))
-						return made(key);
-				}
-				const recorded = this.#work
-					.all()
-					.find((record) =>
-						record.agents.some(
-							(agent) =>
-								agent.machine === workspace.machine &&
-								stripSlash(agent.folder) === stripSlash(workspace.folder),
-						),
-					);
-				if (recorded !== undefined) return made(recorded.subject);
-				const first = workspace.agentIds[0];
-				if (first !== undefined) return made(this.#agentWorkKey(first));
-				throw new Error(
-					`ws=${typed.workspace} has no agent and no recorded work: name the subject (issue=…, agent=…).`,
-				);
-			}
-		}
+	setTaskStatus(
+		id: number,
+		status: StoredTaskStatus,
+		wait: { readonly note?: string; readonly checkAt?: number },
+	): Task {
+		const task = this.#store().setStatus(id, status, wait, this.#now());
+		// Parked on a time: the timer looks for it.
+		this.observe();
+		return task;
 	}
 
-	/** `issue=…` or `pr=…` for an item key, as far as DevHub knows which. */
-	subjectTokenOf(key: string): string {
-		return subjectToken(key, this.#itemKindOf(key));
+	linkTask(
+		id: number,
+		links: readonly string[],
+		labels?: Readonly<Record<string, string>>,
+	): Task {
+		return this.#store().link(id, links, labels, this.#now());
 	}
 
-	#itemKindOf(key: string): "issue" | "pr" | undefined {
-		if (!key.startsWith("item ")) return undefined;
-		const recorded = this.#work.get(key)?.itemKind;
-		if (recorded !== undefined) return recorded;
-		const ref = key.slice(5);
-		const facts = this.ports
-			.invariant?.()
-			.items?.find(
-				(one) =>
-					`${one.item.repo}#${String(one.item.number)}`.toLowerCase() === ref,
-			);
-		return facts?.kind;
+	unlinkTask(id: number, links: readonly string[]): Task {
+		return this.#store().unlink(id, links, this.#now());
 	}
 
-	/** An agent's full id, from an id or a unique prefix, open now or recorded. */
-	#agentIdOf(text: string): string {
-		const ids = new Set<string>();
-		for (const agent of this.ports.agents())
-			if (agent.id === text || agent.id.startsWith(text)) ids.add(agent.id);
-		for (const record of this.#work.all())
-			for (const agent of record.agents)
-				if (agent.agentId === text || agent.agentId.startsWith(text))
-					ids.add(agent.agentId);
-		for (const memo of this.#memos.all())
-			if (memo.subject.startsWith("agent ")) {
-				const id = memo.subject.slice(6);
-				if (id === text || id.startsWith(text)) ids.add(id);
-			}
-		if (ids.has(text)) return text;
-		if (ids.size === 1 && text.length >= 4) return [...ids][0]!;
-		throw new Error(
-			ids.size === 0
-				? `no agent is ${text}, open or recorded. Run 'devhub --tell agents' or 'devhub --tell memo list'.`
-				: ids.size > 1
-					? `${text} names ${String(ids.size)} agents: give more of the id.`
-					: `give at least 4 characters of the agent's id, not ${JSON.stringify(text)}.`,
+	/** Bind agents (by full id) to a task: each leaves the open task it was on. */
+	bindTask(id: number, agentIds: readonly string[]): Task {
+		const names = new Map(this.ports.agents().map((one) => [one.id, one.name]));
+		const bound = this.#store().bind(
+			id,
+			agentIds.map((agentId) => ({
+				agentId,
+				name: names.get(agentId) ?? agentId.slice(0, 8),
+			})),
+			this.#now(),
 		);
+		return bound;
 	}
 
-	/** The subject an agent's work is kept under: its item, else itself. */
-	#agentWorkKey(agentId: string): string {
-		const live = this.#invariantSource()?.agents.find(
-			(one) => one.id === agentId,
-		);
-		if (live !== undefined)
-			return normalSubject(
-				workSubjectOf({
-					agentId,
-					...(live.issue === undefined ? {} : { issue: live.issue }),
-				}).subject,
-			);
-		return normalSubject(
-			this.#work.byAgent(agentId)?.record.subject ?? `agent ${agentId}`,
-		);
+	unbindTask(id: number, agentId: string): Task {
+		return this.#store().unbind(id, agentId, this.#now());
 	}
 
-	#invariantSource() {
-		return this.ports.invariant?.();
-	}
-
-	memo(key: string): Memo | undefined {
-		return this.#memos.get(key);
-	}
-
-	memos(): readonly Memo[] {
-		return this.#memos.all();
-	}
-
-	setMemo(key: string, text: string): Memo {
-		const memo = this.#memos.set(key, text, this.#now());
-		this.publish();
-		return memo;
-	}
-
-	clearMemo(key: string): boolean {
-		const had = this.#memos.clear(key);
-		if (had) this.publish();
-		return had;
+	completeTask(id: number, note: string | undefined): Task {
+		return this.#store().complete(id, note, this.#now());
 	}
 
 	/**
-	 * The note that goes with `subject` where it is shown: its own; an
-	 * agent's, its work's (its item's); an escalation's, its own or that of
-	 * the first item it links. Undefined: there is none.
+	 * The agent `agent resume <task|agent>` brings back: the latest of the
+	 * task's bound agents (`text` a task: `task=12`, `#12`, `12`), or the
+	 * bound agent `text` names (its id, a 4+ prefix, or its name), newest
+	 * task first. Undefined: `text` names neither (it may be a session id).
+	 * `live` is the agent running that conversation now, when one is.
 	 */
-	memoAbout(subject: string): Memo | undefined {
-		const key = normalSubject(subject);
-		const own = this.#memos.get(key);
-		if (own !== undefined) return own;
-		if (key.startsWith("agent "))
-			return this.#memos.get(this.#agentWorkKey(key.slice(6)));
-		const esc = /^esc (\d+)$/u.exec(key);
-		if (esc !== null) {
-			const one = this.ports.store.all().find((e) => e.id === Number(esc[1]));
-			for (const link of one?.links ?? []) {
-				const item = itemOfUrl(link);
-				const memo =
-					item === undefined ? undefined : this.#memos.get(itemKey(item.ref));
-				if (memo !== undefined) return memo;
-			}
-		}
-		return undefined;
-	}
-
-	/**
-	 * The managed agents open now (every save of the state): recorded under
-	 * their work's subject; the memos follow a subject that moved; both
-	 * stores pruned.
-	 */
-	observeWork(live: readonly LiveWorkAgent[]): void {
-		const now = this.#now();
-		const moves = this.#work.observe(live, now);
-		this.#afterWork(moves, now);
-	}
-
-	/** An agent closed, with the session it was asked for at its close. */
-	workClosed(agent: LiveWorkAgent): void {
-		const now = this.#now();
-		this.#afterWork(this.#work.closed(agent, now), now);
-	}
-
-	#afterWork(
-		moves: readonly { from: string; to: string }[],
-		now: number,
-	): void {
-		for (const move of moves) this.#memos.rename(move.from, move.to);
-		this.#pruneStores(now);
-		this.publish();
-	}
-
-	#pruneStores(now: number): void {
-		const items = this.#invariantSource()?.items;
-		const itemDone = (key: string): number | undefined => {
-			if (items === undefined) return undefined;
-			const facts = items.find(
-				(one) =>
-					`item ${one.item.repo}#${String(one.item.number)}`.toLowerCase() ===
-					key,
-			);
-			return facts !== undefined && facts.state !== "open" ? now : undefined;
-		};
-		this.#work.prune(itemDone, now);
-		const liveIds = new Set(this.ports.agents().map((one) => one.id));
-		this.#memos.prune(
-			{
-				doneAt: (key) => {
-					const esc = /^esc (\d+)$/u.exec(key);
-					if (esc !== null)
-						return this.ports.store
-							.all()
-							.find((one) => one.id === Number(esc[1]))?.closed?.at;
-					const req = /^req (\d+)$/u.exec(key);
-					if (req !== null)
-						return this.#requests.get(Number(req[1]))?.filed?.at;
-					return itemDone(key);
-				},
-				gone: (key) => {
-					const esc = /^esc (\d+)$/u.exec(key);
-					if (esc !== null)
-						return !this.ports.store
-							.all()
-							.some((one) => one.id === Number(esc[1]));
-					const req = /^req (\d+)$/u.exec(key);
-					return (
-						req !== null && this.#requests.get(Number(req[1])) === undefined
-					);
-				},
-				agentKnown: (key) => {
-					const id = key.slice(6);
-					return (
-						liveIds.has(id) ||
-						this.#work.get(key) !== undefined ||
-						this.#work.byAgent(id) !== undefined
-					);
-				},
-			},
-			now,
-		);
-	}
-
-	/** Every work record, most recently seen first. */
-	workRecords(): readonly WorkRecord[] {
-		return this.#work.all();
-	}
-
-	/**
-	 * The agent `agent resume <subject|agent>` brings back: the latest of
-	 * the subject's recorded agents (`text` a subject), or the recorded agent
-	 * `text` names (its id, a 4+ prefix, or its name). Undefined: `text`
-	 * names neither (it may be a session id). `live` is the agent running
-	 * that conversation now, when one is.
-	 */
-	resumeTarget(
-		text: string,
-		workspace?: {
-			readonly machine: string;
-			readonly folder: string;
-			readonly agentIds: readonly string[];
-		},
-	):
+	resumeTarget(text: string):
 		| {
-				readonly key: string;
-				readonly token: string;
-				readonly record: WorkRecord;
-				readonly agent: WorkAgent;
+				readonly task: Task;
+				readonly agent: TaskAgent;
 				readonly live?: string;
 		  }
 		| undefined {
 		const liveIds = new Set(this.ports.agents().map((one) => one.id));
-		const answer = (record: WorkRecord, agent: WorkAgent) => ({
-			key: normalSubject(record.subject),
-			token: this.subjectTokenOf(normalSubject(record.subject)),
-			record,
+		const answer = (task: Task, agent: TaskAgent) => ({
+			task,
 			agent,
 			...(liveIds.has(agent.agentId) ? { live: agent.agentId } : {}),
 		});
-		const typed = readSubject(text);
-		if (typed !== undefined && typed.kind !== "agent") {
-			if (typed.kind === "esc" || typed.kind === "req") return undefined;
-			const { key } = this.resolveSubject(text, workspace);
-			const record = this.#work.get(key);
-			const agent = record?.agents.at(-1);
-			if (record === undefined || agent === undefined)
+		const typed = /^(?:task=|#|T)(\d{1,9})$/u.exec(text.trim());
+		if (typed !== null) {
+			const task = this.#store().requireTask(Number(typed[1]));
+			const agent = task.agents.at(-1);
+			if (agent === undefined)
 				throw new Error(
-					`DevHub has no record of an agent that worked on ${this.subjectTokenOf(key)}: start a new one (issue assign / agent new), or resume a session by its id ('devhub --tell sessions --all').`,
+					`no agent has worked on task #${String(task.id)}: start one (agent new --task ${String(task.id)} / issue assign --task ${String(task.id)}).`,
 				);
-			return answer(record, agent);
+			return answer(task, agent);
 		}
-		const id = typed?.kind === "agent" ? typed.id : text;
-		const matches: { record: WorkRecord; agent: WorkAgent }[] = [];
-		for (const record of this.#work.all())
-			for (const agent of record.agents)
+		const id = text.trim();
+		const matches: { task: Task; agent: TaskAgent }[] = [];
+		for (const task of [...this.#store().tasks()].reverse())
+			for (const agent of task.agents)
 				if (
 					agent.agentId === id ||
 					(id.length >= 4 && agent.agentId.startsWith(id)) ||
 					agent.name === id
 				)
-					matches.push({ record, agent });
-		if (matches.length === 0) {
-			if (typed?.kind === "agent")
-				throw new Error(
-					`DevHub has no record of agent ${id}'s work. Run 'devhub --tell memo list' (its WORK lines) or 'devhub --tell sessions --all'.`,
-				);
-			return undefined;
-		}
+					matches.push({ task, agent });
+		if (matches.length === 0) return undefined;
 		if (new Set(matches.map((one) => one.agent.agentId)).size > 1)
 			throw new Error(
-				`${JSON.stringify(id)} names more than one recorded agent: ${matches.map((one) => `${one.agent.agentId} (${one.agent.name})`).join(", ")}.`,
+				`${JSON.stringify(id)} names more than one agent of a task: ${[...new Set(matches.map((one) => `${one.agent.agentId} (${one.agent.name})`))].join(", ")}.`,
 			);
-		return answer(matches[0]!.record, matches[0]!.agent);
+		return answer(matches[0]!.task, matches[0]!.agent);
 	}
 
-	#memoWires(): readonly OrchestratorMemoWire[] {
-		return this.#memos.all().map((memo) => ({
-			subject: memo.subject,
-			token: this.subjectTokenOf(memo.subject),
-			text: memo.text,
-			at: memo.at,
-		}));
-	}
-
-	#workWires(): readonly OrchestratorWorkWire[] {
-		const liveIds = new Set(this.ports.agents().map((one) => one.id));
-		return this.#work.all().map((record) => ({
-			subject: record.subject,
-			token: this.subjectTokenOf(normalSubject(record.subject)),
-			...(record.url === undefined ? {} : { url: record.url }),
-			agents: record.agents.map((agent) => {
-				const workspaceId = this.ports.workspaceAt?.(
-					agent.machine,
-					agent.folder,
-				);
-				return {
-					agentId: agent.agentId,
-					name: agent.name,
-					profileId: agent.profileId,
-					kind: agent.kind,
-					machine: agent.machine,
-					folder: agent.folder,
-					...(agent.branch === undefined ? {} : { branch: agent.branch }),
-					...(agent.sessions.at(-1) === undefined
-						? {}
-						: { session: agent.sessions.at(-1)! }),
-					live: liveIds.has(agent.agentId),
-					resumable:
-						!liveIds.has(agent.agentId) &&
-						agent.sessions.length > 0 &&
-						(agent.kind === "claude" || agent.kind === "codex"),
-					...(agent.stoppedAt === undefined
-						? {}
-						: { stoppedAt: agent.stoppedAt }),
-					...(workspaceId === undefined ? {} : { workspaceId }),
-				};
-			}),
-		}));
+	/**
+	 * The managed agents open now (every save of the state): each bound
+	 * agent's entry brought up to date, one continuing a recorded session
+	 * taking its place.
+	 */
+	observeWork(live: readonly LiveTaskAgent[]): void {
+		this.#store().observe(live, this.#now());
 	}
 
 	// --- the person's requests ---------------------------------------------------
 
-	/** The person's request, from the board's +: kept, and delivered as their words. */
-	request(text: string): PersonRequest {
-		const made = this.#requests.add(text, this.#now());
+	/**
+	 * The person's request, from the board's +: a 待機 task made with their
+	 * words (its title their first line), and the words delivered at once as
+	 * theirs — held while off, or until an orchestrator runs.
+	 */
+	request(text: string): Task {
+		const trimmed = text.trim();
+		const title =
+			trimmed
+				.split("\n")[0]!
+				.replace(/^#+\s*/u, "")
+				.trim()
+				.slice(0, 120) || "依頼";
+		const made = this.#store().createTask(
+			{ title, request: trimmed },
+			this.#now(),
+		);
 		this.#dispatchRequest(made);
 		this.publish();
 		return made;
 	}
 
-	/**
-	 * A request to the dispatcher: delivered at once, or held while off.
-	 * With no orchestrator running there is nobody to hold it for, so it is
-	 * not queued, and goes when one is started (`#releaseRequests`).
-	 */
-	#dispatchRequest(request: PersonRequest): void {
+	#dispatchRequest(task: Task): void {
+		if (task.request === undefined) return;
 		const entry = this.events.dispatch({
 			type: "request",
-			requestId: request.id,
-			text: request.text,
+			task: { id: task.id, title: task.title },
+			text: task.request.text,
 		});
-		if (entry.fate !== "dropped") this.#queuedRequests.add(request.id);
+		if (entry.fate !== "dropped") this.#queuedRequests.add(task.id);
 	}
 
 	/**
@@ -1145,20 +691,14 @@ export class OrchestratorService {
 	 */
 	#releaseRequests(): void {
 		if (this.orchestratorAgentId === undefined) return;
-		for (const one of this.#requests.open())
-			if (one.state === "held" && !this.#queuedRequests.has(one.id))
+		for (const one of this.#store().tasks())
+			if (
+				one.request !== undefined &&
+				one.request.sentAt === undefined &&
+				one.done === undefined &&
+				!this.#queuedRequests.has(one.id)
+			)
 				this.#dispatchRequest(one);
-	}
-
-	/** `orchestrator request done`: filed as a task, and where. */
-	fileRequest(id: number, note: string | undefined): PersonRequest {
-		const filed = this.#requests.file(id, this.#now(), note);
-		this.publish();
-		return filed;
-	}
-
-	requests(): readonly PersonRequest[] {
-		return this.#requests.all();
 	}
 
 	/** The usage readout moved: the automatic switch follows it. */
@@ -1221,11 +761,56 @@ export class OrchestratorService {
 		);
 	}
 
+	// --- triage ------------------------------------------------------------------
+
+	get triagedAt(): number | undefined {
+		return this.#triagedAt;
+	}
+
+	/** When the next triage is due; undefined while off or with no orchestrator. */
+	get nextTriageAt(): number | undefined {
+		if (this.orchestratorAgentId === undefined) return undefined;
+		return nextTriageAt(this.#mode.mode, this.#triageAnchor);
+	}
+
+	/** Its time came: ask the orchestrator to look at every open task again. */
+	#announceTriage(now: number): void {
+		const due = this.nextTriageAt;
+		if (due === undefined || due > now) return;
+		this.#triageAnchor = now;
+		this.#observeStale();
+		const previous = this.#triagedAt;
+		const tasks: TriageTask[] = this.#store()
+			.tasks()
+			.filter((one) => one.done === undefined)
+			.map((one) => {
+				const stale = this.#stale.get(one.id);
+				return {
+					id: one.id,
+					title: one.title,
+					status: this.statusOf(one) as TriageTask["status"],
+					...(one.priority === undefined ? {} : { priority: one.priority }),
+					...(stale === undefined
+						? {}
+						: {
+								stale: stale.reasons.map(staleWords),
+								...(previous !== undefined && stale.since <= previous
+									? { overdue: true }
+									: {}),
+							}),
+				};
+			});
+		this.events.dispatch({
+			type: "triage",
+			...(tasks.length === 0 ? {} : { tasks }),
+		});
+	}
+
 	// --- the orchestrator ----------------------------------------------------
 
 	/** Assign the orchestrator agent, and tell it it has started. */
 	assign(agentId: string, initPrompt?: string): void {
-		this.ports.store.setOrchestrator(agentId);
+		this.#store().setOrchestrator(agentId);
 		// `init` reads the board: the first triage is an interval away.
 		this.#triageAnchor = this.#now();
 		if (initPrompt !== undefined) this.ports.deliver(agentId, initPrompt);
@@ -1235,116 +820,57 @@ export class OrchestratorService {
 	}
 
 	release(): void {
-		this.ports.store.setOrchestrator(undefined);
+		this.#store().setOrchestrator(undefined);
 	}
 
-	// --- escalations: the orchestrator's side ----------------------------------
+	// --- escalations ---------------------------------------------------------
 
 	raise(request: NewEscalation): Escalation {
-		const made = this.ports.store.create(request, this.#now());
-		// Born waiting, maybe on a time: the timer looks for it.
-		if (request.wait !== undefined) this.observe();
-		return made;
+		return this.#store().raise(request, this.#now());
 	}
 
-	ask(
-		id: number,
-		markdown: string,
-		options: readonly string[] | undefined,
-		links: readonly string[] = [],
-		linkLabels?: Readonly<Record<string, string>>,
-	): Escalation {
-		return this.ports.store.ask(
-			id,
-			markdown,
-			options,
-			this.#now(),
-			links,
-			linkLabels,
-		);
+	withdraw(id: number, note: string | undefined): Escalation {
+		return this.#store().withdraw(id, note, this.#now());
 	}
 
-	close(id: number, note: string | undefined): Escalation {
-		return this.ports.store.close(id, note, this.#now());
+	escalation(id: number): Escalation | undefined {
+		return this.#store().escalation(id);
 	}
 
-	/**
-	 * `escalation hold`: the orchestrator parks it in 対応中 while it works on
-	 * it, or notes where an 対応中 one stands. A `held` note, on the
-	 * orchestrator's side: never an answer.
-	 */
-	hold(id: number, note: string | undefined): Escalation {
-		return this.ports.store.hold(id, note, this.#now());
-	}
-
-	/**
-	 * `escalation wait`: parked on an outside condition, its trigger in words
-	 * and maybe a time. 待機中 until it is asked, answered, resumed or closed.
-	 */
-	wait(id: number, request: WaitRequest): Escalation {
-		const waiting = this.ports.store.wait(id, request, this.#now());
-		this.observe();
-		return waiting;
-	}
-
-	/** `escalation resume`: off its wait, to 対応中. */
-	resume(id: number, note: string | undefined): Escalation {
-		return this.ports.store.resume(id, note, this.#now());
-	}
-
-	link(
-		id: number,
-		more: {
-			readonly agentId?: string;
-			readonly links?: readonly string[];
-			readonly linkLabels?: Readonly<Record<string, string>>;
-		},
-	): Escalation {
-		return this.ports.store.link(id, more, this.#now());
+	escalations(): readonly Escalation[] {
+		return this.#store().escalations();
 	}
 
 	/** The id `raise` will give the next one: its pictures' folder is named for it. */
-	/** One escalation, as stored — for the window's title. */
-	escalation(id: number): Escalation | undefined {
-		return this.ports.store.get(id);
-	}
-
 	nextEscalationId(): number {
-		return this.ports.store.nextId;
+		return this.#store().nextEscalationId;
 	}
 
-	rank(id: number, rank: EscalationRank): Escalation {
-		return this.ports.store.rank(id, rank, this.#now());
-	}
-
-	// --- the person's side -----------------------------------------------------
-
-	/** The person's answer, from the window. Moves it to in_progress. */
+	/** The person's answer, from the window: closes it, its task 処理中. */
 	answer(id: number, markdown: string): Escalation {
-		const before = this.ports.store.all().find((one) => one.id === id);
-		// A quick reply is sent as the option's own words.
-		const option =
-			before === undefined
-				? undefined
-				: openOptions(before).find((one) => one === markdown.trim());
-		const answered = this.ports.store.answer(id, markdown, this.#now());
+		const answered = this.#store().answer(id, markdown, this.#now());
+		const task = this.#store().task(answered.taskId);
 		const names = new Map(this.ports.agents().map((one) => [one.id, one.name]));
 		this.events.dispatch({
 			type: "escalation_answered",
+			task: {
+				id: answered.taskId,
+				...(task === undefined ? {} : { title: task.title }),
+			},
 			escalationId: answered.id,
 			title: answered.title,
 			// Named as the person sees them, with the id to address them by.
-			agents: answered.agents.map((id) => {
-				const name = names.get(id);
-				return name === undefined ? { id } : { id, name };
-			}),
+			agents: (task?.agents ?? [])
+				.filter((one) => names.has(one.agentId))
+				.map((one) => ({ id: one.agentId, name: names.get(one.agentId)! })),
 			answers: [
 				{
-					text: answered.entries.at(-1)?.markdown ?? markdown,
-					...(option === undefined ? {} : { option }),
+					text: answered.answer?.markdown ?? markdown,
+					...(answered.answer?.option === undefined
+						? {}
+						: { option: answered.answer.option }),
 				},
 			],
-			readThrough: answered.entries.length,
 		});
 		return answered;
 	}
@@ -1363,12 +889,9 @@ export class OrchestratorService {
 
 	/**
 	 * Every agent that went from waiting (idle, or stopped on a question) to
-	 * working since the last projection: a `needs_answer` escalation about it
-	 * leaves 要回答 (DevHub's note: `direct` when the person's own composer
-	 * set it going, `resumed` for anything else), and stays out until the
-	 * orchestrator asks again. Only the person's words are told (`escalation.
-	 * human_direct`, for every open escalation about the agent): anything
-	 * else the orchestrator caused itself.
+	 * working since the last projection: its 待機 task is 処理中 again; and
+	 * when the person's own composer set it going and its task has an open
+	 * question, the orchestrator is told (`task.human_direct`).
 	 */
 	#watchWorking(agents: readonly LiveAgent[], now: number): void {
 		const before = new Map(this.#status);
@@ -1394,40 +917,23 @@ export class OrchestratorService {
 	}
 
 	#startedWorking(agent: LiveAgent, byPerson: boolean, now: number): void {
-		if (agent.id === this.ports.store.orchestratorAgentId) return;
-		const about = this.ports.store
-			.all()
-			.filter((one) => isOpen(one) && one.agents.includes(agent.id));
-		if (about.length === 0) return;
-		const told: Escalation[] = [];
-		for (const one of about) {
-			const state = escalationState(one);
-			told.push(
-				state === "needs_answer" || state === "waiting"
-					? this.ports.store.note(
-							one.id,
-							byPerson ? "direct" : "resumed",
-							agent.id,
-							now,
-						)
-					: one,
-			);
-		}
-		if (!byPerson) return;
+		if (agent.id === this.#store().orchestratorAgentId) return;
+		const task = this.#store().taskOfAgent(agent.id);
+		if (task === undefined) return;
+		this.#store().agentWorking(agent.id, now);
+		if (!byPerson || this.statusOf(task) !== "answer") return;
 		const say = (message: PersonMessage | undefined) => {
 			const since = message?.since;
 			const text = message?.text;
-			for (const one of told)
-				this.events.dispatch({
-					type: "escalation.human_direct",
-					escalationId: one.id,
-					title: one.title,
-					agent: { id: agent.id, name: agent.name },
-					...(since === undefined ? {} : { since }),
-					...(text === undefined || text.trim().length === 0
-						? {}
-						: { messages: [{ text }] }),
-				});
+			this.events.dispatch({
+				type: "task.human_direct",
+				task: { id: task.id, title: task.title },
+				agent: { id: agent.id, name: agent.name },
+				...(since === undefined ? {} : { since }),
+				...(text === undefined || text.trim().length === 0
+					? {}
+					: { messages: [{ text }] }),
+			});
 		};
 		const message = this.ports.personMessage?.(agent.id);
 		if (message instanceof Promise)
@@ -1437,17 +943,11 @@ export class OrchestratorService {
 
 	// --- live state ------------------------------------------------------------
 
-	/**
-	 * A new projection: who went working, and which 対応中 escalation has
-	 * stood still past the grace. Called on every snapshot; cheap, and
-	 * idempotent.
-	 */
+	/** A new projection: called on every snapshot; cheap, and idempotent. */
 	observe(): void {
 		const now = this.#now();
 		const agents = this.#agents();
-		this.#startedAt ??= now;
 		this.#watchWorking(agents, now);
-		this.#watchStalled(agents, now);
 		this.#announceDue(now);
 		this.#announceTriage(now);
 		// An orchestrator restored with DevHub picks up the requests kept.
@@ -1468,163 +968,80 @@ export class OrchestratorService {
 			agent.maintenance === true
 				? {
 						...agent,
-						// Never seen before it (a restart of DevHub, a resumed
-						// session): not known, so going on from it is not going
-						// back to work.
 						status: workStatus(agent, this.#status.get(agent.id) ?? "unknown"),
 					}
 				: agent,
 		);
 	}
 
-	#lanes() {
-		return board(this.ports.store.all());
-	}
-
-	// --- 停滞: 対応中 with nobody working on it -----------------------------------
-
-	/**
-	 * The orchestrator has been shown escalation `id`'s first `entries`
-	 * entries (`escalation show`): an answer among them is read, and a
-	 * stalled stretch may start.
-	 */
-	acknowledge(id: number, entries: number): void {
-		if (!this.#markRead(id, entries)) return;
-		this.observe();
-	}
-
-	/** Escalation `id`'s first `entries` are read now; false: they were already. */
-	#markRead(id: number, entries: number): boolean {
-		const before = this.#read.get(id);
-		if (before !== undefined && before.entries >= entries) return false;
-		this.#read.set(id, { entries, at: this.#now() });
-		return true;
+	/** The orchestrator has read escalation `id` (`escalation show`). */
+	acknowledge(id: number): void {
+		const orchestrator = this.orchestratorAgentId;
+		if (orchestrator !== undefined) this.ports.acknowledged?.(orchestrator, id);
 	}
 
 	/**
-	 * Events just delivered: an `escalation_answered` that carried its
-	 * answers whole is the orchestrator's reading of them — 停滞's grace
-	 * starts now, and `agent wait --any` no longer owes it them. One cut at
-	 * `HUMAN_TEXT_CAP` is not: `escalation show` reads the rest, and is the
-	 * reading.
+	 * Events just delivered: an answer's delivery is the orchestrator's
+	 * reading of it; a request's, its being sent; a triage's, its time.
 	 */
 	#deliveredRead(events: readonly OrchestratorEvent[]): void {
 		const orchestrator = this.orchestratorAgentId;
-		let moved = false;
 		for (const event of events) {
 			if (event.type === "request") {
-				this.#requests.sent(event.requestId, this.#now());
-				moved = true;
+				this.#store().requestSent(event.task.id, this.#now());
 				continue;
 			}
 			if (event.type === "triage") {
 				this.#triagedAt = this.#now();
-				moved = true;
 				continue;
 			}
-			if (event.type !== "escalation_answered") continue;
-			if (event.readThrough === undefined) continue;
-			if (orchestrator !== undefined)
-				this.ports.acknowledged?.(
-					orchestrator,
-					event.escalationId,
-					event.readThrough,
-				);
-			moved = this.#markRead(event.escalationId, event.readThrough) || moved;
+			if (event.type === "escalation_answered" && orchestrator !== undefined)
+				this.ports.acknowledged?.(orchestrator, event.escalationId);
 		}
-		// The grace runs from here: wake when it is up.
-		if (moved) this.#schedule(this.#now());
 	}
 
-	/** Whether one of `ids` is working now (a maintenance turn is not). */
-	#anyWorking(ids: readonly string[], agents: readonly LiveAgent[]): boolean {
-		return agents.some(
-			(agent) =>
-				ids.includes(agent.id) &&
-				agent.id !== this.ports.store.orchestratorAgentId &&
-				!agent.stopping &&
-				agentAtWork(agent.status),
-		);
-	}
+	// --- 待機: parked, maybe with a time to look again ----------------------------
 
-	#watchStalled(agents: readonly LiveAgent[], now: number): void {
-		const open = new Set<number>();
-		for (const one of this.ports.store.all()) {
-			if (!isOpen(one)) continue;
-			open.add(one.id);
-			const working = this.#anyWorking(one.agents, agents);
-			const was = this.#workedAt.get(one.id);
-			// Working, or seen to stop just now: the stretch starts here.
-			if (working || was?.working === true)
-				this.#workedAt.set(one.id, { at: now, working });
-		}
-		for (const id of [...this.#workedAt.keys()])
-			if (!open.has(id)) this.#workedAt.delete(id);
-	}
-
-	/** When `one` started standing still, or undefined while it does not. */
-	#stalledSince(
-		one: Escalation,
-		agents: readonly LiveAgent[],
-	): number | undefined {
-		if (escalationState(one) !== "in_progress") return undefined;
-		if (this.#anyWorking(one.agents, agents)) return undefined;
-		const last = one.entries.at(-1);
-		const read = this.#read.get(one.id);
-		const answer = last?.role === "human" && last.kind === undefined;
-		// An answer it has not read: escalation_answered says it already.
-		if (answer && (read?.entries ?? 0) < one.entries.length) return undefined;
-		return Math.max(
-			last?.at ?? one.createdAt,
-			this.#workedAt.get(one.id)?.at ?? 0,
-			answer ? (read?.at ?? 0) : 0,
-			this.#startedAt ?? 0,
-		);
-	}
-
-	// --- 待機中: parked on an outside condition --------------------------------------
-
-	/** Every waiting escalation whose time has come is told, once per wait. */
+	/** Every 待機 task whose `--check-at` has come is told, once per time. */
 	#announceDue(now: number): void {
 		if (this.orchestratorAgentId === undefined) return;
-		for (const one of this.ports.store.all()) {
-			const wait = currentWait(one);
-			if (wait?.dueAt === undefined || wait.dueAt > now) continue;
-			const key = `${String(one.id)}@${String(wait.at)}`;
+		for (const task of this.#store().tasks()) {
+			if (task.checkAt === undefined || task.checkAt > now) continue;
+			if (this.statusOf(task) !== "waiting") continue;
+			const key = `${String(task.id)}@${String(task.checkAt)}`;
 			if (this.#dueTold.has(key)) continue;
 			this.#dueTold.add(key);
 			const entry = this.events.dispatch({
-				type: "waiting.changed",
-				escalationId: one.id,
+				type: "task.changed",
+				taskId: task.id,
 				reasons: ["due"],
-				waitSince: wait.at,
+				checkAt: task.checkAt,
 			});
 			if (entry.fate === "dropped" && entry.reason === "off")
-				this.#expired.set(one.id, {
-					escalationId: one.id,
-					title: one.title,
-					waitSince: wait.at,
-					dueAt: wait.dueAt,
+				this.#expired.set(task.id, {
+					taskId: task.id,
+					title: task.title,
+					checkAt: task.checkAt,
 					droppedAt: now,
 				});
 		}
 	}
 
 	/**
-	 * The one-shot wake-ups that came due while off and were dropped: a
-	 * 待機中 escalation's `--at`, for as long as that wait stands (answered,
-	 * resumed, waiting anew or closed: gone). Oldest due first.
+	 * The check-back times that came while off and were dropped, for as long
+	 * as the task waits with that time. Oldest first.
 	 */
 	expiredWhileOff(): readonly ExpiredWake[] {
 		for (const [id, one] of [...this.#expired]) {
-			const escalation = this.ports.store.get(id);
+			const task = this.#store().task(id);
 			if (
-				escalation === undefined ||
-				currentWait(escalation)?.at !== one.waitSince
+				task === undefined ||
+				task.checkAt !== one.checkAt ||
+				this.statusOf(task) !== "waiting"
 			)
 				this.#expired.delete(id);
 		}
-		return [...this.#expired.values()].sort((a, b) => a.dueAt - b.dueAt);
+		return [...this.#expired.values()].sort((a, b) => a.checkAt - b.checkAt);
 	}
 
 	/** The settings moved: what is read and delivered follows them now. */
@@ -1640,7 +1057,7 @@ export class OrchestratorService {
 	#watchInvariant(): void {
 		const source = this.ports.invariant?.();
 		if (source === undefined) return;
-		const orchestrator = this.ports.store.orchestratorAgentId;
+		const orchestrator = this.#store().orchestratorAgentId;
 		// A maintenance turn is not work: the status before it (`#agents`).
 		const statuses = new Map(this.#agents().map((one) => [one.id, one.status]));
 		this.#invariantAgents = source.agents
@@ -1652,24 +1069,19 @@ export class OrchestratorService {
 		const reading = readInvariant({
 			items: source.items,
 			agents: this.#invariantAgents,
-			escalations: this.ports.store
-				.all()
-				.filter(isOpen)
+			tasks: this.#store()
+				.tasks()
+				.filter((one) => one.done === undefined)
 				.map((one) => ({
 					id: one.id,
 					title: one.title,
-					state: escalationState(one),
+					status: this.statusOf(one) as Exclude<TaskStatus, "done">,
 					links: one.links,
-					agents: one.agents,
-					...(one.workspaceId === undefined
-						? {}
-						: { workspaceId: one.workspaceId }),
-					...(currentWait(one) === undefined
-						? {}
-						: {
-								trigger: currentWait(one)!.markdown,
-								waitSince: currentWait(one)!.at,
-							}),
+					agents: one.agents.map((agent) => agent.agentId),
+					escalations: this.#store()
+						.escalationsOf(one.id)
+						.filter(isOpen)
+						.map((escalation) => escalation.id),
 				})),
 		});
 		this.#invariant.observe(reading, this.orchestratorAgentId !== undefined);
@@ -1679,11 +1091,10 @@ export class OrchestratorService {
 	// --- may be stale ---------------------------------------------------------------
 
 	/**
-	 * Mark the open escalations that may no longer match reality
-	 * (`staleness.ts`), from what DevHub already reads: the items of the last
-	 * GitHub reading and the agents' Workspace pull requests, the agents and
-	 * their lanes, the other open escalations. Keeps since when each has been
-	 * marked; one no longer marked is forgotten.
+	 * Mark the open tasks whose linked pull request merged or closed, or
+	 * whose linked Issue closed (`staleness.ts`), from what DevHub already
+	 * reads: the items of the last GitHub reading and the agents' Workspace
+	 * pull requests. Keeps since when each has been marked.
 	 */
 	#observeStale(): void {
 		const reading = this.#invariant.reading;
@@ -1707,48 +1118,17 @@ export class OrchestratorService {
 				state: one.facts.state,
 				ref: `${one.facts.item.repo}#${String(one.facts.item.number)}`,
 			});
-		const live = new Map(this.ports.agents().map((one) => [one.id, one]));
-		const issues = new Map(
-			this.#invariantAgents.map((one) => [one.id, one.issue]),
-		);
-		const lanes =
-			this.ports.agentLanes?.(this.#laneBoard()) ?? new Map<string, LaneId>();
-		const open = this.ports.store
-			.all()
-			.filter(isOpen)
-			.map((one) => ({
-				id: one.id,
-				state: escalationState(one) as Exclude<
-					ReturnType<typeof escalationState>,
-					"closed"
-				>,
-				links: one.links,
-				agents: one.agents,
-			}));
 		const now = this.#now();
 		const next = new Map<
 			number,
 			{ readonly since: number; readonly reasons: readonly StaleReason[] }
 		>();
-		for (const one of open) {
-			const reasons = staleReasons(one, {
-				item: (key) => items.get(key),
-				agent: (id) => {
-					const agent = live.get(id);
-					if (agent === undefined) return undefined;
-					const issue = issues.get(id);
-					const lane = lanes.get(id);
-					return {
-						name: agent.name,
-						...(issue === undefined ? {} : { issue }),
-						...(lane === undefined ? {} : { lane }),
-					};
-				},
-				open,
-			});
+		for (const task of this.#store().tasks()) {
+			if (task.done !== undefined) continue;
+			const reasons = staleReasons(task.links, (key) => items.get(key));
 			if (reasons.length === 0) continue;
-			next.set(one.id, {
-				since: this.#stale.get(one.id)?.since ?? now,
+			next.set(task.id, {
+				since: this.#stale.get(task.id)?.since ?? now,
 				reasons,
 			});
 		}
@@ -1756,14 +1136,14 @@ export class OrchestratorService {
 	}
 
 	/**
-	 * The item URLs the open escalations link (Issues and pull requests on
-	 * GitHub): read by URL with the items agents are linked to, so a merged
-	 * or closed one is seen (`staleness.ts`).
+	 * The item URLs the open tasks link (Issues and pull requests on
+	 * GitHub): read by URL beside the population, so a merged or closed one
+	 * is seen and a 待機 task waiting on it hears of it.
 	 */
-	escalationItemLinks(): readonly string[] {
-		return this.ports.store
-			.all()
-			.filter(isOpen)
+	taskItemLinks(): readonly string[] {
+		return this.#store()
+			.tasks()
+			.filter((one) => one.done === undefined)
 			.flatMap((one) =>
 				one.links.flatMap((link) => {
 					const item =
@@ -1775,32 +1155,9 @@ export class OrchestratorService {
 			);
 	}
 
-	/**
-	 * `agent keep A --note`: leave a managed agent that needs action as it is, for
-	 * the reason given, until its facts change.
-	 */
-	keep(agentId: string, note: string): KeptAgent {
-		this.observe();
-		const kept = this.#invariant.keep(agentId, note);
-		this.publish();
-		return kept;
-	}
-
-	/** `agent keep A --clear`: whether it was being kept. */
-	unkeep(agentId: string): boolean {
-		const was = this.#invariant.unkeep(agentId);
-		this.observe();
-		return was;
-	}
-
-	/** How an agent stands against the invariant, and whether it is kept. */
-	standing(
-		agentId: string,
-	): (AgentStanding & { readonly kept?: KeptAgent }) | undefined {
-		const standing = this.#invariant.standing(agentId);
-		if (standing === undefined) return undefined;
-		const kept = this.#invariant.kept(agentId);
-		return kept === undefined ? standing : { ...standing, kept };
+	/** How an agent stands against the invariant. */
+	standing(agentId: string): AgentStanding | undefined {
+		return this.#invariant.standing(agentId);
 	}
 
 	/** Every subject that needs action now. */
@@ -1809,19 +1166,38 @@ export class OrchestratorService {
 	}
 
 	/**
-	 * `devhub --tell status`: the whole state of one subject now — an item
-	 * (its URL, or `owner/repo#N`) or an agent — as far as DevHub knows it:
-	 * the item's state, assignment, lanes and pull request (review decision,
-	 * unresolved conversations, checks), the agents linked to it and how each
-	 * stands, the escalations about it, the clause it fails and since when,
-	 * and `agent keep`'s note. Undefined when DevHub has read no such item
-	 * (or has no such agent).
+	 * `devhub --tell status`: the whole state of one subject now — a task, an
+	 * item (its URL, or `owner/repo#N`) or an agent — as far as DevHub knows
+	 * it. Undefined when DevHub has read no such item (or has no such agent
+	 * or task).
 	 */
 	status(
-		target: { readonly item: string } | { readonly agentId: string },
+		target:
+			| { readonly task: number }
+			| { readonly item: string }
+			| { readonly agentId: string },
 	): SubjectStatus | undefined {
 		this.observe();
 		const reading = this.#invariant.reading;
+		if ("task" in target) {
+			const task = this.#store().task(target.task);
+			if (task === undefined) return undefined;
+			const view = this.#invariant.view(`task ${String(task.id)}`);
+			return {
+				subject: "task",
+				task: this.taskWire(task),
+				...(view === undefined ? {} : { needsAction: needsActionOf(view) }),
+				items: task.links.flatMap((link) => {
+					const key = itemLinkKey(link);
+					const item = key === undefined ? undefined : reading.items.get(key);
+					return item === undefined ? [] : [statusItem(item)];
+				}),
+				agents: task.agents.flatMap((one) => {
+					const agent = this.#statusAgent(one.agentId);
+					return agent === undefined ? [] : [agent];
+				}),
+			};
+		}
 		if ("item" in target) {
 			const item = findItem(reading, target.item);
 			if (item === undefined) return undefined;
@@ -1830,36 +1206,37 @@ export class OrchestratorService {
 				subject: "item",
 				item: statusItem(item),
 				...(view === undefined ? {} : { needsAction: needsActionOf(view) }),
-				agents: item.agents.flatMap((id) => {
-					const agent = this.#statusAgent(id);
-					return agent === undefined ? [] : [agent];
+				tasks: item.tasks.flatMap((id) => {
+					const task = this.#store().task(id);
+					return task === undefined ? [] : [this.#taskRef(task)];
 				}),
-				escalations: this.#statusEscalations(item.escalations),
 			};
 		}
 		const agent = this.#statusAgent(target.agentId);
 		if (agent === undefined) return undefined;
-		const standing = this.#invariant.standing(target.agentId);
-		const view = this.#invariant.view(`agent ${target.agentId}`);
-		const item =
-			standing?.item?.item.url === undefined
-				? undefined
-				: findItem(reading, standing.item.item.url);
+		const task = this.#store().taskOfAgent(target.agentId);
+		const view = this.#invariant.view(
+			task === undefined
+				? `agent ${target.agentId}`
+				: `task ${String(task.id)}`,
+		);
 		return {
 			subject: "agent",
 			agent,
-			...(item === undefined ? {} : { item: statusItem(item) }),
+			...(task === undefined ? {} : { task: this.#taskRef(task) }),
 			...(view === undefined ? {} : { needsAction: needsActionOf(view) }),
-			...(standing?.waiting === undefined ? {} : { waiting: standing.waiting }),
-			escalations: this.#statusEscalations(standing?.escalations ?? []),
 		};
+	}
+
+	#taskRef(task: Task): StatusTaskRef {
+		return { id: task.id, title: task.title, status: this.statusOf(task) };
 	}
 
 	#statusAgent(id: string): StatusAgent | undefined {
 		const agent = this.#invariantAgents.find((one) => one.id === id);
 		if (agent === undefined) return undefined;
 		const standing = this.#invariant.standing(id);
-		const kept = this.#invariant.kept(id);
+		const breach = standing?.breach ?? standing?.taskBreach;
 		return {
 			id: agent.id,
 			name: agent.name,
@@ -1867,47 +1244,21 @@ export class OrchestratorService {
 			workspaceId: agent.workspaceId,
 			status: agent.stopping ? "stopping" : agent.status,
 			managed: agent.managed,
-			...(agent.issue === undefined ? {} : { linked: agent.issue }),
-			...(agent.issuePending === true ? { pendingIssue: true } : {}),
-			...(standing?.breach === undefined
-				? {}
-				: { needsAction: breachWords(standing.breach) }),
-			...(kept === undefined ? {} : { kept: { note: kept.note, at: kept.at } }),
+			...(agent.issue === undefined ? {} : { issue: agent.issue }),
+			...(breach === undefined ? {} : { needsAction: breachWords(breach) }),
 		};
 	}
 
-	#statusEscalations(ids: readonly number[]): StatusEscalation[] {
-		return ids.flatMap((id) => {
-			const one = this.ports.store.get(id);
-			if (one === undefined) return [];
-			const wait = currentWait(one);
-			return [
-				{
-					id: one.id,
-					title: one.title,
-					state: escalationState(one),
-					...(wait === undefined ? {} : { trigger: wait.markdown }),
-					...(wait?.dueAt === undefined ? {} : { dueAt: wait.dueAt }),
-				},
-			];
-		});
-	}
-
-	/** Wake when the next escalation's grace or wait is up, to say so. */
+	/** Wake when the next task's check-back time or triage is due. */
 	#schedule(now: number): void {
 		this.#timer?.cancel();
 		this.#timer = undefined;
 		const setTimer = this.ports.setTimer;
 		if (setTimer === undefined) return;
-		const agents = this.#agents();
-		const all = this.ports.store.all();
 		const due = [
-			...all
-				.map((one) => this.#stalledSince(one, agents))
-				.filter((since): since is number => since !== undefined)
-				.map((since) => since + this.#graceMs),
-			...all
-				.map((one) => currentWait(one)?.dueAt)
+			...this.#store()
+				.tasks()
+				.map((one) => (one.done === undefined ? one.checkAt : undefined))
 				.filter((at): at is number => at !== undefined),
 			...(this.nextTriageAt === undefined ? [] : [this.nextTriageAt]),
 		]
@@ -1924,86 +1275,109 @@ export class OrchestratorService {
 
 	// --- the board -------------------------------------------------------------
 
-	/** One escalation as the board and `--tell` carry it. */
-	toWire(one: Escalation): EscalationWire {
-		const stalled = this.#stalledSince(one, this.#agents());
-		const maybeStale = this.#stale.get(one.id);
-		const agents = new Map(
-			this.ports.agents().map((agent) => [agent.id, agent]),
-		);
+	/** One task as the board and `--tell` carry it. */
+	taskWire(task: Task): TaskWire {
+		const live = new Map(this.ports.agents().map((agent) => [agent.id, agent]));
+		const breach = this.#invariant.reading.tasks.get(task.id);
+		const stale = this.#stale.get(task.id);
+		const agents: TaskAgentWire[] = task.agents.map((agent) => {
+			const now = live.get(agent.agentId);
+			const workspaceId =
+				now?.workspaceId ??
+				(agent.machine === undefined || agent.folder === undefined
+					? undefined
+					: this.ports.workspaceAt?.(agent.machine, agent.folder));
+			const session = agent.sessions.at(-1);
+			return {
+				agentId: agent.agentId,
+				name: now?.name ?? agent.name,
+				live: now !== undefined,
+				...(now === undefined ? {} : { status: now.status }),
+				...(workspaceId === undefined ? {} : { workspaceId }),
+				...(now === undefined ? {} : { workspaceLabel: now.workspaceLabel }),
+				resumable:
+					now === undefined &&
+					session !== undefined &&
+					(agent.kind === "claude" || agent.kind === "codex"),
+				...(agent.stoppedAt === undefined || now !== undefined
+					? {}
+					: { stoppedAt: agent.stoppedAt }),
+				...(agent.profileId === undefined
+					? {}
+					: { profileId: agent.profileId }),
+				...(agent.kind === undefined ? {} : { kind: agent.kind }),
+				...(agent.machine === undefined ? {} : { machine: agent.machine }),
+				...(agent.folder === undefined ? {} : { folder: agent.folder }),
+				...(agent.branch === undefined ? {} : { branch: agent.branch }),
+				...(session === undefined ? {} : { session }),
+			};
+		});
 		return {
-			id: one.id,
-			title: one.title,
-			state: escalationState(one),
-			entries: one.entries.map((entry) => ({
-				role: entry.role,
-				markdown: entry.markdown,
-				at: entry.at,
-				...(entry.options === undefined ? {} : { options: entry.options }),
-				...(entry.kind === undefined ? {} : { kind: entry.kind }),
-				...(entry.agent === undefined ? {} : { agent: entry.agent }),
-				...(entry.dueAt === undefined ? {} : { dueAt: entry.dueAt }),
-			})),
-			agents: one.agents.map((agentId) => {
-				const agent = agents.get(agentId);
-				return agent === undefined
-					? { agentId }
-					: {
-							agentId,
-							name: agent.name,
-							workspaceLabel: agent.workspaceLabel,
-							status: agent.status,
-						};
-			}),
-			...(one.workspaceId === undefined
+			id: task.id,
+			title: task.title,
+			status: this.statusOf(task),
+			...(task.waitNote === undefined ? {} : { waitNote: task.waitNote }),
+			...(task.checkAt === undefined ? {} : { checkAt: task.checkAt }),
+			links: task.links,
+			...(task.linkLabels === undefined ? {} : { linkLabels: task.linkLabels }),
+			agents,
+			...(task.memo === undefined ? {} : { memo: task.memo }),
+			priority: priorityOf(task),
+			...(task.priorityNote === undefined
 				? {}
-				: { workspaceId: one.workspaceId }),
-			links: one.links,
-			...(one.linkLabels === undefined ? {} : { linkLabels: one.linkLabels }),
-			createdAt: one.createdAt,
-			updatedAt: one.updatedAt,
-			stateSince: stateSince(one),
-			...(one.closed === undefined ? {} : { closed: one.closed }),
-			priority: priorityOf(one),
-			effort: effortOf(one),
-			...(one.rankNote === undefined ? {} : { rankNote: one.rankNote }),
-			...(stalled === undefined || this.#now() - stalled < this.#graceMs
+				: { priorityNote: task.priorityNote }),
+			...(task.request === undefined ? {} : { request: task.request }),
+			createdAt: task.createdAt,
+			updatedAt: task.updatedAt,
+			...(task.done === undefined ? {} : { done: task.done }),
+			...(breach === undefined || task.done !== undefined
 				? {}
-				: { stalledSince: stalled }),
-			...(maybeStale === undefined || !isOpen(one)
+				: { needsAction: breachWords(breach) }),
+			...(stale === undefined || task.done !== undefined
 				? {}
 				: {
 						mayBeStale: {
-							since: maybeStale.since,
-							reasons: maybeStale.reasons.map(staleWords),
+							since: stale.since,
+							reasons: stale.reasons.map(staleWords),
 						},
 					}),
-		};
-	}
-
-	/** Every escalation, closed ones included, as `--tell` lists them. */
-	allWires(): readonly EscalationWire[] {
-		return this.ports.store.all().map((one) => this.toWire(one));
-	}
-
-	/** The board's lanes alone: what `inProgress` is read off. */
-	#laneBoard(): LaneBoard {
-		const lanes = this.#lanes();
-		const escalation = (one: Escalation) => this.toWire(one);
-		return {
-			needsAnswer: lanes.needsAnswer.map(escalation),
-			inProgress: lanes.inProgress.map(escalation),
-			waiting: lanes.waiting.map(escalation),
-			agentStates: this.#agentStates(),
+			escalations: this.#store().escalationsOf(task.id).map(escalationWire),
 		};
 	}
 
 	wire(): OrchestratorBoardWire {
-		const lanes = this.#lanes();
-		const escalation = (one: Escalation) => this.toWire(one);
 		const settings = this.ports.settings();
 		const problem = this.ports.startProblem();
 		const orchestrator = this.orchestratorAgentId;
+		const byStatus = new Map<TaskStatus, Task[]>();
+		for (const task of this.#store().tasks()) {
+			const status = this.statusOf(task);
+			byStatus.set(status, [...(byStatus.get(status) ?? []), task]);
+		}
+		const firstOpen = (task: Task) =>
+			Math.min(
+				...this.#store()
+					.escalationsOf(task.id)
+					.filter(isOpen)
+					.map((one) => one.question.at),
+			);
+		const answer = (byStatus.get("answer") ?? []).sort(
+			(a, b) => byPriority(a, b) || firstOpen(a) - firstOpen(b) || a.id - b.id,
+		);
+		const inProgress = (byStatus.get("in_progress") ?? []).sort(
+			(a, b) => byPriority(a, b) || a.updatedAt - b.updatedAt || a.id - b.id,
+		);
+		const waiting = (byStatus.get("waiting") ?? []).sort(
+			(a, b) =>
+				(a.checkAt ?? Infinity) - (b.checkAt ?? Infinity) ||
+				byPriority(a, b) ||
+				a.updatedAt - b.updatedAt ||
+				a.id - b.id,
+		);
+		const done = (byStatus.get("done") ?? [])
+			.sort((a, b) => (b.done?.at ?? 0) - (a.done?.at ?? 0) || b.id - a.id)
+			.slice(0, DONE_SHOWN);
+		const wire = (task: Task) => this.taskWire(task);
 		return {
 			revision: this.#revision,
 			...(orchestrator === undefined
@@ -2022,37 +1396,11 @@ export class OrchestratorService {
 			paused: this.events.paused,
 			mode: this.#mode.mode,
 			...(this.#mode.auto === undefined ? {} : { autoSaving: this.#mode.auto }),
-			inProgressTasks: this.ports.inProgress?.(this.#laneBoard()) ?? 0,
+			inProgressTasks: inProgress.length,
 			held: this.events.held().length,
 			nextDelivery: this.#nextDelivery(),
 			github: this.ports.github?.() ?? { state: "idle" },
-			needsAction: this.#invariant.needsAction().map((view) => {
-				const priority = this.priorityOf(view.subject);
-				return priority === undefined ? view : { ...view, priority };
-			}),
-			requests: [
-				...this.#requests.open(),
-				...this.#requests
-					.all()
-					.filter((one) => one.state === "filed")
-					.slice(-3)
-					.reverse(),
-			].map((one) => ({
-				id: one.id,
-				text: one.text,
-				at: one.at,
-				state: one.state,
-				...(one.filed === undefined ? {} : { filed: one.filed }),
-				...(this.priorityOf(`req ${String(one.id)}`) === undefined
-					? {}
-					: { priority: this.priorityOf(`req ${String(one.id)}`)! }),
-			})),
-			agentPriorities: Object.fromEntries(
-				this.ports.agents().flatMap((agent) => {
-					const priority = this.priorityOf(`agent ${agent.id}`);
-					return priority === undefined ? [] : [[agent.id, priority]];
-				}),
-			),
+			needsAction: this.#invariant.needsAction(),
 			triage: {
 				...(this.#triagedAt === undefined ? {} : { lastAt: this.#triagedAt }),
 				...(this.nextTriageAt === undefined
@@ -2060,13 +1408,10 @@ export class OrchestratorService {
 					: { nextAt: this.nextTriageAt }),
 			},
 			agentStates: this.#agentStates(),
-			memos: this.#memoWires(),
-			work: this.#workWires(),
-			needsAnswer: lanes.needsAnswer.map(escalation),
-			inProgress: lanes.inProgress.map(escalation),
-			waiting: lanes.waiting.map(escalation),
-			closed: lanes.closed.slice(0, CLOSED_SHOWN).map(escalation),
-			graceMs: this.#graceMs,
+			answer: answer.map(wire),
+			inProgress: inProgress.map(wire),
+			waiting: waiting.map(wire),
+			done: done.map(wire),
 		};
 	}
 
@@ -2082,35 +1427,28 @@ export class OrchestratorService {
 		};
 	}
 
-	/** What each agent's row shows of the orchestration. */
+	/** What each agent's row shows of the orchestration: its task, its flag. */
 	#agentStates(): Record<string, AgentOrchestrationWire> {
 		const out: Record<string, AgentOrchestrationWire> = {};
 		for (const agent of this.ports.agents()) {
+			const task = this.#store().taskOfAgent(agent.id);
 			const standing = this.#invariant.standing(agent.id);
-			const kept = this.#invariant.kept(agent.id);
-			const breach = standing?.breach;
-			const needsAction = breach !== undefined && kept === undefined;
+			const breach = standing?.breach ?? standing?.taskBreach;
 			const state: AgentOrchestrationWire = {
-				...(standing?.waiting === undefined
+				...(task === undefined
 					? {}
-					: { waiting: standing.waiting }),
-				...(needsAction ? { needsAction: breachWords(breach) } : {}),
-				...(kept === undefined
-					? {}
-					: { kept: { note: kept.note, at: kept.at } }),
+					: {
+							task: {
+								id: task.id,
+								title: task.title,
+								status: this.statusOf(task),
+							},
+						}),
+				...(breach === undefined ? {} : { needsAction: breachWords(breach) }),
 			};
 			if (Object.keys(state).length > 0) out[agent.id] = state;
 		}
 		return out;
-	}
-
-	/** Every escalation, closed ones included, for `--tell`. */
-	escalations(): readonly Escalation[] {
-		return this.ports.store.all();
-	}
-
-	open(): readonly Escalation[] {
-		return this.ports.store.all().filter(isOpen);
 	}
 
 	#last: string | undefined;
@@ -2132,8 +1470,4 @@ export class OrchestratorService {
 		this.events.dispose();
 		this.timers.stop();
 	}
-}
-
-function stripSlash(path: string): string {
-	return path.length > 1 ? path.replace(/\/+$/u, "") : path;
 }

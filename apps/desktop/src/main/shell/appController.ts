@@ -260,9 +260,10 @@ import {
 import { bundledNeovim } from "../editor/bundledNeovim.js";
 import { NeovimConfigSource, type CarryReport } from "../runtime/carryHost.js";
 import { whenIdleAfterLaunch } from "./launchIdle.js";
-import { EscalationStore } from "../orchestrator/escalationStore.js";
+import { TaskStore } from "../orchestrator/taskStore.js";
 import {
 	OrchestratorService,
+	escalationWire,
 	type LiveAgent,
 } from "../orchestrator/orchestratorService.js";
 import {
@@ -286,10 +287,8 @@ import {
 } from "../orchestrator/orchestratorFiles.js";
 import { workspaceToken } from "../orchestrator/events.js";
 import { GitHubItemSource } from "../orchestrator/githubItems.js";
-import { KeptFile } from "../orchestrator/keptFile.js";
 import {
 	ISSUE_LINK_KEY,
-	issueLinkOf,
 	type InvariantAgent,
 	type PullFacts,
 } from "../orchestrator/invariant.js";
@@ -318,19 +317,7 @@ import {
 	usageWindowOf,
 } from "../orchestrator/usageThresholds.js";
 import { isOrchestratorMode, savingNotice } from "../orchestrator/mode.js";
-import {
-	PriorityFile,
-	parseSubject,
-	type SubjectRef,
-} from "../orchestrator/triage.js";
-import { MAX_REQUEST_LENGTH, RequestFile } from "../orchestrator/requests.js";
-import { MemoFile } from "../orchestrator/memos.js";
-import { WorkFile, type LiveWorkAgent } from "../orchestrator/work.js";
-import {
-	agentLaneIds,
-	inProgressAgentIds,
-	inProgressCount,
-} from "../../ipc/orchestratorLanes.js";
+import { REQUEST_LIMIT, type LiveTaskAgent } from "../../model/tasks.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
 import { AppConditions } from "./appConditions.js";
@@ -1000,12 +987,11 @@ export class AppController {
 		this.coordinator = new AppCoordinator(model, (snapshot) =>
 			drawnWorkspaceOrder(snapshot, this.repositoryOf),
 		);
-		// An escalation deleted from the board is a place that has gone: Back
-		// and Forward step over it, as they do a closed Agent.
+		// A task gone from the board is a place that has gone: Back and
+		// Forward step over it, as they do a closed Agent.
 		model.setOrchestratorViewExists(
 			(view) =>
-				view.kind !== "escalation" ||
-				this.orchestrator?.escalation(view.id) !== undefined,
+				view.kind !== "task" || this.orchestrator?.task(view.id) !== undefined,
 		);
 		// The window's size is the one input to the rectangles that is not
 		// the model's, and a resize is no projection: said only from one,
@@ -3400,15 +3386,16 @@ export class AppController {
 		}
 		// And its metadata, for 'sessions --meta' and whoever goes on with it.
 		this.sessionMeta.closed(agent, session);
-		// And the work it did, with the session to bring it back on.
+		// And the work it did, with the session to bring it back on: its
+		// task's entry, brought up to date with what it ran before it goes.
 		const closing = this.liveWorkAgents().find(
 			(one) => one.agentId === agentId,
 		);
 		if (closing !== undefined)
-			this.orchestrator?.workClosed({
-				...closing,
-				...(session === undefined ? {} : { session }),
-			});
+			this.orchestrator?.observeWork([
+				...this.liveWorkAgents().filter((one) => one.agentId !== agentId),
+				{ ...closing, ...(session === undefined ? {} : { session }) },
+			]);
 		return {
 			profile_id: agent.profile.id,
 			profile_kind: agent.profile.kind,
@@ -4398,19 +4385,18 @@ export class AppController {
 	 */
 	/**
 	 * What the Orchestrator screen says it shows (`reportOrchestratorView`),
-	 * with the escalation read off the store: its subject and what it is
-	 * about, never its thread.
+	 * with the task read off the store: its title and what it is about,
+	 * never its questions.
 	 */
 	private orchestratorTitleView(): OrchestratorTitleView {
 		const view = this.orchestratorView;
-		if (view.kind !== "escalation") return view;
-		const escalation = this.orchestrator?.escalation(view.id);
-		if (escalation === undefined) return { kind: "board" };
+		if (view.kind !== "task") return view;
+		const task = this.orchestrator?.task(view.id);
+		if (task === undefined) return { kind: "board" };
 		return {
-			kind: "escalation",
-			subject: escalation.title,
-			workspaceId: escalation.workspaceId,
-			agentIds: escalation.agents,
+			kind: "task",
+			subject: task.title,
+			agentIds: [...task.agents].reverse().map((one) => one.agentId),
 		};
 	}
 
@@ -7492,23 +7478,11 @@ export class AppController {
 	 * What an escalation's relative paths are relative to: its workspace,
 	 * else its first agent's, else the orchestrator's folder.
 	 */
-	private escalationBase(
-		workspaceId: string | undefined,
-		agents: readonly string[],
-	): string | undefined {
+	private escalationBase(agents: readonly string[]): string | undefined {
 		const model = this.coordinator.model;
-		const named =
-			workspaceId === undefined
-				? undefined
-				: model.workspaces.find((one) => one.id === workspaceId);
-		const first = agents[0];
-		const ofAgent =
-			first === undefined
-				? undefined
-				: model.workspaceForAgent(parseAgentId(first));
-		const workspace = [named, ofAgent].find(
-			(one) => one !== undefined && one.location.kind === "local",
-		);
+		const workspace = agents
+			.map((id) => model.workspaceForAgent(parseAgentId(id)))
+			.find((one) => one !== undefined && one.location.kind === "local");
 		return workspace?.root ?? this.orchestratorFilesRoot();
 	}
 
@@ -7520,7 +7494,6 @@ export class AppController {
 	private withEscalationFiles(
 		markdown: string,
 		id: number,
-		workspaceId: string | undefined,
 		agents: readonly string[],
 		attachments: readonly AttachmentFile[] = [],
 	): string {
@@ -7533,7 +7506,7 @@ export class AppController {
 		const imported = importEscalationFiles(markdown, {
 			storeRoot,
 			id,
-			baseDir: this.escalationBase(workspaceId, agents),
+			baseDir: this.escalationBase(agents),
 			allowedRoots:
 				orchestratorRoot === undefined ? roots : [...roots, orchestratorRoot],
 		}).markdown;
@@ -7672,44 +7645,16 @@ export class AppController {
 	}
 
 	private startOrchestratorService(userDataPath: string): void {
-		const { store, refused } = EscalationStore.load(
-			join(userDataPath, "devhub", "escalations.json"),
+		const { store, refused, migrated } = TaskStore.load(
+			join(userDataPath, "devhub"),
 		);
 		if (refused !== undefined) {
 			console.error(`[devhub] ${refused}`);
 			this.publishError(errorWire(new Error(refused)));
 		}
-		// `agent keep`'s keepings, across restarts.
-		const kept = new KeptFile(
-			join(userDataPath, "devhub", "orchestrator-kept.json"),
-			undefined,
-			(line) => console.error(line),
-		);
-		// The triage's priorities and the person's requests, across restarts.
-		const priorities = new PriorityFile(
-			join(userDataPath, "devhub", "orchestrator-priorities.json"),
-			(line) => console.error(line),
-		);
-		const requests = new RequestFile(
-			join(userDataPath, "devhub", "orchestrator-requests.json"),
-			(line) => console.error(line),
-		);
-		// The memos, and who worked on what (and on which session), across restarts.
-		const memos = new MemoFile(
-			join(userDataPath, "devhub", "orchestrator-memos.json"),
-			(line) => console.error(line),
-		);
-		const work = new WorkFile(
-			join(userDataPath, "devhub", "orchestrator-work.json"),
-			(line) => console.error(line),
-		);
+		if (migrated !== undefined) console.log(`[devhub] ${migrated}`);
 		this.orchestrator = new OrchestratorService({
 			store,
-			kept,
-			priorities,
-			requests,
-			memos,
-			work,
 			workspaceAt: (machine, folder) =>
 				this.tellWorkspaces().find(
 					(one) =>
@@ -7720,10 +7665,6 @@ export class AppController {
 			settings: () => this.config.orchestrator,
 			startProblem: () => this.orchestratorStartProblem(),
 			// No `mode`: off, as every launch starts (`mode.ts`).
-			// Saving's gate: the Sidebar's 対応中, read by the Sidebar's rule.
-			inProgress: (board) => inProgressCount(this.snapshot(), board),
-			inProgressAgents: (board) => inProgressAgentIds(this.snapshot(), board),
-			agentLanes: (board) => agentLaneIds(this.snapshot(), board),
 			// An automatic switch says why, quietly: a notice that hides by
 			// itself and stays in the notice center, taken down when saving
 			// ends or the person chooses.
@@ -7813,7 +7754,7 @@ export class AppController {
 				return { cancel: () => clearTimeout(timer) };
 			},
 			log: (line) => console.log(line),
-			// `escalation.human_direct`: the person's last message, its `since=`
+			// `task.human_direct`: the person's last message, its `since=`
 			// and its words.
 			personMessage: async (agentId) => {
 				const conversation = await this.tellPorts().conversation(agentId);
@@ -7826,59 +7767,15 @@ export class AppController {
 			},
 			// An answer delivered in its event is read: `agent wait --any`
 			// (the orchestrator's `TellMemory`) stops reporting it.
-			acknowledged: (agentId, id, entries) => {
-				const reader = callerKey({
-					machine: "",
-					agentId,
-					workspaceId: undefined,
-				});
-				this.tellMemory.markEscalation(
-					reader,
+			acknowledged: (agentId, id) => {
+				this.tellMemory.markAnswerSeen(
+					callerKey({ machine: "", agentId, workspaceId: undefined }),
 					id,
-					Math.max(this.tellMemory.escalationSeen(reader, id) ?? 0, entries),
 				);
 			},
 		});
 		this.orchestrator.observeUsage(this.usageLimits.wire());
-		for (const refused of [
-			priorities.refused,
-			requests.refused,
-			memos.refused,
-			work.refused,
-		])
-			if (refused !== undefined) {
-				console.error(`[devhub] ${refused}`);
-				this.publishError(errorWire(new Error(refused)));
-			}
-		if (kept.refused !== undefined) {
-			console.error(`[devhub] ${kept.refused}`);
-			this.publishError(errorWire(new Error(kept.refused)));
-		}
 		this.syncOrchestrator();
-	}
-
-	/**
-	 * `orchestrator priority set|clear`'s subject, as an event line names it:
-	 * an agent by its full id or a unique prefix.
-	 */
-	private resolvePrioritySubject(text: string): SubjectRef {
-		const ref = parseSubject(text);
-		if (ref === undefined)
-			throw new Error(
-				`a subject is esc=ID, issue=OWNER/REPO#N, pr=OWNER/REPO#N, agent=ID or req=ID, as the event lines name it; not ${JSON.stringify(text)}.`,
-			);
-		if (ref.kind !== "agent") return ref;
-		const ids = this.coordinator.model.workspaces
-			.flatMap((workspace) => workspace.agents)
-			.map((agent) => String(agent.id))
-			.filter((id) => id === ref.id || id.startsWith(ref.id));
-		if (ids.length !== 1)
-			throw new Error(
-				ids.length === 0
-					? `no agent is ${ref.id}. Run 'devhub --tell agents'.`
-					: `${ref.id} names ${String(ids.length)} agents: give more of the id.`,
-			);
-		return { kind: "agent", id: ids[0]! };
 	}
 
 	private requireOrchestrator(): OrchestratorService {
@@ -7888,23 +7785,22 @@ export class AppController {
 	}
 
 	/**
-	 * The managed agents of Claude and Codex open now, as the work record
-	 * reads them (`orchestrator/work.ts`): where they run, and the session
-	 * the session-meta keeper knows each runs.
+	 * The managed agents of Claude and Codex open now, as a task's agents
+	 * are kept (`model/tasks.ts`): where they run, and the session the
+	 * session-meta keeper knows each runs.
 	 */
-	private liveWorkAgents(): readonly LiveWorkAgent[] {
+	private liveWorkAgents(): readonly LiveTaskAgent[] {
 		const orchestrator = this.orchestrator?.orchestratorAgentId;
 		return this.coordinator.model.workspaces.flatMap((workspace) => {
 			const branch = this.lastRepositoryStatus.workspaces.find(
 				(one) => one.workspaceId === workspace.id,
 			)?.branch;
 			const location = workspace.location;
-			return workspace.agents.flatMap((agent): LiveWorkAgent[] => {
+			return workspace.agents.flatMap((agent): LiveTaskAgent[] => {
 				if (agent.managed !== true || agent.id === orchestrator) return [];
 				const kind = agent.profile.kind;
 				if (kind !== "claude" && kind !== "codex") return [];
 				const session = this.sessionMeta.sessionKnown(agent.id);
-				const issue = agent.meta?.[ISSUE_LINK_KEY];
 				return [
 					{
 						agentId: agent.id,
@@ -7916,7 +7812,6 @@ export class AppController {
 						machine: location.kind === "ssh" ? `ssh:${location.host}` : "local",
 						folder: location.path,
 						...(branch === undefined ? {} : { branch }),
-						...(issue === undefined ? {} : { issue }),
 						...(session === undefined ? {} : { session }),
 					},
 				];
@@ -7989,16 +7884,10 @@ export class AppController {
 	 */
 	private readonly githubItems = new GitHubItemSource({
 		settings: () => this.config.orchestrator.github,
-		// Read by URL when the search does not give them: why such an agent's
-		// item is outside the population.
-		linked: () => [
-			...this.invariantAgents().flatMap((agent) =>
-				agent.managed && agent.issue !== undefined ? [agent.issue] : [],
-			),
-			// The open escalations' Issues and pull requests: a merged or
-			// closed one marks the escalation as maybe stale.
-			...(this.orchestrator?.escalationItemLinks() ?? []),
-		],
+		// Read by URL when the search does not give them: the open tasks'
+		// Issues and pull requests — a merged or closed one marks the task as
+		// maybe stale, and a 待機 task waiting on one hears of it.
+		linked: () => this.orchestrator?.taskItemLinks() ?? [],
 		token: async () => {
 			const credentials = await readGitHubToken(this.launchEnvironment);
 			return credentials.kind === "token"
@@ -8036,8 +7925,8 @@ export class AppController {
 
 	/**
 	 * Every agent as the invariant reads it (`invariant.ts`): managed or not,
-	 * its status, the Issue its meta `issue=` links it to, and its
-	 * Workspace's pull request as the Sidebar has it.
+	 * its status, the item its meta `issue=` names, and its Workspace's pull
+	 * request as the Sidebar has it.
 	 */
 	private invariantAgents(): readonly InvariantAgent[] {
 		const snapshot = this.coordinator.snapshot();
@@ -8071,8 +7960,9 @@ export class AppController {
 				// A maintenance turn is read at the status before it (the service).
 				status: agent.status,
 				stopping: agent.controlState.kind !== "running",
-				// `issue=pending` is no URL: no item to read or link, yet.
-				...issueLinkOf(agent.meta?.[ISSUE_LINK_KEY]),
+				...(agent.meta?.[ISSUE_LINK_KEY] === undefined
+					? {}
+					: { issue: agent.meta[ISSUE_LINK_KEY] }),
 				...(pull === undefined ? {} : { pull }),
 			}));
 		});
@@ -8223,86 +8113,84 @@ export class AppController {
 				board: () => orchestrator().wire(),
 				standing: (agentId) => orchestrator().standing(agentId),
 				status: (target) => orchestrator().status(target),
-				keep: (agentId, note) => orchestrator().keep(agentId, note),
-				unkeep: (agentId) => orchestrator().unkeep(agentId),
-				resolveSubject: (text, workspace) =>
-					orchestrator().resolveSubject(text, workspace),
-				subjectToken: (key) => orchestrator().subjectTokenOf(key),
-				memo: (key) => orchestrator().memo(key),
-				memos: () => orchestrator().memos(),
-				setMemo: (key, text) => orchestrator().setMemo(key, text),
-				clearMemo: (key) => orchestrator().clearMemo(key),
-				memoAbout: (subject) => orchestrator().memoAbout(subject),
-				workRecords: () => orchestrator().workRecords(),
-				resumeTarget: (text, workspace) =>
-					orchestrator().resumeTarget(text, workspace),
-				escalations: () => orchestrator().allWires(),
-				acknowledge: (id, entries) => {
-					orchestrator().acknowledge(id, entries);
+				tasks: () => {
+					const o = orchestrator();
+					return o.tasks().map((task) => o.taskWire(task));
 				},
-				raise: (request) =>
-					orchestrator().toWire(
-						orchestrator().raise({
+				newTask: (request) => {
+					const o = orchestrator();
+					return o.taskWire(o.newTask(request));
+				},
+				editTask: (id, edit) => {
+					const o = orchestrator();
+					return o.taskWire(o.editTask(id, edit));
+				},
+				setTaskStatus: (id, status, wait) => {
+					const o = orchestrator();
+					return o.taskWire(o.setTaskStatus(id, status, wait));
+				},
+				linkTask: (id, links, labels) => {
+					const o = orchestrator();
+					return o.taskWire(o.linkTask(id, links, labels));
+				},
+				unlinkTask: (id, links) => {
+					const o = orchestrator();
+					return o.taskWire(o.unlinkTask(id, links));
+				},
+				bindTask: (id, agentIds) => {
+					const o = orchestrator();
+					return o.taskWire(o.bindTask(id, agentIds));
+				},
+				unbindTask: (id, agentId) => {
+					const o = orchestrator();
+					return o.taskWire(o.unbindTask(id, agentId));
+				},
+				completeTask: (id, note) => {
+					const o = orchestrator();
+					return o.taskWire(o.completeTask(id, note));
+				},
+				resumeTarget: (text) => {
+					const o = orchestrator();
+					const found = o.resumeTarget(text);
+					return found === undefined
+						? undefined
+						: { ...found, task: o.taskWire(found.task) };
+				},
+				escalations: () => orchestrator().escalations().map(escalationWire),
+				acknowledge: (id) => {
+					orchestrator().acknowledge(id);
+				},
+				raise: (request) => {
+					const o = orchestrator();
+					const task = o.requireTask(request.taskId);
+					return escalationWire(
+						o.raise({
+							taskId: request.taskId,
 							title: request.title,
 							markdown: this.withEscalationFiles(
 								request.markdown,
-								orchestrator().nextEscalationId(),
-								request.workspaceId,
-								request.agents,
+								o.nextEscalationId(),
+								[...task.agents].reverse().map((one) => one.agentId),
 								request.attachments,
 							),
 							options: request.options,
-							agents: request.agents,
 							links: request.links,
 							...(request.linkLabels === undefined
 								? {}
 								: { linkLabels: request.linkLabels }),
-							...(request.workspaceId === undefined
-								? {}
-								: { workspaceId: request.workspaceId }),
-							rank: request.rank,
-							...(request.wait === undefined ? {} : { wait: request.wait }),
 						}),
-					),
-				ask: (id, markdown, options, links, more) => {
-					const one = orchestrator()
-						.allWires()
-						.find((escalation) => escalation.id === id);
-					return orchestrator().toWire(
-						orchestrator().ask(
-							id,
-							one === undefined
-								? markdown
-								: this.withEscalationFiles(
-										markdown,
-										id,
-										one.workspaceId,
-										one.agents.map((agent) => agent.agentId),
-										more?.attachments,
-									),
-							options,
-							links ?? [],
-							more?.linkLabels,
-						),
 					);
 				},
-				close: (id, note) =>
-					orchestrator().toWire(orchestrator().close(id, note)),
-				hold: (id, note) =>
-					orchestrator().toWire(orchestrator().hold(id, note)),
-				wait: (id, trigger, dueAt) =>
-					orchestrator().toWire(
-						orchestrator().wait(id, {
-							trigger,
-							...(dueAt === undefined ? {} : { dueAt }),
-						}),
-					),
-				resumeWait: (id, note) =>
-					orchestrator().toWire(orchestrator().resume(id, note)),
-				link: (id, more) =>
-					orchestrator().toWire(orchestrator().link(id, more)),
-				rank: (id, rank) =>
-					orchestrator().toWire(orchestrator().rank(id, rank)),
+				withdraw: (id, note) =>
+					escalationWire(orchestrator().withdraw(id, note)),
+				triage: () => ({
+					...(orchestrator().triagedAt === undefined
+						? {}
+						: { lastAt: orchestrator().triagedAt! }),
+					...(orchestrator().nextTriageAt === undefined
+						? {}
+						: { nextAt: orchestrator().nextTriageAt! }),
+				}),
 				configuredRoot: () => this.config.orchestrator.root,
 				start: (request) => this.startOrchestrator(request),
 				pause: () => {
@@ -8316,29 +8204,6 @@ export class AppController {
 						: { auto: orchestrator().autoSaving! }),
 				}),
 				setMode: (mode) => orchestrator().setMode(mode),
-				setPriority: (subject, priority, note) => {
-					const ref = this.resolvePrioritySubject(subject);
-					return orchestrator().setPriority(ref, priority, note);
-				},
-				clearPriority: (subject) => {
-					const ref = this.resolvePrioritySubject(subject);
-					if (ref.kind === "esc")
-						throw new Error(
-							"an escalation's priority is its rank: 'escalation rank ID --priority normal'.",
-						);
-					return orchestrator().clearPriority(ref);
-				},
-				priorities: () => ({
-					entries: orchestrator().priorities(),
-					...(orchestrator().triagedAt === undefined
-						? {}
-						: { triagedAt: orchestrator().triagedAt! }),
-					...(orchestrator().nextTriageAt === undefined
-						? {}
-						: { nextTriageAt: orchestrator().nextTriageAt! }),
-				}),
-				requests: () => orchestrator().requests(),
-				fileRequest: (id, note) => orchestrator().fileRequest(id, note),
 				events: (last) => orchestrator().eventLog(last),
 				emit: (type, text) => orchestrator().emit(type, text),
 				timers: () => orchestrator().timers.list(),
@@ -10120,7 +9985,7 @@ export class AppController {
 			if (
 				typeof text !== "string" ||
 				text.trim() === "" ||
-				text.length > MAX_REQUEST_LENGTH
+				text.length > REQUEST_LIMIT
 			)
 				throw namedFailure(
 					new Error("a request is some text, at most 20,000 characters"),

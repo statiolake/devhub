@@ -328,6 +328,7 @@ describe("the shell window's title on the Orchestrator screen", () => {
 	const CHILD = agentId("1b2c3d4e-5f60-4718-8293-a4b5c6d7e8f9");
 	const WORKER = agentId("2c3d4e5f-6071-4829-93a4-b5c6d7e8f901");
 	const PAYMENTS = workspaceId("3d4e5f60-7182-493a-a4b5-c6d7e8f90123");
+	const PAYER = agentId("4e5f6071-8293-4a4b-b5c6-d7e8f9012345");
 
 	function orchestrator(
 		view: ShellTitleFacts["orchestratorView"],
@@ -354,7 +355,11 @@ describe("the shell window's title on the Orchestrator screen", () => {
 					label: "#123 ログイン修正",
 					agents: [{ id: WORKER, displayName: "Claude 1", named: false }],
 				},
-				{ id: PAYMENTS, label: "payments", agents: [] },
+				{
+					id: PAYMENTS,
+					label: "payments",
+					agents: [{ id: PAYER, displayName: "Claude 2", named: false }],
+				},
 			],
 			editorElement: "ignored.ts",
 			orchestratorWorkspaceId: ORCHESTRATOR,
@@ -372,25 +377,23 @@ describe("the shell window's title on the Orchestrator screen", () => {
 		);
 	});
 
-	it("leads with the escalation's Workspace, then its subject", () => {
+	it("leads with the task's Workspace — its first open agent's — then its title", () => {
 		expect(
 			shellTitleFor(
 				orchestrator({
-					kind: "escalation",
+					kind: "task",
 					subject: "本番DBマイグレーション承認",
-					workspaceId: PAYMENTS,
-					agentIds: [WORKER],
+					agentIds: ["gone-agent", PAYER, WORKER],
 				}),
 			),
 		).toBe("payments · 本番DBマイグレーション承認 — Orchestrator — DevHub");
 	});
 
-	it("names the escalation's Workspace with its Issue", () => {
+	it("names the task's Workspace with its Issue", () => {
 		const escalation = {
-			kind: "escalation",
+			kind: "task",
 			subject: "本番DBマイグレーション承認",
-			workspaceId: PAYMENTS,
-			agentIds: [],
+			agentIds: [PAYER],
 		} as const;
 		expect(
 			shellTitleFor(
@@ -426,11 +429,11 @@ describe("the shell window's title on the Orchestrator screen", () => {
 		);
 	});
 
-	it("takes the first related agent's Workspace when it names none", () => {
+	it("takes the first bound agent's Workspace", () => {
 		expect(
 			shellTitleFor(
 				orchestrator({
-					kind: "escalation",
+					kind: "task",
 					subject: "本番DBマイグレーション承認",
 					agentIds: [WORKER, CHILD],
 				}),
@@ -444,7 +447,7 @@ describe("the shell window's title on the Orchestrator screen", () => {
 		expect(
 			shellTitleFor(
 				orchestrator({
-					kind: "escalation",
+					kind: "task",
 					subject: "方針の確認",
 					agentIds: [],
 				}),
@@ -453,7 +456,7 @@ describe("the shell window's title on the Orchestrator screen", () => {
 		expect(
 			shellTitleFor(
 				orchestrator({
-					kind: "escalation",
+					kind: "task",
 					subject: "方針の確認",
 					agentIds: [CHILD],
 				}),
@@ -471,7 +474,7 @@ describe("the shell window's title on the Orchestrator screen", () => {
 		expect(
 			shellTitleFor(
 				orchestrator(
-					{ kind: "escalation", subject: "x", agentIds: [] },
+					{ kind: "task", subject: "x", agentIds: [] },
 					{ kind: "agent", agentId: CHILD },
 				),
 			),
@@ -481,7 +484,7 @@ describe("the shell window's title on the Orchestrator screen", () => {
 	it("puts a subject on one line and cuts a long one near 80 characters", () => {
 		const title = shellTitleFor(
 			orchestrator({
-				kind: "escalation",
+				kind: "task",
 				subject: `承認\n\tお願い\u0007します ${"とても長い件名 ".repeat(20)}`,
 				agentIds: [],
 			}),
@@ -508,16 +511,15 @@ describe("titleText", () => {
 describe("what the Orchestrator screen may report", () => {
 	it("is an id or a path, and nothing else", () => {
 		expect(orchestratorViewWire({ kind: "board" })).toEqual({ kind: "board" });
-		expect(
-			orchestratorViewWire({ kind: "escalation", id: 4, body: "x" }),
-		).toEqual({ kind: "escalation", id: 4 });
+		expect(orchestratorViewWire({ kind: "task", id: 4, body: "x" })).toEqual({
+			kind: "task",
+			id: 4,
+		});
 		expect(orchestratorViewWire({ kind: "file", path: "a.md" })).toEqual({
 			kind: "file",
 			path: "a.md",
 		});
-		expect(
-			orchestratorViewWire({ kind: "escalation", id: "4" }),
-		).toBeUndefined();
+		expect(orchestratorViewWire({ kind: "task", id: "4" })).toBeUndefined();
 		expect(orchestratorViewWire({ kind: "title", text: "x" })).toBeUndefined();
 		expect(orchestratorViewWire(null)).toBeUndefined();
 	});

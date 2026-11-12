@@ -9,27 +9,27 @@
  *
  * 1. drops what the `[orchestrator] events` patterns filter out;
  * 2. sends **the person's words** (`escalation_answered`,
- *    `escalation.human_direct`: `isHumanInput`) at once, each as a message of
+ *    `task.human_direct`, `request`: `isHumanInput`) at once, each as a message of
  *    its own whose text is what they typed, under one line naming the
- *    escalation (`humanMessage`) — never inside an event line or the
+ *    task (`humanMessage`) — never inside an event line or the
  *    `event_prompt` template, so the orchestrator reads it as the person's
  *    own input. Nothing holds them, off included (`isAnswer`); with no
  *    orchestrator running they wait for one. A request waits while off;
  * 3. keeps the rest **pending** as action items, not a history: **one line
- *    per subject** (`subjectOf`: an item, an agent, an escalation, a timer,
+ *    per subject** (`subjectOf`: a task, an item, an agent, a timer,
  *    a usage window, a custom type and text). A newer statement about a
  *    pending subject replaces the older one (`merge`):
  *    a line says how the subject stands now, not what happened to it;
  * 3a. sends **the orchestrator's own wake-ups** (`onTime`: a `timer set`
- *    timer, a wait's `due`) at once, each its one line as a message of its
+ *    timer, a 待機 task's `due`) at once, each its one line as a message of its
  *    own — not batched, not held by the interval or saving. Off turns them
  *    off: one that comes due while off is dropped (`offDrops`), not sent
  *    later;
  * 4. just before delivery, drops what no longer needs attention (`relevant`:
- *    a wait no longer waiting, a usage window reset) as `dropped-stale`;
+ *    a task no longer 待機, a usage window reset) as `dropped-stale`;
  * 5. delivers everything pending, and **the invariant's `needs_action`
  *    lines** (`standing`: every subject that needs action at that moment,
- *    the kept ones left out), as **one** message — one line per subject
+ *    as **one** message — one line per subject
  *    (`eventLine`) as `{EVENT}`, at most `MAX_DELIVERY_LINES` and a last
  *    line counting the rest, and as JSON for `{EVENT_JSON}` only when the
  *    template has it — at most once per `[orchestrator] delivery_interval`,
@@ -52,10 +52,10 @@
  * the pause below.
  *
  * **Paused** (`off`) holds everything but the person's answers
- * (`escalation_answered`, `escalation.human_direct`: they go as in full),
+ * (`escalation_answered`, `task.human_direct`: they go as in full),
  * the person's requests included, and the sources that cost something
  * (GitHub) are suspended (`paused`). The timers are off too: a
- * `timer.elapsed`, or a wait's `due`, that comes while off is dropped
+ * `timer.elapsed`, or a task's `due`, that comes while off is dropped
  * (`dropped`, reason `off`), never sent later. `resume` sends at once the
  * held requests, then everything else — pending and standing — as one
  * message, whatever the interval, the orchestrator's turn or the pickup
@@ -115,33 +115,36 @@ export interface HumanWords {
 	readonly option?: string;
 }
 
+/** A task, as an event names it: its id (to address it by) and its title. */
+export interface EventTask {
+	readonly id: number;
+	readonly title?: string;
+}
+
 export type OrchestratorEvent =
 	/** The orchestrator has just been started (or restarted). */
 	| { readonly type: "init" }
-	/** The person answered an escalation: it is `in_progress` now. */
+	/**
+	 * The person answered an escalation: it is closed, and its task is
+	 * 処理中 — the answer is work to carry out. Their words, at once.
+	 */
 	| {
 			readonly type: "escalation_answered";
+			readonly task: EventTask;
 			readonly escalationId: number;
 			readonly title: string;
 			readonly agents: readonly EventAgent[];
 			/** What they wrote. */
 			readonly answers?: readonly HumanWords[];
-			/**
-			 * How many of the escalation's entries the answer completes: what
-			 * delivering it acknowledges as read (`acknowledge`).
-			 */
-			readonly readThrough?: number;
 	  }
 	/**
-	 * The person talked to one of an open escalation's agents directly, from
-	 * its own composer, and it took that up (went working). A `needs_answer`
-	 * one has moved to `in_progress`; either way what was said may answer it,
-	 * or change it.
+	 * The person talked directly, from its own composer, to an agent of a
+	 * task with an open question, and it took that up (went working). The
+	 * question stays open; what was said may answer it, or change it.
 	 */
 	| {
-			readonly type: "escalation.human_direct";
-			readonly escalationId: number;
-			readonly title: string;
+			readonly type: "task.human_direct";
+			readonly task: EventTask;
 			readonly agent: EventAgent;
 			/** `agent read --since`: the person's message. */
 			readonly since?: string;
@@ -149,30 +152,32 @@ export type OrchestratorEvent =
 			readonly messages?: readonly HumanWords[];
 	  }
 	/**
-	 * A subject that breaks the invariant (`invariant.ts`): an item of the
-	 * population or a managed agent, and the clause it fails. No state: that
-	 * is `devhub --tell status`'s.
+	 * A subject that breaks the invariant (`invariant.ts`): an open task,
+	 * an item of the population with no task, or a managed agent with no
+	 * task, and the clause it fails. No state: that is `task show` /
+	 * `devhub --tell status`'s.
 	 */
 	| {
 			readonly type: "needs_action";
 			readonly subject:
+				| { readonly kind: "task"; readonly task: EventTask }
 				| { readonly kind: "issue" | "pr"; readonly item: EventItem }
 				| { readonly kind: "agent"; readonly agent: EventAgent };
 			readonly ws?: string;
 			readonly breach: Breach;
 	  }
 	/**
-	 * A 待機中 escalation may be ready: what it is about moved (its items,
-	 * its agents: `subjects_changed`), or its `--at` time came (`due`, once
-	 * per wait). Which of the two, nothing more. Dropped before it goes if it
-	 * has left 待機中 or waits anew.
+	 * A 待機 task may be ready: what it is about moved (its linked items,
+	 * its agents: `subjects_changed`), or the time it was given to look
+	 * again came (`due`, once per time). Which of the two, nothing more.
+	 * Dropped before it goes if the task is no longer 待機.
 	 */
 	| {
-			readonly type: "waiting.changed";
-			readonly escalationId: number;
+			readonly type: "task.changed";
+			readonly taskId: number;
 			readonly reasons: readonly WaitingReason[];
-			/** The wait it is about: its entry's time. */
-			readonly waitSince: number;
+			/** The `--check-at` it was given, for `due`. */
+			readonly checkAt?: number;
 	  }
 	| {
 			readonly type: "timer.elapsed";
@@ -203,104 +208,90 @@ export type OrchestratorEvent =
 			readonly resetsAt?: number;
 	  }
 	/**
-	 * Time to rank the open work again (`triage.ts`): every escalation, item,
-	 * managed agent and request, each `high`, `normal` or `low`, recorded
-	 * with `orchestrator priority set` — and to re-check every open
-	 * escalation (`escalations`), the ones DevHub marks as maybe stale with
-	 * why (`staleness.ts`).
+	 * Time to rank the open tasks again (`triage.ts`) and re-check each
+	 * (`tasks`): the ones DevHub marks as maybe stale, with why
+	 * (`staleness.ts`).
 	 */
 	| {
 			readonly type: "triage";
-			/** The open escalations as the triage was asked; absent: none. */
-			readonly escalations?: readonly TriageEscalation[];
+			/** The open tasks as the triage was asked; absent: none. */
+			readonly tasks?: readonly TriageTask[];
 	  }
 	/**
-	 * The person's request, from the Orchestrator screen's +: their words,
-	 * delivered at once as their own message (`isHumanInput`). The
-	 * orchestrator files it as a task and marks it `orchestrator request done`.
+	 * The person's request, from the Orchestrator screen's +: a 待機 task
+	 * made with their words, which go at once as their own message
+	 * (`isHumanInput`).
 	 */
 	| {
 			readonly type: "request";
-			readonly requestId: number;
+			readonly task: EventTask;
 			readonly text: string;
 	  }
 	| { readonly type: `custom.${string}`; readonly text: string };
 
 export type OrchestratorEventType = OrchestratorEvent["type"];
 
-/** An open escalation, as a `triage` lists it for the re-check. */
-export interface TriageEscalation {
+/** An open task, as a `triage` lists it for the re-check. */
+export interface TriageTask {
 	readonly id: number;
 	readonly title: string;
-	readonly state: "needs_answer" | "in_progress" | "waiting";
+	readonly status: "answer" | "in_progress" | "waiting";
+	readonly priority?: "high" | "low";
 	/** Why it may be stale (`staleWords`); absent: nothing seen. */
 	readonly stale?: readonly string[];
 	/**
 	 * Marked stale already when the last triage went: to be resolved in this
-	 * one (updated, closed, or kept with a reason).
+	 * one (completed, re-linked, or kept with a memo saying why).
 	 */
 	readonly overdue?: boolean;
 }
 
-const TRIAGE_STATE_WORDS: Record<TriageEscalation["state"], string> = {
-	needs_answer: "要回答",
-	in_progress: "対応中",
-	waiting: "待機中",
+const TRIAGE_STATUS_WORDS: Record<TriageTask["status"], string> = {
+	answer: "回答待ち",
+	in_progress: "処理中",
+	waiting: "待機",
 };
 
-/** A triage's re-check list: one indented line per open escalation. */
+/** A triage's re-check list: one indented line per open task. */
 function triageLines(event: Extract<OrchestratorEvent, { type: "triage" }>) {
-	return (event.escalations ?? []).map((one) => {
+	return (event.tasks ?? []).map((one) => {
 		const stale =
 			one.stale === undefined || one.stale.length === 0
 				? ""
 				: ` — 古いかも: ${one.stale.join("; ")}${one.overdue === true ? " (前回の triage から: この triage で解決する)" : ""}`;
-		return `  esc=${String(one.id)}${title(one.title)} ${TRIAGE_STATE_WORDS[one.state]}${stale}`;
+		const priority =
+			one.priority === undefined ? "" : ` 優先度=${one.priority}`;
+		return `  task=${String(one.id)}${title(one.title)} ${TRIAGE_STATUS_WORDS[one.status]}${priority}${stale}`;
 	});
 }
 
 /**
  * The invariant's clause a subject fails (`invariant.ts`), as a short code:
- * an item with no agent linked, or whose agents are all stopped with no
- * 要回答 / 待機中 escalation about it (`idle_no_escalation`); a managed agent
- * stopped with no such escalation, or linked to an item outside the
- * population, or to none (`outside_population`, and why).
+ * a 処理中 task with no bound agent open (`no_agent`), or whose bound agents
+ * all stopped (`idle`); an item of the population or a managed agent that
+ * no open task has (`no_task`).
  */
-export type NeedsActionClause =
-	| "no_agent"
-	| "idle_no_escalation"
-	| "outside_population";
-
-/** Why an agent's item is outside the population. */
-export type OutsideReason =
-	| "closed"
-	| "unassigned"
-	| "not_in_project"
-	| "no_item";
+export type NeedsActionClause = "no_agent" | "idle" | "no_task";
 
 export interface Breach {
 	readonly clause: NeedsActionClause;
-	/** With `outside_population`. */
-	readonly outside?: OutsideReason;
 }
 
-/** `no_agent`, `outside_population (closed)`: a breach as a line says it. */
+/** `no_agent`, `idle`, `no_task`: a breach as a line says it. */
 export function breachWords(breach: Breach): string {
-	return breach.outside === undefined
-		? breach.clause
-		: `${breach.clause} (${breach.outside})`;
+	return breach.clause;
 }
 
-/** Why a 待機中 escalation may be ready, as `waiting.changed` says it. */
+/** Why a 待機 task may be ready, as `task.changed` says it. */
 export type WaitingReason = "subjects_changed" | "due";
 
 /** Every type DevHub itself emits (`custom.*` is the open family). */
 export const EVENT_TYPES = [
 	"init",
 	"escalation_answered",
-	"escalation.human_direct",
+	"task.human_direct",
 	"needs_action",
-	"waiting.changed",
+	"task.changed",
 	"timer.elapsed",
 	"usage.threshold",
 	"triage",
@@ -316,7 +307,7 @@ export function customTypeProblem(type: string): boolean {
 /** An event that carries the person's own words. */
 export type HumanInputEvent = Extract<
 	OrchestratorEvent,
-	{ type: "escalation_answered" | "escalation.human_direct" | "request" }
+	{ type: "escalation_answered" | "task.human_direct" | "request" }
 >;
 
 /** The person's own words: sent at once, as they typed them. */
@@ -325,35 +316,34 @@ export function isHumanInput(
 ): event is HumanInputEvent {
 	return (
 		event.type === "escalation_answered" ||
-		event.type === "escalation.human_direct" ||
+		event.type === "task.human_direct" ||
 		event.type === "request"
 	);
 }
 
 /**
- * The person's answer to an escalation: their words about work they were
- * asked about, delivered in every mode, off included — someone answered, so
- * the work they unblock goes on.
+ * The person's answer to an escalation, or their words to an agent of a
+ * task waiting on them: delivered in every mode, off included — someone
+ * answered, so the work they unblock goes on.
  */
 export function isAnswer(event: OrchestratorEvent): boolean {
 	return (
-		event.type === "escalation_answered" ||
-		event.type === "escalation.human_direct"
+		event.type === "escalation_answered" || event.type === "task.human_direct"
 	);
 }
 
 /**
  * Off turns the timers off: what is left of `event` while off, or undefined
  * when off drops it whole. A `timer.elapsed` (the settings' and `timer set`'s
- * alike) is dropped: the next firing is on its schedule. A wait's `due` is
- * dropped from a `waiting.changed` (its `subjects_changed`, a state change,
- * waits as everything does while off).
+ * alike) is dropped: the next firing is on its schedule. A task's `due`
+ * (`--check-at`) is dropped from a `task.changed` (its `subjects_changed`,
+ * a state change, waits as everything does while off).
  */
 export function offDrops(
 	event: OrchestratorEvent,
 ): OrchestratorEvent | undefined {
 	if (event.type === "timer.elapsed") return undefined;
-	if (event.type !== "waiting.changed" || !event.reasons.includes("due"))
+	if (event.type !== "task.changed" || !event.reasons.includes("due"))
 		return event;
 	const reasons = event.reasons.filter((one) => one !== "due");
 	return reasons.length === 0 ? undefined : { ...event, reasons };
@@ -385,6 +375,11 @@ export function excerpt(text: string | undefined, max = 120): string {
 function agentToken(agent: EventAgent): string {
 	const name = agent.name === undefined ? "" : ` (${excerpt(agent.name, 40)})`;
 	return `agent=${shortId(agent.id)}${name}`;
+}
+
+/** `task=12「…」`: a task as a line names it. */
+export function taskToken(task: EventTask): string {
+	return `task=${String(task.id)}${title(task.title)}`;
 }
 
 function title(text: string | undefined): string {
@@ -451,9 +446,11 @@ function needsActionParts(
 	const subject = event.subject;
 	return {
 		head: [
-			subject.kind !== "agent"
-				? `${subject.kind}=${issueRef(subject.item)}`
-				: agentToken(subject.agent),
+			subject.kind === "task"
+				? taskToken(subject.task)
+				: subject.kind === "agent"
+					? agentToken(subject.agent)
+					: `${subject.kind}=${issueRef(subject.item)}`,
 			...(event.ws === undefined ? [] : [`ws=${event.ws}`]),
 		],
 		summary: breachWords(event.breach),
@@ -462,7 +459,7 @@ function needsActionParts(
 
 /**
  * A `needs_action` line without its `[type]`: the subject, its Workspace and
- * the clause — `issue=acme/web#123 ws=web — no_agent`.
+ * the clause — `task=12「…」 ws=web — idle`, `issue=acme/web#123 — no_task`.
  */
 export function needsActionWords(
 	event: Extract<OrchestratorEvent, { type: "needs_action" }>,
@@ -488,15 +485,16 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 		case "escalation_answered":
 			return {
 				head: [
+					taskToken(event.task),
 					`esc=${String(event.escalationId)}${title(event.title)}`,
 					...event.agents.map(agentToken),
 				],
 				summary: "人が回答しました",
 			};
-		case "escalation.human_direct":
+		case "task.human_direct":
 			return {
 				head: [
-					`esc=${String(event.escalationId)}${title(event.title)}`,
+					taskToken(event.task),
 					agentToken(event.agent),
 					...(event.since === undefined ? [] : [`since=${event.since}`]),
 				],
@@ -504,9 +502,9 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 			};
 		case "needs_action":
 			return needsActionParts(event);
-		case "waiting.changed":
+		case "task.changed":
 			return {
-				head: [`esc=${String(event.escalationId)}`],
+				head: [`task=${String(event.taskId)}`],
 				summary: event.reasons.join(", "),
 			};
 		case "timer.elapsed":
@@ -515,13 +513,13 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 			return {
 				head: [],
 				summary:
-					(event.escalations ?? []).length === 0
-						? "優先度の見直し: devhub --tell --json board で開いている仕事 (エスカレーション、要対応のアイテムとエージェント、依頼) を見て、それぞれ devhub --tell orchestrator priority set <対象> high|normal|low"
-						: "優先度の見直し: devhub --tell --json board で開いている仕事 (エスカレーション、要対応のアイテムとエージェント、依頼) を見て、それぞれ devhub --tell orchestrator priority set <対象> high|normal|low。あわせて下の開いているエスカレーションがまだ成り立つか確かめ、それぞれ今の状態に更新する (escalation ask / link)、メモを付けて閉じる (escalation close --note)、そのままにする、のどれかにする",
+					(event.tasks ?? []).length === 0
+						? "見直し: 開いているタスクはありません。devhub --tell --json board で要対応 (タスクのないエージェント・アイテム) を見て、それぞれタスクにする"
+						: "見直し: 下の開いているタスクそれぞれについて、まだ成り立つか確かめ、優先度を devhub --tell task edit <ID> --priority high|normal|low で付け直す。古いかもと出ているものは、終わっていれば task done、対象が変わっていれば task link / unlink、続けるならメモ (task edit --memo) に理由を書く。タスクのないエージェントとアイテム (board の要対応) はタスクにする",
 			};
 		case "request":
 			return {
-				head: [`req=${String(event.requestId)}`],
+				head: [taskToken(event.task)],
 				summary: excerpt(event.text, 200),
 			};
 		case "usage.threshold":
@@ -542,38 +540,39 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 }
 
 /**
- * The message the person's words go as: one line naming the escalation (and
- * the agent, for a message to it), then their text exactly as typed —
- * unquoted, unwrapped, no template around it.
+ * The message the person's words go as: one line naming the task (and the
+ * escalation, or the agent), then their text exactly as typed — unquoted,
+ * unwrapped, no template around it.
  */
 export function humanMessage(
 	event: Extract<
 		OrchestratorEvent,
-		{ type: "escalation_answered" | "escalation.human_direct" }
+		{ type: "escalation_answered" | "task.human_direct" }
 	>,
 	piece: HumanWords | undefined,
 ): string {
-	const esc = `esc=${String(event.escalationId)}${title(event.title)}`;
+	const task = taskToken(event.task);
 	if (event.type === "escalation_answered") {
+		const esc = `esc=${String(event.escalationId)}${title(event.title)}`;
 		const option =
 			piece?.option === undefined
 				? ""
 				: ` (選択肢「${excerpt(piece.option, 80)}」)`;
 		return piece === undefined
-			? `${esc} に人が回答しました (devhub --tell escalation show ${String(event.escalationId)} で読む)`
-			: `${esc} への人の回答${option}:\n${piece.text}`;
+			? `${task} ${esc} に人が回答しました (devhub --tell escalation show ${String(event.escalationId)} で読む)`
+			: `${task} ${esc} への人の回答${option}:\n${piece.text}`;
 	}
 	const agent = shortId(event.agent.id);
 	return piece === undefined
-		? `${esc} agent=${agent} に人が直接話しかけました (devhub --tell agent read ${agent}${event.since === undefined ? "" : ` --since ${event.since}`} で読む)`
-		: `${esc} agent=${agent} に人が直接送ったメッセージ:\n${piece.text}`;
+		? `${task} agent=${agent} に人が直接話しかけました (devhub --tell agent read ${agent}${event.since === undefined ? "" : ` --since ${event.since}`} で読む)`
+		: `${task} agent=${agent} に人が直接送ったメッセージ:\n${piece.text}`;
 }
 
 /** The messages one human event goes as: one per piece of their words. */
 export function humanMessages(event: HumanInputEvent): string[] {
 	if (event.type === "request")
 		return [
-			`req=${String(event.requestId)} 人からの依頼 (タスクとして登録し、devhub --tell orchestrator request done ${String(event.requestId)} --note "<登録先>" で受付済みにしてください):\n${event.text}`,
+			`${taskToken(event.task)} 人からの依頼 (この依頼からタスクを作りました。devhub --tell task edit ${String(event.task.id)} で題名を整え、task link / エージェントの割り当てで進めてください):\n${event.text}`,
 		];
 	const pieces =
 		event.type === "escalation_answered"
@@ -599,17 +598,19 @@ export function subjectOf(event: OrchestratorEvent): string {
 		case "init":
 			return "init";
 		case "escalation_answered":
-		case "escalation.human_direct":
-		case "waiting.changed":
-			return `esc ${String(event.escalationId)}`;
+		case "task.human_direct":
+		case "request":
+			return `task ${String(event.task.id)}`;
+		case "task.changed":
+			return `task ${String(event.taskId)}`;
 		case "triage":
 			return "triage";
-		case "request":
-			return `req ${String(event.requestId)}`;
 		case "needs_action":
-			return event.subject.kind !== "agent"
-				? `item ${prKey(event.subject.item)}`
-				: `agent ${event.subject.agent.id}`;
+			return event.subject.kind === "task"
+				? `task ${String(event.subject.task.id)}`
+				: event.subject.kind === "agent"
+					? `agent ${event.subject.agent.id}`
+					: `item ${prKey(event.subject.item)}`;
 		case "timer.elapsed":
 			return `timer ${event.name}`;
 		case "usage.threshold":
@@ -621,7 +622,7 @@ export function subjectOf(event: OrchestratorEvent): string {
 
 /**
  * `older` and `newer` (one subject) as the one statement they become. A
- * timer pending once stands; a wait's two reasons add up; anything else
+ * timer pending once stands; a 待機 task's two reasons add up; anything else
  * says how the subject stands now, and the latest does.
  */
 export function merge(
@@ -631,13 +632,12 @@ export function merge(
 	if (older.type === "timer.elapsed" && newer.type === "timer.elapsed")
 		return older;
 	// The same wait: both of what happened to it are said.
-	if (
-		older.type === "waiting.changed" &&
-		newer.type === "waiting.changed" &&
-		older.waitSince === newer.waitSince
-	)
+	if (older.type === "task.changed" && newer.type === "task.changed")
 		return {
 			...newer,
+			...(older.checkAt === undefined || newer.checkAt !== undefined
+				? {}
+				: { checkAt: older.checkAt }),
 			reasons: (["due", "subjects_changed"] as const).filter(
 				(one) => older.reasons.includes(one) || newer.reasons.includes(one),
 			),
@@ -716,15 +716,14 @@ export interface EventDelivery {
 	 */
 	readonly paused?: (paused: boolean) => void;
 	/**
-	 * How many tasks are in progress now (the Sidebar's 対応中 heading): in
+	 * How many tasks are in progress now (処理中): in
 	 * saving, while it is `SAVING_BUSY_TASKS` or more, the nudges about other
 	 * work wait. Absent: none.
 	 */
 	readonly inProgress?: () => number;
 	/**
 	 * Whether a line's subject (`subjectOf`) is one of the tasks in progress
-	 * (an agent of a 対応中 item, an item one of them is on, an escalation
-	 * 対応中 or about one of them). Absent: none is.
+	 * (a 処理中 task). Absent: none is.
 	 */
 	readonly inProgressSubject?: (subject: string) => boolean;
 	/**
@@ -891,7 +890,7 @@ export class EventDispatcher {
 	 * (`event_prompt` around its one line), not batched, not held by the
 	 * interval, the pickup wait or saving — like the person's words, queued
 	 * for the orchestrator and taken when its turn ends. Re-read first: a
-	 * wait that is no longer 待機中 is dropped-stale. The batch's interval
+	 * task that is no longer 待機 is dropped-stale. The batch's interval
 	 * is not moved by it.
 	 */
 	#sendOnTime(agentId: string, subject: string): void {

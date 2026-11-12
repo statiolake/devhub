@@ -8,21 +8,21 @@
  *   `SAVING_INTERVAL_FACTOR` × `delivery_interval`, and it tells **state
  *   changes** from **nudges** (`savingClassOf`, the table `SAVING_CLASSES`):
  *   a state change about the work — an agent stopped, on a prompt, errored,
- *   its item's pull request or checks moved, a wait that may be ready — goes
+ *   its item's pull request or checks moved, a 待機 task that may be ready — goes
  *   with every batch, whatever its priority and however many tasks are in
  *   progress; a nudge (a subject said again with nothing new, an item nobody
  *   started, the usage readout, `custom.*`) goes only when its subject is
  *   ranked high, and while `SAVING_BUSY_TASKS` or more tasks are in progress
  *   only when it is about one of them (`savingHolds`). The person's words,
  *   requests, `init` and `triage` are never held, and an explicit timer —
- *   `[[orchestrator.timers]]`, `orchestrator timer set` — or a wait's `--at`
+ *   `[[orchestrator.timers]]`, `orchestrator timer set` — or a 待機 task's `--check-at`
  *   goes at its time, alone, as in full (`onTime`).
  * - **off** holds everything else, the person's requests too, and GitHub
  *   is not polled: what the Events switch's off was. Two exceptions:
  *   the person's answers to escalations (`escalation_answered`,
- *   `escalation.human_direct`) are delivered as in full — someone answered,
+ *   `task.human_direct`) are delivered as in full — someone answered,
  *   and the work waits on it; and the timers are off — a timer
- *   (`[[orchestrator.timers]]`, `timer set`) or a wait's `--at` that comes
+ *   (`[[orchestrator.timers]]`, `timer set`) or a task's `--check-at` that comes
  *   due while off is dropped, not sent when the mode turns on
  *   (`events.ts`: `isAnswer`, `offDrops`).
  *
@@ -90,8 +90,8 @@ export const SAVING_BUSY_TASKS = 2;
  * and nudges"):
  *
  * - `on_time` — an explicit timer (the person's `[[orchestrator.timers]]`,
- *   the orchestrator's `orchestrator timer set`) or a wait's time
- *   (`escalation wait --at`): sent at its time, alone, like the person's
+ *   the orchestrator's `orchestrator timer set`) or a 待機 task's time
+ *   (`task status --check-at`): sent at its time, alone, like the person's
  *   words — in full and saving alike, never batched, never held by the
  *   interval or for triage (`onTime`). What it wakes the orchestrator for
  *   (reading Slack, a thread, someone else's work) has consequences
@@ -117,14 +117,14 @@ export type SavingKind =
 	| "init"
 	| "triage"
 	| "escalation_answered"
-	| "escalation.human_direct"
+	| "task.human_direct"
 	| "request"
-	| "needs_action agent"
-	| "needs_action item idle_no_escalation"
-	| "needs_action item no_agent"
+	| "needs_action task"
+	| "needs_action agent no_task"
+	| "needs_action item no_task"
 	| "needs_action said again"
-	| "waiting.changed subjects_changed"
-	| "waiting.changed due"
+	| "task.changed subjects_changed"
+	| "task.changed due"
 	| "timer.elapsed timer set"
 	| "timer.elapsed settings"
 	| "usage.threshold"
@@ -133,22 +133,21 @@ export type SavingKind =
 /**
  * The classification, explicitly, for every kind: the doc's table is this.
  *
- * - `needs_action agent`: a managed agent newly needing action, or whose
- *   state moved since its line last went — it stopped (its turn ended, it
- *   exited, it errored), it is on a prompt (a question, a permission), its
- *   item or pull request moved (merged, closed, unassigned, review, checks),
- *   its escalation moved. Whatever its clause: what the agent itself does is
- *   never a mere reminder.
- * - `needs_action item idle_no_escalation`: an item whose agents have all
- *   stopped, newly or with its state moved (the same, seen from the item).
- * - `needs_action item no_agent`: an item nobody has started — new work, a
- *   nudge to start it.
+ * - `needs_action task`: an open task newly needing action, or whose state
+ *   moved since its line last went — its agents stopped (a turn ended, one
+ *   exited or errored), one is on a prompt, its linked item or pull request
+ *   moved (merged, closed, review, checks), its questions moved. Whatever
+ *   its clause: what the work in progress does is never a mere reminder.
+ * - `needs_action agent no_task`: a managed agent bound to no open task —
+ *   newly, or with its state moved: work going on outside any task.
+ * - `needs_action item no_task`: an item of the population nobody made a
+ *   task for — new work, a nudge to take it up.
  * - `needs_action said again`: any `needs_action` subject standing as it
  *   stood when its line last went (the nag: "still idle").
- * - `waiting.changed subjects_changed`: what a 待機中 escalation is about
- *   moved (CI, a review, a merge, its agents): work waiting on the
- *   orchestrator. `waiting.changed due`: the time the orchestrator set for it
- *   (`escalation wait --at`) came — its own wake-up, on time.
+ * - `task.changed subjects_changed`: what a 待機 task is about moved (CI, a
+ *   review, a merge, its agents): work waiting on the orchestrator.
+ *   `task.changed due`: the time the orchestrator gave it to look again
+ *   (`task status --check-at`) came — its own wake-up, on time.
  * - `timer.elapsed timer set`: a timer the orchestrator set itself
  *   (`orchestrator timer set`, `source: "session"`): its own wake-up ("look
  *   at Slack at 15:00", "re-read the thread in 30 minutes"), on time.
@@ -161,14 +160,14 @@ export const SAVING_CLASSES: Readonly<Record<SavingKind, SavingClass>> = {
 	init: "never_held",
 	triage: "never_held",
 	escalation_answered: "never_held",
-	"escalation.human_direct": "never_held",
+	"task.human_direct": "never_held",
 	request: "never_held",
-	"needs_action agent": "state_change",
-	"needs_action item idle_no_escalation": "state_change",
-	"needs_action item no_agent": "nudge",
+	"needs_action task": "state_change",
+	"needs_action agent no_task": "state_change",
+	"needs_action item no_task": "nudge",
 	"needs_action said again": "nudge",
-	"waiting.changed subjects_changed": "state_change",
-	"waiting.changed due": "on_time",
+	"task.changed subjects_changed": "state_change",
+	"task.changed due": "on_time",
 	"timer.elapsed timer set": "on_time",
 	"timer.elapsed settings": "on_time",
 	"usage.threshold": "nudge",
@@ -187,7 +186,7 @@ export function savingKindOf(
 		case "init":
 		case "triage":
 		case "escalation_answered":
-		case "escalation.human_direct":
+		case "task.human_direct":
 		case "request":
 		case "usage.threshold":
 			return event.type;
@@ -197,14 +196,13 @@ export function savingKindOf(
 				: "timer.elapsed settings";
 		case "needs_action":
 			if (saidAgain) return "needs_action said again";
-			if (event.subject.kind === "agent") return "needs_action agent";
-			return event.breach.clause === "no_agent"
-				? "needs_action item no_agent"
-				: "needs_action item idle_no_escalation";
-		case "waiting.changed":
+			if (event.subject.kind === "task") return "needs_action task";
+			if (event.subject.kind === "agent") return "needs_action agent no_task";
+			return "needs_action item no_task";
+		case "task.changed":
 			return event.reasons.includes("due")
-				? "waiting.changed due"
-				: "waiting.changed subjects_changed";
+				? "task.changed due"
+				: "task.changed subjects_changed";
 		default:
 			return "custom.*";
 	}
@@ -219,7 +217,7 @@ export function savingClassOf(
 
 /**
  * A wake-up the orchestrator set itself, whatever else the line says (a
- * wait's `due` folded with `subjects_changed` included): sent on time.
+ * task's `due` folded with `subjects_changed` included): sent on time.
  */
 export function onTime(event: OrchestratorEvent): boolean {
 	return savingClassOf(event) === "on_time";
@@ -241,7 +239,7 @@ export type SavingHold = "not_high" | "busy";
 export function savingHolds(line: {
 	readonly class: SavingClass;
 	readonly high: boolean;
-	/** Its subject is one of the tasks in progress (対応中). */
+	/** Its subject is one of the tasks in progress (処理中). */
 	readonly inProgress: boolean;
 	readonly tasks: number;
 }): SavingHold | undefined {

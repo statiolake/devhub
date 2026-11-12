@@ -1,7 +1,7 @@
 /**
  * Screenshots handed to an escalation, from wherever they were taken.
  *
- * `--attach PATH[=CAPTION]` (`escalation new`, `escalation ask`) and
+ * `--attach PATH[=CAPTION]` (`escalation new`) and
  * `attachment add PATH[=CAPTION]` name files on the machine the `devhub`
  * command runs on — an SSH host as often as this Mac. The command reads them
  * there and sends their bytes with the request (`cli/attach.go`, the `files`

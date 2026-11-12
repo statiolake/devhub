@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { UsageLimitsWire } from "../../ipc/contract.js";
 import { DEFAULT_ORCHESTRATOR } from "../../model/orchestratorSettings.js";
-import { EscalationStore } from "./escalationStore.js";
+import { TaskStore } from "./taskStore.js";
 import {
 	BATCH_WINDOW_MS,
 	EVENT_TYPES,
@@ -205,7 +205,7 @@ function needsAction(n: number): OrchestratorEvent {
 			kind: "issue",
 			item: { repo: "acme/app", number: n, url: `https://x/${String(n)}` },
 		},
-		breach: { clause: "no_agent" },
+		breach: { clause: "no_task" },
 	};
 }
 
@@ -292,6 +292,7 @@ describe("saving's nudges", () => {
 		const saving = dispatcher("saving", { n: 3 });
 		saving.events.dispatch({
 			type: "escalation_answered",
+			task: { id: 9, title: "仕事" },
 			escalationId: 1,
 			title: "t",
 			agents: [],
@@ -326,7 +327,15 @@ function agentLine(id: string): OrchestratorEvent {
 		type: "needs_action",
 		subject: { kind: "agent", agent: { id, name: id } },
 		ws: "web",
-		breach: { clause: "idle_no_escalation" },
+		breach: { clause: "no_task" },
+	};
+}
+
+function taskLine(id: number): OrchestratorEvent {
+	return {
+		type: "needs_action",
+		subject: { kind: "task", task: { id, title: `t${String(id)}` } },
+		breach: { clause: "idle" },
 	};
 }
 
@@ -336,14 +345,14 @@ describe("saving: state changes and nudges", () => {
 			init: "never_held",
 			triage: "never_held",
 			escalation_answered: "never_held",
-			"escalation.human_direct": "never_held",
+			"task.human_direct": "never_held",
 			request: "never_held",
-			"needs_action agent": "state_change",
-			"needs_action item idle_no_escalation": "state_change",
-			"needs_action item no_agent": "nudge",
+			"needs_action task": "state_change",
+			"needs_action agent no_task": "state_change",
+			"needs_action item no_task": "nudge",
 			"needs_action said again": "nudge",
-			"waiting.changed subjects_changed": "state_change",
-			"waiting.changed due": "on_time",
+			"task.changed subjects_changed": "state_change",
+			"task.changed due": "on_time",
 			"timer.elapsed timer set": "on_time",
 			"timer.elapsed settings": "on_time",
 			"usage.threshold": "nudge",
@@ -358,38 +367,24 @@ describe("saving: state changes and nudges", () => {
 	});
 
 	it("reads each event's kind, a standing line said again as a nudge", () => {
-		expect(savingKindOf(agentLine("a"))).toBe("needs_action agent");
-		expect(
-			savingKindOf({
-				type: "needs_action",
-				subject: { kind: "agent", agent: { id: "a" } },
-				breach: { clause: "outside_population", outside: "closed" },
-			}),
-		).toBe("needs_action agent");
-		expect(savingKindOf(needsAction(1))).toBe("needs_action item no_agent");
-		expect(
-			savingKindOf({
-				...needsAction(1),
-				breach: { clause: "idle_no_escalation" },
-			} as OrchestratorEvent),
-		).toBe("needs_action item idle_no_escalation");
+		expect(savingKindOf(agentLine("a"))).toBe("needs_action agent no_task");
+		expect(savingKindOf(taskLine(3))).toBe("needs_action task");
+		expect(savingKindOf(needsAction(1))).toBe("needs_action item no_task");
 		expect(savingClassOf(agentLine("a"), true)).toBe("nudge");
 		expect(
 			savingKindOf({
-				type: "waiting.changed",
-				escalationId: 1,
+				type: "task.changed",
+				taskId: 1,
 				reasons: ["due"],
-				waitSince: 0,
 			}),
-		).toBe("waiting.changed due");
+		).toBe("task.changed due");
 		expect(
 			savingKindOf({
-				type: "waiting.changed",
-				escalationId: 1,
+				type: "task.changed",
+				taskId: 1,
 				reasons: ["due", "subjects_changed"],
-				waitSince: 0,
 			}),
-		).toBe("waiting.changed due");
+		).toBe("task.changed due");
 		expect(
 			savingKindOf({
 				type: "timer.elapsed",
@@ -492,10 +487,9 @@ describe("saving's dispatcher: the work in progress is never held", () => {
 		const run = savingRun({ tasks: 3, inProgress: ["agent a", "agent b"] });
 		// A batch just went: the interval counts from it.
 		run.events.dispatch({
-			type: "waiting.changed",
-			escalationId: 7,
+			type: "task.changed",
+			taskId: 7,
 			reasons: ["subjects_changed"],
-			waitSince: 1,
 		});
 		run.advance(BATCH_WINDOW_MS);
 		expect(run.sent).toHaveLength(1);
@@ -594,13 +588,12 @@ describe("saving's dispatcher: the work in progress is never held", () => {
 		const run = savingRun({ tasks: 3 });
 		run.state.standing = [{ event: needsAction(1), print: "t1 no_agent" }];
 		run.events.dispatch({
-			type: "waiting.changed",
-			escalationId: 7,
+			type: "task.changed",
+			taskId: 7,
 			reasons: ["subjects_changed"],
-			waitSince: 1,
 		});
 		run.advance(BATCH_WINDOW_MS);
-		expect(run.sent).toEqual(["[waiting.changed] esc=7 — subjects_changed"]);
+		expect(run.sent).toEqual(["[task.changed] task=7 — subjects_changed"]);
 		// A minute later, well inside saving's 15 minutes: at once, alone.
 		run.advance(MIN);
 		run.events.dispatch({
@@ -610,7 +603,7 @@ describe("saving's dispatcher: the work in progress is never held", () => {
 			source: "session",
 		});
 		expect(run.sent).toEqual([
-			"[waiting.changed] esc=7 — subjects_changed",
+			"[task.changed] task=7 — subjects_changed",
 			"[timer.elapsed] slack",
 		]);
 		// The person's settings timer (reading Slack, say): on time too.
@@ -622,7 +615,7 @@ describe("saving's dispatcher: the work in progress is never held", () => {
 			source: "settings",
 		});
 		expect(run.sent).toEqual([
-			"[waiting.changed] esc=7 — subjects_changed",
+			"[task.changed] task=7 — subjects_changed",
 			"[timer.elapsed] slack",
 			"[timer.elapsed] slack-check",
 		]);
@@ -636,20 +629,18 @@ describe("saving's dispatcher: the work in progress is never held", () => {
 		const run = savingRun({ tasks: 2 });
 		run.events.dispatch({ type: "custom.x", text: "batch" });
 		run.events.dispatch({
-			type: "waiting.changed",
-			escalationId: 3,
+			type: "task.changed",
+			taskId: 3,
 			reasons: ["subjects_changed"],
-			waitSince: 1,
 		});
 		run.advance(BATCH_WINDOW_MS);
 		expect(run.sent).toHaveLength(1);
 		run.events.dispatch({
-			type: "waiting.changed",
-			escalationId: 4,
+			type: "task.changed",
+			taskId: 4,
 			reasons: ["due"],
-			waitSince: 1,
 		});
-		expect(run.sent[1]).toBe("[waiting.changed] esc=4 — due");
+		expect(run.sent[1]).toBe("[task.changed] task=4 — due");
 		run.events.setMode("off");
 		const fired = run.events.dispatch({
 			type: "timer.elapsed",
@@ -666,13 +657,12 @@ describe("saving's dispatcher: the work in progress is never held", () => {
 	it("delivers a wait that may be ready, low and with 3 in progress", () => {
 		const run = savingRun({ tasks: 3 });
 		run.events.dispatch({
-			type: "waiting.changed",
-			escalationId: 4,
+			type: "task.changed",
+			taskId: 4,
 			reasons: ["subjects_changed"],
-			waitSince: 1,
 		});
 		run.advance(1_000);
-		expect(run.sent).toEqual(["[waiting.changed] esc=4 — subjects_changed"]);
+		expect(run.sent).toEqual(["[task.changed] task=4 — subjects_changed"]);
 	});
 });
 
@@ -701,24 +691,21 @@ describe("off: the timers are off, the person's answers go", () => {
 		const run = dispatcher("off", { n: 0 });
 		expect(
 			run.events.dispatch({
-				type: "waiting.changed",
-				escalationId: 4,
+				type: "task.changed",
+				taskId: 4,
 				reasons: ["due"],
-				waitSince: 1,
 			}),
 		).toMatchObject({ fate: "dropped", reason: "off" });
 		run.events.dispatch({
-			type: "waiting.changed",
-			escalationId: 5,
+			type: "task.changed",
+			taskId: 5,
 			reasons: ["due", "subjects_changed"],
-			waitSince: 1,
 		});
 		expect(run.events.held()).toEqual([
 			{
-				type: "waiting.changed",
-				escalationId: 5,
+				type: "task.changed",
+				taskId: 5,
 				reasons: ["subjects_changed"],
-				waitSince: 1,
 			},
 		]);
 	});
@@ -727,22 +714,26 @@ describe("off: the timers are off, the person's answers go", () => {
 		const run = dispatcher("off", { n: 0 });
 		run.events.dispatch({
 			type: "escalation_answered",
+			task: { id: 9, title: "仕事" },
 			escalationId: 1,
 			title: "t",
 			agents: [],
 			answers: [{ text: "はい" }],
 		});
 		run.events.dispatch({
-			type: "escalation.human_direct",
-			escalationId: 2,
-			title: "u",
+			type: "task.human_direct",
+			task: { id: 2, title: "u" },
 			agent: { id: "w", name: "worker" },
 			messages: [{ text: "こちらで進めて" }],
 		});
-		run.events.dispatch({ type: "request", requestId: 3, text: "調べて" });
+		run.events.dispatch({
+			type: "request",
+			task: { id: 3, title: "依頼" },
+			text: "調べて",
+		});
 		run.events.dispatch({ type: "custom.x", text: "y" });
 		expect(run.sent).toEqual([
-			"esc=1「t」 への人の回答:\nはい",
+			"task=9「仕事」 esc=1「t」 への人の回答:\nはい",
 			expect.stringContaining("こちらで進めて"),
 		]);
 		expect(run.events.held().map((one) => one.type)).toEqual([
@@ -750,7 +741,7 @@ describe("off: the timers are off, the person's answers go", () => {
 			"custom.x",
 		]);
 		run.events.setMode("full");
-		expect(run.sent[2]).toContain("req=3");
+		expect(run.sent[2]).toContain("task=3「依頼」 人からの依頼");
 		expect(run.sent[3]).toContain("[custom.x]");
 	});
 
@@ -770,6 +761,7 @@ describe("off: the timers are off, the person's answers go", () => {
 		});
 		const entry = events.dispatch({
 			type: "escalation_answered",
+			task: { id: 9, title: "仕事" },
 			escalationId: 1,
 			title: "t",
 			agents: [],
@@ -781,7 +773,7 @@ describe("off: the timers are off, the person's answers go", () => {
 		expect(sent).toEqual([]);
 		who.id = "orch";
 		events.flush();
-		expect(sent).toEqual(["esc=1「t」 への人の回答:\nはい"]);
+		expect(sent).toEqual(["task=9「仕事」 esc=1「t」 への人の回答:\nはい"]);
 		expect(entry.fate).toBe("delivered");
 	});
 });
@@ -793,7 +785,7 @@ describe("the service's mode", () => {
 		const clock = { now: NOW };
 		const settings = { ...DEFAULT_ORCHESTRATOR, event_prompt: "{EVENT}" };
 		const run = new OrchestratorService({
-			store: EscalationStore.inMemory(),
+			store: TaskStore.inMemory(),
 			agents: () => [
 				{
 					id: "orch",
@@ -858,34 +850,36 @@ describe("the service's mode", () => {
 		expect(run.mode).toBe("full");
 	});
 
-	it("drops a wait's --at that comes while off, and lists it as expired while its wait stands", () => {
+	it("drops a task's --check-at that comes while off, and lists it as expired while the task waits with it", () => {
 		const { run, sent, clock } = service("full");
 		run.assign("orch");
-		const one = run.raise({ title: "リリース後に確認", markdown: "?" });
-		run.wait(one.id, { trigger: "15:00 に", dueAt: NOW + HOUR });
+		const one = run.newTask({ title: "リリース後に確認" });
+		run.setTaskStatus(one.id, "waiting", {
+			note: "15:00 に",
+			checkAt: NOW + HOUR,
+		});
 		run.setMode("off");
 		sent.length = 0;
 		clock.now = NOW + HOUR + 1_000;
 		run.observe();
 		const due = run
 			.eventLog(200)
-			.filter((entry) => entry.type === "waiting.changed");
+			.filter((entry) => entry.type === "task.changed");
 		expect(due).toMatchObject([{ fate: "dropped" }]);
 		expect(run.expiredWhileOff()).toEqual([
 			{
-				escalationId: one.id,
+				taskId: one.id,
 				title: "リリース後に確認",
-				waitSince: expect.any(Number),
-				dueAt: NOW + HOUR,
+				checkAt: NOW + HOUR,
 				droppedAt: NOW + HOUR + 1_000,
 			},
 		]);
 		run.setMode("full");
 		run.observe();
 		expect(sent.join("\n")).not.toContain("— due");
-		// Still listed while the wait stands; gone once it is off its wait.
+		// Still listed while the task waits; gone once it is 処理中.
 		expect(run.expiredWhileOff()).toHaveLength(1);
-		run.resume(one.id, undefined);
+		run.setTaskStatus(one.id, "in_progress", {});
 		expect(run.expiredWhileOff()).toEqual([]);
 	});
 

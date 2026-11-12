@@ -15,11 +15,10 @@
  * Project is read in full: a Project of thousands of cards (Done, closed)
  * costs nothing more than one of ten.
  *
- * The items managed agents are linked to (`linked`) that the search did not
- * give — closed, merged, not assigned to the viewer — are read by URL
- * (`resource(url:)`, at most `MAX_LINKED_ITEMS` a request), so an agent's
- * item outside the population is said as closed or unassigned, not as on no
- * Project. One the search gave on no registered Project is `not_in_project`.
+ * The items the open tasks link (`linked`) that the search did not give —
+ * closed, merged, not assigned to the viewer — are read by URL
+ * (`resource(url:)`, at most `MAX_LINKED_ITEMS` a request), so a task's
+ * merged pull request or closed Issue is seen (staleness, `task.changed`).
  *
  * For each item, its pull request — a pull request item's own, an Issue's
  * the one that closes it (the open one, else the latest) — with the review

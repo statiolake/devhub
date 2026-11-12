@@ -24,9 +24,9 @@
  * reason.
  *
  * **The Orchestrator's part comes from its page, by id.** The screen reports
- * which escalation or file its left pane shows (`reportOrchestratorView`) and
- * main reads the escalation's subject and Workspace off its own store, so the
- * title is the time spent on the project the escalation is about:
+ * which task or file its left pane shows (`reportOrchestratorView`) and
+ * main reads the task's title and Workspace off its own store, so the
+ * title is the time spent on the project the task is about:
  *
  *     {workspace} · {subject} — Orchestrator — DevHub
  *     {file name} — Orchestrator — DevHub
@@ -93,11 +93,10 @@ export interface ShellTitleFacts {
 export type OrchestratorTitleView =
 	| { readonly kind: "board" }
 	| {
-			readonly kind: "escalation";
-			/** The escalation's title — its subject, never its thread. */
+			readonly kind: "task";
+			/** The task's title — its subject, never its questions. */
 			readonly subject: string;
-			readonly workspaceId?: string | undefined;
-			/** The agents it is about, in order; the first one's Workspace counts. */
+			/** The agents bound to it, in order; the first one's Workspace counts. */
 			readonly agentIds: readonly string[];
 	  }
 	| { readonly kind: "file"; readonly path: string };
@@ -105,7 +104,7 @@ export type OrchestratorTitleView =
 /** How long a subject or a file name may run in the title, in characters. */
 export const TITLE_TEXT_LIMIT = 80;
 
-/** Between the Workspace an escalation is about and its subject. */
+/** Between the Workspace a task is about and its subject. */
 export const SUBJECT_SEPARATOR = " · ";
 
 /**
@@ -245,7 +244,7 @@ function workspaceName(
 }
 
 /**
- * The Orchestrator screen's element: the escalation being read — after the
+ * The Orchestrator screen's element: the task being read — after the
  * Workspace it is about, so the time lands on that project — or the file
  * open in the Files tab. The board has none.
  */
@@ -259,9 +258,9 @@ function orchestratorElement(facts: ShellTitleFacts): string | undefined {
 			const name = titleText(view.path.split("/").at(-1) ?? "");
 			return name === "" ? undefined : name;
 		}
-		case "escalation": {
+		case "task": {
 			const subject = titleText(view.subject);
-			const found = escalationWorkspace(facts, view);
+			const found = taskWorkspace(facts, view);
 			const workspace =
 				found === undefined ? undefined : workspaceName(facts, found);
 			const parts = [workspace, subject].filter(
@@ -273,25 +272,20 @@ function orchestratorElement(facts: ShellTitleFacts): string | undefined {
 }
 
 /**
- * The one Workspace an escalation is about: its own, else its first agent's.
+ * The one Workspace a task is about: the first of its agents' that is open.
  * The Orchestrator's own is not one — the title already names it.
  */
-function escalationWorkspace(
+function taskWorkspace(
 	facts: ShellTitleFacts,
-	view: Extract<OrchestratorTitleView, { kind: "escalation" }>,
+	view: Extract<OrchestratorTitleView, { kind: "task" }>,
 ): WorkspaceSnapshot | undefined {
-	const own =
-		view.workspaceId === undefined
-			? undefined
-			: facts.workspaces.find((one) => one.id === view.workspaceId);
-	const first = view.agentIds[0];
-	const found =
-		own ??
-		(first === undefined
-			? undefined
-			: facts.workspaces.find((one) =>
-					one.agents.some((agent) => agent.id === first),
-				));
+	const found = view.agentIds
+		.map((id) =>
+			facts.workspaces.find((one) =>
+				one.agents.some((agent) => agent.id === id),
+			),
+		)
+		.find((one) => one !== undefined);
 	return found === undefined || found.id === facts.orchestratorWorkspaceId
 		? undefined
 		: found;
@@ -332,9 +326,9 @@ export function orchestratorViewWire(
 	switch (view["kind"]) {
 		case "board":
 			return { kind: "board" };
-		case "escalation":
+		case "task":
 			return typeof view["id"] === "number" && Number.isInteger(view["id"])
-				? { kind: "escalation", id: view["id"] }
+				? { kind: "task", id: view["id"] }
 				: undefined;
 		case "file":
 			return typeof view["path"] === "string" && view["path"] !== ""

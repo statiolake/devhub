@@ -410,12 +410,16 @@ describe("the GitHub items", () => {
 		const reading = readInvariant({
 			items,
 			agents: [agent(closed), agent(theirs)],
-			escalations: [],
+			tasks: [],
 		});
-		expect(reading.needsAction.map((one) => one.breach)).toEqual([
-			{ clause: "outside_population", outside: "closed" },
-			{ clause: "outside_population", outside: "unassigned" },
+		// Read, and outside the population: no task is asked for them.
+		expect([...reading.items.values()].map((one) => one.inPopulation)).toEqual([
+			false,
+			false,
 		]);
+		expect(reading.needsAction.filter((one) => one.kind !== "agent")).toEqual(
+			[],
+		);
 	});
 
 	it("says a linked item on no registered Project is not in a Project, and reads no item the search gave by URL", async () => {
@@ -456,12 +460,18 @@ describe("the GitHub items", () => {
 					issue: elsewhere,
 				},
 			],
-			escalations: [],
+			tasks: [],
 		});
-		expect(reading.needsAction.map((one) => one.breach)).toContainEqual({
-			clause: "outside_population",
-			outside: "not_in_project",
-		});
+		// On no registered Project: read, and not in the population.
+		expect(
+			[...reading.items.values()].map((one) => [
+				one.facts.item.number,
+				one.inPopulation,
+			]),
+		).toEqual([
+			[1, true],
+			[3, false],
+		]);
 	});
 
 	it(`reads at most ${String(MAX_LINKED_ITEMS)} linked items a request`, async () => {

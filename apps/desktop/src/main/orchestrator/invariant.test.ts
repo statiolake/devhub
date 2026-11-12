@@ -3,15 +3,16 @@ import { eventLine, type OrchestratorEvent } from "./events.js";
 import {
 	findItem,
 	InvariantWatch,
+	itemLinkKey,
 	readInvariant,
 	type InvariantAgent,
-	type InvariantEscalation,
+	type InvariantTask,
 	type ItemFacts,
-	type KeptAgent,
 } from "./invariant.js";
 
 const URL = "https://github.com/acme/app/issues/123";
 const PR = "https://github.com/acme/app/pull/9";
+const AGENT = "a1b2c3d4-0000";
 
 function issue(
 	overrides: Partial<ItemFacts> & { lane?: string } = {},
@@ -29,476 +30,250 @@ function issue(
 
 function agent(overrides: Partial<InvariantAgent> = {}): InvariantAgent {
 	return {
-		id: "a1b2c3d4-0000",
+		id: AGENT,
 		name: "API fix",
 		ws: "api",
 		workspaceId: "w1",
 		managed: true,
 		status: "working",
 		stopping: false,
-		issue: URL,
 		...overrides,
 	};
 }
 
-function escalation(
-	overrides: Partial<InvariantEscalation> = {},
-): InvariantEscalation {
+function task(overrides: Partial<InvariantTask> = {}): InvariantTask {
 	return {
-		id: 12,
-		title: "レビュー待ち",
-		state: "waiting",
-		links: [],
-		agents: ["a1b2c3d4-0000"],
-		trigger: "approve されたら",
-		waitSince: 7,
+		id: 7,
+		title: "API整理",
+		status: "in_progress",
+		links: [URL],
+		agents: [AGENT],
+		escalations: [],
 		...overrides,
 	};
 }
 
-const keys = (reading: ReturnType<typeof readInvariant>) =>
-	reading.needsAction.map((one) => one.key);
 const clauses = (reading: ReturnType<typeof readInvariant>) =>
-	reading.needsAction.map((one) => [one.key, one.breach]);
+	reading.needsAction.map((one) => [one.key, one.breach.clause]);
 
-describe("the invariant", () => {
-	it("is held by a working linked agent, a 要回答 or a 待機中 escalation", () => {
-		expect(
-			keys(
-				readInvariant({
-					items: [issue()],
-					agents: [agent()],
-					escalations: [],
-				}),
-			),
-		).toEqual([]);
-		for (const state of ["needs_answer", "waiting"] as const)
+describe("the invariant, about tasks", () => {
+	it("is held by a 処理中 task one of whose agents works, a 回答待ち one, a 待機 one", () => {
+		for (const tasks of [
+			[task()],
+			[task({ status: "answer", escalations: [3] })],
+			[task({ status: "waiting" })],
+		])
 			expect(
-				keys(
+				clauses(
 					readInvariant({
 						items: [issue()],
-						agents: [agent({ status: "idle" })],
-						escalations: [escalation({ state })],
+						agents: [
+							agent({
+								status: tasks[0]!.status === "in_progress" ? "working" : "idle",
+							}),
+						],
+						tasks,
 					}),
 				),
 			).toEqual([]);
 	});
 
-	it("says an item nobody is on, or whose agent stopped, by the clause it fails", () => {
-		expect(
-			clauses(readInvariant({ items: [issue()], agents: [], escalations: [] })),
-		).toEqual([[`item ${URL}`, { clause: "no_agent" }]]);
-		const idle = readInvariant({
-			items: [issue()],
-			agents: [agent({ status: "idle" })],
-			escalations: [escalation({ state: "in_progress" })],
-		});
-		expect(clauses(idle)).toEqual([
-			[`item ${URL}`, { clause: "idle_no_escalation" }],
-			["agent a1b2c3d4-0000", { clause: "idle_no_escalation" }],
-		]);
-		expect(idle.needsAction[0]?.ws).toBe("api");
-	});
-
-	it("leaves out an item whose linked agent is the person's own", () => {
-		expect(
-			keys(
-				readInvariant({
-					items: [issue()],
-					agents: [agent({ managed: false, status: "idle" })],
-					escalations: [],
-				}),
-			),
-		).toEqual([]);
-	});
-
-	it("links by meta issue= only, never by branch", () => {
+	it("flags a 処理中 task nobody moves: idle with its agents stopped, no_agent with none open", () => {
 		expect(
 			clauses(
 				readInvariant({
 					items: [issue()],
-					agents: [agent({ issue: undefined })],
-					escalations: [],
+					agents: [agent({ status: "idle" })],
+					tasks: [task()],
 				}),
 			),
-		).toEqual([
-			[`item ${URL}`, { clause: "no_agent" }],
-			[
-				"agent a1b2c3d4-0000",
-				{ clause: "outside_population", outside: "no_item" },
-			],
-		]);
-	});
-
-	it("holds an agent whose Issue is still to be filed to the status rule only", () => {
-		const pending = (overrides: Partial<InvariantAgent>) =>
-			agent({ issue: undefined, issuePending: true, ...overrides });
-		// Investigating: settled, not outside_population (no_item).
-		const working = readInvariant({
-			items: [],
-			agents: [pending({})],
-			escalations: [],
-		});
-		expect(keys(working)).toEqual([]);
-		expect(working.agents.get("a1b2c3d4-0000")?.settled).toBe(true);
-		// Stopped with nothing settling it: an ordinary idle agent, said once
-		// per delivery like any other, with its pending link among its facts.
-		const idle = readInvariant({
-			items: [],
-			agents: [pending({ status: "idle" })],
-			escalations: [],
-		});
-		expect(clauses(idle)).toEqual([
-			["agent a1b2c3d4-0000", { clause: "idle_no_escalation" }],
-		]);
-		expect(idle.needsAction[0]?.facts).toContain("issue=pending");
-		// On a 要回答 escalation (the draft Issue, for the person): settled.
+		).toEqual([["task 7", "idle"]]);
 		expect(
-			keys(
+			clauses(readInvariant({ items: [issue()], agents: [], tasks: [task()] })),
+		).toEqual([["task 7", "no_agent"]]);
+		// A stopping agent is not at work.
+		expect(
+			clauses(
 				readInvariant({
 					items: [],
-					agents: [pending({ status: "idle" })],
-					escalations: [escalation({ state: "needs_answer" })],
+					agents: [agent({ stopping: true })],
+					tasks: [task({ links: [] })],
 				}),
 			),
-		).toEqual([]);
-		// Once linked, it is an ordinary item's agent: the Issue, filed and not
-		// on a registered Project yet, is outside the population.
+		).toEqual([["task 7", "idle"]]);
+	});
+
+	it("asks for a task for a managed agent on none, whatever it does, and leaves the person's agents alone", () => {
+		expect(
+			clauses(readInvariant({ items: [], agents: [agent()], tasks: [] })),
+		).toEqual([[`agent ${AGENT}`, "no_task"]]);
 		expect(
 			clauses(
 				readInvariant({
-					items: [issue({ projects: [] })],
-					agents: [agent({ status: "working" })],
-					escalations: [],
-				}),
-			),
-		).toEqual([
-			[
-				"agent a1b2c3d4-0000",
-				{ clause: "outside_population", outside: "not_in_project" },
-			],
-		]);
-	});
-
-	it("says a managed agent whose item left the population, working or not, and why", () => {
-		for (const [facts, outside] of [
-			[{ state: "closed" }, "closed"],
-			[{ state: "merged" }, "closed"],
-			[{ assignedToMe: false }, "unassigned"],
-		] as const) {
-			const reading = readInvariant({
-				items: [issue(facts)],
-				agents: [agent()],
-				escalations: [],
-			});
-			expect(clauses(reading)).toEqual([
-				["agent a1b2c3d4-0000", { clause: "outside_population", outside }],
-			]);
-		}
-		// On no registered Project (or none registered: the population is empty).
-		const off = readInvariant({
-			items: [],
-			agents: [agent()],
-			escalations: [],
-		});
-		expect(off.needsAction[0]?.breach).toEqual({
-			clause: "outside_population",
-			outside: "not_in_project",
-		});
-	});
-
-	it("treats a pull request item as an Issue", () => {
-		const pr = issue({
-			item: { repo: "acme/app", number: 9, title: "設定画面", url: PR },
-			kind: "pr",
-		});
-		const nobody = readInvariant({ items: [pr], agents: [], escalations: [] });
-		expect(nobody.needsAction.map((one) => [one.key, one.kind])).toEqual([
-			[`item ${PR}`, "pr"],
-		]);
-		expect(
-			keys(
-				readInvariant({
-					items: [pr],
-					agents: [agent({ issue: PR })],
-					escalations: [],
+					items: [],
+					agents: [agent({ managed: false })],
+					tasks: [],
 				}),
 			),
 		).toEqual([]);
-		expect(findItem(nobody, "acme/app#9")?.facts.kind).toBe("pr");
-		expect(findItem(nobody, `${PR}/`)?.inPopulation).toBe(true);
 	});
 
-	it("applies only the status rule while the population is not known", () => {
+	it("asks for a task for an item of the population no open task links", () => {
 		expect(
-			keys(
-				readInvariant({
-					items: undefined,
-					agents: [agent({ issue: undefined })],
-					escalations: [],
-				}),
-			),
-		).toEqual([]);
+			clauses(readInvariant({ items: [issue()], agents: [], tasks: [] })),
+		).toEqual([[`item ${URL}`, "no_task"]]);
+		// Linked by a task (any link spelling of it): settled as the task is.
 		expect(
-			keys(
-				readInvariant({
-					items: undefined,
-					agents: [agent({ status: "idle" })],
-					escalations: [],
-				}),
-			),
-		).toEqual(["agent a1b2c3d4-0000"]);
-	});
-
-	it("finds an escalation about an item by its link, or by a linked agent", () => {
-		expect(
-			keys(
+			clauses(
 				readInvariant({
 					items: [issue()],
-					agents: [],
-					escalations: [escalation({ agents: [], links: [`${URL}/`] })],
+					agents: [agent()],
+					tasks: [task({ links: [`${URL}#issuecomment-1`] })],
 				}),
 			),
 		).toEqual([]);
+		// Outside the population: closed, not mine, on no Project.
+		for (const outside of [
+			issue({ state: "closed" }),
+			issue({ assignedToMe: false }),
+			issue({ projects: [] }),
+		])
+			expect(
+				clauses(readInvariant({ items: [outside], agents: [], tasks: [] })),
+			).toEqual([]);
+		// The person's own: an unmanaged agent started on it.
 		expect(
-			keys(
+			clauses(
 				readInvariant({
 					items: [issue()],
-					agents: [agent({ status: "idle" })],
-					escalations: [
-						escalation({ agents: [], links: ["devhub:agent/a1b2c3d4"] }),
-					],
+					agents: [agent({ managed: false, issue: URL })],
+					tasks: [],
 				}),
 			),
 		).toEqual([]);
 	});
 
-	it("tells each agent on a 待機中 escalation what it waits on, and its item", () => {
+	it("says no item while the population is not known, and still holds tasks and agents", () => {
+		const reading = readInvariant({
+			items: undefined,
+			agents: [agent({ status: "idle" })],
+			tasks: [task()],
+		});
+		expect(reading.known).toBe(false);
+		expect(clauses(reading)).toEqual([["task 7", "idle"]]);
+	});
+
+	it("reads each agent's task and its standing", () => {
 		const reading = readInvariant({
 			items: [issue()],
-			agents: [agent({ status: "idle", managed: false })],
-			escalations: [escalation()],
+			agents: [agent({ status: "idle" }), agent({ id: "zz-9", managed: true })],
+			tasks: [task()],
 		});
-		const standing = reading.agents.get("a1b2c3d4-0000");
-		expect(standing?.waiting).toEqual({
-			escalationId: 12,
-			trigger: "approve されたら",
+		expect(reading.agents.get(AGENT)).toEqual({
+			settled: false,
+			task: 7,
+			taskBreach: { clause: "idle" },
 		});
-		expect(standing?.item?.item.number).toBe(123);
-		expect(standing?.escalations).toEqual([12]);
-		expect(reading.items.get(URL)?.agents).toEqual(["a1b2c3d4-0000"]);
+		expect(reading.agents.get("zz-9")).toEqual({
+			settled: false,
+			breach: { clause: "no_task" },
+		});
+		expect(reading.tasks.get(7)).toEqual({ clause: "idle" });
+		expect(findItem(reading, "acme/app#123")?.tasks).toEqual([7]);
+		expect(findItem(reading, URL)?.inPopulation).toBe(true);
+	});
+
+	it("names a task's line by its id and title, never its state", () => {
+		const reading = readInvariant({
+			items: [issue()],
+			agents: [agent({ status: "idle" })],
+			tasks: [task()],
+		});
+		const watch = new InvariantWatch({
+			dispatch: () => undefined,
+			now: () => 0,
+		});
+		watch.observe(reading, true);
+		expect(watch.due().map((event) => eventLine(event, 0))).toEqual([
+			"[needs_action] task=7「API整理」 ws=api — idle",
+		]);
 	});
 });
 
-describe("the watch", () => {
-	function watch() {
+describe("a 待機 task's subjects", () => {
+	it("are said as task.changed when they move, not at the first look", () => {
 		const said: OrchestratorEvent[] = [];
-		const clock = { now: 0 };
-		const made = new InvariantWatch({
+		const watch = new InvariantWatch({
 			dispatch: (event) => said.push(event),
-			now: () => clock.now,
+			now: () => 0,
 		});
-		return { watch: made, said, clock };
-	}
-	const idle = (lane = "In Progress") =>
-		readInvariant({
-			items: [issue({ lane })],
-			agents: [agent({ status: "idle" })],
-			escalations: [],
+		const waiting = task({ status: "waiting", links: [PR] });
+		const pr = (state: "open" | "merged"): ItemFacts => ({
+			...issue(),
+			kind: "pr",
+			state,
+			item: { repo: "acme/app", number: 9, url: PR },
 		});
-	const due = (made: InvariantWatch) =>
-		made.due().map((one) => eventLine(one, 0));
+		const read = (state: "open" | "merged", status = "idle") =>
+			readInvariant({
+				items: [pr(state)],
+				agents: [agent({ status })],
+				tasks: [waiting],
+			});
+		watch.observe(read("open"), true);
+		watch.observe(read("open"), true);
+		expect(said).toEqual([]);
+		watch.observe(read("merged"), true);
+		expect(said).toEqual([
+			{ type: "task.changed", taskId: 7, reasons: ["subjects_changed"] },
+		]);
+		// Its agent going to work moves it too.
+		watch.observe(read("merged", "working"), true);
+		expect(said).toHaveLength(2);
+		// Nothing is said with no orchestrator.
+		watch.observe(read("open"), false);
+		expect(said).toHaveLength(2);
+	});
+});
 
-	it("prints each standing line's state for saving: the same while nothing moves, new when it does or it breaks again", () => {
-		const { watch: made, clock } = watch();
-		made.observe(idle(), true);
-		const [item, worker] = made.due();
-		const first = made.print(worker!);
-		expect(first).toContain("status=idle");
-		expect(made.print(item!)).toContain("agents=a1b2c3d4:idle");
-		clock.now = 60_000;
-		made.observe(idle(), true);
-		expect(made.print(worker!)).toBe(first);
-		// Its pull request's checks failed: a new state.
-		made.observe(
+describe("the watch's state print", () => {
+	it("changes when the subject's facts move, so saving can tell new from said again", () => {
+		const watch = new InvariantWatch({
+			dispatch: () => undefined,
+			now: () => 5,
+		});
+		const read = (status: string, checks: "passing" | "failing") =>
 			readInvariant({
 				items: [
 					issue({
 						pull: {
 							number: 9,
-							url: PR,
 							state: "open",
 							review: "none",
 							unresolved: 0,
-							checks: "failing",
+							checks,
 						},
 					}),
 				],
-				agents: [agent({ status: "idle" })],
-				escalations: [],
-			}),
-			true,
-		);
-		expect(made.print(worker!)).not.toBe(first);
-		// Settled (working), then stopped again: a new since.
-		made.observe(
-			readInvariant({ items: [issue()], agents: [agent()], escalations: [] }),
-			true,
-		);
-		expect(made.print(worker!)).toBeUndefined();
-		clock.now = 120_000;
-		made.observe(idle(), true);
-		expect(made.print(worker!)).not.toBe(first);
-	});
-
-	it("gives every subject that needs action now, by its clause, never its state, at once and each time", () => {
-		const { watch: made, said, clock } = watch();
-		made.observe(idle(), true);
-		const lines = [
-			"[needs_action] issue=acme/app#123 ws=api — idle_no_escalation",
-			"[needs_action] agent=a1b2c3d4 (API fix) ws=api — idle_no_escalation",
-		];
-		// No grace, and nothing remembered of having said it.
-		expect(due(made)).toEqual(lines);
-		clock.now = 300_000;
-		made.observe(idle(), true);
-		expect(due(made)).toEqual(lines);
-		// The watch dispatches none itself: the delivery asks.
-		expect(said).toEqual([]);
-		expect(made.needsAction()[0]).toEqual({
-			key: expect.any(String),
-			subject: "item acme/app#123",
-			kind: "issue",
-			line: "issue=acme/app#123 ws=api — idle_no_escalation",
-			clause: "idle_no_escalation",
-			since: 0,
-		});
-	});
-
-	it("gives nothing for a subject that settled", () => {
-		const { watch: made } = watch();
-		made.observe(idle(), true);
-		made.observe(
-			readInvariant({ items: [issue()], agents: [agent()], escalations: [] }),
-			true,
-		);
-		expect(made.due()).toEqual([]);
-	});
-
-	it("leaves out a kept agent, with its note, until its state changes", () => {
-		const { watch: made, clock } = watch();
-		const outside = (status: string) =>
-			readInvariant({
-				items: [issue({ assignedToMe: false })],
 				agents: [agent({ status })],
-				escalations: [],
+				tasks: [task()],
 			});
-		made.observe(outside("working"), true);
-		expect(due(made)).toHaveLength(1);
-		const kept = made.keep("a1b2c3d4-0000", "他チームの依頼で続ける");
-		expect(kept.note).toBe("他チームの依頼で続ける");
-		clock.now = 3_600_000;
-		made.observe(outside("working"), true);
-		expect(made.due()).toEqual([]);
-		expect(made.needsAction()[0]?.kept?.note).toBe("他チームの依頼で続ける");
-		// It went idle: its state moved, the keeping is over.
-		made.observe(outside("idle"), true);
-		expect(made.due().map((one) => one.type)).toEqual(["needs_action"]);
-		expect(made.kept("a1b2c3d4-0000")).toBeUndefined();
-		expect(() => made.keep("nobody", "x")).toThrow(/does not need action/u);
+		watch.observe(read("idle", "passing"), true);
+		const line = watch.due()[0]!;
+		const first = watch.print(line);
+		watch.observe(read("idle", "passing"), true);
+		expect(watch.print(line)).toBe(first);
+		watch.observe(read("idle", "failing"), true);
+		expect(watch.print(line)).not.toBe(first);
+		watch.observe(read("working", "failing"), true);
+		expect(watch.print(line)).toBeUndefined();
 	});
+});
 
-	it("keeps a keeping across a restart, judged again once the state is known", () => {
-		const stored = new Map<string, KeptAgent>();
-		const store = {
-			load: () => new Map(stored),
-			save: (kept: ReadonlyMap<string, KeptAgent>) => {
-				stored.clear();
-				for (const [id, one] of kept) stored.set(id, one);
-			},
-		};
-		const make = () =>
-			new InvariantWatch({
-				dispatch: () => undefined,
-				now: () => 0,
-				kept: store,
-			});
-		const outside = (status: string, known = true) =>
-			readInvariant({
-				items: known ? [issue({ assignedToMe: false })] : undefined,
-				agents: [agent({ status })],
-				escalations: [],
-			});
-		const before = make();
-		before.observe(outside("working"), true);
-		before.keep("a1b2c3d4-0000", "他チームの依頼で続ける");
-		expect([...stored.keys()]).toEqual(["a1b2c3d4-0000"]);
-		// DevHub restarts: GitHub not read yet, the agent not read yet.
-		const after = make();
-		after.observe(outside("working", false), true);
-		after.observe(outside("unknown"), true);
-		expect(after.kept("a1b2c3d4-0000")?.note).toBe("他チームの依頼で続ける");
-		// Read again as it was: still kept.
-		after.observe(outside("working"), true);
-		expect(after.needsAction()[0]?.kept?.note).toBe("他チームの依頼で続ける");
-		// Its state moved: over, on disk too.
-		after.observe(outside("idle"), true);
-		expect(after.kept("a1b2c3d4-0000")).toBeUndefined();
-		expect(stored.size).toBe(0);
-	});
-
-	it("says a wait whose subject moved, never its first look", () => {
-		const { watch: made, said } = watch();
-		const waiting = (review: "none" | "approved") =>
-			readInvariant({
-				items: [
-					issue({
-						pull: {
-							number: 130,
-							state: "open",
-							review,
-							unresolved: 0,
-							checks: "passing",
-						},
-					}),
-				],
-				agents: [agent({ status: "idle" })],
-				escalations: [escalation()],
-			});
-		made.observe(waiting("none"), true);
-		made.observe(waiting("none"), true);
-		expect(said).toEqual([]);
-		made.observe(waiting("approved"), true);
-		expect(said).toEqual([
-			{
-				type: "waiting.changed",
-				escalationId: 12,
-				reasons: ["subjects_changed"],
-				waitSince: 7,
-			},
-		]);
-	});
-
-	it("says no wait with nobody to tell", () => {
-		const { watch: made, said } = watch();
-		const waiting = (review: "none" | "approved") =>
-			readInvariant({
-				items: [
-					issue({
-						pull: {
-							number: 130,
-							state: "open",
-							review,
-							unresolved: 0,
-							checks: "passing",
-						},
-					}),
-				],
-				agents: [agent({ status: "idle" })],
-				escalations: [escalation()],
-			});
-		made.observe(waiting("none"), false);
-		made.observe(waiting("approved"), false);
-		expect(said).toEqual([]);
+describe("an item link's key", () => {
+	it("is the item's URL without what follows its number; other links have none", () => {
+		expect(itemLinkKey(`${PR}/files#diff`)).toBe(PR);
+		expect(itemLinkKey("https://notion.so/page")).toBeUndefined();
+		expect(itemLinkKey("devhub:agent/abcd")).toBeUndefined();
 	});
 });
