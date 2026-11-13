@@ -73,6 +73,9 @@ import {
   type Sash,
   GUI_OWNED,
 } from "./mouse";
+import { clickMode, predictClick, type Cell as GridCell } from "./clickCaret";
+import { PerFrame } from "./perFrame";
+import { Provisional, PROVISIONAL_TTL_MS } from "./provisional";
 import { MetaComposition, OptionKeys } from "../surfaces/optionKey";
 import { BaseKeys, layoutMapSource } from "../surfaces/baseKeys";
 import type { MacOptionIsMeta } from "../../model/macOption";
@@ -191,6 +194,17 @@ export class NeovimEditor {
   private labelsPaint: { force: boolean } | undefined;
   private readonly listeners = new Set<() => void>();
   private dragging: { button: string; target: MouseTarget } | undefined;
+  /**
+   * The caret where a click or a drag put it, before Neovim says so
+   * (`clickCaret.ts`, `provisional.ts`): Neovim's cursor wins as soon as
+   * it moves.
+   */
+  private readonly caretGuess = new Provisional<GridCell>(
+    (a, b) => a.grid === b.grid && a.row === b.row && a.col === b.col,
+  );
+  private caretTimer = 0;
+  /** When the pointer last moved the caret: a move it makes does not glide. */
+  private pointerMoved = -Infinity;
   /** A Meta dead key's composition, dropped (`surfaces/optionKey.ts`). */
   private readonly metaComposition = new MetaComposition();
   /** What each physical key types without Option, for Meta chords. */
@@ -203,6 +217,13 @@ export class NeovimEditor {
    */
   private sashOn: Sash | undefined;
   private sashDragged = false;
+  /**
+   * The border's band, lit under the pointer as VS Code's sash is and, while
+   * dragged, at the pointer at once: Neovim's layout follows a round trip
+   * later and lands under it.
+   */
+  private readonly sashBand: HTMLDivElement;
+  private sashTimer = 0;
   /** A pending ask for the colorscheme's groups (`askTheme`). */
   private themeTimer = 0;
   private blink: Animation | undefined;
@@ -244,7 +265,9 @@ export class NeovimEditor {
     // follows then sits at the end of the preedit, as the overlay draws it.
     this.input.setAttribute("wrap", "off");
     this.input.setAttribute("aria-label", "Neovim");
-    this.gridLayer.append(this.cursor, this.input);
+    this.sashBand = document.createElement("div");
+    this.sashBand.className = "nvim-sash";
+    this.gridLayer.append(this.cursor, this.input, this.sashBand);
     // The editor's band holds the grids and what the page lays over them;
     // the preedit is a band of its own over DevHub's command line
     // (`neovim.css`, the bands).
@@ -682,6 +705,8 @@ export class NeovimEditor {
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
     if (this.scrollTick !== 0) cancelAnimationFrame(this.scrollTick);
     this.windowMotion.dispose();
+    clearTimeout(this.caretTimer);
+    clearTimeout(this.sashTimer);
     this.band.remove();
     this.preedit.remove();
   }
@@ -842,7 +867,7 @@ export class NeovimEditor {
    * where the text area ends.
    */
   private placeCursorScroll(): void {
-    const { grid } = this.state.cursor;
+    const { grid } = this.shownCursor();
     const off = this.painter.scrollOffset(grid);
     const ride = off === 0 ? this.painter.floatShift(grid) : -off;
     this.cursor.style.transform =
@@ -1099,6 +1124,85 @@ export class NeovimEditor {
     this.painter.setBufposFloats(anchors);
   }
 
+  /** The cursor as shown: Neovim's, or where the pointer just put it. */
+  private shownCursor(): GridCell {
+    return this.caretGuess.shown(this.state.cursor, performance.now());
+  }
+
+  /**
+   * A click or a drag at `at` (a window's cell): the caret is put where
+   * Neovim will put it, when the cells say plainly where that is
+   * (`predictClick`), and stays there until Neovim's cursor moves — to
+   * the same cell, unseen, or to its own, which is shown at once.
+   */
+  private guessCaret(at: MouseTarget): void {
+    this.pointerMoved = performance.now();
+    const mode = clickMode(this.state.mode.name);
+    const box = this.boxes.find((b) => b.grid === at.grid);
+    const grid = this.state.grids.get(at.grid);
+    if (
+      mode === undefined ||
+      box === undefined ||
+      box.float ||
+      at.grid === 1 ||
+      grid === undefined ||
+      this.state.busy ||
+      this.state.cmdline.length > 0
+    )
+      return;
+    const cell = predictClick(
+      grid,
+      this.state.hl,
+      this.state.margins.get(at.grid),
+      at,
+      mode,
+    );
+    if (cell === undefined) return;
+    const now = performance.now();
+    this.caretGuess.predict(
+      cell,
+      { ...this.state.cursor },
+      now,
+      PROVISIONAL_TTL_MS,
+    );
+    if (!this.caretGuess.pending) return;
+    this.placeCursor();
+    // Neovim never moved: its own cursor comes back when the guess ends.
+    clearTimeout(this.caretTimer);
+    this.caretTimer = window.setTimeout(() => {
+      if (!this.disposed) this.placeCursor();
+    }, PROVISIONAL_TTL_MS + 1);
+  }
+
+  /**
+   * The sash's band over `sash`, moved to grid 1's cell `to` while dragged
+   * (along its own axis only), or hidden.
+   */
+  private placeSashBand(
+    sash: Sash | undefined,
+    to: MouseTarget | undefined,
+  ): void {
+    const band = this.sashBand;
+    band.classList.toggle("nvim-sash-on", sash !== undefined);
+    band.classList.toggle("nvim-sash-dragged", to !== undefined);
+    if (sash === undefined) return;
+    const cell = this.painter.cell();
+    const s = band.style;
+    if (sash.dir === "col") {
+      const col = to?.col ?? sash.col;
+      s.left = `${String((col + 0.5) * cell.width - 2)}px`;
+      s.top = `${String(sash.row * cell.height)}px`;
+      s.width = "4px";
+      s.height = `${String(sash.length * cell.height)}px`;
+    } else {
+      const row = to?.row ?? sash.row;
+      s.left = `${String(sash.col * cell.width)}px`;
+      s.top = `${String(row * cell.height - 2)}px`;
+      s.width = `${String(sash.length * cell.width)}px`;
+      s.height = "4px";
+    }
+  }
+
   /** The pointer over a border a drag at grid 1's `at` would resize. */
   private placeSash(at: MouseTarget | undefined): void {
     const sash =
@@ -1107,6 +1211,7 @@ export class NeovimEditor {
         : undefined;
     if (!sash && this.sashDragged) return;
     this.sashOn = sash;
+    this.placeSashBand(sash, undefined);
     const cursor = sash
       ? sash.dir === "col"
         ? "col-resize"
@@ -1148,7 +1253,7 @@ export class NeovimEditor {
   }
 
   private cursorBox(): { x: number; y: number } | undefined {
-    const { grid, row, col } = this.state.cursor;
+    const { grid, row, col } = this.shownCursor();
     const box = this.boxes.find((b) => b.grid === grid);
     if (!box) return undefined;
     const cell = this.painter.cell();
@@ -1176,15 +1281,19 @@ export class NeovimEditor {
       this.ime.preedit.length > 0;
     this.cursor.style.display = hidden ? "none" : "";
     if (at === undefined) return;
-    const { grid, row, col } = this.state.cursor;
+    const { grid, row, col } = this.shownCursor();
     // Moves glide, briefly — not in Insert mode, where it would trail the
     // typing, nor under reduced motion. Never across a scroll: the text
     // moves at once (or rides the display's offset, a transform), and a
     // cursor gliding to its new row meanwhile would be rows off its cell,
     // so it goes with the text instead; a glide under way stops where it
-    // is going (`glideCursor`).
+    // is going (`glideCursor`). Nor where the pointer put it: it is at the
+    // pointer at once, as a click's caret is in any editor.
     const scrolling = scrolled || this.painter.scrollView(grid) !== undefined;
-    const glides = !this.state.mode.name.startsWith("insert") && !scrolling;
+    const glides =
+      !this.state.mode.name.startsWith("insert") &&
+      !scrolling &&
+      performance.now() - this.pointerMoved > PROVISIONAL_TTL_MS;
     const g = this.state.grids.get(grid);
     const wide = g !== undefined && g.chars[row * g.width + col + 1] === "";
     const attr =
@@ -1337,7 +1446,7 @@ export class NeovimEditor {
    */
   private paintInk(colors: { readonly fg: number; readonly bg: number }): void {
     const s = this.cursor.style;
-    const { grid: gridId } = this.state.cursor;
+    const { grid: gridId } = this.shownCursor();
     const box = this.boxes.find((b) => b.grid === gridId);
     const grid = this.state.grids.get(gridId);
     const cell = this.painter.cell();
@@ -1729,6 +1838,15 @@ export class NeovimEditor {
       this.dragging = { button, target: at };
       this.sashDragged = this.sashOn !== undefined;
       mouse(button, "press", event, at);
+      // A plain click's caret, at once (a double click selects a word: its
+      // caret is Neovim's to say).
+      if (
+        button === "left" &&
+        !this.sashDragged &&
+        event.detail <= 1 &&
+        mouseModifiers(event) === ""
+      )
+        this.guessCaret(at);
     });
     layer.addEventListener("mousemove", (event) => {
       const at = ownedByGui(event) ? undefined : target(event);
@@ -1736,6 +1854,15 @@ export class NeovimEditor {
     });
     layer.addEventListener("mouseleave", () => {
       if (!this.sashDragged) this.placeSash(undefined);
+    });
+    // A drag's moves, one a frame at most (`PerFrame`): a fast hand over a
+    // slow link sends what is under it now, not every cell it went over.
+    const drags = new PerFrame<{
+      readonly button: string;
+      readonly event: MouseEvent;
+      readonly at: MouseTarget;
+    }>(({ button, event, at }) => {
+      mouse(button, "drag", event, at);
     });
     window.addEventListener("mousemove", (event) => {
       const drag = this.dragging;
@@ -1747,15 +1874,28 @@ export class NeovimEditor {
       const same = at.grid === drag.target.grid ? at : drag.target;
       if (same.row === drag.target.row && same.col === drag.target.col) return;
       drag.target = same;
-      mouse(drag.button, "drag", event, same);
+      drags.push({ button: drag.button, event, at: same });
+      // The border dragged is at the pointer at once; Neovim's layout lands
+      // under it (`placeSashBand`).
+      if (this.sashDragged) this.placeSashBand(this.sashOn, same);
+      // Visual's end follows the pointer: the caret is there at once.
+      if (drag.button === "left" && !this.sashDragged && same.grid !== 1)
+        this.guessCaret(same);
     });
     window.addEventListener("mouseup", (event) => {
       const drag = this.dragging;
       if (!drag) return;
+      drags.flush();
       this.dragging = undefined;
       if (this.sashDragged) {
         this.sashDragged = false;
-        this.placeSash(target(event));
+        // The band stays where it was let go while Neovim's layout comes;
+        // then it is the pointer's again, over the border as it is.
+        const at = target(event);
+        window.clearTimeout(this.sashTimer);
+        this.sashTimer = window.setTimeout(() => {
+          if (!this.disposed && !this.dragging) this.placeSash(at);
+        }, PROVISIONAL_TTL_MS);
       }
       mouse(
         drag.button,
