@@ -56,6 +56,71 @@ export function clickMode(mode: string): "normal" | "insert" | undefined {
   return undefined;
 }
 
+/**
+ * What a row of a window's grid shows of its buffer line, as far as the
+ * cells say: where its text area starts after the gutter (`start`), its
+ * first and last characters (-1 on an empty line), and the right edge of
+ * the text area. Undefined on a row that is no line's (a closed fold, a
+ * diff's filler, the rows past the buffer, a winbar).
+ */
+export interface LineCells {
+  readonly start: number;
+  readonly first: number;
+  readonly last: number;
+  readonly right: number;
+  /** Whether the cell is not a buffer character as it is (virtual text…). */
+  readonly virtual: (col: number) => boolean;
+  /** The column a click at `col` is (a wide character's right half: its left). */
+  readonly whole: (col: number) => number;
+  /**
+   * Whether the gutter shows a number: the row starts a line (a wrapped
+   * line's next rows leave the number column blank).
+   */
+  readonly numbered: boolean;
+}
+
+export function lineCells(
+  grid: Grid,
+  hl: ReadonlyMap<number, HlAttr>,
+  margins: Margins | undefined,
+  row: number,
+): LineCells | undefined {
+  const top = margins?.top ?? 0;
+  const bottom = grid.height - (margins?.bottom ?? 0);
+  const left = margins?.left ?? 0;
+  const right = grid.width - (margins?.right ?? 0);
+  if (row < top || row >= bottom) return undefined;
+  const groups = (col: number) =>
+    hl.get(grid.hls[row * grid.width + col] ?? 0)?.groups ?? [];
+  const char = (col: number) => grid.chars[row * grid.width + col] ?? " ";
+  // The gutter: the cells from the left in its groups.
+  let start = left;
+  while (start < right && groups(start).some((g) => GUTTER.has(g))) start += 1;
+  let numbered = false;
+  for (let col = left; col < start; col += 1)
+    if (/\d/.test(char(col))) numbered = true;
+  let first = -1;
+  let last = -1;
+  for (let col = start; col < right; col += 1) {
+    const own = groups(col);
+    if (own.some((g) => NOT_A_LINE.test(g))) return undefined;
+    if (own.some((g) => NOT_TEXT.test(g))) continue;
+    if (char(col) === " ") continue;
+    if (first < 0) first = col;
+    last = col;
+  }
+  return {
+    start,
+    first,
+    last,
+    right,
+    virtual: (col) => groups(col).some((g) => NOT_TEXT.test(g)),
+    // The right half of a wide character is the character.
+    whole: (col) => (col > start && char(col) === "" ? col - 1 : col),
+    numbered,
+  };
+}
+
 export function predictClick(
   grid: Grid,
   hl: ReadonlyMap<number, HlAttr>,
@@ -64,37 +129,15 @@ export function predictClick(
   mode: "normal" | "insert",
 ): Cell | undefined {
   const { row } = at;
-  const top = margins?.top ?? 0;
-  const bottom = grid.height - (margins?.bottom ?? 0);
+  const line = lineCells(grid, hl, margins, row);
   const left = margins?.left ?? 0;
-  const right = grid.width - (margins?.right ?? 0);
-  if (row < top || row >= bottom || at.col < left || at.col >= right) return;
-  const groups = (col: number) =>
-    hl.get(grid.hls[row * grid.width + col] ?? 0)?.groups ?? [];
-  const char = (col: number) => grid.chars[row * grid.width + col] ?? " ";
-  // The gutter: the cells from the left in its groups.
-  let start = left;
-  while (start < right && groups(start).some((g) => GUTTER.has(g))) start += 1;
+  if (line === undefined || at.col < left || at.col >= line.right) return;
+  const { start, first, last, right, whole } = line;
   if (at.col < start) return;
-  // What the line's characters are, as far as the cells say.
-  let first = -1;
-  let last = -1;
-  for (let col = start; col < right; col += 1) {
-    const own = groups(col);
-    if (own.some((g) => NOT_A_LINE.test(g))) return;
-    if (own.some((g) => NOT_TEXT.test(g))) continue;
-    const c = char(col);
-    if (c === " ") continue;
-    if (first < 0) first = col;
-    last = col;
-  }
-  // The right half of a wide character is the character.
-  const whole = (col: number) =>
-    col > start && char(col) === "" ? col - 1 : col;
   const place = (col: number): Cell => ({ grid: at.grid, row, col });
   if (last < 0) {
     // An empty line: its first cell, whatever the mode.
-    return at.col >= start ? place(start) : undefined;
+    return place(start);
   }
   if (at.col > last) {
     // Past the line's end: on its last character; in Insert mode after it.
@@ -104,7 +147,7 @@ export function predictClick(
     }
     return place(whole(last));
   }
-  if (groups(at.col).some((g) => NOT_TEXT.test(g))) return;
+  if (line.virtual(at.col)) return;
   // A leading blank may be a tab, which Neovim puts the cursor at the end of.
   if (at.col < first) return;
   return place(whole(at.col));

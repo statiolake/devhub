@@ -44,6 +44,11 @@ export interface PaintTheme {
   /** `WinSeparator`'s colour: the boundary between panes. */
   readonly separator?: number;
   /**
+   * `Visual`'s colours, for its band drawn ahead of Neovim in a drag
+   * (`dragBand.ts`); absent until asked, or when it reverses instead.
+   */
+  readonly visual?: { readonly bg: number; readonly fg?: number };
+  /**
    * `laststatus`: with 1 or 2 a window's status line is its own (`boundariesOf`).
    */
   readonly laststatus?: number;
@@ -137,6 +142,7 @@ export const THEME_GROUPS: readonly string[] = [
   "PmenuExtra",
   "PmenuKindSel",
   "PmenuExtraSel",
+  "Visual",
   ...KIND_GROUPS,
 ];
 
@@ -207,10 +213,17 @@ export function themeOf(answer: unknown): PaintTheme {
     });
   }
   const separator = colour("WinSeparator", "fg");
+  const visualBg = colour("Visual", "bg");
+  const visualFg = colour("Visual", "fg");
+  const visual =
+    visualBg !== undefined && record(groups["Visual"])?.["reverse"] !== true
+      ? { bg: visualBg, ...(visualFg !== undefined ? { fg: visualFg } : {}) }
+      : undefined;
   return {
     fillchars,
     grounds,
     ...(separator !== undefined ? { separator } : {}),
+    ...(visual !== undefined ? { visual } : {}),
     ...(laststatus !== undefined ? { laststatus } : {}),
     winFillchars,
     cmdheight,
@@ -252,6 +265,7 @@ export function sameTheme(a: PaintTheme, b: PaintTheme): boolean {
     JSON.stringify([...(a.grounds ?? [])]) ===
       JSON.stringify([...(b.grounds ?? [])]) &&
     a.separator === b.separator &&
+    JSON.stringify(a.visual) === JSON.stringify(b.visual) &&
     a.laststatus === b.laststatus
   );
 }

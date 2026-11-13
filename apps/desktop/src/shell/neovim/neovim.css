@@ -87,22 +87,15 @@
      there. */
   overflow: clip;
   overflow-clip-margin: var(--nvim-reach-clip, 0px);
-  cursor: text;
 }
 
-/* What DevHub draws over Neovim's text (GUI windows, views and their
-   frames, cards, popups, notifications, footers, the tab strip) is a
-   control, not text: the arrow, as the rest of the app (`tokens.css`),
-   not the I-beam of the text around it. */
-.nvim-gui-window,
-.nvim-popup,
-.nvim-view,
-.nvim-inline-card,
-.nvim-view-frame,
-.nvim-toasts,
-.nvim-footer,
-.nvim-tabline {
-  cursor: default;
+/* The I-beam over the cells, Neovim's and a terminal's (they are drawn by
+   the same painter), and only over them: what DevHub draws over the text
+   (views, popups, cards, frames, footers, the tab line) keeps the page's
+   arrow (`tokens.css`). A border under the pointer (`placeSash`) or a link
+   (`ControlTerminalSurface.tsx`) sets its own through `--nvim-pointer`. */
+.nvim-grid {
+  cursor: var(--nvim-pointer, text);
 }
 
 /* The editor band (`NeovimEditor`): the grids and what rides them. */
@@ -274,10 +267,9 @@
 /* A window border a drag resizes (`placeSashBand`), lit as VS Code's sash:
    under the pointer after a moment, and while dragged at the pointer at
    once, ahead of Neovim's layout, which lands under it. Over the windows,
-   under the floats (at 100 and up). */
+   under the floats (`SASH_Z`). */
 .nvim-sash {
   position: absolute;
-  z-index: 99;
   pointer-events: none;
   background: var(--accent);
   opacity: 0;

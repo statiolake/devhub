@@ -234,3 +234,15 @@ export function sashAt(
   }
   return undefined;
 }
+
+/**
+ * The pointer's shape over a grids' layer and its cells: on the layer for
+ * what is between the canvases, and through `--nvim-pointer` for the
+ * canvases, whose own is the I-beam (`neovim.css`). Empty: the I-beam.
+ */
+export function pointerShape(layer: HTMLElement, shape: string): void {
+  if (layer.style.cursor === shape) return;
+  layer.style.cursor = shape;
+  if (shape === "") layer.style.removeProperty("--nvim-pointer");
+  else layer.style.setProperty("--nvim-pointer", shape);
+}

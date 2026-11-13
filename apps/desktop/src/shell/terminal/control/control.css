@@ -6,13 +6,6 @@
   position: relative;
 }
 
-/* The pointer over the cells is the I-beam, as over any terminal's text
-   (`tokens.css`); a link under it sets the hand, a border between panes
-   the resize arrows, on this element (`ControlTerminalSurface.tsx`). */
-.control-grids {
-  cursor: text;
-}
-
 /* The boundary a drag resizes, lit as VS Code's sash (`placeSash`): under
    the pointer after a moment, and while dragged at the pointer at once,
    ahead of tmux's layout, which lands under it. Over the hairlines. */

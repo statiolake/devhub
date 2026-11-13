@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { AMBIENT_Z } from "./editor";
+import { AMBIENT_Z, SASH_Z } from "./editor";
 
 /**
  * The editor's stacking bands (`neovim.css`, docs/rendering-layers.md):
@@ -49,6 +49,13 @@ describe("the editor's bands", () => {
     for (const m of (await css()).matchAll(/z-index:\s*([^;]+);/g)) {
       expect(m[1]).toMatch(/^(var\(--nvim-band-[a-z]+\)|-1)$/);
     }
+  });
+
+  it("put a window border's sash over the windows and under every float", () => {
+    // Under a float at Neovim's lowest zindex (1) too: a border never
+    // shows through what floats over it.
+    expect(SASH_Z).toBeGreaterThan(1);
+    expect(SASH_Z).toBeLessThan(100 + 1);
   });
 
   it("put the notifications over the windows and under every float", () => {

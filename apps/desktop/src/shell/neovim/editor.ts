@@ -68,12 +68,14 @@ import {
   hitTest,
   mouseButton,
   mouseModifiers,
+  pointerShape,
   sashAt,
   type MouseTarget,
   type Sash,
   GUI_OWNED,
 } from "./mouse";
 import { clickMode, predictClick, type Cell as GridCell } from "./clickCaret";
+import { dragBand } from "./dragBand";
 import { PerFrame } from "./perFrame";
 import { Provisional, PROVISIONAL_TTL_MS } from "./provisional";
 import { MetaComposition, OptionKeys } from "../surfaces/optionKey";
@@ -127,6 +129,12 @@ export interface EditorSettings {
 
 /** How long the cursor's blink takes to fade out or in. */
 const BLINK_FADE_MS = 120;
+/**
+ * Highlight ids of Visual's band drawn ahead of Neovim (`drawBand`): each
+ * cell's own id plus this, out of the range Neovim gives out.
+ */
+const BAND_HL = 0x40000000;
+
 /** A cursor's glide from cell to cell (`glideCursor`). */
 const CURSOR_GLIDE_MS = 70;
 
@@ -138,6 +146,12 @@ const CURSOR_GLIDE_MS = 70;
  * window covers a notification, never the other way round.
  */
 export const AMBIENT_Z = 100 + 45;
+
+/**
+ * A window border's sash (`placeSashBand`): over the windows' grids (1)
+ * and under every float (100 + its zindex), whose cells it does not cut.
+ */
+export const SASH_Z = 99;
 
 export class NeovimEditor {
   readonly state: NeovimUiState = initialUiState(themeColors());
@@ -203,6 +217,22 @@ export class NeovimEditor {
     (a, b) => a.grid === b.grid && a.row === b.row && a.col === b.col,
   );
   private caretTimer = 0;
+  /**
+   * Visual's band in a drag, drawn ahead of Neovim (`dragBand.ts`): from
+   * the press to the pointer; kept after the release until Neovim's cursor
+   * has caught up with the caret (or the guess ran out).
+   */
+  private visualBand:
+    | {
+        readonly grid: number;
+        readonly from: MouseTarget;
+        to: MouseTarget;
+        until: number;
+      }
+    | undefined;
+  /** The cells the band is drawn over, by grid: Neovim's highlight there. */
+  private readonly banded = new Map<number, Map<number, number>>();
+  private bandTimer = 0;
   /** When the pointer last moved the caret: a move it makes does not glide. */
   private pointerMoved = -Infinity;
   /** A Meta dead key's composition, dropped (`surfaces/optionKey.ts`). */
@@ -267,6 +297,7 @@ export class NeovimEditor {
     this.input.setAttribute("aria-label", "Neovim");
     this.sashBand = document.createElement("div");
     this.sashBand.className = "nvim-sash";
+    this.sashBand.style.zIndex = String(SASH_Z);
     this.gridLayer.append(this.cursor, this.input, this.sashBand);
     // The editor's band holds the grids and what the page lays over them;
     // the preedit is a band of its own over DevHub's command line
@@ -668,7 +699,13 @@ export class NeovimEditor {
   }
 
   redraw(batches: readonly unknown[]): void {
+    // Neovim's cells under the band are Neovim's again while its redraw is
+    // taken in (a scroll moves them, a line rewrites them); the band is
+    // drawn again over what it then shows, where it does not show Visual.
+    const banded = this.banded.size > 0;
+    if (banded) this.unband();
     applyRedraw(this.state, batches, this.pending);
+    if (this.visualBand !== undefined || banded) this.drawBand();
     if (this.pending.flushed) this.hold.flushed();
     if (this.pending.flushed && this.frame === 0) {
       this.frame = requestAnimationFrame(() => {
@@ -707,6 +744,7 @@ export class NeovimEditor {
     this.windowMotion.dispose();
     clearTimeout(this.caretTimer);
     clearTimeout(this.sashTimer);
+    clearTimeout(this.bandTimer);
     this.band.remove();
     this.preedit.remove();
   }
@@ -1203,6 +1241,74 @@ export class NeovimEditor {
     }
   }
 
+  /** The band's cells given back to Neovim's highlights. */
+  private unband(): void {
+    for (const [id, cells] of this.banded) {
+      const grid = this.state.grids.get(id);
+      if (grid === undefined) continue;
+      for (const [cell, hl] of cells) {
+        if (grid.hls[cell] !== BAND_HL + hl) continue;
+        grid.hls[cell] = hl;
+        grid.dirty.add(Math.floor(cell / grid.width));
+      }
+      this.pending.grids.add(id);
+    }
+    this.banded.clear();
+  }
+
+  /**
+   * Visual's band over the drag's cells that Neovim does not show as
+   * Visual yet, in Visual's colours over each cell's own ink, as Neovim
+   * combines them: where Neovim has caught up, its own cells are drawn,
+   * never the band over them. Ended once Neovim's caret is where the
+   * pointer left it (or the guess ran out).
+   */
+  private drawBand(): void {
+    const band = this.visualBand;
+    if (band === undefined) return;
+    if (
+      band.until > 0 &&
+      (!this.caretGuess.pending || performance.now() > band.until)
+    ) {
+      this.visualBand = undefined;
+      return;
+    }
+    const visual = this.painter.paintTheme().visual;
+    const grid = this.state.grids.get(band.grid);
+    if (visual === undefined || grid === undefined) return;
+    const spans = dragBand(
+      grid,
+      this.state.hl,
+      this.state.margins.get(band.grid),
+      band.from,
+      band.to,
+    );
+    if (spans === undefined) return;
+    const cells = new Map<number, number>();
+    for (const { row, col0, col1 } of spans) {
+      for (let col = col0; col <= col1 && col < grid.width; col += 1) {
+        const cell = row * grid.width + col;
+        const own = grid.hls[cell] ?? 0;
+        const attr = this.state.hl.get(own) ?? {};
+        if (attr.groups?.some((g) => g === "Visual" || g === "VisualNOS"))
+          continue;
+        if (!this.state.hl.has(BAND_HL + own))
+          this.state.hl.set(BAND_HL + own, {
+            ...attr,
+            reverse: false,
+            background: visual.bg,
+            ...(visual.fg !== undefined ? { foreground: visual.fg } : {}),
+          });
+        cells.set(cell, own);
+        grid.hls[cell] = BAND_HL + own;
+        grid.dirty.add(row);
+      }
+    }
+    if (cells.size === 0) return;
+    this.banded.set(band.grid, cells);
+    this.pending.grids.add(band.grid);
+  }
+
   /** The pointer over a border a drag at grid 1's `at` would resize. */
   private placeSash(at: MouseTarget | undefined): void {
     const sash =
@@ -1217,8 +1323,7 @@ export class NeovimEditor {
         ? "col-resize"
         : "row-resize"
       : "";
-    if (this.gridLayer.style.cursor !== cursor)
-      this.gridLayer.style.cursor = cursor;
+    pointerShape(this.gridLayer, cursor);
   }
 
   /**
@@ -1845,8 +1950,22 @@ export class NeovimEditor {
         !this.sashDragged &&
         event.detail <= 1 &&
         mouseModifiers(event) === ""
-      )
+      ) {
         this.guessCaret(at);
+        const box = this.boxes.find((b) => b.grid === at.grid);
+        this.unband();
+        window.clearTimeout(this.bandTimer);
+        this.visualBand =
+          clickMode(this.state.mode.name) === "normal" &&
+          at.grid !== 1 &&
+          box !== undefined &&
+          !box.float
+            ? { grid: at.grid, from: at, to: at, until: 0 }
+            : undefined;
+      } else {
+        this.unband();
+        this.visualBand = undefined;
+      }
     });
     layer.addEventListener("mousemove", (event) => {
       const at = ownedByGui(event) ? undefined : target(event);
@@ -1881,12 +2000,30 @@ export class NeovimEditor {
       // Visual's end follows the pointer: the caret is there at once.
       if (drag.button === "left" && !this.sashDragged && same.grid !== 1)
         this.guessCaret(same);
+      // And Visual's band reaches it at once (`drawBand`).
+      if (this.visualBand !== undefined && same.grid === this.visualBand.grid) {
+        this.visualBand.to = same;
+        this.unband();
+        this.drawBand();
+        this.paint();
+      }
     });
     window.addEventListener("mouseup", (event) => {
       const drag = this.dragging;
       if (!drag) return;
       drags.flush();
       this.dragging = undefined;
+      // The band stays until Neovim's caret has caught up, then is Neovim's.
+      if (this.visualBand !== undefined) {
+        this.visualBand.until = performance.now() + PROVISIONAL_TTL_MS;
+        window.clearTimeout(this.bandTimer);
+        this.bandTimer = window.setTimeout(() => {
+          if (this.disposed || this.visualBand === undefined) return;
+          this.unband();
+          this.drawBand();
+          this.paint();
+        }, PROVISIONAL_TTL_MS + 1);
+      }
       if (this.sashDragged) {
         this.sashDragged = false;
         // The band stays where it was let go while Neovim's layout comes;

@@ -119,6 +119,7 @@ import type { TerminalSurfaceProps } from "../TerminalSurface";
 import { WindowStrip } from "./WindowStrip";
 import { ChooserSheet } from "./ChooserSheet";
 import { createRoot } from "react-dom/client";
+import { pointerShape } from "../../neovim/mouse";
 import { PerFrame } from "../../neovim/perFrame";
 import { PROVISIONAL_TTL_MS } from "../../neovim/provisional";
 import { CompletionMenu } from "../../completion/CompletionMenu";
@@ -1988,7 +1989,7 @@ export function ControlTerminalSurface({
     let boundaryHover: ReturnType<typeof boundaryAt>;
     /**
      * The pointer's shape over the cells: a boundary's resize arrows, a
-     * link's hand, else the cells' own I-beam (`control.css`).
+     * link's hand, else the cells' own I-beam (`neovim.css`).
      */
     const placePointer = () => {
       const next =
@@ -1999,7 +2000,7 @@ export function ControlTerminalSurface({
           : hover !== undefined
             ? "pointer"
             : "";
-      if (grids.style.cursor !== next) grids.style.cursor = next;
+      pointerShape(grids, next);
     };
     /**
      * The band over a boundary, moved to `cells` from the pane before it

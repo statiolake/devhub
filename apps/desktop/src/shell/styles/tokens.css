@@ -789,9 +789,8 @@ body {
    the text starts and inherited below it, so a link inside the transcript
    keeps the hand, and a control the arrow (below), for what it holds.
    A terminal's cells are canvases, over which `auto` is the arrow: their
-   I-beam is set on the grids themselves (`control.css`) and inherited by
-   what a pointer of its own (a border's resize, a link's hand) does not
-   override. */
+   I-beam is the canvases' own (`neovim.css`), and what is drawn over them
+   keeps the arrow. */
 .failure-title,
 .failure-detail,
 .surface-line,
