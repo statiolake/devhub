@@ -835,6 +835,17 @@ local function place_frame(view, current)
     q.caret = vim.api.nvim_win_get_cursor(f.query_win)[2]
     q.current = current == f.query_win
     q.insert = q.current and vim.fn.mode():sub(1, 1) == "i"
+    -- Visual mode in it: the bytes selected on its line, first and last
+    -- (a line's whole text for V and a block).
+    local mode = q.current and vim.fn.mode() or ""
+    if mode == "v" or mode == "V" or mode == "\22" then
+      local a, b = vim.fn.col("v") - 1, q.caret
+      if mode == "v" then
+        q.visual = { math.min(a, b), math.max(a, b) }
+      elseif #q.text > 0 then
+        q.visual = { 0, #q.text - 1 }
+      end
+    end
     entry.query = q
   end
   if f.preview_win and vim.api.nvim_win_is_valid(f.preview_win) then

@@ -328,4 +328,25 @@ describe("buffer-backed GUI layers on the page", () => {
     expect(applyLayerEvent(settled, "settled", { seq: 5 })).toBe(settled);
     expect(applyLayerEvent(settled, "settled", {})).toBe(settled);
   });
+
+  it("keeps a query's Visual bytes when they are two in order", () => {
+    const rect = { row: 2, col: 4, width: 50, height: 20, top: 0 };
+    const place = (visual: unknown) =>
+      applyLayerEvent(NO_LAYERS, "layers", {
+        frames: [
+          {
+            id: 6,
+            win: 1001,
+            wins: [1001],
+            frame: rect,
+            list: { ...rect, cursor: 1 },
+            query: { ...rect, text: "file1", caret: 1, current: true, visual },
+          },
+        ],
+      }).placedFrames[0]?.query?.visual;
+    expect(place([1, 2])).toEqual([1, 2]);
+    expect(place([2, 1])).toBeUndefined();
+    expect(place("x")).toBeUndefined();
+    expect(place(undefined)).toBeUndefined();
+  });
 });

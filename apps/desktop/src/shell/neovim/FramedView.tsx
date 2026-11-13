@@ -262,7 +262,7 @@ function FrameParts({
               <ComponentTree node={content.title} theme={theme} />
             </div>
           ) : null}
-          <QueryField content={content} place={place} />
+          <QueryField content={content} place={place} host={host} />
           {content.status ? (
             <div className="nvim-view-frame-status">
               <ComponentTree node={content.status} theme={theme} />
@@ -340,35 +340,167 @@ function FrameParts({
   );
 }
 
+/** A run of the query's text: the caret's character, a selection's, or plain. */
+export interface FieldRun {
+  readonly text: string;
+  /** The caret is on it (a block, an underline) or before it (a bar). */
+  readonly caret: boolean;
+  readonly selected: boolean;
+}
+
+/**
+ * The query's text as runs: the character under the cursor (`caret`, a
+ * byte column) on its own, a blank one past the end, and Visual mode's
+ * bytes (`visual`, first and last) selected, the last character whole.
+ */
+export function fieldRuns(
+  text: string,
+  caret: number | undefined,
+  visual?: readonly [number, number],
+): FieldRun[] {
+  const at = caret === undefined ? undefined : charOffsetOfByte(text, caret);
+  const from = visual ? charOffsetOfByte(text, visual[0]) : undefined;
+  const lastStart = visual ? charOffsetOfByte(text, visual[1]) : undefined;
+  const width = (i: number) => ((text.codePointAt(i) ?? 0) > 0xffff ? 2 : 1);
+  const to = lastStart === undefined ? undefined : lastStart + width(lastStart);
+  const runs: FieldRun[] = [];
+  const push = (piece: string, isCaret: boolean, selected: boolean) => {
+    if (piece === "") return;
+    const prev = runs[runs.length - 1];
+    if (prev && !prev.caret && !isCaret && prev.selected === selected)
+      runs[runs.length - 1] = { ...prev, text: prev.text + piece };
+    else runs.push({ text: piece, caret: isCaret, selected });
+  };
+  for (let i = 0; i < text.length; ) {
+    const w = width(i);
+    const selected =
+      from !== undefined && to !== undefined && i >= from && i < to;
+    push(text.slice(i, i + w), i === at, selected);
+    i += w;
+  }
+  if (at !== undefined && at >= text.length)
+    runs.push({ text: " ", caret: true, selected: false });
+  return runs;
+}
+
 function QueryField({
   content,
   place,
+  host,
 }: {
   readonly content: FrameContent;
   readonly place: FramePlace;
+  readonly host: LayerHost;
 }) {
   const query = place.query;
   const text = query?.text ?? "";
-  const at = query ? charOffsetOfByte(text, query.caret) : 0;
-  const caret = query?.insert === true;
+  // The query has the keys: the cursor drawn as Neovim's would be in this
+  // mode (`guicursor`): a bar in Insert mode, a block in Normal mode, the
+  // Visual selection.
+  const current = query?.current === true;
+  const look = current ? host.caret : undefined;
+  const shape = look?.shape ?? (query?.insert === true ? "vertical" : "block");
+  const runs = fieldRuns(
+    text,
+    current ? query?.caret : undefined,
+    query?.visual,
+  );
+  const caretRef = useRef<HTMLSpanElement>(null);
+  const on = look?.blinkon ?? 0;
+  const off = look?.blinkoff ?? 0;
+  const wait = look?.blinkwait ?? 0;
+  const moved = `${String(query?.caret)},${shape},${String(current)}`;
+  // `guicursor`'s blink, restarted on every move, as the grid's cursor.
+  useLayoutEffect(() => {
+    const caret = caretRef.current;
+    if (!caret || on <= 0 || off <= 0 || typeof caret.animate !== "function")
+      return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const split = on / (on + off);
+    const blink = caret.animate(
+      [
+        { opacity: 1, offset: 0 },
+        { opacity: 1, offset: split },
+        { opacity: 0, offset: split },
+        { opacity: 0, offset: 1 },
+      ],
+      { duration: on + off, delay: wait, iterations: Infinity },
+    );
+    return () => {
+      blink.cancel();
+    };
+  }, [moved, on, off, wait]);
+  const pct = Math.min(100, Math.max(1, look?.percentage ?? 25)) / 100;
+  const caretStyle: CSSProperties = {
+    ...(look?.colors
+      ? shape === "block"
+        ? { background: rgbCss(look.colors.bg), color: rgbCss(look.colors.fg) }
+        : { ["--frame-caret" as string]: rgbCss(look.colors.bg) }
+      : {}),
+    ...(shape === "vertical"
+      ? {
+          width: `max(1.5px, calc(1ch * ${String(pct)}))`,
+        }
+      : shape === "horizontal"
+        ? {
+            ["--frame-caret-height" as string]: `max(1.5px, calc(1.15em * ${String(pct)}))`,
+          }
+        : {}),
+  };
+  const placeholder =
+    text === "" && content.placeholder ? (
+      <span className="nvim-view-frame-placeholder">{content.placeholder}</span>
+    ) : null;
   return (
     <div
-      className={`nvim-view-frame-field${caret ? " nvim-view-frame-field-active" : ""}`}
+      className={`nvim-view-frame-field${current ? " nvim-view-frame-field-active" : ""}`}
     >
-      {text === "" && !caret && content.placeholder ? (
-        <span className="nvim-view-frame-placeholder">
-          {content.placeholder}
-        </span>
+      {!current ? (
+        (placeholder ?? <span className="nvim-view-frame-text">{text}</span>)
       ) : (
         <span className="nvim-view-frame-text">
-          {text.slice(0, at)}
-          {caret ? <span className="nvim-view-frame-caret" /> : null}
-          {text.slice(at)}
-          {text === "" && caret && content.placeholder ? (
-            <span className="nvim-view-frame-placeholder">
-              {content.placeholder}
-            </span>
-          ) : null}
+          {runs.map((run, index) => {
+            const selected = run.selected ? " nvim-view-frame-selection" : "";
+            if (!run.caret)
+              return (
+                <span key={index} className={selected.trim() || undefined}>
+                  {run.text}
+                </span>
+              );
+            if (shape === "vertical") {
+              // A bar on the edge before the character, taking no room:
+              // half of it on each side; past the end, its own room (the
+              // field cuts what is past its text).
+              const end = run.text === " " && index === runs.length - 1;
+              const half = `calc(-0.5 * max(1.5px, calc(1ch * ${String(pct)})))`;
+              return (
+                <span key={index} className={selected.trim() || undefined}>
+                  <span
+                    ref={caretRef}
+                    className="nvim-view-frame-caret"
+                    style={{
+                      ...caretStyle,
+                      marginLeft: end ? 0 : half,
+                      marginRight: end ? 0 : half,
+                    }}
+                  />
+                  {end ? null : run.text}
+                </span>
+              );
+            }
+            return (
+              <span
+                key={index}
+                ref={caretRef}
+                // The cursor over the selection, as in Neovim: its own look.
+                className={`nvim-view-frame-caret-${shape}${shape === "block" ? "" : selected}`}
+                style={caretStyle}
+              >
+                {run.text}
+              </span>
+            );
+          })}
+          {text === "" ? placeholder : null}
         </span>
       )}
     </div>

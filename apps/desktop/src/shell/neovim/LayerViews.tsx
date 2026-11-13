@@ -51,6 +51,22 @@ interface Cell {
   readonly height: number;
 }
 
+/**
+ * How Neovim's cursor looks in the mode it is in (`guicursor`, from
+ * `mode_info_set`): a caret the page draws for a window it shows itself
+ * (a framed view's query) looks as the grid's cursor would.
+ */
+export interface CaretLook {
+  readonly shape: "block" | "horizontal" | "vertical";
+  /** Of the cell, for a bar or an underline. */
+  readonly percentage: number;
+  readonly blinkon: number;
+  readonly blinkoff: number;
+  readonly blinkwait: number;
+  /** The mode's highlight, when it has one: else the text reversed. */
+  readonly colors?: { readonly bg: number; readonly fg: number };
+}
+
 /** What the layers need from the page. */
 export interface LayerHost {
   readonly cell: Cell;
@@ -61,6 +77,8 @@ export interface LayerHost {
    * so it cannot wait for that paint's boxes.
    */
   readonly laidOut: (win: number) => GridBox | undefined;
+  /** The cursor's look in Neovim's current mode. */
+  readonly caret: CaretLook | undefined;
   /** The grid's font family, for `mono` and icons. */
   readonly mono: string;
   readonly defaults: {

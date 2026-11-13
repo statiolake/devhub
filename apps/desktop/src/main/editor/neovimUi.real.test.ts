@@ -1556,6 +1556,23 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			"the query in Insert mode",
 		);
 		const placed = frames()[0] as Record<string, Record<string, unknown>>;
+		// Visual mode in the query: its bytes selected, first and last ("ö" is
+		// two bytes: "cö" is bytes 0 to 1, the last character starting at 1).
+		await h.ui.request("nvim_input", ["<Esc>0vl"]);
+		const query = () =>
+			frames()[0]?.["query"] as
+				| { visual?: number[]; insert?: boolean; caret?: number }
+				| undefined;
+		await waitFor(
+			() => query()?.visual !== undefined,
+			"the query's Visual bytes",
+		);
+		expect(query()).toMatchObject({ visual: [0, 1], insert: false, caret: 1 });
+		await h.ui.request("nvim_input", ["<Esc>A"]);
+		await waitFor(
+			() => query()?.insert === true && query()?.visual === undefined,
+			"the query in Insert mode again",
+		);
 		// Its windows, claimed for the page: frame, list, query, preview.
 		expect((frames()[0] as { wins: number[] }).wins).toHaveLength(4);
 		expect(placed["frame"]).toMatchObject({

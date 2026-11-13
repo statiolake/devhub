@@ -88,6 +88,7 @@ import {
   GuiViews,
   InlineCards,
   Popups,
+  type CaretLook,
   type CmdlineAnchor,
   type LayerHost,
 } from "./LayerViews";
@@ -831,6 +832,7 @@ export function NeovimSurface({
           cell,
           boxes,
           laidOut: (win) => editor.laidOut(win),
+          caret: caretLook(nvim),
           mono: `${ICON_FAMILY}, ${fontFamily ? `${fontFamily}, ` : ""}monospace`,
           defaults: nvim.defaults,
           lua: (fn, args) => {
@@ -1725,4 +1727,23 @@ function toastRight(
   if (windows.length === 0) return cell.width;
   const edge = Math.max(...windows.map((b) => b.col + b.width));
   return Math.max(0, editor.areaSize().width - edge * cell.width) + cell.width;
+}
+
+/** The cursor's look in Neovim's current mode (`guicursor`). */
+function caretLook(state: NeovimUiState): CaretLook | undefined {
+  const mode = currentModeInfo(state);
+  if (!mode) return undefined;
+  const attr = mode.attrId > 0 ? state.hl.get(mode.attrId) : undefined;
+  const colors =
+    attr && (attr.background !== undefined || attr.foreground !== undefined)
+      ? resolveColors(attr, state.defaults)
+      : undefined;
+  return {
+    shape: mode.cursorShape,
+    percentage: mode.cellPercentage,
+    blinkon: mode.blinkon,
+    blinkoff: mode.blinkoff,
+    blinkwait: mode.blinkwait,
+    ...(colors ? { colors: { bg: colors.bg, fg: colors.fg } } : {}),
+  };
 }

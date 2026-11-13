@@ -174,6 +174,11 @@ export interface FramePlace {
         readonly caret: number;
         readonly current: boolean;
         readonly insert: boolean;
+        /**
+         * Visual mode in it: the bytes selected, first and last (the last
+         * the start of the last character selected).
+         */
+        readonly visual?: readonly [number, number];
       })
     | undefined;
   readonly preview: (FrameRect & { readonly win: number }) | undefined;
@@ -350,6 +355,19 @@ export function frameClaims(
   );
 }
 
+/** A query's Visual bytes, `[first, last]`, when they are two in order. */
+function visualOf(value: unknown): { visual?: readonly [number, number] } {
+  const [from, to] = luaList(value);
+  return typeof from === "number" &&
+    typeof to === "number" &&
+    Number.isInteger(from) &&
+    Number.isInteger(to) &&
+    from >= 0 &&
+    to >= from
+    ? { visual: [from, to] as const }
+    : {};
+}
+
 function framePlace(value: unknown): FramePlace[] {
   const r = rec(value);
   const n = r ? ints(r, ["id", "win"] as const) : undefined;
@@ -381,6 +399,7 @@ function framePlace(value: unknown): FramePlace[] {
               caret: int(q, "caret") ?? 0,
               current: q["current"] === true,
               insert: q["insert"] === true,
+              ...visualOf(q["visual"]),
             }
           : undefined,
       preview:

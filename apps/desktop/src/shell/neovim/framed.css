@@ -94,26 +94,33 @@
   font-family: var(--nvim-ui-font);
 }
 
+/* The query's cursor, as Neovim's grid cursor looks in the mode it is in
+   (`guicursor`, FramedView.tsx): a bar before the character in Insert
+   mode, a block over it in Normal mode, an underline in Replace mode; it
+   blinks only as guicursor says. The mode's own colours when it has a
+   highlight, else the text reversed. */
 .nvim-view-frame-caret {
   display: inline-block;
   width: 1.5px;
   height: 1.15em;
-  margin: 0 -0.75px;
   vertical-align: text-bottom;
-  background: currentcolor;
-  animation: nvim-view-frame-blink 1.06s steps(1) infinite;
+  background: var(--frame-caret, currentcolor);
 }
 
-@keyframes nvim-view-frame-blink {
-  50% {
-    opacity: 0;
-  }
+.nvim-view-frame-caret-block {
+  background: var(--float-ink, var(--frame-ink));
+  color: var(--float-ground, var(--frame-ground));
+  border-radius: 1px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .nvim-view-frame-caret {
-    animation: none;
-  }
+.nvim-view-frame-caret-horizontal {
+  box-shadow: inset 0 calc(-1 * var(--frame-caret-height, 2px)) 0
+    var(--frame-caret, currentcolor);
+}
+
+/* Visual mode in the query: the selection, as the list's selected row. */
+.nvim-view-frame-selection {
+  background: var(--frame-selected);
 }
 
 .nvim-view-frame-list {

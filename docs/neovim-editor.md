@@ -1112,7 +1112,10 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   `frameParts`): the view's items in the cells of the window showing its
   buffer (hidden: `hide = true`), whose cursor line is the focus; a
   header on the **query** window's rows — `title`, the query window's first
-  line as a field with the caret at its cursor while it is in Insert mode,
+  line as a field with Neovim's cursor at its cursor while the query window
+  is current, in the mode's `guicursor` shape (a bar in Insert mode, a
+  block in Normal mode, an underline in Replace mode) and its Visual
+  selection, nothing while the keys are in the list or the preview,
   `status`; the **preview**, a window drawn as cells, with its title on the
   row above it; and `keys` as the hint row, on the frame's last row. Items
   are a line and a third tall; `{ node, heading }` items put a heading
