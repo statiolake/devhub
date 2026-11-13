@@ -22,6 +22,9 @@ import type {
 } from "../ipc/taskManager";
 import { REFRESH_MS, TaskManagerApp } from "./TaskManagerApp";
 import { visibleRows } from "./rows";
+import { TOKENS_REFRESH_MS } from "./TokensView";
+import { visibleTokenRows } from "./tokenRows";
+import { fixtureReport } from "../main/cli/tell/tokensTestKit";
 
 const MB = 1024 ** 2;
 
@@ -106,6 +109,8 @@ function client(): TaskManagerApi & {
     kill: vi.fn(() => Promise.resolve(true)),
     copy: vi.fn(() => Promise.resolve()),
     close: vi.fn(() => Promise.resolve()),
+    tokens: vi.fn(() => Promise.resolve(fixtureReport())),
+    copyTokens: vi.fn(() => Promise.resolve()),
   } as never;
 }
 
@@ -255,5 +260,142 @@ describe("what a row does", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "it is on screen",
     );
+  });
+});
+
+describe("the Tokens tab", () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  async function tokens(api = client()) {
+    await shown(api);
+    fireEvent.click(screen.getByRole("tab", { name: "Tokens" }));
+    const grid = await screen.findByRole("treegrid", { name: "Tokens" });
+    return { api, grid };
+  }
+
+  it("asks for Claude's 5-hour window by Agent, and draws the totals and rows", async () => {
+    const { api, grid } = await tokens();
+    expect(api.tokens).toHaveBeenLastCalledWith({
+      range: "window5h",
+      by: "agent",
+    });
+    const totals = screen.getByRole("region", { name: "Token totals" });
+    expect(within(totals).getByText("39.6K")).toBeInTheDocument();
+    const rows = within(grid).getAllByRole("row").slice(1);
+    expect(
+      rows.map((one) => one.querySelector(".tm-label")?.textContent),
+    ).toEqual(["Builder", "api"]);
+    expect(within(rows[0]!).getByText("27.1K")).toBeInTheDocument();
+  });
+
+  it("switches to the cache-aware view without asking again, and says the cost is an estimate", async () => {
+    const { api } = await tokens();
+    const asked = api.tokens.mock.calls.length;
+    fireEvent.click(screen.getByRole("radio", { name: "Cache-aware" }));
+    expect(
+      screen.getByRole("columnheader", { name: "Est. cost" }),
+    ).toHaveAttribute("aria-sort", "descending");
+    expect(
+      screen.getByText(/a Claude plan is not billed this/u),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("$0.07").length).toBeGreaterThan(0);
+    expect(api.tokens.mock.calls.length).toBe(asked);
+  });
+
+  it("is walked and opened from the keyboard", async () => {
+    const { grid } = await tokens();
+    grid.focus();
+    fireEvent.keyDown(grid, { key: "ArrowDown" });
+    expect(grid).toHaveAttribute("aria-activedescendant", "tk-row-agent:a1");
+    fireEvent.keyDown(grid, { key: "ArrowRight" });
+    expect(within(grid).getByText("Survey the parser")).toBeInTheDocument();
+    fireEvent.keyDown(grid, { key: "ArrowLeft" });
+    expect(within(grid).queryByText("Survey the parser")).toBeNull();
+  });
+
+  it("moves the range and the grouping with the arrow keys", async () => {
+    const { api } = await tokens();
+    const range = screen.getByRole("radiogroup", { name: "Range" });
+    fireEvent.keyDown(range, { key: "ArrowRight" });
+    expect(screen.getByRole("radio", { name: "Today" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(api.tokens).toHaveBeenLastCalledWith({
+      range: "today",
+      by: "agent",
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "Task" }));
+    expect(api.tokens).toHaveBeenLastCalledWith({ range: "today", by: "task" });
+  });
+
+  it("sorts by a column heading, again for the other way", async () => {
+    const { grid } = await tokens();
+    const output = screen.getByRole("button", { name: "Output" });
+    fireEvent.click(output);
+    fireEvent.click(output);
+    expect(output.parentElement).toHaveAttribute("aria-sort", "ascending");
+    const rows = within(grid).getAllByRole("row").slice(1);
+    expect(rows[0]!.querySelector(".tm-label")?.textContent).toBe("api");
+  });
+
+  it("asks again while shown, and the processes stop being read", async () => {
+    const { api } = await tokens();
+    const snapshots = api.snapshot.mock.calls.length;
+    const asked = api.tokens.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TOKENS_REFRESH_MS + 10);
+    });
+    expect(api.tokens.mock.calls.length).toBe(asked + 1);
+    expect(api.snapshot.mock.calls.length).toBe(snapshots);
+  });
+
+  it("chooses a tab with ⌘1 and ⌘2", async () => {
+    await shown(client());
+    fireEvent.keyDown(window, { key: "2", metaKey: true });
+    expect(screen.getByRole("tab", { name: "Tokens" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.keyDown(window, { key: "1", metaKey: true });
+    expect(
+      await screen.findByRole("treegrid", { name: "Processes" }),
+    ).toBeInTheDocument();
+  });
+
+  it("copies the table as the CLI prints it, in the view shown", async () => {
+    const { api } = await tokens();
+    fireEvent.click(screen.getByRole("radio", { name: "Cache-aware" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy Table" }));
+    expect(api.copyTokens).toHaveBeenCalledWith(
+      { range: "window5h", by: "agent" },
+      "weighted",
+    );
+  });
+
+  it("folds every row until opened, children sorted as their parents", () => {
+    const report = fixtureReport();
+    const sort = { key: "total" as const, ascending: false };
+    expect(
+      visibleTokenRows(report.rows, "raw", sort, new Set()).map(
+        (one) => one.row.label,
+      ),
+    ).toEqual(["Builder", "api"]);
+    expect(
+      visibleTokenRows(report.rows, "raw", sort, new Set(["agent:a1"])).map(
+        (one) => [one.row.label, one.depth],
+      ),
+    ).toEqual([
+      ["Builder", 0],
+      ["Survey the parser", 1],
+      ["Main conversation", 1],
+      ["Subagent inline1", 1],
+      ["api", 0],
+    ]);
   });
 });

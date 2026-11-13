@@ -32,6 +32,14 @@ import {
 import type { ShellPalette } from "../../ipc/palette.js";
 import { CHANNELS } from "../../ipc/contract.js";
 import { taskSnapshotText } from "../diagnostics/taskTree.js";
+import {
+	TOKEN_GROUPINGS,
+	TOKEN_RANGE_KINDS,
+	TOKEN_USAGE_CHANNELS,
+	type TokenQueryWire,
+	type TokenReportWire,
+} from "../../ipc/tokenUsage.js";
+import { tokensText } from "../cli/tell/tokens.js";
 import { SHELL_ORIGIN } from "./shellPageProtocol.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
 import { menuBarOptions } from "./menuBar.js";
@@ -46,6 +54,8 @@ export interface TaskManagerHost {
 	reveal(target: TaskRevealWire): void;
 	/** `process.kill`, injected so a test kills nothing. */
 	signal(pid: number): void;
+	/** A token report (`main/tokenUsage/`), after a reading. */
+	tokens(query: TokenQueryWire): Promise<TokenReportWire>;
 }
 
 let host: TaskManagerHost | undefined;
@@ -193,7 +203,45 @@ function registerIpc(): void {
 		const snapshot = last ?? (await requireHost().snapshot());
 		electron.clipboard.writeText(taskSnapshotText(snapshot));
 	});
+	handle(TOKEN_USAGE_CHANNELS.report, async (_event, query: unknown) =>
+		requireHost().tokens(tokenQuery(query)),
+	);
+	handle(
+		TOKEN_USAGE_CHANNELS.copy,
+		async (_event, query: unknown, view: unknown) => {
+			const report = await requireHost().tokens(tokenQuery(query));
+			electron.clipboard.writeText(
+				tokensText(
+					report,
+					view === "weighted" ? "weighted" : "raw",
+					Date.now(),
+				),
+			);
+		},
+	);
 	handle(TASK_MANAGER_CHANNELS.close, () => {
 		window?.close();
 	});
+}
+
+/** A page's query, checked: what it cannot have meant is refused. */
+export function tokenQuery(value: unknown): TokenQueryWire {
+	const query = value as Partial<TokenQueryWire> | null;
+	if (
+		query === null ||
+		typeof query !== "object" ||
+		!TOKEN_RANGE_KINDS.includes(query.range as TokenQueryWire["range"]) ||
+		!TOKEN_GROUPINGS.includes(query.by as TokenQueryWire["by"])
+	)
+		throw new Error("not a token query");
+	const time = (at: unknown) =>
+		typeof at === "number" && Number.isFinite(at) ? at : undefined;
+	const from = time(query.from);
+	const to = time(query.to);
+	return {
+		range: query.range!,
+		by: query.by!,
+		...(from === undefined ? {} : { from }),
+		...(to === undefined ? {} : { to }),
+	};
 }

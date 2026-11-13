@@ -25,6 +25,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import {
   formatBytes,
@@ -36,6 +37,7 @@ import type { AppError } from "../ipc/appShell";
 import { useRaiseFailure } from "../shell/model/pageModel";
 import { devhub } from "./client";
 import { visibleRows, type SortKey, type VisibleRow } from "./rows";
+import { TokensView } from "./TokensView";
 import "../shell/styles/tokens.css";
 import "../shell/styles/windowBackground.css";
 import "../shell/styles/macos.css";
@@ -55,6 +57,7 @@ const HEAVY_SHARE = 0.15;
 function useSnapshots(
   api: TaskManagerApi,
   onError: (error: unknown) => void,
+  enabled = true,
 ): { snapshot: TaskSnapshotWire | undefined; refresh: () => void } {
   const [snapshot, setSnapshot] = useState<TaskSnapshotWire>();
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -62,7 +65,8 @@ function useSnapshots(
   const alive = useRef(true);
   const take = useCallback(() => {
     clearTimeout(timer.current);
-    if (inFlight.current || document.visibilityState !== "visible") return;
+    if (!enabled || inFlight.current || document.visibilityState !== "visible")
+      return;
     inFlight.current = true;
     void api
       .snapshot()
@@ -76,11 +80,15 @@ function useSnapshots(
       )
       .finally(() => {
         inFlight.current = false;
-        if (alive.current && document.visibilityState === "visible") {
+        if (
+          alive.current &&
+          enabled &&
+          document.visibilityState === "visible"
+        ) {
           timer.current = setTimeout(take, REFRESH_MS);
         }
       });
-  }, [api, onError]);
+  }, [api, onError, enabled]);
   useEffect(() => {
     alive.current = true;
     take();
@@ -340,6 +348,76 @@ function Row({
   );
 }
 
+type Tab = "processes" | "tokens";
+
+const TABS: readonly { key: Tab; label: string }[] = [
+  { key: "processes", label: "Processes" },
+  { key: "tokens", label: "Tokens" },
+];
+
+/**
+ * The window's two tabs. ← → move between them as a tab list does, and
+ * ⌘1 / ⌘2 choose one from anywhere in the window.
+ */
+function Tabs({
+  value,
+  onChange,
+}: {
+  value: Tab;
+  onChange: (tab: Tab) => void;
+}) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      const index = ["1", "2"].indexOf(event.key);
+      if (index < 0) return;
+      event.preventDefault();
+      onChange(TABS[index]!.key);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onChange]);
+  return (
+    <div
+      className="tm-tabs"
+      role="tablist"
+      aria-label="Task Manager"
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        const at = TABS.findIndex((one) => one.key === value);
+        const next =
+          (at + (event.key === "ArrowRight" ? 1 : -1) + TABS.length) %
+          TABS.length;
+        onChange(TABS[next]!.key);
+        refs.current[next]?.focus();
+      }}
+    >
+      {TABS.map((one, index) => (
+        <button
+          key={one.key}
+          ref={(element) => {
+            refs.current[index] = element;
+          }}
+          type="button"
+          role="tab"
+          aria-selected={value === one.key}
+          tabIndex={value === one.key ? 0 : -1}
+          title={`${one.label} (⌘${String(index + 1)})`}
+          onClick={() => {
+            onChange(one.key);
+          }}
+        >
+          {one.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function TaskManagerApp({ client }: { client: TaskManagerApi }) {
   const raise = useRaiseFailure(devhub());
   const [message, setMessage] = useState<string>();
@@ -350,7 +428,27 @@ export function TaskManagerApp({ client }: { client: TaskManagerApi }) {
       `Could not read the processes: ${error instanceof Error ? error.message : String(error)}`,
     );
   }, []);
-  const { snapshot, refresh } = useSnapshots(client, onSnapshotError);
+  const [tab, setTab] = useState<Tab>("processes");
+  const { snapshot, refresh } = useSnapshots(
+    client,
+    onSnapshotError,
+    tab === "processes",
+  );
+  const onTokensError = useCallback((error: unknown) => {
+    setMessage(
+      `Could not read the transcripts: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }, []);
+  const close = useCallback(() => {
+    void client.close();
+  }, [client]);
+  const toolbar = (tools: ReactNode) => (
+    <header className="tm-toolbar">
+      <h1 className="tm-title">Task Manager</h1>
+      <Tabs value={tab} onChange={setTab} />
+      <div className="tm-tools">{tools}</div>
+    </header>
+  );
   const [sort, setSort] = useState<SortKey>("memory");
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
   const [selected, setSelected] = useState<string>();
@@ -455,99 +553,113 @@ export function TaskManagerApp({ client }: { client: TaskManagerApi }) {
 
   return (
     <div className="tm-window">
-      <header className="tm-toolbar">
-        <h1 className="tm-title">Task Manager</h1>
-        <div className="tm-tools">
-          <div className="tm-segmented" role="radiogroup" aria-label="Sort by">
-            {(["memory", "resident", "cpu"] as const).map((key) => (
-              <button
-                key={key}
-                type="button"
-                role="radio"
-                aria-checked={sort === key}
-                onClick={() => {
-                  setSort(key);
-                }}
-              >
-                {SORT_LABEL[key]}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="mac-button tm-copy"
-            disabled={snapshot === undefined}
-            onClick={copy}
-          >
-            {copied ? "Copied" : "Copy Snapshot"}
-          </button>
-        </div>
-      </header>
-      {snapshot === undefined ? (
-        <div className="tm-loading mac-caption">Reading processes…</div>
+      {tab === "tokens" ? (
+        <TokensView
+          client={client}
+          onError={onTokensError}
+          onClose={close}
+          toolbar={toolbar}
+        />
       ) : (
         <>
-          <Header snapshot={snapshot} />
-          <div
-            className="tm-table"
-            role="treegrid"
-            aria-label="Processes"
-            aria-activedescendant={
-              selected === undefined ? undefined : `tm-row-${selected}`
-            }
-            tabIndex={0}
-            onKeyDown={onKeyDown}
-          >
-            <div role="row" className="tm-row tm-columns">
-              <div role="columnheader" className="tm-name">
-                Name
-              </div>
+          {toolbar(
+            <>
               <div
-                role="columnheader"
-                className="tm-num tm-memory"
-                aria-sort={sort === "memory" ? "descending" : "none"}
-                onClick={() => {
-                  setSort("memory");
-                }}
+                className="tm-segmented"
+                role="radiogroup"
+                aria-label="Sort by"
               >
-                Footprint
+                {(["memory", "resident", "cpu"] as const).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="radio"
+                    aria-checked={sort === key}
+                    onClick={() => {
+                      setSort(key);
+                    }}
+                  >
+                    {SORT_LABEL[key]}
+                  </button>
+                ))}
               </div>
+              <button
+                type="button"
+                className="mac-button tm-copy"
+                disabled={snapshot === undefined}
+                onClick={copy}
+              >
+                {copied ? "Copied" : "Copy Snapshot"}
+              </button>
+            </>,
+          )}
+          {snapshot === undefined ? (
+            <div className="tm-loading mac-caption">Reading processes…</div>
+          ) : (
+            <>
+              <Header snapshot={snapshot} />
               <div
-                role="columnheader"
-                className="tm-num tm-resident"
-                aria-sort={sort === "resident" ? "descending" : "none"}
-                onClick={() => {
-                  setSort("resident");
-                }}
+                className="tm-table"
+                role="treegrid"
+                aria-label="Processes"
+                aria-activedescendant={
+                  selected === undefined ? undefined : `tm-row-${selected}`
+                }
+                tabIndex={0}
+                onKeyDown={onKeyDown}
               >
-                In RAM
+                <div role="row" className="tm-row tm-columns">
+                  <div role="columnheader" className="tm-name">
+                    Name
+                  </div>
+                  <div
+                    role="columnheader"
+                    className="tm-num tm-memory"
+                    aria-sort={sort === "memory" ? "descending" : "none"}
+                    onClick={() => {
+                      setSort("memory");
+                    }}
+                  >
+                    Footprint
+                  </div>
+                  <div
+                    role="columnheader"
+                    className="tm-num tm-resident"
+                    aria-sort={sort === "resident" ? "descending" : "none"}
+                    onClick={() => {
+                      setSort("resident");
+                    }}
+                  >
+                    In RAM
+                  </div>
+                  <div
+                    role="columnheader"
+                    className="tm-num tm-cpu"
+                    aria-sort={sort === "cpu" ? "descending" : "none"}
+                    onClick={() => {
+                      setSort("cpu");
+                    }}
+                  >
+                    CPU
+                  </div>
+                  <div role="columnheader" className="tm-num tm-count">
+                    Procs
+                  </div>
+                </div>
+                {rows.map((visible) => (
+                  <Row
+                    key={visible.row.id}
+                    visible={visible}
+                    total={snapshot.total.memoryBytes}
+                    selected={visible.row.id === selected}
+                    onSelect={setSelected}
+                    onToggle={toggle}
+                    onAction={act}
+                  />
+                ))}
               </div>
-              <div
-                role="columnheader"
-                className="tm-num tm-cpu"
-                aria-sort={sort === "cpu" ? "descending" : "none"}
-                onClick={() => {
-                  setSort("cpu");
-                }}
-              >
-                CPU
-              </div>
-              <div role="columnheader" className="tm-num tm-count">
-                Procs
-              </div>
-            </div>
-            {rows.map((visible) => (
-              <Row
-                key={visible.row.id}
-                visible={visible}
-                total={snapshot.total.memoryBytes}
-                selected={visible.row.id === selected}
-                onSelect={setSelected}
-                onToggle={toggle}
-                onAction={act}
-              />
-            ))}
-          </div>
+            </>
+          )}
         </>
       )}
       {message === undefined && failure === undefined ? null : (

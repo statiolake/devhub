@@ -8,6 +8,12 @@
  * `docs/task-manager.md`.
  */
 
+import type {
+	TokenQueryWire,
+	TokenReportWire,
+	TokenView,
+} from "./tokenUsage.js";
+
 /** How hard the OS says memory is pressed; `unknown` where it cannot say. */
 export type MemoryPressureWire = "normal" | "warning" | "critical" | "unknown";
 
@@ -123,6 +129,10 @@ export interface TaskManagerApi {
 	/** The table as text, on the clipboard. */
 	copy(): Promise<void>;
 	close(): Promise<void>;
+	/** Who used how many tokens (`ipc/tokenUsage.ts`), after a reading. */
+	tokens(query: TokenQueryWire): Promise<TokenReportWire>;
+	/** That report as the table `devhub --tell usage --by` prints, on the clipboard. */
+	copyTokens(query: TokenQueryWire, view: TokenView): Promise<void>;
 }
 
 /**

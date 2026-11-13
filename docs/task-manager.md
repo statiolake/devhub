@@ -10,7 +10,9 @@ day, and no key is spent on it; a person who wants one binds it in
 `[keybindings]`.
 
 It exists to answer "why is my Mac slow" with facts, and to act on the answer:
-stop an Agent, end a runaway process.
+stop an Agent, end a runaway process. Its second tab, **Tokens**, answers the
+other question a person running many Agents has: who used how many tokens
+([Tokens](#tokens)).
 
 ## The window
 
@@ -184,3 +186,170 @@ what it is, its pid and its memory. It then checks the pid is a row the last
 snapshot offered End on and still runs the command line that row showed — a
 pid reused in between is somebody else's process and is left alone — and
 sends that one process SIGTERM.
+
+## Tokens
+
+The second tab (`⌘2`; `⌘1` is Processes, and ← → move along the tab list)
+says who used how many tokens, from the Agents' own transcripts — the same
+numbers whether DevHub drew the conversation (GUI) or the CLI did (TUI), on
+this Mac or an SSH host. `devhub --tell usage --by …` prints the same report
+for the Orchestrator and scripts ([CLI](#from-the-command-line)).
+
+### What it shows
+
+- **The range** (a radio group): Claude's current **5-hour window** — the
+  default, since that is what limits the person — **Today** (since local
+  midnight), Claude's **Weekly window**, the last **7 days**, or a **Custom**
+  range (two date-and-time fields). A plan window's start is its reset, as
+  the usage readout last had it (`usageLimits.ts`), less its length; with no
+  reading yet it is the last 5 hours or 7 days, and the summary says so.
+- **The rows** (a radio group): per **Agent** (its name, profile,
+  Workspace, machine, role and models; its subagents' usage counted in it and
+  broken out under it — the main conversation and each subagent by what it
+  was asked to do), per **task** (what its bound Agents used while bound), per
+  **Workspace**, per **role** — the Orchestrator, workers (Agents it
+  manages), unmanaged Agents, and Outside DevHub — or per **model**. A
+  task's, Workspace's or role's row opens to the Agents in it.
+- **The view**, in the toolbar: **Without cache** — every token as
+  processed: uncached input, cache read, cache write (5-minute and 1-hour
+  together), output, and the total — or **Cache-aware** — the input weighted
+  by list price (cache reads at the model's read price, writes at 1.25× and
+  2× base input) as tokens at base input price, output, the cache hit rate
+  (cache reads of all input), and the **estimated cost**. The cost is labelled
+  for what it is: an estimate at Anthropic's API list price, which a Claude
+  plan is not billed. A model with no pinned price (Codex's) shows its tokens
+  and no cost, and the summary says how many tokens that leaves out.
+
+Above the table: the range and where its start came from, a few figures
+(total, input, output, requests; or cost, weighted input, output, hit rate),
+and one bar of where the input went — uncached, cache read, cache write 5m and
+1h — in the reference categorical slots 1–4, validated for both themes, with
+its legend giving each part's amount. Each row has a sparkline of its tokens
+(its cost in the cache-aware view) over the range, in 24 buckets, its last
+bucket marked; its tooltip says when it peaked. Every column heading sorts
+(again for the other way); ↑ ↓ walk the rows, → and Enter open one, ← closes it
+or goes to its parent, Home and End, and Escape closes the window. **Copy
+Table** puts the CLI's table, in the view shown, on the clipboard.
+
+The tab asks for a report while it is shown and the window visible, every
+five seconds (`TOKENS_REFRESH_MS`); the Processes tab stops reading `ps`
+meanwhile.
+
+### Where the numbers come from
+
+`main/tokenUsage/` reads; `model/token*.ts` is pure and does the rest.
+
+- **Claude**: every session under `<config>/projects/` (the profile's
+  `CLAUDE_CONFIG_DIR`, else the machine's, else `~/.claude`): one
+  `<session>.jsonl` per session, and one `<session>/subagents/agent-<id>.jsonl`
+  per subagent, with `agent-<id>.meta.json` saying what it was asked. Each
+  `assistant` line's `message.usage`: `input_tokens`, `output_tokens`,
+  `cache_read_input_tokens`, `cache_creation_input_tokens` with its
+  `cache_creation` split into `ephemeral_5m_input_tokens` and
+  `ephemeral_1h_input_tokens` (no split: five minutes), `speed`, and
+  `message.model`.
+- **Codex**: every rollout under `<CODEX_HOME>/sessions/` (`~/.codex`):
+  `event_msg` lines of type `token_count`, each with the thread's running
+  total and the last request's usage, and the model of the latest
+  `turn_context`. Codex's input includes its cached input; here input is the
+  uncached part, cached input is a cache read, and there are no cache writes.
+
+**Each request once** (`tokenTranscripts.ts`, `tokenIndex.ts`):
+
+- Claude writes one line per content block of a streamed response, each with
+  the whole response's usage. A request is its `message.id` (else its
+  `requestId`, else the line's `uuid`); its counts are the largest each line
+  said, so an early block with a smaller `output_tokens` neither doubles nor
+  shortens it.
+- A resumed or forked session's file copies the earlier lines, ids and all.
+  The id is kept per machine and CLI across files: the first file to say it
+  owns it.
+- Subagents: an inline `isSidechain` line (older versions) and a subagent's
+  own file are both the subagent's, counted in the session that started it.
+- `<synthetic>` lines are no request.
+- Codex writes a `token_count` again when only the rate limits changed: a
+  request is the thread and the running total it brought it to, so a repeat
+  is the same key.
+
+**Who a session is.** Each reading writes down the session every Claude and
+Codex Agent runs now (asked of its CLI — the GUI conversation, or the TUI's
+pane — at most every 30 s per Agent), with its name, profile, Workspace,
+machine and role, so its tokens stay its after it is closed and across
+restarts. A session no Agent was seen running is named by a task's binding
+that recorded it, or by the metadata DevHub kept for it
+(`session-meta.json`); none of those is **Outside DevHub**, shown by its
+folder (and, grouped by Workspace, in the open Workspace that folder is in).
+A task counts what its bound Agents used from `boundAt` to `stoppedAt`: a
+request of a session the binding recorded, or of the bound Agent. An Agent
+bound to two tasks at once counts toward both, and the tab says the rows then
+add up to more than the total. The total is every request once, never the rows
+added up.
+
+### Incremental, and cheap to restart
+
+Main keeps no timer. A reading lists each folder's transcripts written to in
+the retention (one `find`) and reads each file only from the byte it was read
+up to, whole lines only, at most 4 MB of a file and 96 MB of a folder (16 MB on
+an SSH host) per reading, the most recently written first — so months of
+transcripts are caught up over a few readings, and the summary says so while
+they are. A file shorter than its offset was rewritten and is read again from
+the start. A line longer than a whole read is passed over. Parsing yields to
+the event loop between files.
+
+The index — every file's offset and the requests read out of it — and the
+session owners are kept in `token-usage.json` in the user data folder, saved
+at most every 30 seconds and at quit, so a restart reads only what was written
+since. Requests older than 35 days are let go, and that is as far back as the
+Custom range reaches.
+
+**SSH hosts** are read through the host's `Runtime`, the connection DevHub
+already has: two small `sh` scripts, one listing (`find` and `stat`, GNU's
+spelling or BSD's) and one reading each file from its offset (`tail -c +N |
+head -c M`, each after a 0x1E separator, which JSON never contains raw). Only
+when a report is asked for, and no more often than once a minute; a host
+that cannot be read is said under the summary, and the next reading tries
+again.
+
+### Prices
+
+`model/tokenPrices.ts`, pinned in that one place (as of 2026-11-13, Anthropic's
+first-party API list prices, US dollars per million tokens):
+
+| Model                 | Input | Output | Cache read | Write 5m | Write 1h |
+| --------------------- | ----: | -----: | ---------: | -------: | -------: |
+| Fable 5.2             |  8.00 |  40.00 |       0.20 |    10.00 |    16.00 |
+| Mythos 5.2            |  8.00 |  40.00 |       0.20 |    10.00 |    16.00 |
+| Fable / Mythos 5.1    | 10.00 |  50.00 |       0.25 |    12.50 |    20.00 |
+| Fable / Mythos 5      | 10.00 |  50.00 |       1.00 |    12.50 |    20.00 |
+| Opus 5.5              |  4.00 |  20.00 |       0.20 |     5.00 |     8.00 |
+| Opus 5, 4.8, 4.7, 4.6 |  5.00 |  25.00 |       0.50 |     6.25 |    10.00 |
+| Sonnet 5.5            |  2.00 |  10.00 |       0.10 |     2.50 |     4.00 |
+| Sonnet 5              |  2.00 |  10.00 |       0.20 |     2.50 |     4.00 |
+| Sonnet 4.6            |  3.00 |  15.00 |       0.30 |     3.75 |     6.00 |
+| Haiku 5.5             |  0.10 |   0.50 |       0.01 |    0.125 |     0.20 |
+| Haiku 4.5             |  1.00 |   5.00 |       0.10 |     1.25 |     2.00 |
+
+Cache reads are not one multiple of input across models — 0.1× on most,
+0.05× on Opus 5.5 and Sonnet 5.5, 0.025× on Fable 5.1 and 5.2 — so each model
+has its own. Fast mode (`usage.speed: "fast"`) is priced at Opus 5.5's $8 /
+$40 and Fable 5.2's $16 / $80. Haiku 5.5's prompts over 100K tokens are priced
+at $0.50 / $2.50. A model id is matched without its date, `[1m]` suffix or
+provider prefix.
+
+### From the command line
+
+```text
+devhub --tell usage --by agent|task|workspace|role|model
+                    [--since window|today|week|7d|90m|12h|3d|2026-11-12[T09:00]]
+                    [--until DATE] [--cache raw|weighted] [--json]
+```
+
+Any of those flags (or `--tokens`) asks for tokens; `usage` alone is still
+the plan limits. The default is `--by agent --since window --cache raw`. Text
+is the tab's table — subagents (or Agents) indented under their row, the
+total last, and in the weighted view the note that the cost is an estimate.
+`--json` is the whole report (`TokensJson`: `schema: 1`, the range with ISO
+times, the totals, every row with its children and series, the price table,
+and each folder read with its problem if it had one). The CLI reads SSH hosts
+at once rather than waiting for their minute, and answers within 20 seconds
+with what it has read by then.

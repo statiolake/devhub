@@ -16,6 +16,12 @@ import {
 	type TaskRevealWire,
 	type TaskSnapshotWire,
 } from "../ipc/taskManager.js";
+import {
+	TOKEN_USAGE_CHANNELS,
+	type TokenQueryWire,
+	type TokenReportWire,
+	type TokenView,
+} from "../ipc/tokenUsage.js";
 import { on, pageBridge } from "./bridge.js";
 
 const devhub: TaskManagerPageBridge = {
@@ -39,6 +45,13 @@ const devhubTaskManager: TaskManagerApi = {
 		ipcRenderer.invoke(TASK_MANAGER_CHANNELS.kill, pid) as Promise<boolean>,
 	copy: () => ipcRenderer.invoke(TASK_MANAGER_CHANNELS.copy) as Promise<void>,
 	close: () => ipcRenderer.invoke(TASK_MANAGER_CHANNELS.close) as Promise<void>,
+	tokens: (query: TokenQueryWire) =>
+		ipcRenderer.invoke(
+			TOKEN_USAGE_CHANNELS.report,
+			query,
+		) as Promise<TokenReportWire>,
+	copyTokens: (query: TokenQueryWire, view: TokenView) =>
+		ipcRenderer.invoke(TOKEN_USAGE_CHANNELS.copy, query, view) as Promise<void>,
 };
 
 contextBridge.exposeInMainWorld("devhub", devhub);

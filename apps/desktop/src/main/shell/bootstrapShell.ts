@@ -298,6 +298,7 @@ export async function bootstrapShell(userDataPath: string): Promise<void> {
 		signal: (pid) => {
 			process.kill(pid, "SIGTERM");
 		},
+		tokens: (query) => controller.tokenReport(query),
 	});
 
 	controller.installChords();

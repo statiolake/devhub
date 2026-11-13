@@ -6,6 +6,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskSnapshotWire } from "../../ipc/taskManager.js";
+import { TOKEN_USAGE_CHANNELS } from "../../ipc/tokenUsage.js";
+import { fixtureReport } from "../cli/tell/tokensTestKit.js";
 
 class FakeWindow {
 	static made: FakeWindow[] = [];
@@ -167,6 +169,7 @@ const host = {
 	stopAgent: vi.fn(),
 	reveal: vi.fn(),
 	signal: vi.fn(),
+	tokens: vi.fn(() => Promise.resolve(fixtureReport())),
 };
 installTaskManagerWindow(host);
 
@@ -273,5 +276,30 @@ describe("what a row can do", () => {
 		const [text] = writeText.mock.calls[0] as [string];
 		expect(text).toContain("DevHub Task Manager");
 		expect(text).toContain("rust-analyzer [122]");
+	});
+
+	it("answers a token report for a query it checked, and copies it as the CLI's table", async () => {
+		await expect(
+			call(TOKEN_USAGE_CHANNELS.report, { range: "forever", by: "agent" }),
+		).rejects.toThrow("not a token query");
+		await call(TOKEN_USAGE_CHANNELS.report, {
+			range: "custom",
+			by: "task",
+			from: 5,
+			to: "soon",
+		});
+		expect(host.tokens).toHaveBeenLastCalledWith({
+			range: "custom",
+			by: "task",
+			from: 5,
+		});
+		await call(
+			TOKEN_USAGE_CHANNELS.copy,
+			{ range: "window5h", by: "agent" },
+			"weighted",
+		);
+		const [text] = writeText.mock.calls[0] as [string];
+		expect(text).toMatch(/est\. cost/u);
+		expect(text).toContain("Builder");
 	});
 });
