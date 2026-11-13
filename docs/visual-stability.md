@@ -143,52 +143,42 @@ Neovim through a socket that holds each chunk half that long each way
 (`delayProxy.ts`), and what is at once must still be.
 
 `scripts/test-local.sh stability` (it builds first) and the nightly's
-`Test: visual stability (Linux)` (`docs/ci.md`). Not per push: it records
-for about three minutes on top of a build, and a few steps fail now and then
-on a timing it has caught (below); a per-push job that is red for those
-would be a job people learn to ignore.
+`Test: visual stability (Linux)` (`docs/ci.md`).
 
-## Known faults, open faults and flaky steps
+## Known faults
 
 Each is a `known` entry on its step, with its reason, printed every time it
-shows. Outside DevHub:
+shows (`KNOWN`). Outside DevHub:
 
-- `picker/open` (1x): snacks.nvim flushes the picker's windows before its
-  `startinsert` lands, so Neovim draws one frame in Normal mode (its own
-  `-- (insert) --`): the query's caret is a block, then a bar.
-- `picker/preview-off`, `preview-on` (now and then): snacks-ui.devhub sends
-  the frame's new layout from a scheduled `WinResized` handler, after Neovim
-  has flushed the preview float's change; for a frame the preview's column is
-  empty. (DevHub could also hold a claimed frame whose floats close until Lua
-  settles it, as `ClaimAsks` does for floats it has not drawn.)
-- `cmdline/open` (6x, now and then): Neovim's `showcmd` shows the typed `:`
-  for a frame before the command line opens.
-- `open-file/devhub-file-again`: Neovim highlights markdown with treesitter in
-  a redraw after the one that shows the file: plain, then coloured.
+- `open-file/devhub-file-again` (now and then): Neovim highlights markdown
+  with treesitter in a redraw after the one that shows the file: plain, then
+  coloured.
 
 DevHub's own, diagnosed and open:
 
-- `theme`: the page's palette lands before Neovim's recolour (the theme
-  reaches Neovim through its own connection and Neovim redraws after): light
-  chrome round a dark editor for a few frames, at 1x too.
-- `sidebar-collapse` (6x): the Sidebar's view is resized before its page has
-  the projection that says collapsed or expanded (one frame of the wrong
-  layout at the new width); and the editor is laid out at the new width
-  before Neovim answers the resize (one frame of the last grid, its edge
-  filled to the new width).
-- `cmdline/close` (6x, now and then): blink-ui's command-line menu is closed
-  by a Lua event that comes before the flush with `cmdline_hide`.
+- `sidebar-collapse` at 6x: the Workspace's terminal view waits off the
+  window until the editor has redrawn at its new size, but main stops
+  waiting after `LAYOUT_SETTLE_TIMEOUT_MS` (200 ms), which a page throttled
+  6x does not make: the old grid shows at the new place for a frame. And the
+  Sidebar's own view is narrowed (or widened) before its page has the
+  projection that says it is a rail: one frame of the full rows at the
+  rail's width. Making the two change in one frame needs main to put the
+  Sidebar's view and the projection on screen together; not done yet. At
+  1x both hold.
 
-Flaky and not excused (it fails the run when it shows):
+## Fixed, with the step that found each
 
-- `picker/open` at 1x, about one run in four: the list is drawn with one row
-  for a frame between its first page and its settled one. The view's items
-  are rendered from a `vim.schedule` after the list buffer changes, and one
-  such render caught snacks' list mid-rewrite.
-- `tree/scroll-sticky` at 6x, two runs in five: the command line's box is
-  on screen for one frame during `<C-d>`. The screencast missed that frame,
-  so what it held is not known; Neovim's `showcmd` of `^D` flushed mid-key
-  (as in `cmdline/open`) is the likely cause, not a confirmed one.
+| step | what was drawn | the fix |
+| --- | --- | --- |
+| `picker/open` | a half row at the list's foot for a frame | `framePage`: the rows that fit, from the first frame |
+| `picker/open` (1x, flaky) | the list with one row for a frame | `measuredRows`: no row count told before the list is laid out (it told "1") |
+| `picker/open` (1x) | the query's caret a block, then a bar | the frame waits for Lua to settle with its windows (below) |
+| `picker/preview-off`, `preview-on` | the preview's column empty, or the list narrowed before the preview | `ClaimAsks` asks Lua again about a framed view whose windows change; the page holds Lua's placements until `settled` |
+| `open-file/devhub-file` | the new file's text under the old file's name | the footers' trees made in the redraw, ahead of its flush; React's commit inside the frame's paint |
+| `cmdline/open`, `tree/scroll-sticky` | a command-line box with the key being run (`:`, `^D`) | the band is not brought up by `showcmd` alone |
+| `cmdline/close` | blink's menu gone a frame before the command line | a popup closed on the command line goes with Neovim's next flush |
+| `theme` | light chrome round a dark editor | the palette and the terminal's colours go on with the Neovims' recolour; the paint theme asked at once |
+| `sidebar-collapse` (1x) | the old grid at the new size | the view waits off the window until Neovim has redrawn |
 
 ## Adding a scenario
 
