@@ -2128,18 +2128,30 @@ export class TmuxTerminalRuntime {
 		if (target.kind === "agent" || target.kind === "terminal") {
 			throw portFailure("conflict");
 		}
-		await this.createSession(
-			socket,
-			{
-				name: identity.sessionName,
-				root: identity.root,
-				context: identity.context,
-				workspaceId: identity.workspaceId,
-				agentId: identity.agentId,
-			},
-			cancel,
-			deadline,
-		);
+		try {
+			await this.createSession(
+				socket,
+				{
+					name: identity.sessionName,
+					root: identity.root,
+					context: identity.context,
+					workspaceId: identity.workspaceId,
+					agentId: identity.agentId,
+				},
+				cancel,
+				deadline,
+			);
+		} catch (failure: unknown) {
+			// Two asked for the same place at once — the terminal's page
+			// making its session again as it ended, and a file opened into
+			// it — and the other made it first: the session is there, with
+			// exactly this identity, which is all this asked for.
+			const after = await this.listSessions(socket, cancel, deadline);
+			const made = after.find(
+				(session) => session.name === identity.sessionName,
+			);
+			if (made === undefined || !sessionMatches(made, identity)) throw failure;
+		}
 	}
 
 	// --- Agents ------------------------------------------------------------

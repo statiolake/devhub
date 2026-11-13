@@ -634,6 +634,37 @@ describe.skipIf(TMUX === undefined)(
       expect(await test.runtime.editorPaneState(target, paneId)).toBe("gone");
     });
 
+    it("makes a workspace's session once when its terminal and an editor window ask for it at once", async () => {
+      // `devhub <folder>` then `devhub <file>` at once, or a file opened as
+      // the terminal makes its ended session again: both find no session,
+      // and both create it. The one that loses finds the session it asked
+      // for there, with its identity, and goes on.
+      const test = fixture("racedsession");
+      mkdirSync(join(test.home, "workspace"), { recursive: true });
+      const root = realpathSync(join(test.home, "workspace"));
+      const workspaceId = "00000000-0000-4000-8000-000000000044";
+      const target = workspaceTarget("local", workspaceId, root);
+      for (let round = 0; round < 5; round += 1) {
+        const [, , paneId] = await Promise.all([
+          test.runtime.ensure(target),
+          test.runtime.ensure(target),
+          test.runtime.openEditorWindow(
+            { machine: "local", workspaceId, root },
+            ["sleep", "600"],
+          ),
+        ]);
+        expect(paneId).toMatch(/^%[0-9]+$/u);
+        const sessions = await test.runtime.listSessions(
+          test.socket,
+          test.cancel,
+          deadline(test.runtime),
+        );
+        const name = `ws-${workspaceDigest(root).slice(0, 20)}`;
+        expect(sessions.filter((one) => one.name === name)).toHaveLength(1);
+        await test.runtime.closeWorkspace({ machine: "local", workspaceId, root });
+      }
+    });
+
     it("gives a session made before DevHub's nvim was wanted its PATH and zsh's ZDOTDIR", async () => {
       let wanted = false;
       // In the fixture's home, which exists once the fixture does.
