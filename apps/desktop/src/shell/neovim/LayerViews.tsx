@@ -44,6 +44,7 @@ import type {
   ViewPlace,
 } from "./layers";
 import { PROVISIONAL_TTL_MS } from "./provisional";
+import { drawnRows, viewLayout, viewPieces } from "./viewWindow";
 import { placePopup, popupMaxWidth, popupScrollTop } from "./popup";
 import type { OverPart } from "./painter";
 import { createPortal } from "react-dom";
@@ -214,14 +215,65 @@ function GuiView({
   const focusedRef = useRef(focused);
   focusedRef.current = focused;
 
+  // Only the rows in sight (and a screen's worth either side, the sticky
+  // and the focused ones) are drawn (`viewWindow.ts`); the others are
+  // spacers of their heights, measured once drawn.
+  const measured = useRef(new Map<number, number>());
+  const [measures, setMeasures] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewport, setViewport] = useState(box.height * cell.height);
+  const padTop = useRef(4);
+  const lines = content.items.map((item) => item.line);
+  const layout = viewLayout(
+    lines,
+    measured.current,
+    content.rowHeight,
+    padTop.current,
+  );
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
   const boxes = (): { top: number; height: number }[] => {
-    const el = scroller.current;
-    if (!el) return [];
-    return Array.from(el.children, (child) => {
-      const item = child as HTMLElement;
-      return { top: item.offsetTop, height: item.offsetHeight };
-    });
+    const { tops, heights } = layoutRef.current;
+    return tops.map((top, i) => ({ top, height: heights[i] ?? 0 }));
   };
+  const drawn = drawnRows(
+    layout,
+    scrollTop,
+    viewport,
+    viewport,
+    content.items.map((item) => item.sticky === true),
+    focused,
+  );
+  const pieces = viewPieces(layout, drawn, padTop.current);
+  // The drawn rows' heights, before the frame is painted: a row drawn for
+  // the first time (or drawn anew) that is not as tall as guessed moves
+  // the rows after it in this same frame, never in a next one. After every
+  // render (what is drawn changed); each update only on a change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- every render, guarded
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    let changed = false;
+    const pad = parseFloat(getComputedStyle(el).paddingTop) || 0;
+    if (pad !== padTop.current) {
+      padTop.current = pad;
+      changed = true;
+    }
+    for (const child of el.children) {
+      const row = child as HTMLElement;
+      const line = Number(row.dataset["line"]);
+      if (!Number.isFinite(line) || row.dataset["line"] === undefined) continue;
+      const h = row.getBoundingClientRect().height;
+      const known = measured.current.get(line);
+      if (known === undefined || Math.abs(known - h) > 0.25) {
+        measured.current.set(line, h);
+        changed = true;
+      }
+    }
+    if (el.clientHeight !== viewport) setViewport(el.clientHeight);
+    if (el.scrollTop !== scrollTop) setScrollTop(el.scrollTop);
+    if (changed) setMeasures((n) => n + 1);
+  });
 
   // Keep the focused item in sight, moving as little as possible — below
   // the sticky items held at the top (a sticky one is always in sight).
@@ -245,7 +297,8 @@ function GuiView({
       item.top - inset,
       item.height,
     );
-  }, [focused, content, box.width, box.height, cell.height]);
+    setScrollTop(el.scrollTop);
+  }, [focused, content, box.width, box.height, cell.height, measures]);
 
   const theme = useMemo(
     () => themeFor(host, content.hl, () => undefined),
@@ -258,7 +311,6 @@ function GuiView({
   const guide =
     indent !== undefined ? activeGuide(content.items, focused) : undefined;
   const visual = place.visual;
-  const lines = content.items.map((item) => item.line);
   // The rows' callbacks stay the same function from render to render, so a
   // row whose own look did not change is not rendered again (`ViewRow`).
   const click = useCallback(
@@ -330,6 +382,7 @@ function GuiView({
           height,
           el.clientHeight,
         );
+        setScrollTop(el.scrollTop);
         const next = wheelFocus(
           items,
           focusedRef.current,
@@ -347,26 +400,46 @@ function GuiView({
         }
       }}
     >
-      <div className="nvim-view-scroll" ref={scroller}>
-        {content.items.map((item, index) => (
-          <ViewRow
-            key={item.line}
-            item={item}
-            focused={index === focused}
-            band={bandPart(lines, index, visual)}
-            depth={indent !== undefined ? (item.depth ?? 0) : 0}
-            indent={indent}
-            activeGuide={
-              guide !== undefined && index >= guide.from && index <= guide.to
-                ? guide.level
-                : -1
-            }
-            rowHeight={content.rowHeight}
-            theme={theme}
-            press={press}
-            click={click}
-          />
-        ))}
+      <div
+        className="nvim-view-scroll"
+        ref={scroller}
+        onScroll={(event) => {
+          setScrollTop(event.currentTarget.scrollTop);
+        }}
+      >
+        {pieces.map((piece) => {
+          if (piece.kind === "gap")
+            return (
+              <div
+                key={piece.key}
+                className="nvim-view-gap"
+                style={{ height: piece.height }}
+                aria-hidden
+              />
+            );
+          const index = piece.index;
+          const item = content.items[index];
+          if (item === undefined) return null;
+          return (
+            <ViewRow
+              key={item.line}
+              item={item}
+              focused={index === focused}
+              band={bandPart(lines, index, visual)}
+              depth={indent !== undefined ? (item.depth ?? 0) : 0}
+              indent={indent}
+              activeGuide={
+                guide !== undefined && index >= guide.from && index <= guide.to
+                  ? guide.level
+                  : -1
+              }
+              rowHeight={content.rowHeight}
+              theme={theme}
+              press={press}
+              click={click}
+            />
+          );
+        })}
       </div>
       {content.keys.length > 0 ? (
         <div className="nvim-view-keys">
