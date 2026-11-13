@@ -224,7 +224,8 @@ export default function DocumentPane({
   /** Tell Lua what is in sight, if that changed. */
   const report = useCallback(() => {
     const el = scroller.current;
-    if (!el) return;
+    // Nothing measured yet: nothing to say (a guess would move Neovim).
+    if (!el || marks.current.length === 0) return;
     const all = total();
     anchor.current = lineAtPixelExact(
       marks.current,
@@ -260,7 +261,13 @@ export default function DocumentPane({
         top: block.getBoundingClientRect().top - origin,
       });
     }
-    marks.current = lineMarks(raw);
+    // Not laid out yet (its pane hidden, its chunk just mounted): every
+    // block at one height says nothing of where lines are.
+    const measured = lineMarks(raw);
+    const laidOut =
+      el.clientHeight > 0 &&
+      (measured.length < 2 || measured.at(-1)!.top > measured[0]!.top);
+    marks.current = laidOut ? measured : [];
   }, []);
 
   const scrollTo = useCallback(
@@ -287,10 +294,9 @@ export default function DocumentPane({
         scrollTo(pixelOf(line));
         return;
       }
-      if (anchor.current !== undefined) {
-        el.scrollTop = pixelOf(anchor.current);
-        report();
-      }
+      if (marks.current.length === 0) return;
+      if (anchor.current !== undefined) el.scrollTop = pixelOf(anchor.current);
+      report();
     };
     again();
     const observer = new ResizeObserver(again);
@@ -312,7 +318,9 @@ export default function DocumentPane({
   }, [place.topline]);
 
   // The keys asked for a scroll.
-  const seenScroll = useRef(scroll?.seq);
+  // One to a line asked before this mounted (the document's first `scroll`)
+  // still applies; a relative one was for a drawing that is gone.
+  const seenScroll = useRef(scroll?.by === "to" ? undefined : scroll?.seq);
   useLayoutEffect(() => {
     if (!scroll || scroll.seq === seenScroll.current) return;
     seenScroll.current = scroll.seq;
