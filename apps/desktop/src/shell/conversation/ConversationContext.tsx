@@ -62,6 +62,11 @@ export interface ConversationActions {
   ) => Promise<string | undefined>;
   readonly openExternalUrl: (url: string) => Promise<void>;
   /**
+   * A link's menu's Copy Link or Copy Path (`linkMenu.ts`): `text` on the
+   * clipboard, through main, which says so in a short notice.
+   */
+  readonly copyText: (text: string) => Promise<void>;
+  /**
    * Say something to the Agent as the person: written at once when it is
    * idle, else held as a pending message (`Transcript.pending`).
    */

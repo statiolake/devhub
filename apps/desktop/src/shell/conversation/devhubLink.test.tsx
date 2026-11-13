@@ -60,6 +60,8 @@ function drawn(
           navigate: vi.fn(() => Promise.resolve()),
           sessionAgent: vi.fn(() => Promise.resolve(null)),
           reportFailure: vi.fn(),
+          copyLink: vi.fn(() => Promise.resolve()),
+          showContextMenu: vi.fn(() => Promise.resolve(undefined)),
           ...links,
         };
   const paths = new PathLinks(actions.resolvePaths, actions.reportFailure);

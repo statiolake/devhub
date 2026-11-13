@@ -397,7 +397,7 @@ function FileView({
       </div>
       <div
         ref={body}
-        className="orchestrator-thread orchestrator-file-body conversation-selectable"
+        className="orchestrator-thread orchestrator-file-body conversation-selectable conversation-typeset"
         tabIndex={-1}
         onScroll={(event) => {
           memory.scroll.set(scrollKey, {

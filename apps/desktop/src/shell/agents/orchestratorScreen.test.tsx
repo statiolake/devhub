@@ -38,6 +38,8 @@ const answerEscalation = vi.fn(() => Promise.resolve());
 /** The files an escalation's thread may draw, by absolute path. */
 const FILES: Record<string, Uint8Array> = {
   "/w/payments/out/shot.png": new Uint8Array([137, 80, 78, 71]),
+  "/w/wt/src/auth/login.ts": new Uint8Array(),
+  "/w/payments/src/auth/retry.ts": new Uint8Array(),
   "/abs/flow.svg": new TextEncoder().encode(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>',
   ),
@@ -59,7 +61,17 @@ const readEscalationEmbed = vi.fn((path: string) =>
   ),
 );
 const reportOrchestratorView = vi.fn();
+/** The native menu: dismissed, unless a test says what is chosen. */
+const showContextMenu = vi.fn(
+  (_request: unknown): Promise<string | undefined> =>
+    Promise.resolve(undefined),
+);
+const copyText = vi.fn((_text: string) => Promise.resolve());
+const openLinkedFile = vi.fn(() => Promise.resolve());
 window.devhub = {
+  showContextMenu,
+  copyText,
+  openLinkedFile,
   answerEscalation,
   reportOrchestratorView,
   setOrchestratorPaused: vi.fn(() => Promise.resolve()),
@@ -102,6 +114,9 @@ function paneShape(element: HTMLElement): string {
 }
 
 const NOW = Date.now();
+
+/** Where a Workspace of these tests is: this Mac. */
+const LOCAL = { kind: "local" } as const;
 
 const BOARD: OrchestratorBoardWire = {
   ...EMPTY_BOARD,
@@ -508,7 +523,14 @@ describe("a question's pictures", () => {
           },
         ],
       },
-      [{ id: "w-pay", root: "/w/payments", agents: [{ id: "a1" }] }],
+      [
+        {
+          id: "w-pay",
+          root: "/w/payments",
+          location: { kind: "local" },
+          agents: [{ id: "a1" }],
+        },
+      ],
     );
     fireEvent.click(
       screen.getByRole("button", { name: /本番マイグレーション/u }),
@@ -533,8 +555,8 @@ describe("a question's pictures", () => {
   it("takes relative paths from its latest open agent's workspace, else the orchestrator's folder", () => {
     const one = BOARD.answer[0]!;
     const workspaces = [
-      { id: "w1", root: "/w/one", agents: [{ id: "b2" }] },
-      { id: "w2", root: "/w/two", agents: [{ id: "a1" }] },
+      { id: "w1", root: "/w/one", location: LOCAL, agents: [{ id: "b2" }] },
+      { id: "w2", root: "/w/two", location: LOCAL, agents: [{ id: "a1" }] },
     ] as unknown as AppSnapshot["workspaces"];
     expect(taskBase(one, workspaces, "/orch")).toBe("/w/two");
     expect(
@@ -572,6 +594,171 @@ describe("the task's priority on the board", () => {
     const progress = screen.getByRole("region", { name: "処理中" });
     expect(within(progress).queryByText("優先")).toBeNull();
     expect(within(progress).queryByText("低")).toBeNull();
+  });
+});
+
+describe("a question, drawn as the conversation draws a message", () => {
+  const ESC = "/u/devhub/escalations/9";
+  const markdown = [
+    "## 決めてほしいこと",
+    "",
+    "`src/auth/login.ts:42` と `src/auth/retry.ts` の retry を3回にするか決める。",
+    "",
+    "## 添付",
+    "",
+    "**staging での再試行** — *retry.png*",
+    "",
+    `![staging での再試行](<${ESC}/a1-retry.png>)`,
+    "",
+    "*backoff.png*",
+    "",
+    `![backoff.png](<${ESC}/a2-backoff.png>)`,
+  ].join("\n");
+  const TASK = askingTask(9, {
+    title: "ログインの retry 方針",
+    agents: [
+      {
+        agentId: "a1",
+        name: "login-fix",
+        live: true,
+        resumable: false,
+        // Its worktree: a path is looked for there first, then in its
+        // Workspace's folder.
+        folder: "/w/wt",
+      },
+    ],
+    escalations: [
+      questionWire({ id: 9, taskId: 9, question: { markdown, at: NOW } }),
+    ],
+  });
+  const WORKSPACES = [
+    {
+      id: "w-pay",
+      label: "payments",
+      root: "/w/payments",
+      location: LOCAL,
+      agents: [{ id: "a1" }],
+    },
+  ];
+
+  function open() {
+    FILES[`${ESC}/a1-retry.png`] = new Uint8Array([137, 80, 78, 71]);
+    FILES[`${ESC}/a2-backoff.png`] = new Uint8Array([137, 80, 78, 71]);
+    motion(true);
+    mount({ ...BOARD, answer: [TASK] }, WORKSPACES);
+    fireEvent.click(document.querySelector<HTMLElement>('[data-task-id="9"]')!);
+    return document.querySelector<HTMLElement>(".orchestrator-thread")!;
+  }
+
+  it("is typeset as the conversation is: the CJK–Latin spacing on the thread, the quick replies and the answer", () => {
+    const thread = open();
+    expect(thread).toHaveClass("conversation-typeset");
+    expect(thread.querySelector(".orchestrator-options")).not.toBeNull();
+    expect(thread.querySelector("textarea")).not.toBeNull();
+  });
+
+  it("draws its attachments as a message's: a row of thumbnails under their captions, not a 添付 section", async () => {
+    const thread = open();
+    const row = await within(thread).findByRole("group", { name: "添付" });
+    await waitFor(() => {
+      expect(
+        row.querySelectorAll(".conversation-image > summary img"),
+      ).toHaveLength(2);
+    });
+    expect(
+      [...row.querySelectorAll(".conversation-image > summary img")].map(
+        (img) => img.getAttribute("alt"),
+      ),
+    ).toEqual(["staging での再試行", "backoff.png"]);
+    expect(row.querySelector(".conversation-image-caption")).toHaveTextContent(
+      "staging での再試行",
+    );
+    expect(within(thread).queryByRole("heading", { name: "添付" })).toBeNull();
+    // Nothing mouse-only: the thumbnail is a summary (Return opens it), and
+    // Shift+F10 on it puts its menu up.
+    const thumbnail = row.querySelector<HTMLElement>(
+      ".conversation-image > summary",
+    )!;
+    fireEvent.keyDown(thumbnail, { key: "F10", shiftKey: true });
+    expect(showContextMenu).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [
+          { id: "open", label: "Open" },
+          { id: "copy-image", label: "Copy Image" },
+          { id: "save-image", label: "Save Image…" },
+        ],
+      }),
+    );
+  });
+
+  it("links a path found in any of the task's folders, opens it in the Workspace that holds it, and copies it from its menu", async () => {
+    const thread = open();
+    const inWorktree = await within(thread).findByTitle(
+      "Open /w/wt/src/auth/login.ts:42 in the editor",
+    );
+    const inWorkspace = await within(thread).findByTitle(
+      "Open /w/payments/src/auth/retry.ts in the editor",
+    );
+    expect(resolveEscalationPaths).toHaveBeenCalledWith("/w/wt", [
+      "src/auth/login.ts",
+      "src/auth/retry.ts",
+    ]);
+    expect(resolveEscalationPaths).toHaveBeenCalledWith("/w/payments", [
+      "src/auth/retry.ts",
+    ]);
+    fireEvent.click(inWorkspace);
+    expect(openLinkedFile).toHaveBeenCalledWith(
+      "w-pay",
+      "/w/payments/src/auth/retry.ts",
+      undefined,
+    );
+    showContextMenu.mockResolvedValueOnce("copy-link");
+    fireEvent.contextMenu(inWorktree, { clientX: 10, clientY: 20 });
+    await waitFor(() => {
+      expect(copyText).toHaveBeenCalledWith(
+        "devhub:file/w/wt/src/auth/login.ts:42",
+      );
+    });
+    expect(showContextMenu).toHaveBeenCalledWith({
+      items: [
+        { id: "open", label: "Open" },
+        { id: "copy-path", label: "Copy Path" },
+        { id: "copy-link", label: "Copy Link" },
+      ],
+      at: { x: 10, y: 20 },
+    });
+    // ⌘C on the focused link, nothing selected: its path.
+    fireEvent.keyDown(inWorktree, { key: "c", metaKey: true });
+    await waitFor(() => {
+      expect(copyText).toHaveBeenCalledWith("/w/wt/src/auth/login.ts");
+    });
+  });
+
+  it("gives a URL chip the conversation's link menu", async () => {
+    motion(true);
+    mount(
+      {
+        ...BOARD,
+        answer: [{ ...TASK, links: ["https://github.com/acme/app/pull/12"] }],
+      },
+      WORKSPACES,
+    );
+    fireEvent.click(document.querySelector<HTMLElement>('[data-task-id="9"]')!);
+    showContextMenu.mockResolvedValueOnce("copy-link");
+    fireEvent.contextMenu(
+      screen.getByTitle("https://github.com/acme/app/pull/12"),
+    );
+    await waitFor(() => {
+      expect(copyText).toHaveBeenCalledWith(
+        "https://github.com/acme/app/pull/12",
+      );
+    });
+    expect(showContextMenu.mock.calls[0]![0]).toMatchObject({
+      items: [
+        { id: "open", label: "Open in Browser" },
+        { id: "copy-link", label: "Copy Link" },
+      ],
+    });
   });
 });
 
@@ -1341,9 +1528,10 @@ describe("going to a Workspace from a task", () => {
       id: "w-pay",
       label: "payments",
       root: "/w/payments",
+      location: LOCAL,
       agents: [{ id: "a1" }],
     },
-    { id: "w-ops", label: "ops", root: "/w/ops", agents: [] },
+    { id: "w-ops", label: "ops", root: "/w/ops", location: LOCAL, agents: [] },
   ];
 
   it("offers each agent's Workspace — a stopped one's by its folder's — by name with a folder, no tooltip", () => {

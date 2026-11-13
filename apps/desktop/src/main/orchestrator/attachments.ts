@@ -36,6 +36,7 @@ import {
 import { randomBytes } from "node:crypto";
 import { basename, join } from "node:path";
 import { MAX_FILE, MAX_TOTAL } from "./escalationFiles.js";
+import { ATTACHMENTS_HEADING } from "../../model/escalationAttachments.js";
 
 export { MAX_FILE, MAX_TOTAL };
 
@@ -264,8 +265,12 @@ export class AttachmentStore {
 	}
 }
 
-/** The heading of the section the attachments are drawn under. */
-export const ATTACHMENTS_HEADING = "添付";
+/**
+ * The heading of the section the attachments are drawn under: read back by
+ * the task view (`model/escalationAttachments.ts`), so the shape written here
+ * is the one it parses.
+ */
+export { ATTACHMENTS_HEADING };
 
 /**
  * Copy `files` into the escalation's folder and say them as Markdown: the

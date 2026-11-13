@@ -483,9 +483,27 @@ An escalation draws what a conversation draws — `svg, `mermaid,
 `vega-lite, `html, Marp, and local files as `![alt](path)`, also inside
 a table's cells (a screenshot in a comparison table is drawn in place, at
 most the cell's width, and opens large on a click; the conversation does the
-same). A relative path is relative to the Workspace of the task's first bound
+same). A relative path is relative to the Workspace of the task's latest bound
 agent, else the orchestrator's folder, and files are read with the
 conversation's own embed readers on this Mac.
+
+A **file path** in the thread (`src/a.ts:12`, in prose or inline code) is a
+link when it names a file on this Mac under one of the task's folders,
+looked through in order: each bound agent's own folder (its worktree, when it
+is on this Mac) and its Workspace's, the latest agent first, then the
+orchestrator's folder (`taskPlaces`). A click opens it in the editor of the
+open Workspace that holds it, as a `devhub:file` link does; one in no open
+Workspace opens on the latest agent's machine. Its right-click menu, and
+every other link's, is the conversation's (`docs/agent-gui.md`, "A link's
+right-click menu"), the task's and question's URL chips included.
+
+**Typesetting.** The task view is typeset as a GUI conversation is: the
+small space between Japanese and Latin letters or digits (`text-autospace`)
+and trimmed full-width punctuation (`text-spacing-trim`), on the thread, the
+memo, the request, the quick replies and the answer box —
+`.conversation-typeset`, the conversation root's own rule — and off wherever
+monospace is set. Its size stays the board's (13px), smaller than the
+conversation's.
 
 `escalation new` takes the local images (PNG, JPEG, GIF,
 WebP, SVG, …) a body names into the escalation's own folder,
@@ -507,9 +525,14 @@ runs on** — an SSH host or a container as well as this Mac. The command
 reads it there and sends its bytes with the request (the `files` round trip,
 `docs/devhub-cli.md`), so nothing in the app reads another machine's disk.
 Each is copied into the escalation's folder and the question ends with a
-`## 添付` section: each picture under its caption (or its name), drawn by the
-conversation's renderer and opened large by the lightbox on a click; `escalation
-show` lists them.
+`## 添付` section: each picture under its caption (or its name); `escalation
+show` lists them, and the card takes its thumbnail from it. The task view
+draws that section the way a conversation draws the pictures attached to a
+message: a row of thumbnails under the body, each with its caption under it,
+opening whole in place on a click or Return and large in the lightbox from its
+right-click menu (or Shift+F10), which also copies and saves it
+(`model/escalationAttachments.ts`; a section in any other shape is drawn as
+Markdown).
 
 **From a worker.** The orchestrator never does hands-on work, so the
 screenshot is a worker's. `devhub --tell attachment add FILE[=CAPTION]...`

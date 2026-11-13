@@ -30,6 +30,7 @@ import {
 } from "react";
 import { useAgentCwd, useConversationActions } from "./ConversationContext";
 import { rangeSuffix, type PathCandidate } from "./textLinks";
+import { fileMenu, linkMenuHandlers } from "./linkMenu";
 
 /** At most this many paths in one request: a long grep is several. */
 const BATCH = 500;
@@ -228,8 +229,22 @@ export function PathLink({
   const links = usePathLinks();
   const cwd = useAgentCwd();
   const file = useFileOf(candidate.path);
-  const { openFile, reportFailure } = useConversationActions();
+  const { openFile, reportFailure, showContextMenu, copyText } =
+    useConversationActions();
   if (typeof file !== "string") return <>{children}</>;
+  const open = () =>
+    openFile(file, candidate.range).catch((error: unknown) => {
+      // The file has gone since the link was drawn: ask again, so the
+      // word goes back to plain text rather than staying a link that
+      // fails the same way every time it is followed.
+      links.forget(cwd, candidate.path);
+      reportFailure(error);
+    });
+  const menu = linkMenuHandlers(
+    () => fileMenu(file, candidate.range, { open, copyText }),
+    showContextMenu,
+    reportFailure,
+  );
   return (
     <a
       // `#` and not the file: a link DevHub does not handle itself would
@@ -243,14 +258,10 @@ export function PathLink({
         // it was.
         event.preventDefault();
         event.stopPropagation();
-        void openFile(file, candidate.range).catch((error: unknown) => {
-          // The file has gone since the link was drawn: ask again, so the
-          // word goes back to plain text rather than staying a link that
-          // fails the same way every time it is followed.
-          links.forget(cwd, candidate.path);
-          reportFailure(error);
-        });
+        void open();
       }}
+      onContextMenu={menu.onContextMenu}
+      onKeyDown={menu.onKeyDown}
     >
       {children}
     </a>

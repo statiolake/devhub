@@ -32,6 +32,7 @@ export function fakeActions(
     // A menu that is dismissed, unless a test says what is chosen.
     showContextMenu: vi.fn(() => Promise.resolve(undefined)),
     openExternalUrl: vi.fn(() => Promise.resolve()),
+    copyText: vi.fn(() => Promise.resolve()),
     send: vi.fn(() => Promise.resolve()),
     startEditingPending: vi.fn(() => Promise.resolve()),
     editPending: vi.fn(() => Promise.resolve()),

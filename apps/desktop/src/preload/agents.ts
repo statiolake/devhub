@@ -87,6 +87,14 @@ const api: AgentsBridge = {
 		ipcRenderer.invoke(CHANNELS.devhubSessionAgent, session) as Promise<
 			string | null
 		>,
+	copyDevhubLink: (link, markdown) =>
+		ipcRenderer.invoke(
+			CHANNELS.copyDevhubLink,
+			link,
+			markdown,
+		) as Promise<void>,
+	copyText: (text) =>
+		ipcRenderer.invoke(CHANNELS.copyText, text) as Promise<void>,
 	resolveEscalationPaths: (cwd, paths) =>
 		ipcRenderer.invoke(CHANNELS.resolveEscalationPaths, cwd, paths) as Promise<
 			readonly (string | null)[]

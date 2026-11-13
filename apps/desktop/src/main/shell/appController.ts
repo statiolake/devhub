@@ -6989,10 +6989,19 @@ export class AppController {
 		const copied = markdown
 			? markdownDevhubLink(found.found ? targetName(found.target) : "", link)
 			: formatDevhubLink(link);
-		electron.clipboard.writeText(copied);
+		this.copyText(copied);
+	}
+
+	/**
+	 * `text` on this Mac's clipboard as it is, and Copy Link's notice saying
+	 * so: a link's menu's Copy Link or Copy Path on a URL or a file
+	 * (`shell/conversation/linkMenu.ts`), and `copyDevhubLink`'s copy.
+	 */
+	copyText(text: string): void {
+		electron.clipboard.writeText(text);
 		clearTimeout(this.linkCopiedTimer);
 		this.publishCondition(LINK_COPIED_CONDITION, undefined);
-		this.publishCondition(LINK_COPIED_CONDITION, `コピーしました: ${copied}`);
+		this.publishCondition(LINK_COPIED_CONDITION, `コピーしました: ${text}`);
 		this.linkCopiedTimer = setTimeout(() => {
 			this.publishCondition(LINK_COPIED_CONDITION, undefined);
 		}, LINK_COPIED_MS);
@@ -10743,6 +10752,12 @@ export class AppController {
 				this.copyDevhubLink(link, markdown === true);
 			},
 		);
+		// A link's menu's Copy Link / Copy Path: written and said the same way.
+		handle(CHANNELS.copyText, (_event, text: unknown) => {
+			if (typeof text !== "string")
+				throw new Error(`${String(text)} is not text to copy`);
+			this.copyText(text);
+		});
 		receive(CHANNELS.showTooltip, (_event, request: TooltipRequestWire) => {
 			shellWindow().tooltip.show(request);
 		});

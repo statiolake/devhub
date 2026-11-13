@@ -10,6 +10,7 @@ import {
 	withAttachmentsSection,
 	writeEscalationAttachments,
 } from "./attachments.js";
+import { splitAttachments } from "../../model/escalationAttachments.js";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]);
 const SVG = new TextEncoder().encode(
@@ -94,5 +95,28 @@ describe("attachments", () => {
 		);
 		expect(withAttachmentsSection("body", "")).toBe("body");
 		expect(writeEscalationAttachments(into, [])).toBe("");
+	});
+
+	it("writes the section the task view reads back as thumbnails", () => {
+		const into = folder();
+		const section = writeEscalationAttachments(into, [
+			{ name: "shot.png", bytes: PNG, caption: "修正後の [画面]" },
+			{ name: "flow.svg", bytes: SVG },
+		]);
+		expect(
+			splitAttachments(
+				withAttachmentsSection("## 決めてほしいこと\n\nx", section),
+			),
+		).toEqual({
+			body: "## 決めてほしいこと\n\nx",
+			attachments: [
+				{
+					path: join(into, "a1-shot.png"),
+					name: "shot.png",
+					caption: "修正後の [画面]",
+				},
+				{ path: join(into, "a2-flow.svg"), name: "flow.svg" },
+			],
+		});
 	});
 });

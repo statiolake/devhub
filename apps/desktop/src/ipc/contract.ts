@@ -1861,6 +1861,18 @@ export interface DevhubLinksBridge {
 	): Promise<void>;
 	/** The open Agent running `session` (an id or a 4+ prefix), or `null`. */
 	devhubSessionAgent(session: string): Promise<string | null>;
+	/**
+	 * A link's menu's Copy Link / Copy Markdown Link on a `devhub:` chip
+	 * (`shell/conversation/linkMenu.ts`): as the Sidebar's row menu copies one
+	 * (`SidebarBridge.copyDevhubLink`), with the same notice.
+	 */
+	copyDevhubLink(link: string, markdown: boolean): Promise<void>;
+	/**
+	 * A link's menu's Copy Link or Copy Path on a URL, a file path or a
+	 * picture's: `text` on this Mac's clipboard as it is, and the same short
+	 * notice saying so that Copy Link shows.
+	 */
+	copyText(text: string): Promise<void>;
 }
 
 /** Every Agent, in one view — `agents.html`. */
@@ -2583,6 +2595,7 @@ export const CHANNELS = {
 	/** A row's context menu, put up by main as a native menu. */
 	showContextMenu: "devhub:show-context-menu",
 	copyDevhubLink: "devhub:copy-devhub-link",
+	copyText: "devhub:copy-text",
 	/** The Sidebar asking for a tooltip over the window, about one of its rows. */
 	showTooltip: "devhub:show-tooltip",
 	/** The Sidebar taking it down again, at once. */

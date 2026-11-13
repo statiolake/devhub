@@ -19,6 +19,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { WorkspaceRepositoryWire } from "../../ipc/contract";
 import { useConversationActions } from "./ConversationContext";
+import { linkMenuHandlers, urlMenu } from "./linkMenu";
 import type { IssueReference } from "./textLinks";
 
 /** Where a bare `#12` is numbered, and the titles already known there. */
@@ -85,9 +86,15 @@ export function IssueLink({
   readonly children: ReactNode;
 }) {
   const here = useContext(IssueRepositoryContext);
-  const { openExternalUrl, reportFailure } = useConversationActions();
+  const { openExternalUrl, reportFailure, showContextMenu, copyText } =
+    useConversationActions();
   const url = issueUrl(reference, here);
   if (url === undefined) return <>{children}</>;
+  const menu = linkMenuHandlers(
+    () => urlMenu(url, { openExternalUrl, copyText }),
+    showContextMenu,
+    reportFailure,
+  );
   const title = titleOf(reference, here);
   return (
     <a
@@ -101,6 +108,8 @@ export function IssueLink({
         event.stopPropagation();
         void openExternalUrl(url).catch(reportFailure);
       }}
+      onContextMenu={menu.onContextMenu}
+      onKeyDown={menu.onKeyDown}
     >
       {children}
     </a>

@@ -10,7 +10,11 @@ import type {
   ToolOutput,
   ToolOutputPart,
 } from "../../model/conversation";
-import { useAgentCwd } from "./ConversationContext";
+import { useState } from "react";
+import { useAgentCwd, useConversationActions } from "./ConversationContext";
+import { Lightbox, LightboxPicture } from "./Lightbox";
+import { imageMenu, linkMenuHandlers } from "./linkMenu";
+import { pngOf } from "./RasterPreview";
 import { LinkedText } from "./LinkedText";
 import { Picture } from "./Picture";
 import { PathLink } from "./pathLinks";
@@ -183,9 +187,29 @@ export function imageUrl(image: ImageRef): string | undefined {
  * An image in the conversation, at a size that keeps the transcript
  * readable; opening it shows it whole. One the page cannot read is named
  * where it would be, never left out.
+ *
+ * Its thumbnail is the `<summary>`: a press or Return/Space opens it in
+ * place, and a right-click — or Shift+F10 on it focused — has Open (large,
+ * in the lightbox), Copy Image and Save Image… (`linkMenu.ts`); ⌘C on it
+ * focused copies the image. A caption, when it has one, is under the
+ * thumbnail.
  */
-export function ImageView({ image }: { readonly image: ImageRef }) {
+export function ImageView({
+  image,
+  caption,
+}: {
+  readonly image: ImageRef;
+  /** What it shows, in words: an escalation attachment's `=CAPTION`. */
+  readonly caption?: string;
+}) {
   const url = imageUrl(image);
+  const {
+    showContextMenu,
+    writeClipboardImage,
+    saveSlideImages,
+    reportFailure,
+  } = useConversationActions();
+  const [enlarged, setEnlarged] = useState(false);
   if (url === undefined) {
     return (
       <div className="conversation-image-missing" title={image.label}>
@@ -193,18 +217,77 @@ export function ImageView({ image }: { readonly image: ImageRef }) {
       </div>
     );
   }
+  const menu = linkMenuHandlers(
+    () =>
+      imageMenu({
+        open: () => setEnlarged(true),
+        copyImage: async () => writeClipboardImage(await pngOf(url)),
+        saveImage: async () =>
+          saveSlideImages({
+            images: [await pngOf(url)],
+            name: image.label.replace(/\.[a-z0-9]+$/iu, "") || "image",
+          }),
+      }),
+    showContextMenu,
+    reportFailure,
+  );
   return (
     <details className="conversation-image">
-      <summary>
-        <img src={url} alt={image.label} />
+      <summary
+        title={caption ?? image.label}
+        onContextMenu={menu.onContextMenu}
+        onKeyDown={menu.onKeyDown}
+      >
+        <img src={url} alt={caption ?? image.label} />
+        {caption === undefined ? null : (
+          <span className="conversation-image-caption">{caption}</span>
+        )}
       </summary>
       <Picture
         className="conversation-image-whole"
         src={url}
-        alt={image.label}
+        alt={caption ?? image.label}
         boxed={false}
       />
+      {enlarged ? (
+        <Lightbox
+          label={caption ?? image.label}
+          onClose={() => setEnlarged(false)}
+        >
+          <LightboxPicture src={url} alt={caption ?? image.label} />
+        </Lightbox>
+      ) : null}
     </details>
+  );
+}
+
+/**
+ * Images in a row of thumbnails, each opening to itself whole: what a
+ * message was sent with, what a tool gave back, and an escalation's
+ * `--attach` pictures (`EscalationAttachments`), each under its caption.
+ */
+export function ImageStrip({
+  images,
+  captions,
+  label,
+}: {
+  readonly images: readonly ImageRef[];
+  /** Each image's caption, by index, where it has one. */
+  readonly captions?: readonly (string | undefined)[];
+  /** The row's accessible name, when it is a section of its own. */
+  readonly label?: string;
+}) {
+  if (images.length === 0) return null;
+  return (
+    <div
+      className="conversation-images"
+      role={label === undefined ? undefined : "group"}
+      aria-label={label}
+    >
+      {images.map((image, index) => (
+        <ImageView key={index} image={image} caption={captions?.[index]} />
+      ))}
+    </div>
   );
 }
 

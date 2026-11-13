@@ -52,6 +52,7 @@ import { DevhubLink } from "./DevhubLink";
 import { isDevhubLink } from "../../model/devhubLink";
 import { Table } from "./Table";
 import { linkSpans, pathOfHref, rangeSuffix } from "./textLinks";
+import { fileMenu, linkMenuHandlers, urlMenu } from "./linkMenu";
 
 const REMARK_PLUGINS = [remarkGfm, remarkMath];
 
@@ -93,11 +94,38 @@ export function ExternalLink({
   readonly href: string | undefined;
   readonly children?: ReactNode;
 }) {
-  const { openExternalUrl, resolvePaths, openFile, reportFailure } =
-    useConversationActions();
+  const {
+    openExternalUrl,
+    resolvePaths,
+    openFile,
+    reportFailure,
+    showContextMenu,
+    copyText,
+  } = useConversationActions();
   const cwd = useAgentCwd();
   const file = href === undefined ? undefined : pathOfHref(href);
   if (file !== undefined) {
+    /** The file it names, or `undefined` (said) when there is none. */
+    const found = async () => {
+      const [path] = await resolvePaths(cwd, [file.path]);
+      if (typeof path === "string") return path;
+      reportFailure(
+        fileNotFoundError(
+          file.path,
+          "There is no such file on the Agent's machine.",
+        ),
+      );
+      return undefined;
+    };
+    const open = async () => {
+      const path = await found();
+      if (path !== undefined) await openFile(path, file.range);
+    };
+    const menu = linkMenuHandlers(
+      () => fileMenu(found, file.range, { open, copyText }),
+      showContextMenu,
+      reportFailure,
+    );
     return (
       <a
         href="#"
@@ -106,25 +134,23 @@ export function ExternalLink({
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
-          void (async () => {
-            const [found] = await resolvePaths(cwd, [file.path]);
-            if (typeof found !== "string") {
-              reportFailure(
-                fileNotFoundError(
-                  file.path,
-                  "There is no such file on the Agent's machine.",
-                ),
-              );
-              return;
-            }
-            await openFile(found, file.range);
-          })().catch(reportFailure);
+          void open().catch(reportFailure);
         }}
+        onContextMenu={menu.onContextMenu}
+        onKeyDown={menu.onKeyDown}
       >
         {children}
       </a>
     );
   }
+  const menu =
+    href === undefined
+      ? undefined
+      : linkMenuHandlers(
+          () => urlMenu(href, { openExternalUrl, copyText }),
+          showContextMenu,
+          reportFailure,
+        );
   return (
     <a
       href={href}
@@ -134,6 +160,8 @@ export function ExternalLink({
         event.preventDefault();
         if (href) void openExternalUrl(href).catch(reportFailure);
       }}
+      onContextMenu={menu?.onContextMenu}
+      onKeyDown={menu?.onKeyDown}
     >
       {children}
     </a>

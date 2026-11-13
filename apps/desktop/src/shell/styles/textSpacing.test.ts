@@ -8,7 +8,9 @@
  * and so does every field typed into, because the one form-control rule in
  * `tokens.css` makes controls inherit both. Wherever `--font-mono` is set, both
  * are turned off, so a code block, a diff or command output keeps its columns.
- * Nothing else in DevHub sets either.
+ * The Orchestrator's task view and file view are the same renderer outside a
+ * conversation, and take the same typesetting by `.conversation-typeset`,
+ * the root rule's second selector. Nothing else in DevHub sets either.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -46,6 +48,9 @@ function ruleFor(css: string, selector: string): string {
   return found[0].body;
 }
 
+/** The rule that turns it on: the conversation, and its renderer elsewhere. */
+const ROOT = ".conversation-surface, .conversation-typeset";
+
 const TYPESETTING =
   /text-autospace:\s*normal;[\s\S]*text-spacing-trim:\s*trim-start;/;
 const MONOSPACE =
@@ -57,9 +62,20 @@ const MONO_FACE =
   /font-family:\s*(?:"DevHub Nerd Symbols",\s*)?var\(--font-mono\)/;
 
 describe("text spacing", () => {
-  it("is turned on at the conversation's root", () => {
+  it("is turned on at the conversation's root, and wherever its renderer is drawn outside one", () => {
     const conversation = read("shell/conversation/conversation.css");
-    expect(ruleFor(conversation, ".conversation-surface")).toMatch(TYPESETTING);
+    expect(ruleFor(conversation, ROOT)).toMatch(TYPESETTING);
+  });
+
+  it("is the Orchestrator's task and file views' too", () => {
+    for (const view of [
+      "shell/agents/OrchestratorScreen.tsx",
+      "shell/agents/OrchestratorFiles.tsx",
+    ]) {
+      expect(read(view), view).toMatch(
+        /className="orchestrator-thread[^"]*\bconversation-typeset\b/,
+      );
+    }
   });
 
   it("is inherited by every form control, which the browser would not do for font", () => {
@@ -94,7 +110,7 @@ describe("text spacing", () => {
         const where = `${path}: ${rule.selector}`;
         const isRoot =
           path.endsWith(join("conversation", "conversation.css")) &&
-          rule.selector === ".conversation-surface";
+          rule.selector === ROOT;
         const isControls =
           path.endsWith(join("styles", "tokens.css")) &&
           rule.selector === "button, input, textarea, select";

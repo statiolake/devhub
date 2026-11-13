@@ -949,6 +949,31 @@ only when DevHub already has it — the Workspace's own Issue and pull request,
 from the Sidebar's status — and the URL otherwise. A browser that could not
 be opened is said the way every other failure on the Agents page is.
 
+## A link's right-click menu
+
+Every link the conversation's renderer draws has a native right-click menu
+(`shell/conversation/linkMenu.ts`, put up by main the way the Sidebar's row
+menus are), here and in the Orchestrator's task view alike:
+
+| Link                            | Menu                                                   | ⌘C on it focused |
+| ------------------------------- | ------------------------------------------------------ | ---------------- |
+| a `devhub:` chip                | Open, Copy Link, Copy Markdown Link                    | Copy Link        |
+| a file path, a link to a file   | Open, Copy Path, Copy Link (`devhub:file/…:L`)         | Copy Path        |
+| a URL, an Issue or PR reference | Open in Browser, Copy Link                             | Copy Link        |
+| an image's thumbnail            | Open (large, in the lightbox), Copy Image, Save Image… | Copy Image       |
+
+A copy goes through main, which writes the clipboard and says so in the same
+quiet コピーしました notice the row menu's Copy Link shows; a `devhub:` chip's
+Copy Markdown Link names the place, as the row menu's does. A file's Copy Path
+is the absolute path main found for it. There is no Reveal in Finder: DevHub
+has no such action yet.
+
+**From the keyboard.** A link is focusable (Tab); Shift+F10 or the menu key on
+it opens the same menu under it — macOS has no keyboard menu key of its own,
+so these are DevHub's — and ⌘C with no text selected runs the menu's copy in
+the table. A right-click on text selected across a link is left to the page,
+so a selection is copied the ordinary way.
+
 ## Tables copy as CSV
 
 A Markdown table in an answer scrolls sideways in its own box rather than

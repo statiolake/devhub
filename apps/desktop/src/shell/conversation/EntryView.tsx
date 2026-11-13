@@ -54,7 +54,7 @@ import {
 } from "./ConversationContext";
 import { Clip } from "./Clip";
 import { REVEAL_EVENT } from "./findInTranscript";
-import { DiffView, ImageView, JsonView, OutputView } from "./EntryParts";
+import { DiffView, ImageStrip, JsonView, OutputView } from "./EntryParts";
 import { SkillText } from "./skillTokens";
 import {
   EntryTreeStore,
@@ -488,18 +488,6 @@ function useDisclosure(openByDefault: boolean) {
       if (now !== open) setChosen(now);
     },
   };
-}
-
-/** Images in a row of thumbnails, each opening to itself whole. */
-function ImageStrip({ images }: { readonly images: readonly ImageRef[] }) {
-  if (images.length === 0) return null;
-  return (
-    <div className="conversation-images">
-      {images.map((image, index) => (
-        <ImageView key={index} image={image} />
-      ))}
-    </div>
-  );
 }
 
 /** The images a call gave back, which are drawn on the call rather than folded into its output. */

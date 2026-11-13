@@ -42,6 +42,8 @@ export function AgentsDevhubLinks({
       navigate: (target) => navigateLink(target, ports),
       sessionAgent: ports.sessionAgent,
       reportFailure,
+      copyLink: (link, markdown) => devhub().copyDevhubLink(link, markdown),
+      showContextMenu: (request) => devhub().showContextMenu(request),
     };
   }, [snapshot, board, dispatch, reportFailure]);
   return <DevhubLinksProvider value={value}>{children}</DevhubLinksProvider>;

@@ -48,7 +48,9 @@ import { useAgents } from "./AgentsContext";
 import { devhub } from "./client";
 import { useGlide } from "../glide";
 import { focusIsOurs, useNavStack } from "./navStack";
-import { RichText } from "./orchestratorRichText";
+import { linkMenuHandlers, urlMenu } from "../conversation/linkMenu";
+import { RichText, type ThreadPlaces } from "./orchestratorRichText";
+import { splitAttachments } from "../../model/escalationAttachments";
 import { listenForLightboxes } from "../conversation/lightboxLayer";
 import { FilesPage } from "./OrchestratorFiles";
 import { ModeControl } from "./OrchestratorDelivery";
@@ -298,6 +300,40 @@ export function taskBase(
     if (workspace !== undefined) return workspace.root;
   }
   return orchestratorRoot;
+}
+
+/**
+ * Where a task's file paths are looked for, on this Mac: each bound agent's
+ * own folder and its Workspace's, the latest agent first, then `base` (the
+ * orchestrator's folder when no agent has one); and the open Workspaces a
+ * file found there opens in.
+ */
+export function taskPlaces(
+  task: TaskWire,
+  workspaces: AppSnapshot["workspaces"],
+  base: string | undefined,
+): ThreadPlaces {
+  const local = workspaces.filter(
+    (workspace) => workspace.location.kind === "local",
+  );
+  const bases: string[] = [];
+  const add = (folder: string | undefined) => {
+    if (folder !== undefined && folder !== "" && !bases.includes(folder))
+      bases.push(folder);
+  };
+  for (const agent of [...task.agents].reverse()) {
+    if (agent.machine === undefined || agent.machine === "local")
+      add(agent.folder);
+    add(
+      local.find((one) => one.agents.some((it) => it.id === agent.agentId))
+        ?.root,
+    );
+  }
+  add(base);
+  return {
+    bases,
+    workspaces: local.map((one) => ({ id: one.id, root: one.root })),
+  };
 }
 
 /** The board under a task, as a view. */
@@ -947,6 +983,13 @@ function TaskView({
   readonly onFocusWorkspace: (workspaceId: string) => void;
 }) {
   const pathsOn = task.agents.at(-1)?.agentId ?? orchestratorAgentId;
+  // The same places across the board's revisions, so the thread's links are
+  // not asked about again each time the snapshot or the task changes.
+  const placesKey = JSON.stringify(taskPlaces(task, workspaces, base));
+  const places = useMemo(
+    () => JSON.parse(placesKey) as ThreadPlaces,
+    [placesKey],
+  );
   const root = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const jumps = taskWorkspaces(task, workspaces);
@@ -1098,7 +1141,7 @@ function TaskView({
         ) : null}
       </div>
       <div
-        className="orchestrator-thread conversation-selectable"
+        className="orchestrator-thread conversation-selectable conversation-typeset"
         ref={scroller}
         tabIndex={-1}
         onScroll={(event) => {
@@ -1126,7 +1169,12 @@ function TaskView({
               {span(now - task.memo.at)} ago
             </span>
             <div className="orchestrator-memo-text">
-              <RichText source={task.memo.text} agentId={pathsOn} cwd={base} />
+              <RichText
+                source={task.memo.text}
+                agentId={pathsOn}
+                cwd={places.bases[0]}
+                places={places}
+              />
             </div>
           </div>
         )}
@@ -1143,7 +1191,8 @@ function TaskView({
               <RichText
                 source={task.request.text}
                 agentId={pathsOn}
-                cwd={base}
+                cwd={places.bases[0]}
+                places={places}
               />
             </div>
           </article>
@@ -1174,10 +1223,10 @@ function TaskView({
               </div>
             )}
             <div className="orchestrator-entry-body">
-              <RichText
-                source={one.question.markdown}
+              <QuestionBody
+                markdown={one.question.markdown}
                 agentId={pathsOn}
-                cwd={base}
+                places={places}
               />
             </div>
             <AnswerComposer escalation={one} onAnswered={onAnswered} />
@@ -1201,6 +1250,34 @@ function TaskView({
   );
 }
 
+/**
+ * A question's body: its Markdown by the conversation's renderer, and its
+ * `## 添付` pictures as the conversation draws a message's attachments.
+ */
+function QuestionBody({
+  markdown,
+  agentId,
+  places,
+}: {
+  readonly markdown: string;
+  readonly agentId: string | undefined;
+  readonly places: ThreadPlaces;
+}) {
+  const { body, attachments } = useMemo(
+    () => splitAttachments(markdown),
+    [markdown],
+  );
+  return (
+    <RichText
+      source={body}
+      agentId={agentId}
+      cwd={places.bases[0]}
+      places={places}
+      attachments={attachments}
+    />
+  );
+}
+
 /** A link of a task or a question: a `devhub:` chip, or a URL with its label. */
 function LinkChip({
   link,
@@ -1209,15 +1286,29 @@ function LinkChip({
   readonly link: string;
   readonly label: string | undefined;
 }) {
+  const { reportFailure } = useAgents();
   if (isDevhubLink(link)) return <DevhubLink href={link} />;
+  const bridge = devhub();
+  // The conversation's link menu: Open in Browser, Copy Link (`linkMenu.ts`).
+  const menu = linkMenuHandlers(
+    () =>
+      urlMenu(link, {
+        openExternalUrl: (url) => bridge.openExternalUrl(url),
+        copyText: (text) => bridge.copyText(text),
+      }),
+    (request) => bridge.showContextMenu(request),
+    reportFailure,
+  );
   return (
     <button
       type="button"
       className="orchestrator-chip is-link"
       title={link}
       onClick={() => {
-        void devhub().openExternalUrl(link);
+        void bridge.openExternalUrl(link);
       }}
+      onContextMenu={menu.onContextMenu}
+      onKeyDown={menu.onKeyDown}
     >
       {label === undefined ? (
         linkLabel(link)

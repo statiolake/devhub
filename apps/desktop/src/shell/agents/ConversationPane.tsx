@@ -71,6 +71,7 @@ export function ConversationPane({
     const bridge = devhub();
     return {
       writeClipboard: (text: string) => bridge.writeClipboard(text),
+      copyText: (text: string) => bridge.copyText(text),
       writeClipboardImage: (png: Uint8Array) => bridge.writeClipboardImage(png),
       writeClipboardRich: (content: RichClipboardWire) =>
         bridge.writeClipboardRich(content),

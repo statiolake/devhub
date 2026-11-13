@@ -21,6 +21,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   baseName,
+  formatDevhubLink,
+  linkToTarget,
   parseDevhubLink,
   positionSuffix,
   resolveDevhubLink,
@@ -30,6 +32,7 @@ import {
 import type { AgentStatus } from "../../ipc/appShell";
 import { StatusMark } from "../components/sidebar/StatusMark";
 import { createPublishedContext } from "../model/publishedValue";
+import { devhubMenu, linkMenuHandlers, type ShowMenu } from "./linkMenu";
 
 export interface DevhubLinks {
   readonly places: LinkPlaces;
@@ -38,6 +41,10 @@ export interface DevhubLinks {
   /** The open agent running `session`, or `null` (asked of main). */
   readonly sessionAgent: (session: string) => Promise<string | null>;
   readonly reportFailure: (error: unknown) => void;
+  /** Copy Link / Copy Markdown Link, through main, with its notice. */
+  readonly copyLink: (link: string, markdown: boolean) => Promise<void>;
+  /** A native menu at `at`, resolved to the id chosen (`linkMenu.ts`). */
+  readonly showContextMenu: ShowMenu;
 }
 
 /**
@@ -200,6 +207,18 @@ function Chip({
         );
     }
   })();
+  const open = () => links.navigate(target);
+  // A right-click (or Shift+F10, ⌘C on it focused): Open, Copy Link, Copy
+  // Markdown Link — the Sidebar row menu's words (`linkMenu.ts`).
+  const menu = linkMenuHandlers(
+    () =>
+      devhubMenu(formatDevhubLink(linkToTarget(target)), {
+        open,
+        copyLink: links.copyLink,
+      }),
+    links.showContextMenu,
+    links.reportFailure,
+  );
   return (
     <button
       type="button"
@@ -210,8 +229,10 @@ function Chip({
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        void links.navigate(target).catch(links.reportFailure);
+        void open().catch(links.reportFailure);
       }}
+      onContextMenu={menu.onContextMenu}
+      onKeyDown={menu.onKeyDown}
     >
       <Glyph kind={target.kind} />
       <span className="devhub-link-kind">{KIND_LABEL[target.kind]}</span>

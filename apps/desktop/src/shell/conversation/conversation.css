@@ -47,16 +47,23 @@
   color: var(--primary);
   font-size: var(--conversation-font-size);
   line-height: 1.6;
-  /* Japanese typeset the usual way, in the transcript and in every field the
-     person types into (they inherit it: `tokens.css`). `text-autospace:
-     normal` puts a small space between CJK and Latin letters or digits; it is
-     Chromium's own initial `no-autospace` that this turns on. `trim-start`
-     is `normal` — the space collapsed where two full-width punctuation marks
-     meet — with an opening bracket set flush at the start of every line, the
-     first included: prose here has no indent, so a 「 that opened a paragraph
-     half an em in would read as a misaligned edge. Only the rendering
-     changes; no space is in the text, so a copy carries none. Monospace opts
-     out wherever it is set (`--font-mono`). */
+}
+
+/* Japanese typeset the usual way, in the transcript and in every field the
+   person types into (they inherit it: `tokens.css`). `text-autospace:
+   normal` puts a small space between CJK and Latin letters or digits; it is
+   Chromium's own initial `no-autospace` that this turns on. `trim-start`
+   is `normal` — the space collapsed where two full-width punctuation marks
+   meet — with an opening bracket set flush at the start of every line, the
+   first included: prose here has no indent, so a 「 that opened a paragraph
+   half an em in would read as a misaligned edge. Only the rendering
+   changes; no space is in the text, so a copy carries none. Monospace opts
+   out wherever it is set (`--font-mono`). `.conversation-typeset` is the same
+   typesetting for this renderer drawn outside a conversation: the
+   Orchestrator's task view (an escalation, the memo, the request, the quick
+   replies and the answer box) and a file of its folder. */
+.conversation-surface,
+.conversation-typeset {
   text-autospace: normal;
   text-spacing-trim: trim-start;
 }
@@ -1772,6 +1779,35 @@ span.conversation-picture-box > img {
 
 .conversation-image[open] > summary {
   cursor: zoom-out;
+}
+
+/* A thumbnail's caption: under it, at its width, one or two lines. */
+.conversation-image-caption {
+  display: -webkit-box;
+  width: 12em;
+  margin-top: var(--space-1);
+  overflow: hidden;
+  color: var(--secondary);
+  font-size: 0.85em;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.conversation-image[open] .conversation-image-caption {
+  width: auto;
+}
+
+/* A thumbnail whose bytes are still being read: its tile, empty, so the
+   row does not move when it arrives. */
+.conversation-image-pending {
+  display: block;
+  width: 12em;
+  height: 8em;
+  box-sizing: border-box;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-control);
+  background: var(--sunken);
 }
 
 .conversation-image[open] > summary > img {
