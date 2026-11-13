@@ -121,6 +121,18 @@
   padding: 2px 0;
 }
 
+/* The row under the pointer, lit faintly as a list's row is under it (VS
+   Code's hover), at once and on the page alone: the focused row and
+   Visual's band keep their own ground over it. */
+.nvim-view-item:not(
+    .nvim-view-card,
+    .nvim-view-sticky,
+    .nvim-view-focused,
+    .nvim-view-selected
+  ):hover {
+  background: color-mix(in srgb, currentcolor 5%, transparent);
+}
+
 .nvim-view-focused:not(.nvim-view-card) {
   background: var(--nvim-cursorline);
 }

@@ -160,6 +160,12 @@
   flex: 1;
 }
 
+/* The row under the pointer, faintly (`layers.css`), under the selection's
+   own ground. */
+.nvim-view-frame-row:not(.nvim-view-frame-selected):hover {
+  background: color-mix(in srgb, currentcolor 5%, transparent);
+}
+
 .nvim-view-frame-selected {
   background: var(--frame-selected-idle);
 }

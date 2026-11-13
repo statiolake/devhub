@@ -13,7 +13,13 @@
  * Lua calls; the plugin decides what they do.
  */
 
-import { useLayoutEffect, useRef, type CSSProperties } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { createPortal } from "react-dom";
 import { ComponentTree, fgOf, type ComponentTheme } from "./ComponentView";
 import { isDark, revealScroll, rgbCss, type HlTable } from "./components";
@@ -26,6 +32,7 @@ type FrameContent = ViewFrame & {
   readonly keys: readonly (readonly [string, string])[];
 };
 import type { LayerHost } from "./LayerViews";
+import { PROVISIONAL_TTL_MS } from "./provisional";
 import { charOffsetOfByte } from "./redraw";
 import { formatKeys } from "../../model/keyNotation";
 
@@ -523,7 +530,27 @@ function FrameList({
   const scroller = useRef<HTMLDivElement>(null);
   const reported = useRef(0);
   const rowHeight = frameRowHeight(host.cell.height);
-  const cursor = place.list.cursor;
+  // A row pressed is selected at once, before Neovim's cursor gets there
+  // (`provisional.ts`), as long as Neovim's is still where it was.
+  const [pressed, setPressed] = useState<
+    { readonly line: number; readonly base: number } | undefined
+  >(undefined);
+  const actual = place.list.cursor;
+  useEffect(() => {
+    if (pressed === undefined) return;
+    if (pressed.base !== actual) {
+      setPressed(undefined);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setPressed(undefined);
+    }, PROVISIONAL_TTL_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [pressed, actual]);
+  const cursor =
+    pressed !== undefined && pressed.base === actual ? pressed.line : actual;
 
   // How many rows fit, told once per change; and the selected row in sight.
   useLayoutEffect(() => {
@@ -581,6 +608,11 @@ function FrameList({
               onMouseDown={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                setPressed(
+                  item.line === actual
+                    ? undefined
+                    : { line: item.line, base: actual },
+                );
                 host.lua("_frame_click", [
                   place.id,
                   item.line,

@@ -12,8 +12,11 @@
  */
 
 import {
+  memo,
   useCallback,
+  useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -37,8 +40,10 @@ import type {
   PopupPlace,
   PopupScroll,
   ViewContent,
+  ViewItem,
   ViewPlace,
 } from "./layers";
+import { PROVISIONAL_TTL_MS } from "./provisional";
 import { placePopup, popupMaxWidth, popupScrollTop } from "./popup";
 import type { OverPart } from "./painter";
 import { createPortal } from "react-dom";
@@ -176,10 +181,35 @@ function GuiView({
   const scroller = useRef<HTMLDivElement>(null);
   const placeRef = useRef(place);
   placeRef.current = place;
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  // A row pressed is focused at once, before Neovim moves its cursor there
+  // (`provisional.ts`): while Neovim's cursor is still where it was, up to
+  // a slow link's round trip; then Neovim's line, whatever it is.
+  const [pressed, setPressed] = useState<
+    { readonly line: number; readonly base: number } | undefined
+  >(undefined);
+  useEffect(() => {
+    if (pressed === undefined) return;
+    if (pressed.base !== place.cursor) {
+      setPressed(undefined);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setPressed(undefined);
+    }, PROVISIONAL_TTL_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [pressed, place.cursor]);
+  const cursorLine =
+    pressed !== undefined && pressed.base === place.cursor
+      ? pressed.line
+      : place.cursor;
   // The focused item: the cursor's line, or the last item above it.
   let focused = -1;
   content.items.forEach((item, index) => {
-    if (item.line <= place.cursor) focused = index;
+    if (item.line <= cursorLine) focused = index;
   });
   const focusedRef = useRef(focused);
   focusedRef.current = focused;
@@ -195,13 +225,16 @@ function GuiView({
 
   // Keep the focused item in sight, moving as little as possible — below
   // the sticky items held at the top (a sticky one is always in sight).
+  // Only when what decides it changed: a view of a thousand rows is not
+  // measured again for every redraw of the windows beside it.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const all = boxes();
     const index = focusedRef.current;
+    if (content.items[index]?.sticky === true) return;
+    const all = boxes();
     const item = all[index];
-    if (!item || content.items[index]?.sticky === true) return;
+    if (!item) return;
     let inset = 0;
     content.items.forEach((it, i) => {
       if (it.sticky === true && i < index) inset += all[i]?.height ?? 0;
@@ -212,27 +245,45 @@ function GuiView({
       item.top - inset,
       item.height,
     );
-  });
+  }, [focused, content, box.width, box.height, cell.height]);
 
-  const theme = themeFor(host, content.hl, () => undefined);
+  const theme = useMemo(
+    () => themeFor(host, content.hl, () => undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- what `themeFor` reads of the host
+    [content.hl, host.mono, host.defaults, host.openLink],
+  );
   const ring = ringColor(content.hl, theme.fg);
-  const cursorLine = content.hl.get("CursorLine")?.bg;
-  const click = (line: number, action: number | null, clicks = 1) => {
-    host.lua("_layers_click", [
-      "view",
-      content.id,
-      place.win,
-      line,
-      action,
-      clicks,
-    ]);
-    host.refocus();
-  };
+  const cursorLine_ = content.hl.get("CursorLine")?.bg;
   const indent = content.indent;
   const guide =
     indent !== undefined ? activeGuide(content.items, focused) : undefined;
   const visual = place.visual;
   const lines = content.items.map((item) => item.line);
+  // The rows' callbacks stay the same function from render to render, so a
+  // row whose own look did not change is not rendered again (`ViewRow`).
+  const click = useCallback(
+    (line: number, action: number | null, clicks = 1) => {
+      const at = placeRef.current;
+      hostRef.current.lua("_layers_click", [
+        "view",
+        content.id,
+        at.win,
+        line,
+        action,
+        clicks,
+      ]);
+      hostRef.current.refocus();
+    },
+    [content.id],
+  );
+  const press = useCallback(
+    (line: number, clicks: number) => {
+      const base = placeRef.current.cursor;
+      setPressed(line === base ? undefined : { line, base });
+      click(line, null, clicks);
+    },
+    [click],
+  );
 
   const style: CSSProperties = {
     left: box.col * cell.width,
@@ -245,8 +296,8 @@ function GuiView({
     ["--nvim-ground" as string]: rgbCss(theme.bg),
     ["--nvim-grid-font" as string]: host.mono,
     ["--nvim-cursorline" as string]:
-      cursorLine !== undefined
-        ? rgbCss(cursorLine)
+      cursorLine_ !== undefined
+        ? rgbCss(cursorLine_)
         : `color-mix(in srgb, ${rgbCss(theme.fg)} 8%, transparent)`,
     ["--nvim-muted" as string]:
       fgOf(content.hl, "Comment") ?? rgbCss(theme.fg, 0.55),
@@ -297,86 +348,25 @@ function GuiView({
       }}
     >
       <div className="nvim-view-scroll" ref={scroller}>
-        {content.items.map((item, index) => {
-          const isCard =
-            item.node !== undefined &&
-            (item.node.type === "stack" || item.node.type === "hstack") &&
-            item.node.card === true;
-          const depth = indent !== undefined ? (item.depth ?? 0) : 0;
-          const band = bandPart(lines, index, visual);
-          const itemStyle: CSSProperties = {
-            ...(indent !== undefined
-              ? {
-                  paddingLeft: `calc(var(--nvim-view-pad) + ${String(depth * indent)}px)`,
-                }
-              : {}),
-            ...(content.rowHeight !== undefined
-              ? { minHeight: content.rowHeight }
-              : {}),
-          };
-          return (
-            <div
-              key={item.line}
-              className={[
-                "nvim-view-item",
-                index === focused ? "nvim-view-focused" : "",
-                isCard ? "nvim-view-card" : "",
-                band !== undefined
-                  ? `nvim-view-selected nvim-view-band-${band}`
-                  : "",
-                item.sticky === true ? "nvim-view-sticky" : "",
-                content.rowHeight !== undefined ? "nvim-view-row" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              style={itemStyle}
-              data-line={item.line}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                click(item.line, null, event.detail > 1 ? 2 : 1);
-              }}
-            >
-              {indent !== undefined
-                ? Array.from({ length: depth }, (_, level) => (
-                    <span
-                      key={`g${String(level)}`}
-                      className={
-                        guide !== undefined &&
-                        guide.level === level &&
-                        index >= guide.from &&
-                        index <= guide.to
-                          ? "nvim-view-guide nvim-view-guide-active"
-                          : "nvim-view-guide"
-                      }
-                      style={{
-                        left: `calc(var(--nvim-view-pad) + ${String(guideX(level, indent))}px)`,
-                      }}
-                    />
-                  ))
-                : null}
-              {item.heading ? (
-                <div className="nvim-view-heading">
-                  <ComponentTree node={item.heading} theme={theme} />
-                </div>
-              ) : null}
-              {item.node ? (
-                <ComponentTree
-                  node={item.node}
-                  theme={{
-                    ...theme,
-                    onAction: (action) => {
-                      click(item.line, action);
-                    },
-                  }}
-                />
-              ) : (
-                <span className="nvim-view-plain">
-                  {item.text === "" ? " " : item.text}
-                </span>
-              )}
-            </div>
-          );
-        })}
+        {content.items.map((item, index) => (
+          <ViewRow
+            key={item.line}
+            item={item}
+            focused={index === focused}
+            band={bandPart(lines, index, visual)}
+            depth={indent !== undefined ? (item.depth ?? 0) : 0}
+            indent={indent}
+            activeGuide={
+              guide !== undefined && index >= guide.from && index <= guide.to
+                ? guide.level
+                : -1
+            }
+            rowHeight={content.rowHeight}
+            theme={theme}
+            press={press}
+            click={click}
+          />
+        ))}
       </div>
       {content.keys.length > 0 ? (
         <div className="nvim-view-keys">
@@ -396,6 +386,107 @@ function GuiView({
     </div>
   );
 }
+
+/**
+ * One item of a view. Rendered again only when its own look changes (its
+ * item, focus, Visual band or guide), not for every redraw: a tree of a
+ * thousand rows would otherwise be built again at every wheel step in the
+ * window beside it.
+ */
+const ViewRow = memo(function ViewRow({
+  item,
+  focused,
+  band,
+  depth,
+  indent,
+  activeGuide: active,
+  rowHeight,
+  theme,
+  press,
+  click,
+}: {
+  readonly item: ViewItem;
+  readonly focused: boolean;
+  readonly band: ReturnType<typeof bandPart>;
+  readonly depth: number;
+  readonly indent: number | undefined;
+  /** The level whose guide is drawn stronger on this row, or -1. */
+  readonly activeGuide: number;
+  readonly rowHeight: number | undefined;
+  readonly theme: ComponentTheme;
+  readonly press: (line: number, clicks: number) => void;
+  readonly click: (line: number, action: number | null) => void;
+}) {
+  const isCard =
+    item.node !== undefined &&
+    (item.node.type === "stack" || item.node.type === "hstack") &&
+    item.node.card === true;
+  const itemStyle: CSSProperties = {
+    ...(indent !== undefined
+      ? {
+          paddingLeft: `calc(var(--nvim-view-pad) + ${String(depth * indent)}px)`,
+        }
+      : {}),
+    ...(rowHeight !== undefined ? { minHeight: rowHeight } : {}),
+  };
+  const nodeTheme = useMemo(
+    () => ({
+      ...theme,
+      onAction: (action: number) => {
+        click(item.line, action);
+      },
+    }),
+    [theme, click, item.line],
+  );
+  return (
+    <div
+      className={[
+        "nvim-view-item",
+        focused ? "nvim-view-focused" : "",
+        isCard ? "nvim-view-card" : "",
+        band !== undefined ? `nvim-view-selected nvim-view-band-${band}` : "",
+        item.sticky === true ? "nvim-view-sticky" : "",
+        rowHeight !== undefined ? "nvim-view-row" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      style={itemStyle}
+      data-line={item.line}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        press(item.line, event.detail > 1 ? 2 : 1);
+      }}
+    >
+      {indent !== undefined
+        ? Array.from({ length: depth }, (_, level) => (
+            <span
+              key={`g${String(level)}`}
+              className={
+                level === active
+                  ? "nvim-view-guide nvim-view-guide-active"
+                  : "nvim-view-guide"
+              }
+              style={{
+                left: `calc(var(--nvim-view-pad) + ${String(guideX(level, indent))}px)`,
+              }}
+            />
+          ))
+        : null}
+      {item.heading ? (
+        <div className="nvim-view-heading">
+          <ComponentTree node={item.heading} theme={theme} />
+        </div>
+      ) : null}
+      {item.node ? (
+        <ComponentTree node={item.node} theme={nodeTheme} />
+      ) : (
+        <span className="nvim-view-plain">
+          {item.text === "" ? " " : item.text}
+        </span>
+      )}
+    </div>
+  );
+});
 
 /**
  * Inline cards. The rows were reserved by Lua; the card is measured here at
