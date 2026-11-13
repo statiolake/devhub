@@ -6,6 +6,7 @@ import {
   frameRowHeight,
   framePage,
   frameRows,
+  measuredRows,
   wheelRows,
 } from "./FramedView";
 
@@ -32,6 +33,17 @@ describe("framed view rows", () => {
     expect(framePage(items.slice(0, 30), 30, 1)).toHaveLength(30);
     // Not measured yet: everything.
     expect(framePage(items, 0, 1)).toHaveLength(42);
+  });
+
+  it("are not told while the list is not laid out yet", () => {
+    // Seen in the stability suite (picker/open, 1x): the first measure
+    // was of a list with no height; "1 row fits" made snacks render a page
+    // of one, drawn for a frame.
+    expect(measuredRows(-8, 24)).toBeUndefined();
+    expect(measuredRows(0, 24)).toBeUndefined();
+    expect(measuredRows(23, 24)).toBeUndefined();
+    expect(measuredRows(24, 24)).toBe(1);
+    expect(measuredRows(17 * 18 - 8, 24)).toBe(12);
   });
 
   it("scroll at least a row per wheel notch, either way", () => {

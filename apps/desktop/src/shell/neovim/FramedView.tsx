@@ -65,6 +65,20 @@ export function framePage<T extends { readonly line: number }>(
   return items.slice(start, start + fit);
 }
 
+/**
+ * How many rows a list measured at `listHeight` fits, or nothing while it
+ * is not laid out yet (less than a row tall). Its first layout effect ran
+ * before the list had its height, and told the plugin one row fits: snacks
+ * rendered a page of one, and the list showed one row for a frame between
+ * its first page and its settled one.
+ */
+export function measuredRows(
+  listHeight: number,
+  rowHeight: number,
+): number | undefined {
+  return listHeight < rowHeight ? undefined : frameRows(listHeight, rowHeight);
+}
+
 /** The wheel's pixels as rows to scroll, at least one per notch. */
 export function wheelRows(deltaY: number, rowHeight: number): number {
   if (deltaY === 0) return 0;
@@ -611,9 +625,9 @@ function FrameList({
       el.clientHeight -
       (parseFloat(pad.paddingTop) || 0) -
       (parseFloat(pad.paddingBottom) || 0);
-    const rows = frameRows(inner, rowHeight);
-    if (rows !== fit) setFit(rows);
-    if (rows !== reported.current) {
+    const rows = measuredRows(inner, rowHeight);
+    if (rows !== undefined && rows !== fit) setFit(rows);
+    if (rows !== undefined && rows !== reported.current) {
       reported.current = rows;
       host.lua("_view_rows", [view.id, rows]);
     }
