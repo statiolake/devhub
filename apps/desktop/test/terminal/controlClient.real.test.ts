@@ -647,6 +647,45 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     await until("the end", () => view.ended);
   }, 20000);
 
+  it("scrolls copy mode by tmux's own wheel binding, `select-pane \\;` and all", async () => {
+    const socket = `devhub-wheel-default-${String(process.pid)}`;
+    sockets.push(socket);
+    tmux(socket, "new-session", "-d", "-s", "w", "-x", "80", "-y", "24", "sh");
+    // tmux's defaults, untouched: copy mode's WheelUpPane is
+    // `select-pane \; send-keys -X -N 5 scroll-up`, which list-keys writes
+    // with the `\;` a string tmux parses would take as an argument.
+    tmux(socket, "send-keys", "-t", "w", "PS1='$ '; clear; seq 1 100", "Enter");
+    const view = page();
+    const client = new ControlClient({
+      process: controlProcess(socket, "w"),
+      vt: lib,
+      cols: 80,
+      rows: 24,
+      post: view.post,
+      ended: () => undefined,
+    });
+    view.paints(client);
+    const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
+    await until("the output", () =>
+      view.screens.get(pane)?.some((row) => row === "100"),
+    );
+    await until("the bindings", () =>
+      (view.layout?.prefixes.length ?? 0) > 0 ? true : undefined,
+    );
+    const wheel = () =>
+      client.receive({ kind: "mouse", key: "WheelUpPane", pane, x: 5, y: 5 });
+    wheel();
+    await until("five lines up", () =>
+      view.copy?.scroll === 5 ? true : undefined,
+    );
+    wheel();
+    await until("ten lines up", () =>
+      view.copy?.scroll === 10 ? true : undefined,
+    );
+    client.stop();
+    await until("the end", () => view.ended);
+  }, 20000);
+
   it("says a new window is current only with its place among the windows", async () => {
     const socket = `devhub-neww-${String(process.pid)}`;
     sockets.push(socket);

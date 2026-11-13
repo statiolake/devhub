@@ -106,6 +106,7 @@ import {
 	type PromptStep,
 } from "./prompt.js";
 import {
+	commandListText,
 	popupOf,
 	popupPosition,
 	popupSize,
@@ -1305,7 +1306,8 @@ export class ControlClient {
 				"-b",
 				"-c",
 				"y",
-				command.replace(/#/g, "##"),
+				// A binding's `\;` is its separator here too (`commandListText`).
+				commandListText(command).replace(/#/g, "##"),
 			]);
 		} catch (failure: unknown) {
 			this.#o.post({

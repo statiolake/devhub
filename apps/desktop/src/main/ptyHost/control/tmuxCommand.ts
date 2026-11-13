@@ -72,6 +72,52 @@ export function parseCommands(text: string): string[][] {
 }
 
 /**
+ * A binding's text (`list-keys`) as a command list tmux parses from a
+ * string (`confirm-before`'s command, `#runText`): `list-keys` writes the
+ * separator between two commands as `\;`, as a config file must to hand
+ * both to `bind-key`, but in a string tmux parses `\;` is a `;` *word*,
+ * an argument of the command before it — `select-pane \; send-keys -X
+ * scroll-up` (copy mode's wheel, tmux's default) is `select-pane` with
+ * three arguments too many. Outside quotes, a `\;` word is made `;`.
+ */
+export function commandListText(text: string): string {
+	let out = "";
+	let quote: "'" | '"' | undefined;
+	for (let i = 0; i < text.length; i++) {
+		const c = text[i] ?? "";
+		if (quote !== undefined) {
+			if (c === "\\" && quote === '"' && i + 1 < text.length) {
+				out += c + (text[i + 1] ?? "");
+				i++;
+				continue;
+			}
+			if (c === quote) quote = undefined;
+			out += c;
+			continue;
+		}
+		if (c === "'" || c === '"') {
+			quote = c;
+			out += c;
+			continue;
+		}
+		const before = i === 0 ? " " : (text[i - 1] ?? " ");
+		const after = text[i + 2] ?? " ";
+		if (
+			c === "\\" &&
+			text[i + 1] === ";" &&
+			/\s/.test(before) &&
+			/\s/.test(after)
+		) {
+			out += ";";
+			i++;
+			continue;
+		}
+		out += c;
+	}
+	return out;
+}
+
+/**
  * A command's flags as tmux's `args_parse` reads them: `valued` take a value
  * (inline or the next word), `bare` do not; the words after them are `rest`.
  * A flag the command does not know is a refusal.

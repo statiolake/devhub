@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { POPUP_SCRIPT, keyBytes, popupInput } from "./popup.js";
 import {
+	commandListText,
 	parseCommands,
 	popupOf,
 	popupPosition,
@@ -14,6 +15,28 @@ const BIND_M =
 	'display-popup -E -w 80% -h 60% "  target_window=\\$(tmux list-windows -F \\"#{window_index}: #{window_name}\\" |     fzf --prompt=\\"Move pane to window: \\" |     cut -d: -f1);   if [ -n \\"\\$target_window\\" ]; then     tmux move-pane -t \\":\\$target_window\\";   fi "';
 
 describe("tmux's command syntax", () => {
+	it("makes list-keys' `\\;` separators a string's `;`, outside quotes only", () => {
+		expect(commandListText("select-pane \\; send-keys -X -N 5 scroll-up")).toBe(
+			"select-pane ; send-keys -X -N 5 scroll-up",
+		);
+		expect(commandListText("send -X scroll-up \\; select-pane")).toBe(
+			"send -X scroll-up ; select-pane",
+		);
+		// In quotes a `\\;` is the person's: left as written.
+		expect(commandListText("display -p 'a \\; b'")).toBe(
+			"display -p 'a \\; b'",
+		);
+		expect(commandListText('display -p "a \\; b"')).toBe(
+			'display -p "a \\; b"',
+		);
+		// A word that only ends in `\\;` is not a separator.
+		expect(commandListText("send x\\; y")).toBe("send x\\; y");
+		// Arms in braces are command lists too.
+		expect(commandListText("if -F 1 { select-pane \\; send -M }")).toBe(
+			"if -F 1 { select-pane ; send -M }",
+		);
+	});
+
 	it("splits commands and words as tmux does", () => {
 		expect(parseCommands("copy-mode \\; send-keys -X clear-selection")).toEqual(
 			[["copy-mode"], ["send-keys", "-X", "clear-selection"]],
