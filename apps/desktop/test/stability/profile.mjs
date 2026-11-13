@@ -111,6 +111,11 @@ export function makeProfile(root, pluginDirs) {
     `local plugins = ${luaList(Object.values(pluginDirs))}`,
   );
   write(join(paths.config, "nvim", "init.lua"), init);
+  // No clock on the status line: a minute ticking over is a change no step made.
+  write(
+    join(paths.config, `devhub-${PROFILE}`, "tmux.conf"),
+    'set -g status-right ""\n',
+  );
   // No shell start-up files of the person's, and a fixed prompt.
   write(join(paths.home, ".bashrc"), "PS1='$ '\n");
   sampleWorkspace(paths.workspaceA, "alpha");

@@ -16,6 +16,10 @@ async function begin(client, watch, rate, screencast) {
   const shots = [];
   let off = () => {};
   await client.send("Emulation.setCPUThrottlingRate", { rate });
+  // The recorder first: its first frames hold the loops (a spinner, a
+  // caret's blink), so no picture of the screencast catches them turning.
+  await client.eval(`(${recorderSource})(${JSON.stringify(watch)})`);
+  await sleep(100);
   if (screencast) {
     off = client.on("Page.screencastFrame", (params) => {
       shots.push({
@@ -31,7 +35,6 @@ async function begin(client, watch, rate, screencast) {
       everyNthFrame: 1,
     });
   }
-  await client.eval(`(${recorderSource})(${JSON.stringify(watch)})`);
   return { client, shots, off, screencast };
 }
 
