@@ -753,6 +753,15 @@ when it does not — and after 600 ms with no answer the guess is taken back.
   the buffer, a line's leading blanks (a tab's cursor stands at its end),
   a winbar — there is no guess. A drag's caret (Visual's end) follows the
   pointer the same way. A cursor the pointer moved does not glide.
+- **Visual's band in a drag** is drawn from the press to the pointer in
+  the frame it moves (`dragBand.ts`): charwise, each line's newline
+  included, in `Visual`'s colours over each cell's own ink, as highlight
+  overrides on the grid's cells that are given back before each redraw is
+  taken in, and only on cells Neovim does not show as Visual yet — where
+  Neovim has caught up, its own cells are drawn. Measured pixel for pixel,
+  the band before Neovim's answer and Neovim's after it are one picture.
+  Under the same rules as the caret, and not across a full row whose next
+  row has no line number (it may wrap).
 - **A list's row** (a view, a framed list) is focused at once when
   pressed, and lit faintly under the pointer.
 - **A window border** (and a tmux pane boundary) is lit under the pointer
@@ -768,8 +777,9 @@ when it does not — and after 600 ms with no answer the guess is taken back.
   tab line), the hand over a terminal link, resize arrows over a border.
 
 What still waits for Neovim: a wheel's first tick from rest (there is no
-row beyond the window to show until Neovim draws it), Visual's band in a
-drag, a double or triple click's word or line, the statusline and the
+row beyond the window to show until Neovim draws it), a band that shrinks
+(Neovim's wider one stays until it answers), a double or triple click's
+word or line, the statusline and the
 current window's look after a focus click, and anything a plugin does on a
 click. `test/pointer/latency.mjs` measures each case in the real app
 under Xvfb, at a CPU throttle (`--throttle`) and over a slow link

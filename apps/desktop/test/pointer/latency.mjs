@@ -15,7 +15,7 @@
 // What the page shows at once, before Neovim or tmux answer (the caret at a
 // click, a row's focus and hover, a border's band, DevHub's own terminal
 // selection, the pointer's shape), has a threshold whatever the delay; what
-// waits for them (Neovim's wheel, a drag's Visual band) is reported only.
+// waits for them (Neovim's wheel from rest) is reported only.
 // Exits 1 when a threshold is missed. Needs `pnpm --filter @devhub/desktop
 // build` (out/ and dist/), Xvfb, and nothing else: the app runs on a profile
 // of its own in a scratch directory, with a Neovim config of its own.
@@ -574,7 +574,7 @@ return 1`);
       () => c.wheel(p.x, p.y, 40),
     );
   });
-  await run("drag Visual band", "report", async (i) => {
+  await run("drag Visual band", "at-once", async (i) => {
     esc();
     const w = editWins()[1];
     const a = px(w.row + 10 + i * 6, w.col + w.textoff + 2);
