@@ -1956,6 +1956,9 @@ export class NeovimEditor {
     const forwardedToFrame = (event: Event): boolean => {
       if (!(event instanceof MouseEvent) || event.isTrusted === false)
         return false;
+      // Hit-testing every element under the pointer is the costliest part
+      // of a move over a page with a long list: only with a frame to find.
+      if (document.querySelector(".nvim-view-frame") === null) return false;
       for (const el of document.elementsFromPoint(
         event.clientX,
         event.clientY,
