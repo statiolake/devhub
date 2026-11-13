@@ -11,10 +11,11 @@
  */
 
 import { Buffer } from "node:buffer";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { canonicalise } from "../cli/canonical.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { CancellationToken, PortFailure } from "../terminal/ports.js";
 import { LocalRuntime } from "./local.js";
@@ -331,6 +332,44 @@ export function describeRuntimeContract(
 				expect(await runtime.realpath(join(scratch, "real", ".."))).toBe(
 					await runtime.realpath(scratch),
 				);
+			});
+
+			it("resolves a path for an open in one answer as the walk does step by step", async () => {
+				const real = await runtime.realpath(scratch);
+				await runtime.makeDirectory(join(scratch, "project", "src"));
+				await writeFile(join(scratch, "project", "src", "main.ts"), "");
+				await symlink(join(real, "project"), join(scratch, "link"));
+				await symlink(join(real, "nowhere"), join(scratch, "dangling"));
+				await symlink(
+					join(real, "project", "src", "main.ts"),
+					join(scratch, "file-link"),
+				);
+				// The same runtime, asked one question at a time.
+				const stepByStep = {
+					stat: (path: string) => runtime.stat(path),
+					realpath: (path: string) => runtime.realpath(path),
+				};
+				for (const path of [
+					join(scratch, "link", "src", "main.ts"),
+					join(scratch, "link"),
+					join(scratch, "link", "src", "new.ts"),
+					join(scratch, "link", "new", "deeper", "x.ts"),
+					join(scratch, "link", "src") + "/",
+					join(scratch, "dangling"),
+					join(scratch, "file-link"),
+					"/",
+				]) {
+					expect(await canonicalise(runtime, path)).toEqual(
+						await canonicalise(stepByStep, path),
+					);
+				}
+				expect(
+					await canonicalise(runtime, join(scratch, "link", "src", "new.ts")),
+				).toEqual({
+					path: join(real, "project", "src", "new.ts"),
+					exists: false,
+					isDirectory: false,
+				});
 			});
 
 			it("answers with a home directory", async () => {

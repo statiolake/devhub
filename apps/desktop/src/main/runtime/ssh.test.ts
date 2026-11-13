@@ -811,6 +811,27 @@ describe("the terminal launcher on the host", () => {
 		expect(launcher.unreachable).toContain("nothing is listening");
 	});
 
+	// Each command is a round trip to the host. A DevHub coming back to a host
+	// with this build's devhub already there asks for its home, its master's
+	// pid and its login environment, checks the binary answers, writes every file of the
+	// launcher in one script (beside the master's stale forward cancelled),
+	// forwards the socket and checks it is bound.
+	it("installs the launcher in as few commands as it has steps", async () => {
+		await runtimeWith().terminalLauncher({ ...spec, skillText: () => "s\n" });
+		await writeFile(log, "");
+		const launcher = await runtimeWith().terminalLauncher({
+			...spec,
+			skillText: (cli) => `run ${cli}\n`,
+		});
+		expect(launcher.unreachable).toBeUndefined();
+		expect(launcher.skill).toBeDefined();
+		const commands = (await readFile(log, "utf8"))
+			.split("\n")
+			.filter((line) => line.startsWith("-o BatchMode=yes"));
+		// Twelve, one after another, before the files went in one script.
+		expect(commands).toHaveLength(8);
+	});
+
 	it("installs once per host per DevHub start", async () => {
 		const runtime = runtimeWith();
 		const first = await runtime.terminalLauncher(spec);

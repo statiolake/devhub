@@ -76,6 +76,7 @@ import {
 	RuntimeFileError,
 	userTmuxConfigDigest,
 	type ByteStream,
+	type DeepestExisting,
 	type DirEntry,
 	type ExecLimits,
 	type ExecRequest,
@@ -460,6 +461,18 @@ export abstract class RemoteShellRuntime {
 		remoteSocketPath: string,
 		localSocketPath: string,
 	): Promise<string | undefined>;
+
+	/**
+	 * Whatever the mechanism must undo before the socket file at
+	 * `remoteSocketPath` is removed and published again; run beside that
+	 * removal. Nothing, unless the mechanism keeps a registration of its own.
+	 */
+	protected prepareControlSocket(
+		_remoteSocketPath: string,
+		_localSocketPath: string,
+	): Promise<void> {
+		return Promise.resolve();
+	}
 
 	/**
 	 * The login environment, once it has been read.
@@ -1251,6 +1264,50 @@ export abstract class RemoteShellRuntime {
 	}
 
 	/**
+	 * `stat`, `realpath` and `stat` again, for a path and each missing
+	 * ancestor, in one script and so one round trip (`Runtime.deepestExisting`).
+	 * Each step is the same shell as the method it stands for: `test` and the
+	 * `ls` that tells "not there" from "not allowed to look" (`stat`), then
+	 * `cd && pwd -P` (`realpath`).
+	 */
+	async deepestExisting(
+		chain: readonly string[],
+	): Promise<DeepestExisting | undefined> {
+		if (chain.length === 0) return undefined;
+		const result = await this.sh(
+			[
+				`set -- ${chain.map(shellQuote).join(" ")}`,
+				`i=0`,
+				`for p do`,
+				`  if [ -d "$p" ]; then r=$(cd -- "$p" && pwd -P) || exit 1`,
+				`  elif [ -e "$p" ]; then`,
+				`    d=$(cd -- "$(dirname -- "$p")" && pwd -P) || exit 1`,
+				`    r=$(printf '%s/%s' "$d" "$(basename -- "$p")")`,
+				`  else`,
+				`    why=$(ls -ld -- "$p" 2>&1 >/dev/null) || :`,
+				`    case "$why" in *[Pp]ermission*) printf '%s' "$why" >&2; exit 1;; esac`,
+				`    i=$((i + 1)); continue`,
+				`  fi`,
+				`  if [ -d "$r" ]; then k=d; else k=f; fi`,
+				`  printf '%s\\n%s\\n%s' "$i" "$k" "$r"`,
+				`  exit 0`,
+				`done`,
+				`exit 3`,
+			].join("\n"),
+		);
+		if (result.code === 3) return undefined;
+		if (result.code !== 0) throw this.fileError(chain[0]!, result);
+		const text = result.stdout.toString("utf8");
+		const first = text.indexOf("\n");
+		const second = text.indexOf("\n", first + 1);
+		return {
+			index: Number(text.slice(0, first)),
+			isDirectory: text.slice(first + 1, second) === "d",
+			path: text.slice(second + 1),
+		};
+	}
+
+	/**
 	 * The honest replacement for `fs.watch`: a poll, said out loud.
 	 *
 	 * What is polled is the *content* of `HEAD`, `packed-refs` and every loose
@@ -1348,72 +1405,117 @@ export abstract class RemoteShellRuntime {
 			home: await this.home(),
 			controlSocketPath: spec.controlSocketPath,
 		});
-		// 0700, like the control directory on this Mac and for the same reason:
-		// what is under it is a path to a socket that runs commands as this user.
-		const made = await this.sh(
-			`mkdir -p -- ${shellQuote(paths.cliBinDirectory)} && chmod 700 ${shellQuote(paths.directory)} ${shellQuote(paths.cliBinDirectory)}`,
-		);
-		if (made.code !== 0) throw this.fileError(paths.directory, made);
-		await this.writeTextFile(
-			paths.cli,
-			remoteCliScript({
-				execPath: program,
-				socketPath: paths.socket,
-				machine: this.id,
-			}),
-			0o755,
-		);
-		const skill = await this.#installSkill(paths, spec);
+		// One script for every file of the install, and the stale socket
+		// cleared, beside the master forgetting the forward of it the last
+		// DevHub left (`prepareControlSocket`): what were six commands one
+		// after another — each a round trip to the host — is one, at the same
+		// time as the other.
+		const [written] = await Promise.all([
+			this.#writeLauncherFiles(paths, spec, program),
+			this.prepareControlSocket(paths.socket, spec.controlSocketPath),
+		]);
 		return {
-			unreachable: await this.publishControlSocket(
-				paths.socket,
-				spec.controlSocketPath,
-			),
+			unreachable:
+				written.unremovable ??
+				(await this.publishControlSocket(paths.socket, spec.controlSocketPath)),
 			binDirectory: paths.cliBinDirectory,
-			...(skill === undefined ? {} : { skill }),
+			...(written.skill === undefined ? {} : { skill: written.skill }),
 		};
 	}
 
 	/**
-	 * The `/devhub` skill for Agents on this machine, naming the `devhub`
-	 * just written here by its full path — so an Agent on a host drives
-	 * DevHub through the same forwarded socket a pane's `devhub` does.
+	 * The launcher's files on the host, in one script: its directory (0700,
+	 * like the control directory on this Mac and for the same reason: what is
+	 * under it is a path to a socket that runs commands as this user), the
+	 * `devhub` shim, the stale control socket removed, and the `/devhub` skill
+	 * for Agents on this machine, naming that shim by its full path — so an
+	 * Agent on a host drives DevHub through the same forwarded socket a pane's
+	 * `devhub` does.
 	 *
-	 * A skill that cannot be written is said and skipped, never a reason to
-	 * refuse the terminals: Agents here then start without it, as before.
+	 * The directory or the shim not written is a throw. A skill that cannot be
+	 * written is said and skipped, never a reason to refuse the terminals:
+	 * Agents here then start without it, as before. A socket that could not be
+	 * removed is the sentence `unreachable` says, and nothing is forwarded.
+	 *
+	 * The removal is not tidying. A unix socket left behind by a previous
+	 * DevHub is a *file*, and sshd will not bind over one unless the host's
+	 * sshd was configured with `StreamLocalBindUnlink yes` — which is the
+	 * host's business and not something DevHub may assume or set. Removing it
+	 * from this side needs neither, and it is safe for exactly the reason the
+	 * name was chosen: the name is a digest of this DevHub's own socket path,
+	 * so the file being removed is this DevHub's and nobody else's.
 	 */
-	async #installSkill(
+	async #writeLauncherFiles(
 		paths: RemoteTerminalPaths,
 		spec: TerminalLauncherSpec,
-	): Promise<TerminalLauncher["skill"]> {
-		if (spec.skillText === undefined) return undefined;
-		const directory = posix.dirname(paths.skillFile);
-		const made = await this.sh(
-			`mkdir -p -- ${shellQuote(directory)} && chmod 700 ${shellQuote(paths.skillRoot)}`,
+		program: string,
+	): Promise<{
+		readonly skill?: TerminalLauncher["skill"];
+		readonly unremovable?: string;
+	}> {
+		const shim = remoteCliScript({
+			execPath: program,
+			socketPath: paths.socket,
+			machine: this.id,
+		});
+		const skillText = spec.skillText?.(paths.cli);
+		const skillDirectory = posix.dirname(paths.skillFile);
+		const q = shellQuote;
+		const result = await this.sh(
+			[
+				// A failure before the skill is written still reads the skill
+				// from stdin: a command that stops reading its input early is a
+				// failed write to the ssh carrying it.
+				skillText === undefined
+					? `fail() { exit "$1"; }`
+					: `fail() { cat >/dev/null; exit "$1"; }`,
+				`mkdir -p -- ${q(paths.cliBinDirectory)} && chmod 700 ${q(paths.directory)} ${q(paths.cliBinDirectory)} || fail 11`,
+				// Subshells: a redirection `:` cannot make ends the shell itself.
+				`( : > ${q(paths.cli)} && chmod 0755 ${q(paths.cli)} && printf '%s' ${q(shim)} > ${q(paths.cli)} ) || fail 12`,
+				`why=$(rm -f -- ${q(paths.socket)} 2>&1) || { printf '%s\\n' "$why" >&2; fail 15; }`,
+				...(skillText === undefined
+					? []
+					: [
+							`mkdir -p -- ${q(skillDirectory)} && chmod 700 ${q(paths.skillRoot)} || fail 13`,
+							`( : > ${q(paths.skillFile)} && chmod 0600 ${q(paths.skillFile)} && cat > ${q(paths.skillFile)} ) || fail 14`,
+						]),
+			].join("\n"),
+			skillText === undefined ? {} : { stdin: Buffer.from(skillText, "utf8") },
 		);
-		if (made.code !== 0) {
-			console.error(
-				`[devhub] ${this.id}: could not make the /devhub skill directory: ${lastLine(made.stderr.toString("utf8"))}`,
-			);
-			return undefined;
+		const said = lastLine(result.stderr.toString("utf8"));
+		switch (result.code) {
+			case 0:
+				break;
+			case 11:
+				throw this.fileError(paths.directory, result);
+			case 12:
+				throw this.fileError(paths.cli, result);
+			case 15:
+				return {
+					unremovable: `${paths.socket} could not be removed on ${this.machineName}, so DevHub's control socket could not be forwarded there: ${said}`,
+				};
+			case 13:
+				console.error(
+					`[devhub] ${this.id}: could not make the /devhub skill directory: ${said}`,
+				);
+				return {};
+			case 14:
+				console.error(
+					`[devhub] ${this.id}: could not write the /devhub skill: ${String(this.fileError(paths.skillFile, result))}`,
+				);
+				return {};
+			default:
+				throw this.fileError(paths.directory, result);
 		}
-		try {
-			await this.writeTextFile(
-				paths.skillFile,
-				spec.skillText(paths.cli),
-				0o600,
-			);
-		} catch (failure: unknown) {
-			console.error(
-				`[devhub] ${this.id}: could not write the /devhub skill: ${String(failure)}`,
-			);
-			return undefined;
-		}
-		return {
-			root: paths.skillRoot,
-			skillFile: paths.skillFile,
-			cli: paths.cli,
-		};
+		return skillText === undefined
+			? {}
+			: {
+					skill: {
+						root: paths.skillRoot,
+						skillFile: paths.skillFile,
+						cli: paths.cli,
+					},
+				};
 	}
 
 	/** Forget the launcher install, so the next window does it again. */

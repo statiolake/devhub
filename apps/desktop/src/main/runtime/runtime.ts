@@ -172,6 +172,15 @@ export interface ByteStream {
 }
 
 /** What is at a path: the three answers a probe is allowed to give. */
+/** What `Runtime.deepestExisting` found. */
+export interface DeepestExisting {
+	/** Which of the chain it was: 0 is the path itself. */
+	readonly index: number;
+	/** That one, with its symlinks resolved. */
+	readonly path: string;
+	readonly isDirectory: boolean;
+}
+
 export type FileKind = "directory" | "file" | "absent";
 
 /**
@@ -598,6 +607,21 @@ export interface Runtime {
 	removeTree(path: string): Promise<void>;
 	makeDirectory(path: string): Promise<void>;
 	realpath(path: string): Promise<string>;
+	/**
+	 * The first of `chain` — a path, then each of its ancestors in turn, as
+	 * `cli/canonical.ts` makes it — that exists, `realpath`ed, and whether
+	 * what it resolves to is a directory: `canonicalise`'s three questions
+	 * (`stat`, `realpath`, `stat`) for every missing component, in one answer.
+	 * `undefined` when none of them exists.
+	 *
+	 * Optional: on this Mac they are three system calls, and `canonicalise`
+	 * asks them one by one. On a host each is a command over ssh, a round trip
+	 * apiece, and `devhub <file>` from a host pane waited for three of them
+	 * before anything was opened.
+	 */
+	deepestExisting?(
+		chain: readonly string[],
+	): Promise<DeepestExisting | undefined>;
 
 	/** The honest replacement for `fs.watch`. */
 	watchGitDirectory(worktree: string, onChange: () => void): Promise<Watcher>;

@@ -32,7 +32,10 @@ export interface ResolvedPath {
  * by hand and so that this states exactly what it touches. Every `Runtime`
  * satisfies it by construction.
  */
-export type PathMachine = Pick<Runtime, "stat" | "realpath">;
+export type PathMachine = Pick<
+	Runtime,
+	"stat" | "realpath" | "deepestExisting"
+>;
 
 /**
  * Canonicalise a path that may not exist yet.
@@ -51,6 +54,9 @@ export async function canonicalise(
 	machine: PathMachine,
 	path: string,
 ): Promise<ResolvedPath> {
+	if (machine.deepestExisting) {
+		return canonicaliseAtOnce((chain) => machine.deepestExisting!(chain), path);
+	}
 	if ((await machine.stat(path)) !== "absent") {
 		const resolved = await machine.realpath(path);
 		return {
@@ -72,4 +78,44 @@ export async function canonicalise(
 		exists: false,
 		isDirectory: false,
 	};
+}
+
+/**
+ * The path, then each ancestor up to `/`: what `canonicalise` walks, one
+ * `dirname` at a time.
+ */
+export function ancestry(path: string): readonly string[] {
+	const chain = [path];
+	for (;;) {
+		const last = chain[chain.length - 1]!;
+		const parent = posix.dirname(last);
+		if (parent === last) return chain;
+		chain.push(parent);
+	}
+}
+
+/**
+ * `canonicalise` with one question to the machine: the deepest existing
+ * ancestor and what it resolves to, found there in one go
+ * (`Runtime.deepestExisting`), and the missing tail appended here exactly as
+ * the walk above appends it.
+ */
+async function canonicaliseAtOnce(
+	deepestExisting: NonNullable<PathMachine["deepestExisting"]>,
+	path: string,
+): Promise<ResolvedPath> {
+	const chain = ancestry(path);
+	const found = await deepestExisting(chain);
+	if (found === undefined) {
+		throw new Error(`cannot resolve ${chain[chain.length - 1]!}`);
+	}
+	let resolved = found.path;
+	for (let index = found.index - 1; index >= 0; index -= 1) {
+		const child = chain[index]!;
+		const parent = chain[index + 1]!;
+		resolved = posix.join(resolved, child.slice(parent.length + 1));
+	}
+	return found.index === 0
+		? { path: resolved, exists: true, isDirectory: found.isDirectory }
+		: { path: resolved, exists: false, isDirectory: false };
 }

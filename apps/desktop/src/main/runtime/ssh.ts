@@ -909,23 +909,9 @@ export class SshRuntime extends RemoteShellRuntime implements Runtime {
 	 * `ssh -O forward -R <remote>:<local>` adds the forward to the master that
 	 * is already up, so no second connection and no reconnect: the socket
 	 * appears on the host and every connection to it comes back down this one.
-	 *
-	 * The `rm -f` first is not tidying. A unix socket left behind by a previous
-	 * DevHub is a *file*, and sshd will not bind over one unless the host's
-	 * sshd was configured with `StreamLocalBindUnlink yes` — which is the
-	 * host's business and not something DevHub may assume or set. Removing it
-	 * from this side needs neither, and it is safe for exactly the reason the
-	 * name was chosen: the name is a digest of this DevHub's own socket path,
-	 * so the file being removed is this DevHub's and nobody else's.
-	 *
-	 * The `-O cancel` first is what makes a restart work. A ControlMaster
-	 * outlives the DevHub that started it — that is what a master is for — so a
-	 * DevHub that comes back to a live one finds the *previous* DevHub's
-	 * forward of this same remote path still registered on it, pointing at a
-	 * local socket nothing is behind any more. OpenSSH answers a second
-	 * `-O forward` for a path it already forwards with success and binds
-	 * nothing, so the `test -S` below failed, the window came up with no
-	 * launcher, and the only way back was to kill the master by hand.
+	 * The stale socket file was removed by the launcher's install
+	 * (`#writeLauncherFiles`), and the master's stale forward cancelled
+	 * (`prepareControlSocket`), before this is asked.
 	 *
 	 * The `test -S` afterwards is the point of the whole function. `-O forward`
 	 * can report success and leave nothing bound, and a launcher pointed at a
@@ -941,13 +927,6 @@ export class SshRuntime extends RemoteShellRuntime implements Runtime {
 		localSocketPath: string,
 	): Promise<string | undefined> {
 		const spec = `${remoteSocketPath}:${localSocketPath}`;
-		await this.#mux("cancel", "-R", spec);
-		const removed = await this.sh(
-			`exec rm -f -- ${shellQuote(remoteSocketPath)}`,
-		);
-		if (removed.code !== 0) {
-			return `${remoteSocketPath} could not be removed on ${this.#host}, so DevHub's control socket could not be forwarded there: ${lastLine(removed.stderr.toString("utf8"))}`;
-		}
 		const forwarded = await this.#mux("forward", "-R", spec);
 		if (forwarded.code !== 0) {
 			const said = lastLine(forwarded.stderr.toString("utf8"));
@@ -961,6 +940,27 @@ export class SshRuntime extends RemoteShellRuntime implements Runtime {
 			return said;
 		}
 		return undefined;
+	}
+
+	/**
+	 * The `-O cancel` first is what makes a restart work. A ControlMaster
+	 * outlives the DevHub that started it — that is what a master is for — so a
+	 * DevHub that comes back to a live one finds the *previous* DevHub's
+	 * forward of this same remote path still registered on it, pointing at a
+	 * local socket nothing is behind any more. OpenSSH answers a second
+	 * `-O forward` for a path it already forwards with success and binds
+	 * nothing, so the `test -S` failed, the window came up with no launcher,
+	 * and the only way back was to kill the master by hand.
+	 *
+	 * Beside the removal of the socket file rather than before it: either
+	 * order leaves no file and no registration, which is what the forward
+	 * needs.
+	 */
+	protected override async prepareControlSocket(
+		remoteSocketPath: string,
+		localSocketPath: string,
+	): Promise<void> {
+		await this.#mux("cancel", "-R", `${remoteSocketPath}:${localSocketPath}`);
 	}
 
 	/**
