@@ -6,6 +6,7 @@
  */
 
 import { NeovimClient } from "../editor/neovimRpc.js";
+import { delayedSocket, neovimDelayMs } from "./delayProxy.js";
 import { NeovimHost, type HostPort } from "./host.js";
 import type { ToNeovimHost } from "./protocol.js";
 
@@ -22,9 +23,14 @@ if (parent === undefined) {
 	throw new Error("the Neovim host runs only as an Electron utility process");
 }
 const port: ParentPort = parent;
+// A slow link, for measuring the GUI over one (`delayProxy.ts`).
+const delayMs = neovimDelayMs(process.env);
 const host = new NeovimHost({
 	post: (message) => port.postMessage(message),
-	connect: (socketPath) => NeovimClient.connect(socketPath),
+	connect: async (socketPath) =>
+		NeovimClient.connect(
+			delayMs > 0 ? await delayedSocket(socketPath, delayMs) : socketPath,
+		),
 });
 
 port.on("message", ({ data, ports }) => {

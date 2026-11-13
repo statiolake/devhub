@@ -651,8 +651,11 @@ one layer model and pane motion.
   pixels (above); sideways, with a modifier or over anything else, pixels
   accumulated into line steps. A border a drag resizes (`sashAt`: the
   column between windows side by side, the row between a window and the
-  one under it) gives the pointer `col-resize`/`row-resize`, nothing more.
+  one under it) gives the pointer `col-resize`/`row-resize` and is lit as
+  VS Code's sash; dragged, the band is at the pointer at once and Neovim's
+  layout lands under it a round trip later (`placeSashBand`).
   Keys: `<C-w><`, `<C-w>>`, `<C-w>+`, `<C-w>-`, `<C-w>=`.
+- The pointer, at once (below, "The pointer").
 - Resize: its element's size over the cell size, `nvim_ui_try_resize`.
 - Focus: `nvim_ui_set_focus` (FocusGained/FocusLost), told once per
   change. The editor has the keyboard when its textarea is focused _and_
@@ -728,6 +731,51 @@ one layer model and pane motion.
   before the text, so a candidate sits over the word it completes.
 - Floats are kept on the screen as Neovim's own compositor keeps them: one
   that would run past the right or bottom edge is moved in.
+
+### The pointer
+
+Every press, drag and wheel turn is Neovim's (or tmux's), and its answer
+comes back as a redraw: a round trip, an SSH link's latency included. What
+the pointer does is therefore shown on the page first, where the page can
+say what Neovim will do, and Neovim's redraw then confirms it; Neovim owns
+the state and always wins (`provisional.ts`). A guess is made against what
+Neovim showed when the pointer acted and stands while Neovim still shows
+that (in a drag, or a cell the pointer went over before); the moment
+Neovim shows anything else it is Neovim's — unseen when it agrees, at once
+when it does not — and after 600 ms with no answer the guess is taken back.
+
+- **A click's caret** is at the clicked cell in the frame the button goes
+  down (`clickCaret.ts`): on a character of a window's text, a space
+  between two, past the line's end (its last character; after it in Insert
+  mode), on an empty line. Where the cells may not be the buffer's
+  characters one for one — the gutter, virtual text and inlay hints,
+  concealed and `list` characters, a closed fold, a diff's filler, past
+  the buffer, a line's leading blanks (a tab's cursor stands at its end),
+  a winbar — there is no guess. A drag's caret (Visual's end) follows the
+  pointer the same way. A cursor the pointer moved does not glide.
+- **A list's row** (a view, a framed list) is focused at once when
+  pressed, and lit faintly under the pointer.
+- **A window border** (and a tmux pane boundary) is lit under the pointer
+  and, dragged, its band follows the pointer at once.
+- **Moves go one a frame** (`PerFrame`): a drag's cells and a boundary's
+  steps, the first of a frame at once, then only the newest, so a fast hand
+  over a slow link never queues stale moves. The wheel's lines are merged
+  by the terminal's host while one turn runs, and Neovim's wheel is
+  pixel scrolling (above), which asks Neovim for lines ahead of the
+  display.
+- **Pointer shapes**: the I-beam over text (Neovim's and the terminal's),
+  the arrow over what DevHub draws over it (views, popups, footers, the
+  tab line), the hand over a terminal link, resize arrows over a border.
+
+What still waits for Neovim: a wheel's first tick from rest (there is no
+row beyond the window to show until Neovim draws it), Visual's band in a
+drag, a double or triple click's word or line, the statusline and the
+current window's look after a focus click, and anything a plugin does on a
+click. `test/pointer/latency.mjs` measures each case in the real app
+under Xvfb, at a CPU throttle (`--throttle`) and over a slow link
+(`--delay`: the Neovim host reaches every Neovim through a socket that
+holds each chunk, `DEVHUB_NEOVIM_DELAY_MS`), and fails when what should be
+at once is not.
 
 ### Floating surfaces
 
