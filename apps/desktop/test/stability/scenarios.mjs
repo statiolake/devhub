@@ -139,9 +139,10 @@ export const SCENARIOS = [
         name: "open",
         known: [
           {
-            match: /^pane: \[picture\] region picker/,
+            match:
+              /^pane: \[(picture\] region picker|intermediate\] grid#\d+ took)/,
             owner: "outside",
-            why: "snacks.nvim flushes the picker's windows before its startinsert lands: Neovim draws one frame in Normal mode (its own -- (insert) --), so the query's caret is a block for that frame, then a bar",
+            why: "snacks.nvim shows the preview's float and fills its buffer in a later tick: Neovim flushes the empty preview, then the file (now and then, either rate)",
           },
         ],
         act: (ctx) => ctx.press("pane", "C-p"),
@@ -150,12 +151,27 @@ export const SCENARIOS = [
       },
       {
         name: "preview-off",
+        known: [
+          {
+            match: /^pane: \[picture\] region picker/,
+            owner: "outside",
+            why: "snacks.nvim renders the list's rows again for the list's new width (paths cut differently) in a tick after the one that resized it: one row's text changes a frame later",
+          },
+        ],
         act: (ctx) => ctx.press("pane", "F4"),
         regions: [{ name: "picker", selector: ".nvim-view-frame-edge" }],
         spec: floatSpec,
       },
       {
         name: "preview-on",
+        known: [
+          {
+            match:
+              /^pane: \[(picture\] region picker|intermediate\] grid#\d+ took)/,
+            owner: "outside",
+            why: "snacks.nvim shows the preview's float and fills its buffer in a later tick: Neovim flushes the empty preview, then the file (now and then, either rate)",
+          },
+        ],
         act: (ctx) => ctx.press("pane", "F4"),
         regions: [{ name: "picker", selector: ".nvim-view-frame-edge" }],
         spec: floatSpec,
@@ -549,7 +565,11 @@ export const SCENARIOS = [
           // place and width may not (nothing pushed, rule 1).
           // The Smart Buttons' box follows the turn (idle, running, idle):
           // two causes in this one step, so it is not held to one change.
+          // The person's message is quieter while it is on its way to the
+          // CLI (`data-sending`), until the CLI's echo: a designed state,
+          // its second form the echo's, not the send's.
           ignore: {
+            user: ["op"],
             block: ["r"],
             assistant: ["r"],
             entry: ["r"],

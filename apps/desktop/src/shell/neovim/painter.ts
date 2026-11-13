@@ -670,6 +670,16 @@ export class GridPainter {
   /** Each grid's clips for what the page lays over it, by grid and part. */
   private readonly overs = new Map<string, OverClip>();
   private lastBoxes: readonly GridBox[] = [];
+
+  /** Window `win`'s box as last painted, while it is on screen. */
+  paintedBox(win: number): GridBox | undefined {
+    return this.lastBoxes.find((b) => b.win === win);
+  }
+
+  /** The windows on screen, as last painted. */
+  paintedWins(): number[] {
+    return this.lastBoxes.flatMap((b) => (b.win === undefined ? [] : [b.win]));
+  }
   private lastMargins: NeovimUiState["margins"] = new Map();
   /** Each window grid's pixel scrolling, by grid. */
   private readonly scrolls = new Map<number, ScrollSlot>();

@@ -544,6 +544,17 @@ export class NeovimEditor {
   }
 
   /**
+   * Window `win` where the page should draw what covers it: as laid out,
+   * or, closed in Neovim's layout but still on screen (the paint that
+   * draws it closed has not come, or waits), where it was painted. A
+   * picker's frame stayed only while its window was laid out, and went a
+   * frame before the windows it frames.
+   */
+  shownAt(win: number): GridBox | undefined {
+    return this.laidOut(win) ?? this.painter.paintedBox(win);
+  }
+
+  /**
    * The windows a page draws the chrome of, each with the window of the
    * float its frame is round (`claimFloats`).
    */
@@ -742,12 +753,30 @@ export class NeovimEditor {
   }
 
   /**
-   * Whether an ask is out (`ClaimAsks.regathering`): a window not drawn
-   * yet, or a framed view whose windows changed. The page holds Lua's
-   * placements till it has settled.
+   * The page's own taking-in of what Lua placed (`NeovimApp`), called at
+   * the start of every paint, in its commit, with the windows of the
+   * layout being painted and whether Lua is being asked to settle.
    */
-  framesSettling(): boolean {
-    return this.claimAsks.regathering();
+  setPlacements(
+    take: (open: ReadonlySet<number>, regathering: boolean) => void,
+  ): void {
+    this.takePlacements = take;
+  }
+
+  private takePlacements: (
+    open: ReadonlySet<number>,
+    regathering: boolean,
+  ) => void = () => {};
+
+  /** Lua placed something: taken in by the next paint. */
+  placementsCame(): void {
+    if (this.frame !== 0) return;
+    this.frame = requestAnimationFrame(() => {
+      this.frame = 0;
+      this.commit(() => {
+        this.paint();
+      });
+    });
   }
 
   /**
@@ -803,12 +832,6 @@ export class NeovimEditor {
       this.recoloured = false;
     }
     if (this.visualBand !== undefined || banded) this.drawBand();
-    // A framed view whose windows this flush changed is asked about again
-    // now, before the plugin's own placements that follow the flush come
-    // in (`ClaimAsks`, `framesSettling`).
-    if (this.pending.flushed && this.claimed.size > 0) {
-      this.askClaims(claimFloats(layoutGrids(this.state), this.claimed));
-    }
     if (this.pending.flushed && this.atFlush.length > 0) {
       window.clearTimeout(this.atFlushTimer);
       this.atPaint.push(...this.atFlush.splice(0));
@@ -891,7 +914,19 @@ export class NeovimEditor {
   private paint(forceAll = false): void {
     if (this.disposed) return;
     if (this.hold.defer(forceAll)) return;
-    const laid = claimFloats(layoutGrids(this.state), this.claimed);
+    // What Lua placed, taken in now (`setPlacements`): the page's frames
+    // commit with this paint, and claim again with a paint in this task.
+    const grids = layoutGrids(this.state);
+    // Open: laid out now, or still on screen from the last paint (a paint
+    // that waits leaves them there).
+    this.takePlacements(
+      new Set([
+        ...grids.flatMap((b) => (b.win === undefined ? [] : [b.win])),
+        ...this.painter.paintedWins(),
+      ]),
+      this.claimAsks.regathering(),
+    );
+    const laid = claimFloats(grids, this.claimed);
     // A float not drawn yet waits for Lua to say whether a page claims it
     // (`ClaimAsks`): drawn once, by its one owner, from its first frame.
     const claims = this.askClaims(laid);

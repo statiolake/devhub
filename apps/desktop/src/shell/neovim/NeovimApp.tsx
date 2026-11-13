@@ -442,22 +442,51 @@ export function NeovimSurface({
         ?.contentWindow?.postMessage({ devhubGui: message.message }, "*");
     });
     let statusline = NO_STATUSLINE;
-    let heldLayers: { kind: string; payload: unknown }[] = [];
-    let heldTimer = 0;
-    const releaseLayers = () => {
-      window.clearTimeout(heldTimer);
-      const events = heldLayers;
-      heldLayers = [];
-      if (events.length === 0) return;
+    /**
+     * What Lua places (`LAYER_EVENTS`) is taken in at one point: the start
+     * of the editor's paint, in its commit (`takePlacements`), so the page's
+     * frames and the windows they claim land in one frame. Rules, each a
+     * fact about what is on screen, not a delay:
+     * - while Lua is asked to settle (`regathering`), nothing until its
+     *   `settled` is among them: the frame's new layout and its windows
+     *   are drawn together (a picker's preview toggled);
+     * - an event that lets go of a frame whose windows are still in the
+     *   layout being painted waits for the paint that draws them closed
+     *   (Lua says so as they close, before Neovim flushes the close);
+     * - nothing waits longer than SETTLE_WAIT_MS (a letting-go,
+     *   LETTING_GO_CAP_MS).
+     */
+    let placements: { kind: string; payload: unknown; at: number }[] = [];
+    let layersNow = NO_LAYERS;
+    editor.setPlacements((open, regathering) => {
+      if (placements.length === 0) return;
+      const now = performance.now();
+      const overdue = now - placements[0]!.at > SETTLE_WAIT_MS;
+      if (
+        regathering &&
+        !overdue &&
+        !placements.some((p) => p.kind === "settled")
+      )
+        return;
       const scrolled = editor.scrolledRows();
       const rowsOf = (win: number) => scrolled.get(win) ?? 0;
-      setLayers((before) =>
-        events.reduce(
-          (state, e) => applyLayerEvent(state, e.kind, e.payload, rowsOf),
-          before,
-        ),
-      );
-    };
+      let state = layersNow;
+      let taken = 0;
+      for (const p of placements) {
+        const next = applyLayerEvent(state, p.kind, p.payload, rowsOf);
+        const kept = drawnFrameWins(next);
+        const lettingGo = [...drawnFrameWins(state)].some(
+          (win) => !kept.has(win) && open.has(win),
+        );
+        if (lettingGo && now - p.at <= LETTING_GO_CAP_MS) break;
+        state = next;
+        taken += 1;
+      }
+      if (taken === 0) return;
+      placements = placements.slice(taken);
+      layersNow = state;
+      setLayers(state);
+    });
     const offEvent = bridge.neovim.onGuiEvent((event) => {
       if (event.workspaceId !== workspaceId) return;
       // Where Lua placed something is counted from the rows its window had
@@ -533,23 +562,13 @@ export function NeovimSurface({
         return;
       }
       if (LAYER_EVENTS.has(event.kind)) {
-        // A framed view whose windows changed waits for Lua to settle
-        // (`framesSettling`): what Lua places meanwhile is taken in with
-        // `settled`, in one commit, so the frame and its windows are drawn
-        // anew in one frame (a picker's preview toggled).
-        if (editor.framesSettling() || heldLayers.length > 0) {
-          heldLayers.push({ kind: event.kind, payload: event.payload });
-          window.clearTimeout(heldTimer);
-          if (event.kind === "settled") {
-            releaseLayers();
-          } else {
-            heldTimer = window.setTimeout(releaseLayers, SETTLE_WAIT_MS);
-          }
-          return;
-        }
-        setLayers((before) =>
-          applyLayerEvent(before, event.kind, event.payload, rowsOf),
-        );
+        // Taken in by the editor's paint (`setPlacements`, above).
+        placements.push({
+          kind: event.kind,
+          payload: event.payload,
+          at: performance.now(),
+        });
+        editor.placementsCame();
         return;
       }
       setDecorations((before) =>
@@ -558,6 +577,7 @@ export function NeovimSurface({
     });
     setDecorations(NO_DECORATIONS);
     setLayers(NO_LAYERS);
+    layersNow = NO_LAYERS;
     // Grid 1 is not drawn: every status line row is Neovim's cells until
     // Lua says otherwise.
     editor.setStatusline(statusline);
@@ -885,7 +905,7 @@ export function NeovimSurface({
       ? {
           cell,
           boxes,
-          laidOut: (win) => editor.laidOut(win),
+          laidOut: (win) => editor.shownAt(win),
           caret: caretLook(nvim),
           mono: `${ICON_FAMILY}, ${fontFamily ? `${fontFamily}, ` : ""}monospace`,
           defaults: nvim.defaults,
@@ -1374,6 +1394,22 @@ function countLabel(count: string): string {
  * only the search echo is shown, in the box over the status line, for a
  * few seconds (Neovim draws nothing there either).
  */
+/** The windows of the frames the page draws: placed, with their view. */
+function drawnFrameWins(layers: Layers): Set<number> {
+  return new Set(
+    layers.placedFrames.flatMap((place) =>
+      layers.views.get(place.id)?.frame ? place.wins : [],
+    ),
+  );
+}
+
+/**
+ * How long a framed view let go waits for its windows to be drawn closed,
+ * at most: Lua said they are closing, so it is short in practice; this is
+ * for a Neovim that never flushes the close.
+ */
+const LETTING_GO_CAP_MS = 1000;
+
 /** The Neovims drawn on this page, which a new theme waits for. */
 const recolouring = new Set<NeovimEditor>();
 
