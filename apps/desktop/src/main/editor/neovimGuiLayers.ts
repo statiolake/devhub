@@ -1016,7 +1016,7 @@ function M._settle(seq)
 end
 
 --- A click on the page: the cursor goes to the item (or the card's line) in
---- that window, then the node's on_click (or the view's) runs.
+--- that window, then the node's on_click(line, clicks) (or the view's) runs.
 function M._layers_click(kind, id, win, line, action, clicks)
   local owner = kind == "view" and M._views[id] or kind == "popup" and M._popups[id] or M._inlines[id]
   if not owner then return end
@@ -1031,7 +1031,7 @@ function M._layers_click(kind, id, win, line, action, clicks)
   local fn = type(action) == "number" and (M._actions[kind .. ":" .. id] or {})[action] or nil
   local ok, err = true, nil
   if fn then
-    ok, err = pcall(fn, line)
+    ok, err = pcall(fn, line, clicks or 1)
   elseif kind == "view" and owner.on_click then
     ok, err = pcall(owner.on_click, line, clicks or 1)
   end

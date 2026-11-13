@@ -9,9 +9,11 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -30,6 +32,7 @@ import {
   type StackNode,
 } from "./components";
 import { formatKeys } from "../../model/keyNotation";
+import { PROVISIONAL_TTL_MS } from "./provisional";
 import { formatPosition, modeLabel } from "./statusline";
 
 export interface ComponentTheme {
@@ -41,7 +44,8 @@ export interface ComponentTheme {
   /** The grid's font family, for `mono` text and Nerd Font icons. */
   readonly mono: string;
   readonly openLink: (url: string) => void;
-  readonly onAction: (action: number) => void;
+  /** `clicks`: 1, or 2 and more for a double or triple click's press. */
+  readonly onAction: (action: number, clicks: number) => void;
   /**
    * What the slots show (`SlotNode`), from Neovim's redraw: a footer's
    * window's cursor, the mode, the pending command. None: blank.
@@ -138,7 +142,7 @@ const FONT_SIZE: Record<Size, number> = { xs: 10.5, sm: 11.5, md: 13, lg: 15 };
 
 function clickable(
   action: number | undefined,
-  onAction: (action: number) => void,
+  onAction: (action: number, clicks: number) => void,
 ): Record<string, unknown> {
   if (action === undefined) return {};
   return {
@@ -147,7 +151,7 @@ function clickable(
     onMouseDown: (event: React.MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
-      onAction(action);
+      onAction(action, Math.max(1, event.detail));
     },
   };
 }
@@ -648,11 +652,36 @@ function Column({
   const bandRef = useRef<HTMLDivElement>(null);
   const hidden = useRef(true);
   const banded = node.band !== undefined;
-  const selected = node.selected ?? 0;
+  // A clickable row pressed has the band at once, before Lua moves the
+  // selection there (`provisional.ts`): while Lua's is still where it was.
+  const given = node.selected ?? 0;
+  const [pressed, setPressed] = useState<
+    { readonly row: number; readonly base: number } | undefined
+  >(undefined);
+  useEffect(() => {
+    if (pressed === undefined) return;
+    if (pressed.base !== given) {
+      setPressed(undefined);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setPressed(undefined);
+    }, PROVISIONAL_TTL_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [pressed, given]);
+  const selected =
+    pressed !== undefined && pressed.base === given ? pressed.row : given;
+  const jump = useRef(false);
   useLayoutEffect(() => {
     const el = box.current;
     const b = bandRef.current;
     if (!el || !b) return;
+    // The selected row is known by its class (its hover gives way to the band).
+    Array.from(el.children).forEach((child, index) => {
+      child.classList.toggle("nvc-selected", index > 0 && index === selected);
+    });
     // the band is the first child; the selected one is after it
     const row = selected > 0 ? el.children[selected] : undefined;
     if (!(row instanceof HTMLElement)) {
@@ -668,8 +697,10 @@ function Column({
     const k = el.offsetWidth > 0 ? list.width / el.offsetWidth : 1;
     const place = `translateY(${String((at.top - list.top) / k)}px)`;
     b.style.height = `${String(at.height / k)}px`;
-    if (hidden.current) {
-      // appears in place: no glide from where it last was
+    if (hidden.current || jump.current) {
+      // appears in place: no glide from where it last was (nor to a row
+      // the pointer pressed: it is under the pointer at once)
+      jump.current = false;
       b.classList.remove("nvc-band-live");
       b.style.transform = place;
       void b.offsetWidth;
@@ -709,6 +740,23 @@ function Column({
           }
         : {})}
       {...attrs}
+      onMouseDownCapture={
+        banded
+          ? (event: React.MouseEvent) => {
+              // The row pressed, if it is a clickable one of the list's own.
+              const el = box.current;
+              const row = (event.target as HTMLElement).closest(
+                "[data-action]",
+              );
+              if (!el || !row || row.parentElement !== el) return;
+              const index = Array.prototype.indexOf.call(el.children, row);
+              if (index > 0 && index !== given) {
+                jump.current = true;
+                setPressed({ row: index, base: given });
+              }
+            }
+          : undefined
+      }
     >
       {banded ? (
         <div

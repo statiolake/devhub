@@ -114,7 +114,7 @@ function useRide(host: LayerHost): void {
 function themeFor(
   host: LayerHost,
   hl: HlTable,
-  onAction: (action: number) => void,
+  onAction: (action: number, clicks: number) => void,
 ): ComponentTheme {
   const normal = hl.get("Normal");
   const fg = normal?.fg ?? host.defaults.foreground;
@@ -925,8 +925,9 @@ function Popup({
   useLayoutEffect(() => {
     if (visible) shown.current = true;
   }, [visible]);
-  const theme = themeFor(host, content.hl, (action) => {
-    host.lua("_layers_click", ["popup", place.id, null, null, action]);
+  const theme = themeFor(host, content.hl, (action, clicks) => {
+    // The clicks tell a double click's second press (blink-ui accepts on it).
+    host.lua("_layers_click", ["popup", place.id, null, null, action, clicks]);
     host.refocus();
   });
   // A popup wears the floats' colours.

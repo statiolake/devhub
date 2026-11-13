@@ -553,6 +553,16 @@
   opacity: 0;
   pointer-events: none;
 }
+/* A list's clickable row under the pointer: lit faintly, as DevHub's other
+   lists' rows are (`.nvim-view-item`), not brightened as a button; the
+   selected row keeps the band alone. */
+.nvc-banded > .nvc-clickable:hover {
+  filter: none;
+}
+.nvc-banded > .nvc-clickable:not(.nvc-selected):hover {
+  border-radius: 4px;
+  background: color-mix(in srgb, currentcolor 5%, transparent);
+}
 .nvc-band-live {
   transition:
     transform 90ms cubic-bezier(0.2, 0, 0, 1),
