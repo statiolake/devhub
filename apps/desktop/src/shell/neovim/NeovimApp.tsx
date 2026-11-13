@@ -289,6 +289,10 @@ export function NeovimSurface({
       settingsRef.current,
     );
     editorRef.current = editor;
+    // What React draws from a paint is committed with it, in its frame.
+    editor.setCommit((paint) => {
+      flushSync(paint);
+    });
     editor.setKeys(keysRef.current);
     // For DevTools: the state each Neovim on the page is drawing, by key.
     const debug = window as unknown as {
@@ -490,7 +494,10 @@ export function NeovimSurface({
         // What each status line row shows: drawn in it by the painter
         // (`placeFooters`) and, for a tree, by `Footers`.
         statusline = applyStatuslineEvent(statusline, event.payload);
-        editor.setStatusline(statusline);
+        // Made in the redraw Neovim is about to flush: drawn with it.
+        const withFlush =
+          (event.payload as { flush?: unknown } | null)?.flush === true;
+        editor.setStatusline(statusline, withFlush);
         return;
       }
       if (LAYER_EVENTS.has(event.kind)) {

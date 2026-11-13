@@ -34,6 +34,7 @@ interface Sent {
 		{ kind: string; edge?: boolean; node?: unknown }
 	>;
 	readonly keep: number[];
+	readonly flush?: boolean;
 }
 
 async function attached() {
@@ -60,19 +61,28 @@ async function attached() {
 	}
 	if (!client) throw new Error("nvim did not open its socket");
 	const sent: Sent[] = [];
+	/** Footers and flushes, in the order they came on the UI's channel. */
+	const order: string[] = [];
 	const ui = new NeovimUi(client, {
 		read: () => Promise.resolve(""),
 		write: () => undefined,
 	});
 	await ui.attach(
 		{
-			redraw: () => undefined,
+			redraw: (batches) => {
+				if (JSON.stringify(batches).includes('"flush"')) order.push("flush");
+			},
 			guiWindows: () => undefined,
 			guiOpen: () => undefined,
 			guiClose: () => undefined,
 			guiSend: () => undefined,
 			guiEvent: (kind, payload) => {
-				if (kind === "statusline") sent.push(payload as Sent);
+				if (kind !== "statusline") return;
+				sent.push(payload as Sent);
+				const p = payload as Sent;
+				order.push(
+					`statusline${p.flush === true ? " flush" : ""} ${JSON.stringify(p.wins)}`,
+				);
 			},
 		},
 		80,
@@ -96,7 +106,7 @@ return out`,
 		await new Promise((resolve) => setTimeout(resolve, 60));
 		await lua("return 1");
 	};
-	return { ui, lua, rules, sent, settle };
+	return { ui, lua, rules, sent, order, settle };
 }
 
 describe.skipIf(TEST_NVIM === undefined)("each window's footer", () => {
@@ -209,6 +219,44 @@ for _ = 1, 20 do vim.api.nvim_exec_autocmds('BufEnter', {}) vim.api.nvim_exec_au
 			await h.lua("vim.o.laststatus = 0");
 			await h.settle();
 			expect(h.sent.at(-1)!.keep).toEqual([]);
+			h.ui.client.close();
+		},
+	);
+
+	it(
+		"goes with the redraw that shows what changed it: made ahead of its flush, and marked so",
+		{ timeout: 15_000 },
+		async () => {
+			// Found by the stability suite (open-file): a file opened showed
+			// its text under the last file's name for a frame.
+			const h = await attached();
+			await h.settle();
+			const named = (name: string) => {
+				const at = h.order.findIndex(
+					(line) => line.startsWith("statusline") && line.includes(name),
+				);
+				return {
+					at,
+					line: h.order[at] ?? "",
+					next: h.order.indexOf("flush", at),
+				};
+			};
+			// Typed, as a person does: the footer is made in the redraw.
+			h.order.length = 0;
+			await h.ui.request("nvim_input", [":edit typed-file.txt<CR>"]);
+			await h.settle();
+			const typed = named("typed-file.txt");
+			expect(typed.at).toBeGreaterThanOrEqual(0);
+			expect(typed.line.startsWith("statusline flush")).toBe(true);
+			expect(typed.next).toBeGreaterThan(typed.at);
+			// By RPC, as devhub <file> opens one: the same.
+			h.order.length = 0;
+			await h.lua("vim.cmd('edit rpc-file.txt')");
+			await h.settle();
+			const rpc = named("rpc-file.txt");
+			expect(rpc.at).toBeGreaterThanOrEqual(0);
+			expect(rpc.line.startsWith("statusline flush")).toBe(true);
+			expect(rpc.next).toBeGreaterThan(rpc.at);
 			h.ui.client.close();
 		},
 	);

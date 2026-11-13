@@ -239,15 +239,48 @@ function M._statusline_send()
   if next(changed) == nil and meta == S.meta then return end
   S.meta = meta
   S.sends = (S.sends or 0) + 1
-  event("statusline", { laststatus = vim.o.laststatus, current = cur, wins = changed, keep = keep })
+  -- flush: made in the redraw that is about to be flushed (below), so the
+  -- page draws it with that flush and not a frame before.
+  event("statusline", { laststatus = vim.o.laststatus, current = cur, wins = changed, keep = keep,
+    flush = S.in_redraw or nil })
+end
+
+--- The footers go with the redraw that shows what changed them. A change
+--- (a buffer entered, a window split) marks them pending; Neovim then
+--- redraws, and at the start of that redraw — before it flushes the new
+--- grid lines on this same channel — they are made and sent: the page has
+--- them before the flush, and draws both in one frame. A scheduled send
+--- runs after the flush (Neovim flushes before it waits for input, and
+--- runs scheduled callbacks while it waits), so a file opened showed its
+--- text under the last file's name for a frame. A scheduled callback can
+--- also run before the redraw (an open by RPC: devhub <file>), and a
+--- tree sent then, unmarked, was drawn as soon as it came, over the last
+--- file's text. So the scheduled send redraws first: the redraw's start
+--- sends it, marked, with the flush that follows; only a change that
+--- leaves nothing to redraw is sent here, unmarked.
+local function send_pending()
+  if not S.pending then return end
+  pcall(vim.cmd, "redraw")
+  if S.pending then M._statusline_send() end
 end
 
 local function schedule()
   if S.pending then return end
   S.pending = true
-  vim.schedule(M._statusline_send)
+  vim.schedule(send_pending)
 end
 M._statusline_schedule = schedule
+
+vim.api.nvim_set_decoration_provider(vim.api.nvim_create_namespace("devhub_gui_statusline"), {
+  on_start = function()
+    if S.pending then
+      S.in_redraw = true
+      pcall(M._statusline_send)
+      S.in_redraw = false
+    end
+    return false
+  end,
+})
 
 local EVENTS = { "BufEnter", "BufWinEnter", "BufFilePost", "BufWritePost", "BufModifiedSet", "FileType",
   "WinEnter", "WinLeave", "WinNew", "WinClosed", "WinResized", "TabEnter", "VimResized", "DiagnosticChanged",

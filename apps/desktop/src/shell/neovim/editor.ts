@@ -698,6 +698,24 @@ export class NeovimEditor {
     if (keys !== undefined) this.send(keys);
   }
 
+  /**
+   * How a frame's paint runs: the page commits what React draws from it
+   * (the footers' trees, the command line, menus) inside it — `flushSync`,
+   * as `resumePaint` does — so they land in the frame the canvases do. A
+   * plain state update after the paint was committed a task later: a file
+   * opened showed its text under the last file's name for a frame.
+   */
+  private commit: (paint: () => void) => void = (paint) => {
+    paint();
+  };
+
+  setCommit(commit: (paint: () => void) => void): void {
+    this.commit = commit;
+  }
+
+  /** A footer that waits for the flush it was made for (`setStatusline`). */
+  private statuslineAtFlush: Statusline | undefined;
+
   redraw(batches: readonly unknown[]): void {
     // Neovim's cells under the band are Neovim's again while its redraw is
     // taken in (a scroll moves them, a line rewrites them); the band is
@@ -706,11 +724,17 @@ export class NeovimEditor {
     if (banded) this.unband();
     applyRedraw(this.state, batches, this.pending);
     if (this.visualBand !== undefined || banded) this.drawBand();
+    if (this.pending.flushed && this.statuslineAtFlush !== undefined) {
+      this.painter.setStatusline(this.statuslineAtFlush);
+      this.statuslineAtFlush = undefined;
+    }
     if (this.pending.flushed) this.hold.flushed();
     if (this.pending.flushed && this.frame === 0) {
       this.frame = requestAnimationFrame(() => {
         this.frame = 0;
-        this.paint();
+        this.commit(() => {
+          this.paint();
+        });
       });
     }
   }
@@ -722,7 +746,9 @@ export class NeovimEditor {
     if (this.frame === 0) {
       this.frame = requestAnimationFrame(() => {
         this.frame = 0;
-        this.paint();
+        this.commit(() => {
+          this.paint();
+        });
       });
     }
   }
@@ -975,13 +1001,23 @@ export class NeovimEditor {
   /**
    * What Lua says each status line row shows (its `statusline` event):
    * grid 1 is drawn no more, each row is a footer (`placeFooters`).
+   * `withFlush`: Lua made it in the redraw it is about to flush (it comes
+   * just ahead of that flush), so it is drawn with the flush — the new
+   * file's name with the new file's text, in one frame.
    */
-  setStatusline(statusline: Statusline): void {
+  setStatusline(statusline: Statusline, withFlush = false): void {
+    if (withFlush) {
+      this.statuslineAtFlush = statusline;
+      return;
+    }
+    this.statuslineAtFlush = undefined;
     if (!this.painter.setStatusline(statusline)) return;
     if (this.frame === 0) {
       this.frame = requestAnimationFrame(() => {
         this.frame = 0;
-        this.paint();
+        this.commit(() => {
+          this.paint();
+        });
       });
     }
   }
@@ -1012,7 +1048,9 @@ export class NeovimEditor {
     if (this.frame === 0) {
       this.frame = requestAnimationFrame(() => {
         this.frame = 0;
-        this.paint();
+        this.commit(() => {
+          this.paint();
+        });
       });
     }
   }
@@ -1087,7 +1125,9 @@ export class NeovimEditor {
       if (this.frame === 0) {
         this.frame = requestAnimationFrame(() => {
           this.frame = 0;
-          this.paint();
+          this.commit(() => {
+            this.paint();
+          });
         });
       }
     };
