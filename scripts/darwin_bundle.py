@@ -127,6 +127,25 @@ def document_types() -> list[dict]:
 	return types
 
 
+# The URL scheme a `devhub:` link is written in (apps/desktop/src/model/devhubLink.ts):
+# `devhub:agent/<id>` pasted into Slack, Notes or a browser opens DevHub there
+# (apps/desktop/src/main/shell/openFromUrl.ts). Only the packaged app declares it
+# (`package-nightly.py`): a source run is another DevHub with other Agents, and
+# Launch Services must not hand it a link meant for the one the person uses.
+URL_SCHEME = "devhub"
+
+
+def url_types() -> list[dict]:
+	"""`CFBundleURLTypes`: the `devhub` scheme, DevHub's."""
+	return [
+		{
+			"CFBundleURLName": f"{BUNDLE_IDENTIFIER}.link",
+			"CFBundleURLSchemes": [URL_SCHEME],
+			"CFBundleTypeRole": "Viewer",
+		}
+	]
+
+
 def read_plist(path: Path) -> dict:
 	with path.open("rb") as handle:
 		return plistlib.load(handle)
@@ -139,7 +158,7 @@ def patch_plist(path: Path, values: dict[str, object]) -> None:
 		plistlib.dump(plist, handle, fmt=plistlib.FMT_XML)
 
 
-def rebrand(app: Path, main_plist_extra: dict[str, str] | None = None) -> None:
+def rebrand(app: Path, main_plist_extra: dict[str, object] | None = None) -> None:
 	"""Make the Electron bundle DevHub's.
 
 	Electron locates its helper processes at

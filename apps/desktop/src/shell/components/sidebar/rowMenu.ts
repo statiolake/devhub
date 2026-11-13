@@ -18,8 +18,41 @@ import type {
   AppIntent,
   WorkspaceSnapshot,
 } from "../../../ipc/appShell";
+import { formatDevhubLink, type DevhubLink } from "../../../model/devhubLink";
 import { agentContinuation, agentRestart } from "../../../model/domain";
 import { devhub } from "../../sidebar/client";
+
+/**
+ * Put a `devhub:` link to a row on the clipboard: canonical, or as
+ * Markdown with the row's name. Main writes it and says so
+ * (`SidebarBridge.copyDevhubLink`), as `Cmd+Q Y` / `Shift+Y` do for the
+ * selection.
+ */
+export type CopyLink = (link: string, markdown: boolean) => void;
+
+/** 「リンクをコピー」 and 「Markdown リンクをコピー」, for one place. */
+export function copyLinkItems(
+  link: DevhubLink,
+  copyLink: CopyLink,
+): RowMenuItem[] {
+  const text = formatDevhubLink(link);
+  return [
+    {
+      id: "copy-link",
+      label: "リンクをコピー",
+      run: () => {
+        copyLink(text, false);
+      },
+    },
+    {
+      id: "copy-markdown-link",
+      label: "Markdown リンクをコピー",
+      run: () => {
+        copyLink(text, true);
+      },
+    },
+  ];
+}
 
 export interface RowMenuItem {
   readonly id: string;
@@ -68,6 +101,8 @@ export function workspaceMenuItems(
     readonly fixed: boolean;
     /** Raise an intent: `set_workspace_managed`, as the chord does. */
     readonly dispatch: (intent: AppIntent) => void;
+    /** 「リンクをコピー」: absent, the menu has none. */
+    readonly copyLink?: CopyLink;
   },
 ): RowMenuItem[] {
   const items: RowMenuItem[] = [];
@@ -84,6 +119,13 @@ export function workspaceMenuItems(
         });
       },
     });
+    if (actions.copyLink !== undefined)
+      items.push(
+        ...copyLinkItems(
+          { kind: "workspace", workspace: workspace.id },
+          actions.copyLink,
+        ),
+      );
     items.push({
       // The ellipsis is the row button's promise: a question may follow.
       id: "close-workspace",
@@ -105,12 +147,15 @@ export function workspaceMenuItems(
  * Continue in Terminal / Continue in GUI are here and nowhere else on a
  * healthy Agent (`agentContinuation` says when); Stop Agent is the row's own
  * button and what `Cmd+Q X` does to an Agent, the last item and apart.
+ * 「リンクをコピー」 is the link that opens this Agent, from DevHub or from
+ * Slack and a browser (`Cmd+Q Y` on the selected one).
  */
 export function agentMenuItems(
   agent: AgentSnapshot,
   dispatch: (intent: AppIntent) => void,
   onRename: (agent: AgentSnapshot) => void,
   onContinue: (agent: AgentSnapshot) => void,
+  copyLink?: CopyLink,
 ): RowMenuItem[] {
   const items: RowMenuItem[] = [
     {
@@ -160,6 +205,8 @@ export function agentMenuItems(
       },
     });
   }
+  if (copyLink !== undefined)
+    items.push(...copyLinkItems({ kind: "agent", agent: agent.id }, copyLink));
   if (agent.controlState.kind !== "stopping") {
     items.push({
       id: "stop",

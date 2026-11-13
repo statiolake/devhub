@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   agentEntriesOf,
+  aliasedAgent,
+  closedAgentLink,
+  closedAgentNamed,
+  decodeAgentAliases,
+  rememberAlias,
   closedEntryDetail,
   closedEntryLabel,
   closeRemembers,
@@ -248,5 +253,87 @@ describe("a deleted worktree in the file", () => {
     ]) {
       expect(decodeRecentlyClosed([{ ...entry, worktree }])).toEqual([]);
     }
+  });
+});
+
+describe("a link to a closed Agent", () => {
+  const ID = "3f2a9c1e-7b4d-4e2a-9c1e-7b4d4e2a9c1e";
+  const linked: ClosedAgentRecord = { ...reviewer, agent_id: ID };
+  const own: ClosedEntryRecord = {
+    kind: "agent",
+    closed_at: 2,
+    place: { kind: "local", path: "/a" },
+    agent: linked,
+  };
+  const none = () => false;
+
+  it("remembers the id it had, and reads it back", () => {
+    expect(decodeRecentlyClosed(JSON.parse(JSON.stringify([own])))).toEqual([
+      own,
+    ]);
+    const bad = { ...own, agent: { ...linked, agent_id: "x/../y" } };
+    expect(decodeRecentlyClosed([bad])).toEqual([{ ...own, agent: reviewer }]);
+  });
+
+  it("finds it by id or a unique prefix, in its own entry or its Workspace's", () => {
+    const withWorkspace = workspaceEntry("/b", 1, [linked]);
+    expect(closedAgentNamed([own], ID.slice(0, 4))?.entry).toBe(own);
+    expect(closedAgentNamed([withWorkspace], ID)?.entry).toBe(withWorkspace);
+    expect(closedAgentNamed([own], "3f2")).toBeUndefined();
+    expect(closedAgentNamed([agentEntry("/c")], ID)).toBeUndefined();
+  });
+
+  it("reopens one that can be resumed, directly", () => {
+    expect(
+      closedAgentLink(ID, { aliases: [], stack: [own], isOpen: none }),
+    ).toEqual({
+      kind: "reopen",
+      entry: own,
+      agent: linked,
+      session: reviewer.session,
+    });
+  });
+
+  it("says one is gone that cannot be resumed, or is not remembered", () => {
+    const sessionless: ClosedEntryRecord = {
+      ...own,
+      agent: {
+        profile_id: "c",
+        profile_kind: "custom",
+        display_name: "Shell",
+        presentation: "tui",
+        agent_id: ID,
+      },
+    };
+    expect(
+      closedAgentLink(ID, { aliases: [], stack: [sessionless], isOpen: none }),
+    ).toMatchObject({ kind: "gone", why: expect.stringContaining("Shell") });
+    expect(
+      closedAgentLink(ID, { aliases: [], stack: [], isOpen: none }),
+    ).toMatchObject({ kind: "gone" });
+  });
+
+  it("follows an Agent reopened under a new id, through every id it had", () => {
+    let aliases = rememberAlias([], "aaaa1111", "bbbb2222");
+    aliases = rememberAlias(aliases, "bbbb2222", "cccc3333");
+    expect(aliasedAgent(aliases, "aaaa1111")).toBe("cccc3333");
+    expect(aliasedAgent(aliases, "bbbb")).toBe("cccc3333");
+    expect(
+      closedAgentLink("aaaa1111", {
+        aliases,
+        stack: [],
+        isOpen: (id) => id === "cccc3333",
+      }),
+    ).toEqual({ kind: "successor", agentId: "cccc3333" });
+    expect(decodeAgentAliases([...aliases, { from: "x", to: 1 }])).toEqual(
+      aliases,
+    );
+  });
+
+  it("reopens the successor when it was closed again", () => {
+    const aliases = rememberAlias([], "aaaa1111", ID);
+    expect(
+      closedAgentLink("aaaa1111", { aliases, stack: [own], isOpen: none }),
+    ).toMatchObject({ kind: "reopen", entry: own });
   });
 });

@@ -477,7 +477,14 @@ export type AppErrorCodeWire =
 	 * gone, its session cannot be resumed, its machine did not answer. The
 	 * detail says which and what became of the entry (`model/recentlyClosed.ts`).
 	 */
-	| "closed_not_reopened";
+	| "closed_not_reopened"
+	/**
+	 * A `devhub:` link opened from outside DevHub — Slack, Notes, a browser
+	 * (`main/shell/openFromUrl.ts`) — leads nowhere: it does not read as a
+	 * link, or names nothing open, or an Agent that is gone. The detail says
+	 * which, in one sentence.
+	 */
+	| "link_unavailable";
 
 /**
  * The sentence each failure is shown as.
@@ -551,6 +558,7 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	terminal_needs_agent_view:
 		"The terminal is shown with its Agent. Switch to the Agent (Cmd+Q Cmd+J) or split (Cmd+Q Z), then Cmd+Q V.",
 	closed_not_reopened: "DevHub could not bring back what was closed.",
+	link_unavailable: "DevHub のリンクを開けませんでした。",
 };
 export type AppErrorModuleWire =
 	| "app"

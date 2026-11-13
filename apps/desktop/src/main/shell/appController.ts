@@ -95,7 +95,24 @@ import type { FileSelection } from "../cli/fileSelection.js";
 import { WaitSelectionReturns } from "../cli/waitReturn.js";
 import type { ControlOpenRequest, ControlPosition } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
-import { isDevhubLink } from "../../model/devhubLink.js";
+import {
+	formatDevhubLink,
+	isDevhubLink,
+	linkToTarget,
+	markdownDevhubLink,
+	parseDevhubLink,
+	parseExternalDevhubUrl,
+	resolveDevhubLink,
+	targetName,
+	type DevhubLink,
+	type DevhubLinkKind,
+	type LinkPlaces,
+} from "../../model/devhubLink.js";
+import {
+	linkPlaces,
+	navigateLink,
+	type LinkNavigationPorts,
+} from "../../model/devhubLinkNavigation.js";
 import { fileSelection } from "../agent/conversation/pathLinks.js";
 import {
 	routeAgentOpen,
@@ -218,6 +235,34 @@ import { AgentNotifier, type AgentNotification } from "./agentNotifications.js";
 const REPOSITORY_STATUS_CONDITION = "repository_status";
 /** The Orchestrator in saving because a plan window is over `saving_threshold`. */
 const ORCHESTRATOR_SAVING_CONDITION = "orchestrator_saving";
+/**
+ * 「リンクをコピー」's notice: a condition, so it is the quiet kind and one
+ * slot — copying again replaces it — taken down after `LINK_COPIED_MS`.
+ */
+const LINK_COPIED_CONDITION = "link_copied";
+const LINK_COPIED_MS = 3_000;
+
+/** Why a link from outside names nothing open, by what it names. */
+const LINK_NOT_FOUND: Readonly<Record<DevhubLinkKind, string>> = {
+	agent: "このエージェントは開いていません。",
+	workspace: "このワークスペースは開いていません。",
+	file: "このファイルを含むワークスペースが開いていません。",
+	task: "このタスクはありません。",
+	escalation: "このエスカレーションはありません。",
+	orchestrator: "Orchestrator がありません。",
+	session: "このセッションを実行しているエージェントはありません。",
+};
+
+/** A link from outside that leads nowhere: one notice, and why. */
+function linkUnavailable(detail: string): NamedFailure {
+	return new NamedFailure(withDetail(errorWireAt("link_unavailable"), detail));
+}
+
+/** A URL as a notice quotes it: whole, unless it is very long. */
+function shortened(url: string): string {
+	const one = url.trim();
+	return one.length <= 200 ? one : `${one.slice(0, 200)}…`;
+}
 import { crash, isInvariantViolation } from "./invariant.js";
 import { InvariantViolation } from "../../model/invariant.js";
 import { HostLinkFailure } from "../agent/conversation/hostLink.js";
@@ -372,9 +417,12 @@ import {
 	agentEntriesOf,
 	closedEntryDetail,
 	closedEntryLabel,
+	aliasedAgent,
+	closedAgentLink,
 	closeRemembers,
 	placeKey,
 	placeLabel,
+	rememberAlias,
 	rememberClosed,
 	restoreEntry,
 	resumableSession,
@@ -2115,6 +2163,13 @@ export class AppController {
 					.catch(report);
 			},
 			navigateHistory: (direction) => this.navigateHistory(direction),
+			copyLink: (link, markdown) => {
+				try {
+					this.copyDevhubLink(link, markdown);
+				} catch (error: unknown) {
+					report(error);
+				}
+			},
 			openCommandPalette: () => {
 				void this.openCommandPalette(chordHost);
 			},
@@ -3459,6 +3514,8 @@ export class AppController {
 			...(agent.named ? { named: true } : {}),
 			presentation: agent.presentation,
 			...(session === undefined ? {} : { session }),
+			// What a `devhub:agent` link names it by, to reopen it from one.
+			agent_id: agentId,
 		};
 	}
 
@@ -3847,7 +3904,31 @@ export class AppController {
 				displayName: agent.display_name,
 			});
 		}
+		// A link to the closed one leads to this one from now on.
+		if (agent.agent_id !== undefined)
+			this.rememberAgentAlias(agent.agent_id, created.id);
 		return created.id;
+	}
+
+	/**
+	 * `from` came back as `to` (`model/recentlyClosed.ts`, `agent_aliases`).
+	 * Saved now rather than with the next close: the person may follow the
+	 * link they reopened it by before anything else is saved.
+	 */
+	private rememberAgentAlias(from: string, to: string): void {
+		this.state.agent_aliases = rememberAlias(
+			this.state.agent_aliases,
+			from,
+			to,
+		);
+		void this.saveState().catch((error: unknown) => {
+			this.publishError(
+				withDetail(
+					errorWireAt("persistence_degraded"),
+					this.persistenceReason(error),
+				),
+			);
+		});
 	}
 
 	//#endregion
@@ -6883,6 +6964,167 @@ export class AppController {
 	 */
 	noteFailure(error: unknown): void {
 		this.publishError(errorWire(error));
+	}
+
+	/**
+	 * 「リンクをコピー」 (`Cmd+Q Y`, the row menu): the `devhub:` link to a
+	 * place on this Mac's clipboard — canonical, by id, so it goes on naming
+	 * the same place, or as Markdown with the place's name — and a short
+	 * notice saying what was copied. The notice is a quiet one (a condition
+	 * that takes itself down: `LINK_COPIED_MS`), not a failure.
+	 */
+	copyDevhubLink(text: string, markdown: boolean): void {
+		const parsed = parseDevhubLink(text);
+		if (!parsed.ok)
+			throw new Error(`${text} is not a devhub: link: ${parsed.problem}`);
+		const found = resolveDevhubLink(parsed.link, this.devhubLinkPlaces());
+		const link = found.found ? linkToTarget(found.target) : parsed.link;
+		const copied = markdown
+			? markdownDevhubLink(found.found ? targetName(found.target) : "", link)
+			: formatDevhubLink(link);
+		electron.clipboard.writeText(copied);
+		clearTimeout(this.linkCopiedTimer);
+		this.publishCondition(LINK_COPIED_CONDITION, undefined);
+		this.publishCondition(LINK_COPIED_CONDITION, `コピーしました: ${copied}`);
+		this.linkCopiedTimer = setTimeout(() => {
+			this.publishCondition(LINK_COPIED_CONDITION, undefined);
+		}, LINK_COPIED_MS);
+	}
+
+	private linkCopiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** What a link is resolved against in main: the projection and the board. */
+	private devhubLinkPlaces(): LinkPlaces {
+		return linkPlaces(
+			this.snapshot(),
+			this.orchestrator?.wire() ?? EMPTY_BOARD,
+		);
+	}
+
+	/** The moves a link makes, through main's own dispatch: the page's, here. */
+	private linkNavigationPorts(): LinkNavigationPorts {
+		return {
+			dispatch: async (intent) => {
+				await this.dispatchAwaiting(intentFromWire(intent));
+				return undefined;
+			},
+			openLinkedFile: (workspaceId, path, range) =>
+				this.openLinkedFile(workspaceId, path, range),
+			sessionAgent: async (session) =>
+				(await this.agentRunningSession(session)) ?? null,
+		};
+	}
+
+	/**
+	 * A `devhub:` link the system handed DevHub — a click in Slack, Notes or
+	 * a browser, `open devhub:agent/…` (`main/shell/openFromUrl.ts`).
+	 *
+	 * The window comes to the front, then the link is followed the way a
+	 * chip in DevHub is (`model/devhubLinkNavigation.ts`): the same intents,
+	 * as an explicit move, so Back returns to where the window was. A link
+	 * to an Agent that has been closed reopens it, resuming its session, when
+	 * it can be (`openClosedAgentLink`). Anything else that leads nowhere is
+	 * one notice, `link_unavailable`, saying why.
+	 */
+	async openDevhubUrl(url: string): Promise<void> {
+		this.personStartedAction();
+		this.bringToFront();
+		const parsed = parseExternalDevhubUrl(url);
+		if (!parsed.ok)
+			throw linkUnavailable(
+				`${shortened(url)} は DevHub のリンクとして読めません: ${parsed.problem}`,
+			);
+		const link = parsed.link;
+		const places = this.devhubLinkPlaces();
+		const found = resolveDevhubLink(link, places);
+		if (found.found) {
+			await this.followLink(link, () =>
+				navigateLink(found.target, this.linkNavigationPorts()),
+			);
+			return;
+		}
+		if (link.kind === "agent") {
+			await this.openClosedAgentLink(link, places);
+			return;
+		}
+		throw linkUnavailable(
+			`${formatDevhubLink(link)}: ${LINK_NOT_FOUND[link.kind]}`,
+		);
+	}
+
+	/** A move a link makes, its failure said as the link's. */
+	private async followLink(
+		link: DevhubLink,
+		move: () => Promise<void>,
+	): Promise<void> {
+		try {
+			await move();
+		} catch (error: unknown) {
+			if (error instanceof NamedFailure) throw error;
+			throw linkUnavailable(`${formatDevhubLink(link)}: ${failureText(error)}`);
+		}
+	}
+
+	/**
+	 * `devhub:agent/<id>` naming no open Agent.
+	 *
+	 * An Agent reopened since the link was written came back under a new id
+	 * (`agent_aliases`): that one is selected. One that is closed and on
+	 * Recently Closed is reopened at once, resuming its session — what the
+	 * link asks for, and undone by closing it again — through the same
+	 * reopen `Cmd+Q Shift+T` makes (`reopenEntry`), which says what it could
+	 * not bring back; then it is selected. One closed with its Workspace
+	 * brings the Workspace back, which is undoing that close. One that cannot
+	 * be resumed, or that DevHub no longer remembers, is said to be gone.
+	 */
+	private async openClosedAgentLink(
+		link: Extract<DevhubLink, { kind: "agent" }>,
+		places: LinkPlaces,
+	): Promise<void> {
+		const ports = this.linkNavigationPorts();
+		const selectIfOpen = async (id: string | undefined): Promise<boolean> => {
+			if (id === undefined) return false;
+			const open = resolveDevhubLink({ kind: "agent", agent: id }, places);
+			if (!open.found) return false;
+			await this.followLink(link, () => navigateLink(open.target, ports));
+			return true;
+		};
+		const decided = closedAgentLink(link.agent, {
+			aliases: this.state.agent_aliases,
+			stack: this.state.recently_closed,
+			isOpen: (id) =>
+				this.coordinator.model.agent(parseAgentId(id)) !== undefined,
+		});
+		if (decided.kind === "successor") {
+			await selectIfOpen(decided.agentId);
+			return;
+		}
+		if (decided.kind === "gone")
+			throw linkUnavailable(`${formatDevhubLink(link)}: ${decided.why}`);
+		// Its session may be open already, in an Agent resumed by hand.
+		if (await selectIfOpen(await this.agentRunningSession(decided.session)))
+			return;
+		const { entry, agent: closed } = decided;
+		await this.queueReopen(() =>
+			this.state.recently_closed.includes(entry) ? entry : undefined,
+		);
+		// The reopen said what went wrong, if anything did; what came back is
+		// selected, as the link asked.
+		const back = aliasedAgent(
+			this.state.agent_aliases,
+			closed.agent_id ?? link.agent,
+		);
+		if (
+			back !== undefined &&
+			this.coordinator.model.agent(parseAgentId(back)) !== undefined
+		)
+			await this.dispatchAwaiting(
+				intentFromWire({
+					type: "select_context",
+					context: { kind: "agent", agentId: back },
+					reason: "explicit",
+				}),
+			);
 	}
 
 	/**
@@ -10414,6 +10656,15 @@ export class AppController {
 					request,
 					window.contextMenuOrigin(event.sender),
 				);
+			},
+		);
+		// The row menu's 「リンクをコピー」: written and said here, as the chord's.
+		handle(
+			CHANNELS.copyDevhubLink,
+			(_event, link: unknown, markdown: unknown) => {
+				if (typeof link !== "string")
+					throw new Error(`${String(link)} is not a devhub: link`);
+				this.copyDevhubLink(link, markdown === true);
 			},
 		);
 		receive(CHANNELS.showTooltip, (_event, request: TooltipRequestWire) => {

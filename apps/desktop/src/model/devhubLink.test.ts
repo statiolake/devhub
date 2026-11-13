@@ -7,8 +7,12 @@ import { describe, expect, it } from "vitest";
 import {
   formatDevhubLink,
   isDevhubLink,
+  linkToTarget,
+  markdownDevhubLink,
   owningWorkspace,
   parseDevhubLink,
+  parseExternalDevhubUrl,
+  targetName,
   resolveDevhubLink,
   type DevhubLink,
   type LinkPlaces,
@@ -220,5 +224,83 @@ describe("resolving a link against what is open", () => {
     expect(resolveDevhubLink(parsed("devhub:orchestrator"), PLACES).found).toBe(
       true,
     );
+  });
+});
+
+describe("a link from outside DevHub", () => {
+  it("reads devhub://, a trailing slash and the canonical form as one link", () => {
+    for (const url of [
+      `devhub:agent/${AGENT}`,
+      `devhub://agent/${AGENT}`,
+      `devhub:///agent/${AGENT}/`,
+      ` DEVHUB://agent/${AGENT} `,
+    ]) {
+      const read = parseExternalDevhubUrl(url);
+      expect(read).toEqual({ ok: true, link: { kind: "agent", agent: AGENT } });
+      if (read.ok)
+        expect(formatDevhubLink(read.link)).toBe(`devhub:agent/${AGENT}`);
+    }
+    expect(parseExternalDevhubUrl("devhub://orchestrator/")).toEqual({
+      ok: true,
+      link: { kind: "orchestrator" },
+    });
+    expect(parseExternalDevhubUrl("devhub://file/Users/me/a.ts:3")).toEqual({
+      ok: true,
+      link: { kind: "file", path: "/Users/me/a.ts", line: 3 },
+    });
+  });
+
+  it("still refuses // inside DevHub, and what is no link from outside", () => {
+    expect(parseDevhubLink(`devhub://agent/${AGENT}`).ok).toBe(false);
+    expect(parseExternalDevhubUrl("devhub://nothing/1").ok).toBe(false);
+    expect(parseExternalDevhubUrl("https://example.com").ok).toBe(false);
+    expect(parseExternalDevhubUrl("devhub://agent/ab").ok).toBe(false);
+  });
+});
+
+describe("a copied link", () => {
+  it("is Markdown with the place's name, its brackets escaped", () => {
+    const link: DevhubLink = { kind: "agent", agent: AGENT };
+    expect(markdownDevhubLink("API fix", link)).toBe(
+      `[API fix](devhub:agent/${AGENT})`,
+    );
+    expect(markdownDevhubLink("a [b]\\n  c", link)).toBe(
+      `[a \\[b\\]\\\\n c](devhub:agent/${AGENT})`,
+    );
+    expect(markdownDevhubLink("  ", link)).toBe(
+      `[devhub:agent/${AGENT}](devhub:agent/${AGENT})`,
+    );
+  });
+
+  it("names what was found by its id, whatever found it", () => {
+    const places: LinkPlaces = {
+      workspaces: [
+        {
+          id: "w1",
+          label: "login-fix",
+          root: "/Users/me/app",
+          local: true,
+          agents: [{ id: AGENT, displayName: "API fix", status: "idle" }],
+        },
+      ],
+      tasks: [{ id: 3, title: "列追加", status: "answer" }],
+      escalations: [],
+      orchestrator: true,
+    };
+    const found = resolveDevhubLink({ kind: "agent", agent: "3f2a" }, places);
+    if (!found.found) throw new Error("not found");
+    expect(linkToTarget(found.target)).toEqual({ kind: "agent", agent: AGENT });
+    expect(targetName(found.target)).toBe("API fix");
+    const workspace = resolveDevhubLink(
+      { kind: "workspace", workspace: "login-fix" },
+      places,
+    );
+    if (!workspace.found) throw new Error("not found");
+    expect(formatDevhubLink(linkToTarget(workspace.target))).toBe(
+      "devhub:workspace/w1",
+    );
+    const task = resolveDevhubLink({ kind: "task", id: 3 }, places);
+    if (!task.found) throw new Error("not found");
+    expect(targetName(task.target)).toBe("#3 列追加");
   });
 });

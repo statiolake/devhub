@@ -19,9 +19,12 @@
  *      one DevHub, two profiles are two.
  *   4. `devhub-app:`, the pages' scheme, registered as privileged before
  *      `ready`, as Electron requires.
- *   5. Finder's `open-file`, listened for before `ready` (it fires earlier).
+ *   5. Finder's `open-file` and the system's `open-url` (a `devhub:` link
+ *      from Slack or a browser), listened for before `ready` (they fire
+ *      earlier), and the `devhub` scheme claimed for this DevHub.
  *   6. On `ready`: the process host, then the shell (`bootstrapShell`), then
- *      the shell is told it may serve everything (`markReady`).
+ *      the shell is told it may serve everything (`markReady`), and the
+ *      links that waited are followed.
  */
 
 // The quit trace and the microphone permission. MUST stay the first import.
@@ -36,6 +39,12 @@ import { processHostRunner } from "./processHost/client.js";
 import { setChildRunner } from "./terminal/command.js";
 import { setStreamRunner } from "./runtime/byteStream.js";
 import { watchForFinderOpens } from "./shell/openFromFinder.js";
+import {
+	answerDevhubUrls,
+	claimDevhubScheme,
+	offerDevhubUrls,
+	watchForDevhubUrls,
+} from "./shell/openFromUrl.js";
 import { bootstrapShell } from "./shell/bootstrapShell.js";
 import { appController } from "./shell/appController.js";
 import { shellWindowIfCreated } from "./shell/shellWindow.js";
@@ -77,8 +86,11 @@ if (!app.requestSingleInstanceLock()) {
 	);
 	app.exit(0);
 } else {
-	app.on("second-instance", () => {
+	app.on("second-instance", (_event, argv) => {
 		shellWindowIfCreated()?.raiseFromAppActivation();
+		// A link opened by launching DevHub with it (not macOS, which sends
+		// the running app `open-url` instead): followed here.
+		offerDevhubUrls(argv);
 	});
 
 	// No default menu: the shell sets DevHub's own (`shell/menu.ts`).
@@ -103,6 +115,9 @@ if (!app.requestSingleInstanceLock()) {
 	// `open-file` before `ready`; `openFromFinder.ts` queues it until there is
 	// a shell to open it in.
 	watchForFinderOpens();
+	// And a `devhub:` link, the same way (`openFromUrl.ts`).
+	watchForDevhubUrls(process.argv.slice(1));
+	claimDevhubScheme(profile.isDefault);
 
 	// DevHub is the app, not its window: closing the window hides it on macOS
 	// (`shellWindow.ts`), and the app stays until it is quit. Elsewhere the
@@ -141,4 +156,13 @@ async function onReady(): Promise<void> {
 	// then the page shows "Connecting…" rather than an empty shell that looks
 	// like a state.
 	appController().markReady();
+	// A link that launched DevHub, or arrived while it started, is followed
+	// now that there is a model to find its place in.
+	const controller = appController();
+	answerDevhubUrls(
+		(url) => controller.openDevhubUrl(url),
+		(error) => {
+			controller.noteFailure(error);
+		},
+	);
 }

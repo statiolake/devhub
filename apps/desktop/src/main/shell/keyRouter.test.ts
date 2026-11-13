@@ -89,7 +89,7 @@ describe("the Command-Q chord", () => {
 			commandId: "add_workspace",
 		});
 		router.route(commandQ);
-		expect(router.route(stroke("KeyY"))).toEqual({ kind: "cancelled" });
+		expect(router.route(stroke("KeyK"))).toEqual({ kind: "cancelled" });
 	});
 
 	it("does not arm and fire on one held-down prefix", () => {

@@ -813,6 +813,9 @@ export function errorWireAt(
     code === "terminal_needs_agent_view" ||
     // Pressing the chord again is the retry, and it goes further back.
     code === "closed_not_reopened" ||
+    // The link is the person's to open again; trying again here leads to
+    // the same nowhere.
+    code === "link_unavailable" ||
     // Trying again opens the same missing file.
     code === "file_not_found"
       ? []

@@ -38,6 +38,7 @@ import { chordKeyId, type ChordKey } from "../../model/chordKeys.js";
 import { pairedAgentId } from "../../model/appModel.js";
 import type { TogglePlace } from "../../model/intents.js";
 import { moveAgent, moveWorkspace } from "../../model/workspaceOrder.js";
+import { formatDevhubLink } from "../../model/devhubLink.js";
 import {
 	commandById,
 	defaultBindings,
@@ -247,6 +248,15 @@ export type ChordEffect =
 	| {
 			readonly kind: "navigate-history";
 			readonly direction: "back" | "forward";
+	  }
+	/**
+	 * A `devhub:` link to what is selected, on the clipboard: canonical, or
+	 * as Markdown with the place's name (`model/devhubLink.ts`).
+	 */
+	| {
+			readonly kind: "copy-link";
+			readonly link: string;
+			readonly markdown: boolean;
 	  };
 
 /**
@@ -317,6 +327,35 @@ function selectedWorkspace(
 			: context.kind === "agent" &&
 				workspace.agents.some((agent) => agent.id === context.agentId),
 	);
+}
+
+/**
+ * The link `Cmd+Q Y` copies: the selected Agent, the selected Workspace, or
+ * on the Orchestrator row the task open over its board, else the row. Not
+ * Scratch: it is today's folder, and a link to it would name another one
+ * tomorrow.
+ */
+export function copyLinkOf(snapshot: AppSnapshotWire): string | undefined {
+	const context = snapshot.selection.context;
+	switch (context.kind) {
+		case "agent":
+			return formatDevhubLink({ kind: "agent", agent: context.agentId });
+		case "workspace":
+			return context.workspaceId === snapshot.scratchWorkspaceId
+				? undefined
+				: formatDevhubLink({
+						kind: "workspace",
+						workspace: context.workspaceId,
+					});
+		case "orchestrator": {
+			const view = snapshot.orchestratorView?.view;
+			return formatDevhubLink(
+				view?.kind === "task"
+					? { kind: "task", id: view.id }
+					: { kind: "orchestrator" },
+			);
+		}
+	}
 }
 
 /** The terminal pane with the keyboard, when it is the one on screen. */
@@ -555,6 +594,18 @@ export function resolveChord(
 
 		case "open_command_palette":
 			return { kind: "open-command-palette" };
+
+		case "copy_link":
+		case "copy_markdown_link": {
+			const link = copyLinkOf(snapshot);
+			return link === undefined
+				? undefined
+				: {
+						kind: "copy-link",
+						link,
+						markdown: commandId === "copy_markdown_link",
+					};
+		}
 
 		case "navigate_back":
 		case "navigate_forward": {

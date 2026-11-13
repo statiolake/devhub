@@ -1399,3 +1399,51 @@ describe("the Orchestrator row's Workspace", () => {
 		).toBeUndefined();
 	});
 });
+
+describe("Cmd+Q Y: a link to what is selected", () => {
+	it("copies the selected Agent's link, canonical or as Markdown", () => {
+		const snapshot = snapshotOf({
+			workspaces: [one],
+			context: { kind: "agent", agentId: "a1" },
+		});
+		expect(run("copy_link", snapshot)).toEqual({
+			kind: "copy-link",
+			link: "devhub:agent/a1",
+			markdown: false,
+		});
+		expect(run("copy_markdown_link", snapshot)).toEqual({
+			kind: "copy-link",
+			link: "devhub:agent/a1",
+			markdown: true,
+		});
+	});
+
+	it("copies a Workspace's link, and nothing on Scratch, whose folder is today's", () => {
+		expect(
+			run(
+				"copy_link",
+				snapshotOf({
+					workspaces: [one],
+					context: { kind: "workspace", workspaceId: "one" },
+				}),
+			),
+		).toMatchObject({ link: "devhub:workspace/one" });
+		expect(run("copy_link", snapshotOf())).toBeUndefined();
+	});
+
+	it("copies the task open on the Orchestrator row, else the row", () => {
+		const orchestrator = snapshotOf({ context: { kind: "orchestrator" } });
+		expect(run("copy_link", orchestrator)).toMatchObject({
+			link: "devhub:orchestrator",
+		});
+		expect(
+			run("copy_link", {
+				...orchestrator,
+				orchestratorView: {
+					view: { kind: "task", id: 12 },
+					seq: 1,
+				} as never,
+			}),
+		).toMatchObject({ link: "devhub:task/12" });
+	});
+});

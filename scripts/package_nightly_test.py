@@ -49,6 +49,16 @@ class PrebuildFilter(unittest.TestCase):
 		self.assertEqual(dropped, {"src", "binding.gyp"})
 
 
+class NightlyPlist(unittest.TestCase):
+	"""What only the packaged bundle's Info.plist says."""
+
+	def test_names_the_build_and_claims_devhub_links(self) -> None:
+		extra = package_nightly.nightly_plist("0.1.0", "20261113", "0123456789abcdef")
+		self.assertEqual(extra["CFBundleVersion"], "0.1.0.20261113+0123456789")
+		schemes = [scheme for entry in extra["CFBundleURLTypes"] for scheme in entry["CFBundleURLSchemes"]]
+		self.assertEqual(schemes, ["devhub"])
+
+
 class FreshBuild(unittest.TestCase):
 	"""Packaging copies `out/` and `dist/` whole and scans every `.js` in `out/`,
 	so a file the current sources no longer emit must not survive a build."""

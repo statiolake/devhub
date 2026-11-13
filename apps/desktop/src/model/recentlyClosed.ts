@@ -80,6 +80,9 @@ import type { WorktreeDisposition } from "./intents.js";
 /** How many closed things are remembered. The oldest is forgotten first. */
 export const RECENTLY_CLOSED_LIMIT = 20;
 
+/** What an Agent's id may spell, as `devhub:agent/` reads one. */
+const AGENT_ID = /^[A-Za-z0-9-]{4,64}$/u;
+
 /** Where a closed Workspace was. */
 export type ClosedPlaceRecord =
   | { kind: "local"; path: string }
@@ -95,6 +98,12 @@ export interface ClosedAgentRecord {
   presentation: AgentPresentation;
   /** Claude's session id, Codex's thread id. Absent: nothing to resume. */
   session?: string;
+  /**
+   * The id it had, which a `devhub:agent/<id>` link names it by
+   * (`model/devhubLink.ts`): a link to it, opened once it is closed, reopens
+   * it (`closedAgentNamed`). Absent in an entry written before links could.
+   */
+  agent_id?: string;
 }
 
 /** A deleted worktree, as making it again needs it. */
@@ -330,6 +339,7 @@ function decodeAgent(value: unknown): ClosedAgentRecord | undefined {
     presentation,
     session,
     named,
+    agent_id: agentId,
   } = value;
   if (
     typeof profileId !== "string" ||
@@ -342,6 +352,9 @@ function decodeAgent(value: unknown): ClosedAgentRecord | undefined {
   ) {
     return undefined;
   }
+  // An id that does not read is only a link that cannot find it: the entry
+  // still reopens from Cmd+Q Shift+T.
+  const linkable = typeof agentId === "string" && AGENT_ID.test(agentId);
   return {
     profile_id: profileId,
     profile_kind: profileKind,
@@ -349,6 +362,7 @@ function decodeAgent(value: unknown): ClosedAgentRecord | undefined {
     ...(named === true ? { named: true } : {}),
     presentation,
     ...(session === undefined ? {} : { session }),
+    ...(linkable ? { agent_id: agentId } : {}),
   };
 }
 
@@ -407,4 +421,168 @@ export function decodeRecentlyClosed(value: unknown): ClosedEntryRecord[] {
     .map(decodeEntry)
     .filter((entry): entry is ClosedEntryRecord => entry !== undefined)
     .slice(0, RECENTLY_CLOSED_LIMIT);
+}
+
+// --- links to a closed Agent -------------------------------------------------
+
+/** A closed Agent a link names, and the entry it is in. */
+export interface ClosedAgentFound {
+  /** An Agent's own entry, or the Workspace's it was closed with. */
+  readonly entry: ClosedEntryRecord;
+  readonly agent: ClosedAgentRecord;
+}
+
+/**
+ * The closed Agent `name` names — its id, or a unique prefix of 4+
+ * characters, the rule `devhub:agent/` has for an open one — among every
+ * Agent on the stack, its own entries and those closed with a Workspace.
+ * Newest first, so an id closed twice is the latest close.
+ */
+export function closedAgentNamed(
+  stack: readonly ClosedEntryRecord[],
+  name: string,
+): ClosedAgentFound | undefined {
+  const lower = name.toLowerCase();
+  const all = stack.flatMap((entry) =>
+    (entry.kind === "agent" ? [entry.agent] : entry.agents)
+      .filter((agent) => agent.agent_id !== undefined)
+      .map((agent) => ({ entry, agent, id: agent.agent_id!.toLowerCase() })),
+  );
+  const exact = all.find((one) => one.id === lower);
+  if (exact !== undefined) return { entry: exact.entry, agent: exact.agent };
+  if (lower.length < 4) return undefined;
+  const ids = new Set(
+    all.filter((one) => one.id.startsWith(lower)).map((one) => one.id),
+  );
+  if (ids.size !== 1) return undefined;
+  const one = all.find((each) => ids.has(each.id))!;
+  return { entry: one.entry, agent: one.agent };
+}
+
+/**
+ * A closed Agent brought back: the id it had, and the id it has now.
+ *
+ * Reopening starts a new Agent on the closed one's session, under a new id
+ * (an id names an Agent's terminal, its journal and its files, which went
+ * with it). A `devhub:agent` link written before the close names the old
+ * one, so the pair is kept in `state.json` (`agent_aliases`) and the link
+ * goes on leading to the Agent that took its place (`aliasedAgent`).
+ */
+export interface AgentAliasRecord {
+  from: string;
+  to: string;
+}
+
+/** How many reopened Agents' old ids are remembered. The oldest goes first. */
+export const AGENT_ALIAS_LIMIT = 200;
+
+/**
+ * `aliases` with `from` → `to` first, bounded. An alias that led to `from`
+ * now leads to `to` too, so an Agent closed and reopened twice is still one
+ * hop from every id it had.
+ */
+export function rememberAlias(
+  aliases: readonly AgentAliasRecord[],
+  from: string,
+  to: string,
+  limit: number = AGENT_ALIAS_LIMIT,
+): AgentAliasRecord[] {
+  if (from === to) return [...aliases];
+  return [
+    { from, to },
+    ...aliases
+      .filter((alias) => alias.from !== from)
+      .map((alias) => (alias.to === from ? { from: alias.from, to } : alias)),
+  ].slice(0, limit);
+}
+
+/** The id that took the place of the one `name` names (its id or a 4+ prefix). */
+export function aliasedAgent(
+  aliases: readonly AgentAliasRecord[],
+  name: string,
+): string | undefined {
+  const lower = name.toLowerCase();
+  const exact = aliases.find((alias) => alias.from.toLowerCase() === lower);
+  if (exact !== undefined) return exact.to;
+  if (lower.length < 4) return undefined;
+  const prefixed = aliases.filter((alias) =>
+    alias.from.toLowerCase().startsWith(lower),
+  );
+  return prefixed.length === 1 ? prefixed[0]!.to : undefined;
+}
+
+/** The aliases as the file has them; one that does not read is left out. */
+export function decodeAgentAliases(value: unknown): AgentAliasRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (alias): alias is AgentAliasRecord =>
+        isObject(alias) &&
+        typeof alias["from"] === "string" &&
+        typeof alias["to"] === "string" &&
+        AGENT_ID.test(alias["from"]) &&
+        AGENT_ID.test(alias["to"]),
+    )
+    .map((alias) => ({ from: alias.from, to: alias.to }))
+    .slice(0, AGENT_ALIAS_LIMIT);
+}
+
+/** What a `devhub:agent` link naming no open Agent does. */
+export type ClosedAgentLink =
+  /** It came back under another id, which is open: select that one. */
+  | { readonly kind: "successor"; readonly agentId: string }
+  /**
+   * It is closed and its session can be resumed: reopen `entry` (its own,
+   * or its Workspace's), unless an open Agent already runs `session`.
+   */
+  | {
+      readonly kind: "reopen";
+      readonly entry: ClosedEntryRecord;
+      readonly agent: ClosedAgentRecord;
+      readonly session: string;
+    }
+  /** Closed and cannot come back, or never known: said, in Japanese. */
+  | { readonly kind: "gone"; readonly why: string };
+
+/**
+ * The one decision for a link to an Agent that is not open: an Agent
+ * reopened since the link was written is followed to its new id; one on
+ * Recently Closed that can be resumed is reopened, directly — that is what
+ * the link asks for, and closing it again undoes it; one that cannot is
+ * said to be gone, with why.
+ */
+export function closedAgentLink(
+  name: string,
+  state: {
+    readonly aliases: readonly AgentAliasRecord[];
+    readonly stack: readonly ClosedEntryRecord[];
+    /** Whether an Agent with this id is open now. */
+    readonly isOpen: (agentId: string) => boolean;
+  },
+): ClosedAgentLink {
+  const successor = aliasedAgent(state.aliases, name);
+  if (successor !== undefined && state.isOpen(successor))
+    return { kind: "successor", agentId: successor };
+  const closed =
+    (successor === undefined
+      ? undefined
+      : closedAgentNamed(state.stack, successor)) ??
+    closedAgentNamed(state.stack, name);
+  if (closed === undefined)
+    return {
+      kind: "gone",
+      why: "このエージェントは開いておらず、最近閉じたものにもありません。",
+    };
+  const resumable = resumableSession(closed.agent);
+  if (resumable.kind === "none")
+    return {
+      kind: "gone",
+      why: `「${closed.agent.display_name}」は閉じられていて、再開できるセッションがありません。${resumable.why}`,
+    };
+  return {
+    kind: "reopen",
+    entry: closed.entry,
+    agent: closed.agent,
+    session: resumable.session,
+  };
 }

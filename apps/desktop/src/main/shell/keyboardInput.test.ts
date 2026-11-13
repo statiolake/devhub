@@ -164,6 +164,7 @@ function host(zoomActs = true) {
 		installCli: record("installCli"),
 		restartTerminals: record("restartTerminals"),
 		openCommandPalette: record("openCommandPalette"),
+		copyLink: record("copyLink"),
 	};
 	return { calls, chordHost, interactions };
 }

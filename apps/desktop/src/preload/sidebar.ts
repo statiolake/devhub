@@ -67,6 +67,12 @@ const api: SidebarBridge = {
 		ipcRenderer.invoke(CHANNELS.showContextMenu, request) as Promise<
 			string | undefined
 		>,
+	copyDevhubLink: (link: string, markdown: boolean) =>
+		ipcRenderer.invoke(
+			CHANNELS.copyDevhubLink,
+			link,
+			markdown,
+		) as Promise<void>,
 	showTooltip: (request: TooltipRequestWire) => {
 		ipcRenderer.send(CHANNELS.showTooltip, request);
 	},

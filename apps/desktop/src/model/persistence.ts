@@ -77,7 +77,9 @@ import {
 } from "./agentTerminal.js";
 import { isSmartButtonsSpot, type SmartButtonsSpot } from "./smartButtons.js";
 import {
+  decodeAgentAliases,
   decodeRecentlyClosed,
+  type AgentAliasRecord,
   type ClosedEntryRecord,
 } from "./recentlyClosed.js";
 import { decodeSessionNames, type SessionNameRecord } from "./sessionNames.js";
@@ -736,6 +738,13 @@ export interface PersistedAppState {
    * `recently_closed`. See `model/sessionNames.ts`.
    */
   session_names: SessionNameRecord[];
+  /**
+   * Reopened Agents' old ids and the ids they came back as, newest first,
+   * so a `devhub:agent` link written before a close still leads somewhere.
+   * Main's, like `recently_closed`, and the same bargain: absent is none,
+   * an entry that does not read is left out. See `model/recentlyClosed.ts`.
+   */
+  agent_aliases: AgentAliasRecord[];
 }
 
 export function freshState(): PersistedAppState {
@@ -764,6 +773,7 @@ export function freshState(): PersistedAppState {
     shutdown: { clean: true, launch_generation: 0 },
     recently_closed: [],
     session_names: [],
+    agent_aliases: [],
   };
 }
 
@@ -1228,6 +1238,7 @@ export function validateState(state: PersistedAppState): void {
   }
   decodeArray("recently_closed", state.recently_closed);
   decodeArray("session_names", state.session_names);
+  decodeArray("agent_aliases", state.agent_aliases);
   decodeObject("navigation", state.navigation);
   if (state.navigation.context !== undefined) {
     decodeObject("navigation.context", state.navigation.context);
@@ -2765,6 +2776,7 @@ function decodeParsed(parsed: Extract<Parsed, { kind: "document" }>): Decoded {
       recently_closed: decodeRecentlyClosed(object["recently_closed"]),
       // The same bargain: labels, not work. See `model/sessionNames.ts`.
       session_names: decodeSessionNames(object["session_names"]),
+      agent_aliases: decodeAgentAliases(object["agent_aliases"]),
       navigation:
         object["navigation"] === undefined
           ? fresh.navigation

@@ -82,6 +82,7 @@
  * | `Cmd+Q ?`                   | `show_chord_help`         |
  * | `Cmd+Q :`                   | `open_command_palette`    |
  * | `Cmd+Q H` / `L`              | `navigate_back` / `navigate_forward` |
+ * | `Cmd+Q Y` / `Shift+Y`       | `copy_link` / `copy_markdown_link` |
  *
  * # The decisions behind that table
  *
@@ -326,6 +327,16 @@
  * chord key cancels, so nothing surprising happens if one is typed out of
  * habit.
  *
+ * **`Cmd+Q Y` copies a link to what is selected.** Vim's yank. The
+ * selected Agent's `devhub:agent/<id>` (`model/devhubLink.ts`), a
+ * Workspace's `devhub:workspace/<id>`, and on the Orchestrator row the task
+ * open over its board (`devhub:task/<id>`) or the row itself; Scratch is
+ * today's folder and has no link that would last, so the chord is a no-op
+ * there. `Shift+Y` is the same link as Markdown, `[name](devhub:…)`, for a
+ * body or a note. The row menu has both (「リンクをコピー」), so the copy is
+ * not a right-click only; the link opens DevHub from Slack, Notes or a
+ * browser (`main/shell/openFromUrl.ts`).
+ *
  * **`Cmd+Q :` is every command, by name.** The help overlay is a list you
  * read; the command palette is the same list you choose from, the way VS
  * Code's `Command-Shift-P` is. It is drawn from this registry, so a command
@@ -446,7 +457,9 @@ export type CommandId =
   | "show_chord_help"
   | "open_command_palette"
   | "navigate_back"
-  | "navigate_forward";
+  | "navigate_forward"
+  | "copy_link"
+  | "copy_markdown_link";
 
 /**
  * Which heading a command sits under in the command palette — the prefix of
@@ -943,6 +956,22 @@ export const COMMANDS: readonly CommandDefinition[] = [
     needs: "nothing",
     category: "Navigate",
     defaultKeys: ["l"],
+  },
+  {
+    // Vim's yank: the selection's `devhub:` link, on the clipboard. What it
+    // names is `chords.ts`'s (`copyLinkOf`); the row menu has the same two.
+    id: "copy_link",
+    label: "リンクをコピー",
+    needs: "nothing",
+    category: "Navigate",
+    defaultKeys: ["y"],
+  },
+  {
+    id: "copy_markdown_link",
+    label: "Markdown リンクをコピー",
+    needs: "nothing",
+    category: "Navigate",
+    defaultKeys: ["Y"],
   },
 ];
 

@@ -527,6 +527,44 @@ open (`show_orchestrator_view`), so the link is one entry — and never reaches 
 its text with a quiet 見つかりません, never a broken navigation. External
 http(s) links open in the browser as before.
 
+**A person copies one** from the Sidebar: an Agent's or a Workspace's row
+menu has 「リンクをコピー」 (the canonical `devhub:agent/<id>`,
+`devhub:workspace/<id>`) and 「Markdown リンクをコピー」
+(`[<display name>](devhub:agent/<id>)`), and `Cmd+Q Y` / `Cmd+Q Shift+Y`
+(`copy_link` / `copy_markdown_link`, also in the command palette) copy the
+same for what is selected — on the Orchestrator row, the task open over the
+board (`devhub:task/<id>`), else `devhub:orchestrator`; nothing on Scratch,
+whose folder is today's. Main writes the clipboard and says so in a quiet
+notice that takes itself down (`AppController.copyDevhubLink`).
+
+**And opens one from outside DevHub** — pasted into Slack, Notes or a
+browser, or `open devhub:agent/3f2a9c1e`. The packaged app declares the
+`devhub` scheme in its `Info.plist` (`CFBundleURLTypes`,
+`scripts/darwin_bundle.py`'s `url_types`, added by `package-nightly.py`
+only) and, as the default profile, claims it with
+`app.setAsDefaultProtocolClient`; a source run (`DEVHUB_PROFILE=dev`)
+claims nothing. macOS hands the URL to the running app as `open-url` (a
+launch by link included, before `ready`); elsewhere a second launch's
+command line carries it through the single-instance lock.
+`main/shell/openFromUrl.ts` queues them until DevHub is ready and follows
+them one at a time (`AppController.openDevhubUrl`): the window comes to the
+front, and the link is followed by the same function a chip is
+(`model/devhubLinkNavigation.ts`), so it is an explicit move Back returns
+from. From outside, `devhub://agent/<id>` and a trailing `/` are read as the
+canonical link (`parseExternalDevhubUrl`); inside DevHub `//` is still
+refused. A link that does not read, or names nothing open, is one notice
+(`link_unavailable`) saying why.
+
+A link to an Agent that has been **closed** reopens it, directly, when it is
+on Recently Closed and its session can be resumed — what the link asks for,
+and undone by closing it again — through the same reopen `Cmd+Q Shift+T`
+makes (`model/recentlyClosed.ts`, `closedAgentLink`; one closed with its
+Workspace brings the Workspace back). A closed Agent's entry remembers its
+id (`agent_id`) for this. Reopened, it is a new Agent with a new id, so the
+pair is kept in `state.json` (`agent_aliases`) and the old link goes on
+leading to it, across restarts and further closes. One that cannot be
+resumed, or that DevHub no longer remembers, is said to be gone.
+
 ### Writing an escalation: it stands on its own
 
 The person reads escalations, not the orchestrator's chat (the charter's 8),

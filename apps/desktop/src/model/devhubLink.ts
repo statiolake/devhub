@@ -218,6 +218,45 @@ export function parseDevhubLink(text: string): DevhubLinkParse {
   }
 }
 
+/**
+ * A link as the system hands it to DevHub from outside — a click in Slack,
+ * Notes or a browser (`main/shell/openFromUrl.ts`) — read as the link it is.
+ *
+ * The canonical spelling has no `//` (`devhub:agent/<id>`), and that is the
+ * only spelling `parseDevhubLink` reads: inside DevHub a link is written by
+ * DevHub or by `devhub --tell link`. Outside it, a person may have typed
+ * `devhub://agent/<id>` — the shape a URL "usually" has, and the one some
+ * apps only make clickable — and an app may add a slash at the end. Both are
+ * the same place, so here, and only here, the slashes after the scheme and
+ * the trailing ones are let go of before it is read; what is not a link
+ * after that is refused the way any other is.
+ */
+export function parseExternalDevhubUrl(url: string): DevhubLinkParse {
+  const text = url.trim();
+  if (!isDevhubLink(text)) return parseDevhubLink(text);
+  let body = text.slice(DEVHUB_SCHEME.length).replace(/^\/+/u, "");
+  // A file's path keeps its slashes: `file/` is what follows, and a trailing
+  // slash there is a folder, which the link refuses for itself.
+  if (!/^file\//iu.test(body)) body = body.replace(/\/+$/u, "");
+  return parseDevhubLink(`${DEVHUB_SCHEME}${body}`);
+}
+
+/**
+ * The link as Markdown, `[name](devhub:…)`: what 「Markdown リンクをコピー」
+ * puts on the clipboard, for a task's body, a note, a chat. The name is the
+ * place's own (an agent's display name), with Markdown's brackets and
+ * backslash escaped and its whitespace one space, so a name cannot end the
+ * link early; an empty one is the link itself.
+ */
+export function markdownDevhubLink(name: string, link: DevhubLink): string {
+  const href = formatDevhubLink(link);
+  const text = name
+    .replace(/\s+/gu, " ")
+    .trim()
+    .replace(/[\\[\]]/gu, (mark) => `\\${mark}`);
+  return `[${text === "" ? href : text}](${href})`;
+}
+
 /** A path segment: a URI component, with `:` (the position's mark) encoded too. */
 function encodeSegment(segment: string): string {
   return encodeURIComponent(segment).replace(/:/gu, "%3A");
@@ -446,5 +485,54 @@ export function resolveDevhubLink(
         : { found: false, why: "there is no Orchestrator row" };
     case "session":
       return { found: true, target: link };
+  }
+}
+
+/**
+ * The canonical link to a place that was found — by its id, whatever the
+ * link that found it said (a prefix, a workspace's name): what 「リンクをコピー」
+ * copies, so a copied link goes on naming the same thing.
+ */
+export function linkToTarget(target: ResolvedLink): DevhubLink {
+  switch (target.kind) {
+    case "agent":
+      return { kind: "agent", agent: target.agent.id };
+    case "workspace":
+      return { kind: "workspace", workspace: target.workspace.id };
+    case "file":
+      return {
+        kind: "file",
+        path: target.path,
+        ...(target.line === undefined ? {} : { line: target.line }),
+        ...(target.column === undefined ? {} : { column: target.column }),
+      };
+    case "task":
+      return { kind: "task", id: target.task.id };
+    case "escalation":
+      return { kind: "escalation", id: target.escalation.id };
+    case "orchestrator":
+      return { kind: "orchestrator" };
+    case "session":
+      return { kind: "session", session: target.session };
+  }
+}
+
+/** What a place is called, as its chip names it: a Markdown link's text. */
+export function targetName(target: ResolvedLink): string {
+  switch (target.kind) {
+    case "agent":
+      return target.agent.displayName;
+    case "workspace":
+      return target.workspace.label;
+    case "file":
+      return `${baseName(target.path)}${positionSuffix(target.line, target.column)}`;
+    case "task":
+      return `#${String(target.task.id)} ${target.task.title}`;
+    case "escalation":
+      return `#${String(target.escalation.id)} ${target.escalation.title}`;
+    case "orchestrator":
+      return "Orchestrator";
+    case "session":
+      return target.session.slice(0, 8);
   }
 }

@@ -1858,7 +1858,13 @@ export function Sidebar({ snapshot }: SidebarProps) {
     void devhub().openModal({ kind: "agent-rename", agentId: agent.id });
   }, []);
 
-  const { continueAgent } = useSidebar();
+  const { continueAgent, reportFailure } = useSidebar();
+  const copyRowLink = useCallback(
+    (link: string, markdown: boolean) => {
+      void devhub().copyDevhubLink(link, markdown).catch(reportFailure);
+    },
+    [reportFailure],
+  );
 
   /**
    * The row's context menu: a native menu over the window (`rowMenu.ts`), so
@@ -1872,15 +1878,21 @@ export function Sidebar({ snapshot }: SidebarProps) {
     ) => {
       openRowMenu(
         [
-          ...agentMenuItems(agent, dispatchIntent, openRename, (each) => {
-            continueAgent(each.id);
-          }),
+          ...agentMenuItems(
+            agent,
+            dispatchIntent,
+            openRename,
+            (each) => {
+              continueAgent(each.id);
+            },
+            copyRowLink,
+          ),
           ...more,
         ],
         at,
       );
     },
-    [continueAgent, dispatchIntent, openRename],
+    [continueAgent, copyRowLink, dispatchIntent, openRename],
   );
   const openWorkspaceMenu = useCallback(
     (
@@ -1892,12 +1904,13 @@ export function Sidebar({ snapshot }: SidebarProps) {
         workspaceMenuItems(workspace, {
           close: closeWorkspaceRow,
           dispatch: dispatchIntent,
+          copyLink: copyRowLink,
           ...menu,
         }),
         at,
       );
     },
-    [closeWorkspaceRow, dispatchIntent],
+    [closeWorkspaceRow, copyRowLink, dispatchIntent],
   );
 
   const resize = useCallback(

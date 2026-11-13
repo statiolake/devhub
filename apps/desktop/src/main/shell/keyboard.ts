@@ -165,6 +165,11 @@ export interface ChordHost {
 	 * a question is up, and a declined key travels on untouched.
 	 */
 	navigateHistory(direction: NavigationDirection): boolean;
+	/**
+	 * Put a `devhub:` link on the clipboard, canonical or as Markdown, and
+	 * say so — the row menu's 「リンクをコピー」, by key.
+	 */
+	copyLink(link: string, markdown: boolean): void;
 	/** Stop this Agent, asking first exactly as the row's own close does. */
 	closeAgent(agentId: string): void;
 	/** Restart this Agent's session, asking first exactly as the row menu's Restart Session does. */
@@ -377,6 +382,9 @@ function perform(
 			return;
 		case "navigate-history":
 			host.navigateHistory(effect.direction);
+			return;
+		case "copy-link":
+			host.copyLink(effect.link, effect.markdown);
 			return;
 	}
 }

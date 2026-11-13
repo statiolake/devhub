@@ -1766,6 +1766,13 @@ export interface SidebarBridge
 	 */
 	showContextMenu(request: ContextMenuRequestWire): Promise<string | undefined>;
 	/**
+	 * The row menu's 「リンクをコピー」 / 「Markdown リンクをコピー」: a
+	 * `devhub:` link to a row (`model/devhubLink.ts`) on this Mac's clipboard,
+	 * canonical or as `[name](devhub:…)`, and a short notice saying so. Main
+	 * writes it and names the place, as `Cmd+Q Y` does for the selection.
+	 */
+	copyDevhubLink(link: string, markdown: boolean): Promise<void>;
+	/**
 	 * Raise a tooltip over the window, about a row in this column.
 	 *
 	 * The Sidebar used to draw its own, which is why the rail had none: a box
@@ -2566,6 +2573,7 @@ export const CHANNELS = {
 	chordArmedChanged: "devhub:chord-armed-changed",
 	/** A row's context menu, put up by main as a native menu. */
 	showContextMenu: "devhub:show-context-menu",
+	copyDevhubLink: "devhub:copy-devhub-link",
 	/** The Sidebar asking for a tooltip over the window, about one of its rows. */
 	showTooltip: "devhub:show-tooltip",
 	/** The Sidebar taking it down again, at once. */

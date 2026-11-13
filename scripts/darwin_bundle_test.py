@@ -19,7 +19,9 @@ from darwin_bundle import (
 	DOCUMENT_EXTENSIONS,
 	ICON_FILE,
 	MICROPHONE_USAGE,
+	URL_SCHEME,
 	document_types,
+	url_types,
 )
 
 
@@ -53,6 +55,19 @@ class Identity(unittest.TestCase):
 
 	def test_asks_for_the_microphone_in_devhubs_words(self) -> None:
 		self.assertIn("DevHub", MICROPHONE_USAGE)
+
+
+class UrlScheme(unittest.TestCase):
+	"""`devhub:agent/<id>` pasted into Slack or a browser opens DevHub."""
+
+	def test_claims_the_devhub_scheme_once(self) -> None:
+		self.assertEqual(URL_SCHEME, "devhub")
+		self.assertEqual([scheme for entry in url_types() for scheme in entry["CFBundleURLSchemes"]], ["devhub"])
+
+	def test_is_named_under_devhubs_identifier(self) -> None:
+		for entry in url_types():
+			self.assertTrue(entry["CFBundleURLName"].startswith(f"{BUNDLE_IDENTIFIER}."))
+			self.assertEqual(entry["CFBundleTypeRole"], "Viewer")
 
 
 if __name__ == "__main__":

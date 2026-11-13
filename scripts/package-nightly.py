@@ -12,7 +12,7 @@ about and Node's own resolver finds every dependency in every process.
       MacOS/DevHub                  npm's Electron, renamed
       Frameworks/DevHub Helper*.app renamed with it — Electron finds its child
                                     processes by the main bundle's name
-      Info.plist                    DevHub's names, version, document types
+      Info.plist                    DevHub's names, version, document types, devhub: links
                                     (scripts/darwin_bundle.py)
       Resources/DevHub.icns
       Resources/licenses/           DevHub's, Electron's, the third parties'
@@ -418,6 +418,18 @@ def node_platform() -> str:
 	return f"{sys.platform if sys.platform != 'darwin' else 'darwin'}-{arch}"
 
 
+def nightly_plist(version: str, day: str, commit: str) -> dict[str, object]:
+	"""What only the packaged bundle's Info.plist says: which build this is, and
+	that `devhub:` links open it (`darwin_bundle.url_types`; a source run's
+	bundle does not claim them)."""
+	from darwin_bundle import url_types
+
+	return {
+		"CFBundleVersion": f"{version}.{day}+{commit[:10]}",
+		"CFBundleURLTypes": url_types(),
+	}
+
+
 # --- entry point -----------------------------------------------------------
 
 
@@ -492,10 +504,7 @@ def main() -> int:
 	(app / "Contents" / "Resources" / "default_app.asar").unlink(missing_ok=True)
 
 	step("bundle identity")
-	rebrand(
-		app,
-		{"CFBundleVersion": f"{version}.{date.today():%Y%m%d}+{devhub_commit()[:10]}"},
-	)
+	rebrand(app, nightly_plist(version, f"{date.today():%Y%m%d}", devhub_commit()))
 	write_licenses(app, base.parent)
 
 	assemble_app_directory(app / "Contents" / "Resources" / "app", node_platform())

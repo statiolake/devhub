@@ -294,6 +294,9 @@ a picker, for the one that is not on top. The rules are in
   If the folder is open already it is focused instead, and its Agents are put
   back on the stack to be brought back one press at a time. A folder that is
   gone is said, and the entry dropped.
+- **A `devhub:agent` link to a closed Agent** reopens it the same way, and
+  the reopened Agent's new id is kept beside the old one (`agent_aliases`)
+  so the link still leads to it. See `docs/orchestrator.md` (Links).
 - **A failure before anything was opened** — the machine did not answer —
   puts the entry back where it was, and the notice says another press tries
   again. Once something has been opened, a failure is said and the entry is

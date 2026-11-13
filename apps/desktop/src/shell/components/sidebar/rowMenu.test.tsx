@@ -31,6 +31,7 @@ const showContextMenu = vi.fn((_request: ContextMenuRequestWire) =>
   Promise.resolve(answer),
 );
 const openModal = vi.fn(() => Promise.resolve(""));
+const copyDevhubLink = vi.fn(() => Promise.resolve());
 
 window.devhub = {
   openModal,
@@ -42,6 +43,7 @@ window.devhub = {
   hideTooltip: () => undefined,
   releaseTooltip: () => undefined,
   showContextMenu,
+  copyDevhubLink,
 } as unknown as typeof window.devhub;
 
 afterEach(() => {
@@ -252,6 +254,59 @@ describe("what a right-click on an Agent offers", () => {
   });
 });
 
+describe("「リンクをコピー」", () => {
+  const none = () => undefined;
+  it("copies an Agent's link, canonical or as Markdown, before Stop", () => {
+    const copied: [string, boolean][] = [];
+    const items = agentMenuItems(agent(), none, none, none, (link, markdown) =>
+      copied.push([link, markdown]),
+    );
+    expect(labels(items).slice(-3)).toEqual([
+      "リンクをコピー",
+      "Markdown リンクをコピー",
+      "Stop Agent",
+    ]);
+    items.find((item) => item.id === "copy-link")?.run();
+    items.find((item) => item.id === "copy-markdown-link")?.run();
+    expect(copied).toEqual([
+      ["devhub:agent/a-1", false],
+      ["devhub:agent/a-1", true],
+    ]);
+  });
+
+  it("copies a Workspace's link, and offers none on Scratch", () => {
+    const copied: [string, boolean][] = [];
+    const copyLink = (link: string, markdown: boolean) => {
+      copied.push([link, markdown]);
+    };
+    const local = workspace();
+    const items = workspaceMenuItems(local, {
+      close: vi.fn(),
+      dispatch: vi.fn(),
+      deletesWorktree: false,
+      fixed: false,
+      copyLink,
+    });
+    expect(labels(items)).toEqual([
+      "Manage with Orchestrator",
+      "リンクをコピー",
+      "Markdown リンクをコピー",
+      "Close Workspace…",
+    ]);
+    items.find((item) => item.id === "copy-markdown-link")?.run();
+    expect(copied).toEqual([[`devhub:workspace/${local.id}`, true]]);
+    expect(
+      workspaceMenuItems(local, {
+        close: vi.fn(),
+        dispatch: vi.fn(),
+        deletesWorktree: false,
+        fixed: true,
+        copyLink,
+      }),
+    ).toEqual([]);
+  });
+});
+
 describe("what a right-click on a Workspace offers", () => {
   const actions = (over: Record<string, unknown> = {}) => ({
     close: vi.fn(),
@@ -324,6 +379,8 @@ describe("the menu is main's to draw", () => {
           { id: "unread", label: "Mark as Unread" },
           { id: "restart", label: "Restart Session" },
           { id: "continue", label: "Continue in Terminal" },
+          { id: "copy-link", label: "リンクをコピー" },
+          { id: "copy-markdown-link", label: "Markdown リンクをコピー" },
           { id: "stop", label: "Stop Agent", separatorBefore: true },
         ],
         at: { x: 12, y: 34 },
@@ -370,6 +427,16 @@ describe("the menu is main's to draw", () => {
       await Promise.resolve();
     });
     expect(continueAgent).toHaveBeenCalledWith("a-1");
+  });
+
+  it("copies the Agent's link through main, which writes it and says so", async () => {
+    mount(false);
+    answer = "copy-markdown-link";
+    await act(async () => {
+      fireEvent.contextMenu(document.querySelector(".agent-row") as Element);
+      await Promise.resolve();
+    });
+    expect(copyDevhubLink).toHaveBeenCalledWith("devhub:agent/a-1", true);
   });
 
   it("closes a Workspace through the row's own close, the one path", async () => {
