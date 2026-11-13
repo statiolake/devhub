@@ -223,7 +223,10 @@
 
 /* A Neovim drawn in a pane (`placeNeovims`, `PaneNeovims`): a group the
    shape of a pane's motion group, whose clips cut its pane's ground. Only
-   the Neovim itself takes the pointer; the clips' boxes are past it. */
+   the Neovim itself takes the pointer; the group's box (the whole
+   terminal) and the clips' boxes are past it: over another pane the
+   pointer is that pane's cells' (their I-beam, a link's hand). */
+.control-neovim,
 .control-neovim .nvim-motion-clip,
 .control-neovim .nvim-motion-content {
   pointer-events: none;

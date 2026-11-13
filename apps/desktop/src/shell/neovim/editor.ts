@@ -1984,6 +1984,9 @@ export class NeovimEditor {
       if (!button || !this.state.mouse) return;
       const at = target(event);
       this.dragging = { button, target: at };
+      // The border under the press, not the last one hovered: a press need
+      // not come after a move (a wheel turned, the window raised).
+      this.placeSash(at);
       this.sashDragged = this.sashOn !== undefined;
       mouse(button, "press", event, at);
       // A plain click's caret, at once (a double click selects a word: its

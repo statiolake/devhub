@@ -527,22 +527,28 @@ return 1`);
     const rows = await viewRows();
     const text = px(w.row + 3, w.col + w.textoff + 2);
     const term = px(s.y + 3, s.x + 3);
-    await c.mouse("mouseMoved", text.x, text.y);
-    await sleep(50);
     const want = {
       text: "text",
       row: "default",
       terminal: "text",
       border: "col-resize",
     };
+    // Each with the pointer over it, once what is there has settled (a
+    // pane just resized moves into place, under a layer of its motion).
+    const shapeAt = async (p, expected) => {
+      let shape;
+      for (let i = 0; i < 6; i++) {
+        await c.mouse("mouseMoved", p.x, p.y);
+        await sleep(150 * THROTTLE);
+        shape = await c.ev(`__probe.cursorAt(${String(p.x)},${String(p.y)})`);
+        if (shape === expected) break;
+      }
+      return shape;
+    };
     const got = {
-      text: await c.ev(`__probe.cursorAt(${String(text.x)},${String(text.y)})`),
-      row: await c.ev(
-        `__probe.cursorAt(${String(rows[2].x)},${String(rows[2].y)})`,
-      ),
-      terminal: await c.ev(
-        `__probe.cursorAt(${String(term.x)},${String(term.y)})`,
-      ),
+      text: await shapeAt(text, want.text),
+      row: await shapeAt(rows[2], want.row),
+      terminal: await shapeAt(term, want.terminal),
     };
     const border = px(w.row + 3, w.col + w.width);
     await c.mouse("mouseMoved", border.x, border.y);
