@@ -1321,7 +1321,8 @@ function countLabel(count: string): string {
  * there, quietly. Left, the mode (`-- INSERT --`, recording) or, with no
  * mode to say, the search just entered, where it was typed (the person's
  * pick: the echo in the same place); right, the search count, `showcmd`
- * and the ruler, dimmer — counts and keys being typed, glanced at. No
+ * and the ruler, dimmer — counts and keys being typed, glanced at (but
+ * `showcmd` alone opens no band: the footer's slot has it). No
  * box: it is not being typed into. With `cmdheight=0` there are no rows:
  * only the search echo is shown, in the box over the status line, for a
  * few seconds (Neovim draws nothing there either).
@@ -1353,7 +1354,12 @@ function CmdlineBand({
   const searchShown = cmdheight > 0 ? echo : shownEcho;
   const showEcho = searchShown !== undefined && msgText(mode).trim() === "";
   if (cmdheight === 0 && !showEcho) return null;
-  if (!showEcho && mode.length === 0 && right.length === 0) return null;
+  // `showcmd` alone does not bring the band up: it is the keys of the
+  // command running, flushed while it runs (`<C-d>` in a view that redraws
+  // as it scrolls showed a box with ^D for a frame), and the footer has it
+  // in its slot. The band says it when it is up for the mode, the ruler or
+  // a search.
+  if (!showEcho && mode.length === 0 && state.ruler.length === 0) return null;
   const cell = editor.cellMetrics();
   const font = editor.font();
   const place = editor.cmdlinePlace();

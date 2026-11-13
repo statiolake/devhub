@@ -36,7 +36,8 @@ export const NEOVIM_ROLES = [
   { name: "view-item", selector: ".nvim-view-item", max: 60 },
   { name: "popup", selector: ".nvim-popup", max: 4 },
   { name: "popup-body", selector: ".nvim-popup-body", max: 4 },
-  { name: "cmdline", selector: ".nvim-cmdline" },
+  // Its text is kept (not compared): a failing frame says what it held.
+  { name: "cmdline", selector: ".nvim-cmdline", text: true },
   { name: "cmdline-content", selector: ".nvim-cmdline-content" },
   { name: "cmdline-row", selector: ".nvim-cmdline-row", max: 4 },
   { name: "footer", selector: ".nvim-footer", max: 6 },
