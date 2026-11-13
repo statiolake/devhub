@@ -38,13 +38,23 @@ export function contextMenuTemplate(
 		...(item.separatorBefore === true && index > 0
 			? [{ type: "separator" as const }]
 			: []),
-		{
-			id: item.id,
-			label: item.label,
-			click: () => {
-				choose(item.id);
-			},
-		},
+		item.submenu !== undefined
+			? {
+					label: item.label,
+					...(item.enabled === false ? { enabled: false } : {}),
+					submenu: contextMenuTemplate(item.submenu, choose),
+				}
+			: {
+					id: item.id,
+					label: item.label,
+					...(item.enabled === false ? { enabled: false } : {}),
+					...(item.accelerator !== undefined
+						? { accelerator: item.accelerator, registerAccelerator: false }
+						: {}),
+					click: () => {
+						choose(item.id);
+					},
+				},
 	]);
 }
 

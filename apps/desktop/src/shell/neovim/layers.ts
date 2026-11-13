@@ -59,6 +59,8 @@ export interface ViewContent {
   readonly indent?: number | undefined;
   /** Every item at least this tall (pixels), its content centred: a dense list. */
   readonly rowHeight?: number | undefined;
+  /** It has a menu (`on_context_menu`): a right-click on an item puts it up. */
+  readonly menu?: true | undefined;
 }
 
 export interface InlineContent {
@@ -318,6 +320,7 @@ function viewContent(id: number, p: Rec): ViewContent {
     hl: parseHlTable(p["hl"]),
     keys: keyList(p["keys"]),
     ...(frame ? { frame } : {}),
+    ...(p["menu"] === true ? { menu: true as const } : {}),
   };
 }
 

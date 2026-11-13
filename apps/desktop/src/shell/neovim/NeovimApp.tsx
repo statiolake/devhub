@@ -125,6 +125,7 @@ import type {
   ContextMenuRequestWire,
   TerminalNeovimKeyWire,
 } from "../../ipc/contract";
+import { menuPoint, menuWire, parseMenuRequest } from "./menu";
 import type { AppAppearance } from "../../ipc/appShell";
 
 type Connection =
@@ -153,7 +154,7 @@ interface GuiContent {
 export interface NeovimSurfaceBridge {
   readonly neovim: DevhubNeovimApi;
   openExternalUrl(url: string): Promise<void>;
-  /** A native menu over the window (a link's, in a `gui.document`): the id chosen. */
+  /** A native menu over the window (a link's, in a `gui.document`; `gui.menu`): the id chosen. */
   showContextMenu?(
     request: ContextMenuRequestWire,
   ): Promise<string | undefined>;
@@ -520,6 +521,43 @@ export function NeovimSurface({
             ]);
             editor.focus();
           });
+        return;
+      }
+      if (event.kind === "menu") {
+        // gui.menu, a view's right-click or <S-F10>: a native menu, as the
+        // Sidebar's and the links' are; Lua runs what is chosen (`menu.ts`).
+        const request = parseMenuRequest(event.payload);
+        if (!request) return;
+        const done = (chosen: string | undefined) => {
+          call("nvim_exec_lua", [
+            "local M = package.loaded['devhub_gui']; if M and M._menu_done then M._menu_done(...) end",
+            [request.id, chosen ?? null],
+          ]);
+          editor.focus();
+        };
+        const show = bridge.showContextMenu?.bind(bridge);
+        const items = menuWire(request.items);
+        if (!show || items.length === 0) {
+          done(undefined);
+          return;
+        }
+        const root = hostRef.current;
+        const rect = root?.getBoundingClientRect();
+        const at = menuPoint(
+          request,
+          (view, win, line) =>
+            root
+              ?.querySelector(
+                `.nvim-view[data-view="${String(view)}"][data-win="${String(win)}"] .nvim-view-item[data-line="${String(line)}"]`,
+              )
+              ?.getBoundingClientRect(),
+          rect
+            ? { left: rect.left, top: rect.top, cell: editor.cellMetrics() }
+            : undefined,
+        );
+        void show({ items, at: { x: Math.round(at.x), y: Math.round(at.y) } })
+          .catch(() => undefined)
+          .then(done);
         return;
       }
       if (event.kind === "decor") {

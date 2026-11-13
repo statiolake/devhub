@@ -1197,6 +1197,23 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   ground, rounded only at its ends (`bandPart`), the focus's ring inside
   it: the place carries them (`visual`), for a plugin whose keys work on a
   range.
+- **A menu** (`gui.view{ on_context_menu = function(lnum) return items end }`,
+  or `gui.menu{ items, on_select?, win?, line? }` on its own) — a native
+  menu, put up by main as the Sidebar's row menus and the conversation's
+  link menus are (`main/shell/contextMenu.ts`). An item is
+  `{ label, enabled?, accelerator?, submenu?, on_select? }` or
+  `{ separator = true }`; only labels and ids cross, and
+  `_menu_done(id, chosen)` runs the Lua of the item chosen. A right-click
+  on a view's row focuses it at once (`provisional.ts`), moves the cursor
+  there and puts the menu up at the pointer (`_view_menu`); it is no
+  click. The keyboard's way is Neovim's: in a view's buffer `devhub_gui`
+  maps `<S-F10>` (unless the buffer maps it itself) to
+  `gui.context_menu()`, the cursor's item's menu under its row; the menu
+  key is sent as `<S-F10>` (`keys.ts`). An `accelerator` is keys as Vim
+  writes them: one key (`a`, `R`, `<C-v>`, `<CR>`) is shown in the menu's
+  key column (display only, `registerAccelerator: false`), a sequence
+  (`gy`) after the label in brackets, as VS Code does for a chord
+  (`shell/neovim/menu.ts`).
 - **A tree** (`gui.view{ indent = px, row_height = px }`) — the same view,
   its items `{ node, depth }`: DevHub indents each by its depth and draws
   the guides down the rows, one hairline per level, the focused row's

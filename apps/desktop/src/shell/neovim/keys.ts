@@ -130,6 +130,9 @@ export function keyToNeovim(
     return undefined;
   }
   if (!meta && event.key === "Dead") return undefined;
+  // The menu key has no name in Neovim: it is Shift+F10, the keyboard's
+  // right-click, which devhub_gui maps to a view's menu.
+  if (event.key === "ContextMenu") return "<S-F10>";
   const named =
     NAMED[event.key] ?? (meta ? NAMED_CODES[event.code] : undefined);
   if (named !== undefined) {

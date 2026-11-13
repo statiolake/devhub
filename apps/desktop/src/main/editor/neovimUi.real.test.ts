@@ -1257,6 +1257,116 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		h.ui.client.close();
 	});
 
+	it("puts a view's menu up for a right-click and <S-F10>, and runs what is chosen", async () => {
+		const h = await attached(60, 20);
+		const waitFor = async (check: () => boolean, what: string) => {
+			const deadline = Date.now() + 3_000;
+			while (!check()) {
+				if (Date.now() > deadline)
+					throw new Error(`timed out waiting for ${what}`);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+		};
+		const menus = () =>
+			h.gui.events
+				.filter((e) => e.kind === "menu")
+				.map((e) => e.payload as Record<string, unknown>);
+		const lua = (code: string, args: unknown[] = []) =>
+			h.ui.request("nvim_exec_lua", [code, args]);
+		await lua(`local gui = require('devhub_gui')
+			local buf = vim.api.nvim_create_buf(false, true)
+			vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'one', 'two', 'three' })
+			_G.chosen = {}
+			_G.asked = {}
+			_G.view = gui.view{ buf = buf, win = 'vsplit',
+				on_context_menu = function(lnum)
+					table.insert(_G.asked, lnum)
+					if lnum == 3 then return nil end
+					return {
+						{ label = 'Open', accelerator = '<CR>', on_select = function() table.insert(_G.chosen, 'open' .. lnum) end },
+						{ label = 'Gone', enabled = false },
+						{ separator = true },
+						{ label = 'More', submenu = { { label = 'Deep', accelerator = 'gy' } } },
+					}
+				end }
+			_G.win = vim.api.nvim_get_current_win()`);
+		const view = (await lua("return _G.view.id")) as number;
+		const win = (await lua("return _G.win")) as number;
+		await waitFor(
+			() =>
+				h.gui.events.some(
+					(e) =>
+						e.kind === "view" &&
+						(e.payload as { menu?: unknown }).menu === true,
+				),
+			"the view, said to have a menu",
+		);
+		// A right-click on line 2: the cursor goes there, the menu is put up
+		// at the pointer with the items as data.
+		await lua("require('devhub_gui')._view_menu(...)", [view, win, 2, 40, 50]);
+		await waitFor(() => menus().length === 1, "the menu");
+		const menu = menus()[0] as {
+			id: number;
+			items: unknown;
+			at: unknown;
+			line: number;
+			view: number;
+		};
+		expect(menu).toMatchObject({ line: 2, view, at: { x: 40, y: 50 } });
+		expect(menu.items).toEqual([
+			{ id: "1", label: "Open", enabled: true, keys: "<CR>" },
+			{ label: "Gone", enabled: false, id: "2" },
+			{ separator: true },
+			{
+				label: "More",
+				enabled: true,
+				submenu: [{ id: "3", label: "Deep", enabled: true, keys: "gy" }],
+			},
+		]);
+		expect(await lua("return vim.api.nvim_win_get_cursor(0)[1]")).toBe(2);
+		await lua("require('devhub_gui')._menu_done(...)", [menu.id, "1"]);
+		expect(await lua("return _G.chosen")).toEqual(["open2"]);
+		// Answered once: a second answer for it does nothing.
+		await lua("require('devhub_gui')._menu_done(...)", [menu.id, "1"]);
+		expect(await lua("return _G.chosen")).toEqual(["open2"]);
+		// The keyboard: <S-F10> on the cursor's item, under it (no pointer).
+		await lua("vim.api.nvim_win_set_cursor(0, { 1, 0 })");
+		await h.ui.request("nvim_input", ["<S-F10>"]);
+		await waitFor(() => menus().length === 2, "the keyboard's menu");
+		const keyed = menus()[1] as { id: number; line: number; at?: unknown };
+		expect(keyed.line).toBe(1);
+		expect(keyed.at).toBeUndefined();
+		await lua("require('devhub_gui')._menu_done(...)", [keyed.id, null]);
+		expect(await lua("return _G.chosen")).toEqual(["open2"]);
+		// An item with nothing to offer puts nothing up.
+		await lua("vim.api.nvim_win_set_cursor(0, { 3, 0 })");
+		await h.ui.request("nvim_input", ["<S-F10>"]);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(await lua("return _G.asked")).toEqual([2, 1, 3]);
+		expect(menus()).toHaveLength(2);
+		// A standalone menu: items checked, on_select(item, index).
+		await lua(`_G.picked = nil
+			require('devhub_gui').menu{ items = { { label = 'A' }, '-', { label = 'B' } },
+				on_select = function(item, i) _G.picked = item.label .. i end }`);
+		await waitFor(() => menus().length === 3, "the standalone menu");
+		await lua("require('devhub_gui')._menu_done(...)", [
+			(menus()[2] as { id: number }).id,
+			"2",
+		]);
+		expect(await lua("return _G.picked")).toBe("B2");
+		expect(
+			await lua(
+				"return (select(2, pcall(require('devhub_gui').menu, { items = { { label = 1 } } })))",
+			),
+		).toMatch(/items\[1\]\.label must be a string/);
+		// The view gone: its <S-F10> with it.
+		await lua("_G.view:close()");
+		expect(
+			await lua("return vim.fn.maparg('<S-F10>', 'n', false, true).buffer"),
+		).toBeNull();
+		h.ui.client.close();
+	});
+
 	it("reports a view's items and cursor, and a card's reserved rows round trip", async () => {
 		const h = await attached(60, 20);
 		const waitFor = async (check: () => boolean, what: string) => {

@@ -1087,6 +1087,16 @@ export interface ContextMenuItemWire {
 	readonly label: string;
 	/** Draw a separator above this item (the destructive ones stand apart). */
 	readonly separatorBefore?: true;
+	/** Shown greyed, and cannot be chosen. */
+	readonly enabled?: false;
+	/**
+	 * The key that does the same, as an Electron accelerator (`Ctrl+V`,
+	 * `Shift+R`), shown in the menu's key column. Display only: the page
+	 * keeps its keys.
+	 */
+	readonly accelerator?: string;
+	/** Items under this one; it is not chosen itself. */
+	readonly submenu?: readonly ContextMenuItemWire[];
 }
 
 /**
@@ -1961,7 +1971,8 @@ export interface PaneBridge
 		TerminalSurfaceBridge {
 	/**
 	 * Put a Neovim's menu up over the window, as a native menu (a link's
-	 * right-click in a `gui.document`). Resolves to the id chosen, or
+	 * right-click in a `gui.document`; `gui.menu`, a view's
+	 * `on_context_menu`). Resolves to the id chosen, or
 	 * `undefined`. `at` is in this page's coordinates.
 	 */
 	showContextMenu(request: ContextMenuRequestWire): Promise<string | undefined>;

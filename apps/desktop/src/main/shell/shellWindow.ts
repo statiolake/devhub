@@ -1126,7 +1126,14 @@ export class ShellWindow {
 	 * other request (the only other page that asks).
 	 */
 	contextMenuOrigin(sender: Electron.WebContents): SidebarAreaWire {
-		for (const view of [this.conversations, this.agents]) {
+		// The terminal pages too: a Neovim's menu (`gui.menu`, a tree's
+		// right-click, a `gui.document` link's) from the pane it is drawn in.
+		for (const view of [
+			this.conversations,
+			this.agents,
+			...this.terminalViews.values(),
+			...this.editorTerminals.values(),
+		]) {
 			const contents = view.contents();
 			if (contents !== undefined && sender === contents) {
 				const { x, y, width, height } = view.bounds();

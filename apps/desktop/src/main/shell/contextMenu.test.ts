@@ -76,6 +76,35 @@ describe("a separator", () => {
 	});
 });
 
+describe("a Neovim menu's items", () => {
+	it("are greyed, show their key and hold a submenu whose items answer", () => {
+		const chosen: string[] = [];
+		const template = contextMenuTemplate(
+			[
+				{ id: "1", label: "Open", accelerator: "Return" },
+				{ id: "2", label: "Paste", enabled: false },
+				{
+					id: "submenu:2",
+					label: "Copy",
+					submenu: [{ id: "3", label: "Copy Name", accelerator: "Y" }],
+				},
+			],
+			(id) => chosen.push(id),
+		);
+		expect(template[0]).toMatchObject({
+			label: "Open",
+			accelerator: "Return",
+			registerAccelerator: false,
+		});
+		expect(template[1]).toMatchObject({ label: "Paste", enabled: false });
+		const sub = template[2]?.submenu as Electron.MenuItemConstructorOptions[];
+		expect(template[2]?.click).toBeUndefined();
+		expect(sub[0]).toMatchObject({ label: "Copy Name", accelerator: "Y" });
+		(sub[0]?.click as () => void)();
+		expect(chosen).toEqual(["3"]);
+	});
+});
+
 describe("where it goes", () => {
 	it("is the page's point plus where main laid the page, in whole points", () => {
 		expect(contextMenuPoint({ x: 10.6, y: 4.2 }, SIDEBAR)).toEqual({

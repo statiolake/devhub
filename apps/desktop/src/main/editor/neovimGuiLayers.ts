@@ -235,7 +235,7 @@ local function render_view(view)
   end
   M._actions["view:" .. view.id] = actions
   event("view", { id = view.id, items = items, hl = hl_table(hls), keys = keys_list(view.keys), frame = frame,
-    indent = view.indent, row_height = view.row_height })
+    indent = view.indent, row_height = view.row_height, menu = view.on_context_menu ~= nil or nil })
 end
 
 local render_pending = {}
@@ -273,11 +273,13 @@ local function open_window(buf, how)
 end
 
 --- gui.view{ buf, win?, items = fn(lnum, line) | { [lnum] = node }, on_click?,
---- on_scroll?, on_rows?, keys? }: the buffer's lines drawn as components, one
+--- on_context_menu?, on_scroll?, on_rows?, keys? }: the buffer's lines drawn as components, one
 --- item per line, over every window that shows the buffer (an item may be
 --- { node, heading }: a heading above it that is not an item). win: a
 --- window, or 'vsplit' | 'split' | 'float' | 'current' to open one.
---- on_click(lnum, clicks). A tree: indent = pixels per level and an item
+--- on_click(lnum, clicks). on_context_menu(lnum) -> menu items (gui.menu's)
+--- | nil: a right-click on an item, or <S-F10> (the menu key) on the cursor's
+--- item, puts them up as a native menu there. A tree: indent = pixels per level and an item
 --- { node, depth } (DevHub indents it and draws the guides down the rows;
 --- sticky = true holds an item at the top); row_height = each item's least
 --- height. Visual mode in the window draws its lines selected.
@@ -293,6 +295,7 @@ function M.view(opts)
   opts = opts or {}
   local buf = buf_of(opts.buf)
   local view = { id = next_id(), buf = buf, items = opts.items, on_click = opts.on_click, keys = opts.keys,
+    on_context_menu = type(opts.on_context_menu) == "function" and opts.on_context_menu or nil,
     on_scroll = opts.on_scroll, on_rows = opts.on_rows,
     indent = type(opts.indent) == "number" and opts.indent > 0 and opts.indent or nil,
     row_height = type(opts.row_height) == "number" and opts.row_height > 0 and opts.row_height or nil }
@@ -348,6 +351,7 @@ function M.view(opts)
     group = group, buffer = buf, once = true,
     callback = function() M.view_clear(view.id) end,
   })
+  if view.on_context_menu then M._menu_key(view) end
   handle.win = open_window(buf, opts.win)
   if handle.win then
     for option, value in pairs({ wrap = false, cursorline = false, list = false, spell = false }) do
@@ -362,8 +366,12 @@ end
 function M.view_clear(id)
   id = type(id) == "table" and id.id or id
   if not M._views[id] then return end
+  local view = M._views[id]
   M._views[id] = nil
   M._actions["view:" .. id] = nil
+  if view.menu_key and vim.api.nvim_buf_is_valid(view.buf) then
+    pcall(vim.keymap.del, "n", "<S-F10>", { buffer = view.buf })
+  end
   event("view_clear", { id = id })
   schedule_place()
 end
@@ -1036,6 +1044,153 @@ function M._layers_click(kind, id, win, line, action, clicks)
     ok, err = pcall(owner.on_click, line, clicks or 1)
   end
   if not ok then vim.notify("devhub gui: " .. tostring(err), vim.log.levels.ERROR) end
+end
+
+-- Menus ---------------------------------------------------------------------
+
+M._menus = M._menus or {}
+
+local function menu_item_error(item, where)
+  if item == "-" then return nil end
+  if type(item) ~= "table" then return where .. " must be a table" end
+  if item.separator == true then return nil end
+  if type(item.label) ~= "string" or item.label == "" then return where .. ".label must be a string" end
+  if item.enabled ~= nil and type(item.enabled) ~= "boolean" then return where .. ".enabled must be a boolean" end
+  if item.accelerator ~= nil and type(item.accelerator) ~= "string" then
+    return where .. ".accelerator must be a string (keys as Vim writes them)"
+  end
+  if item.on_select ~= nil and type(item.on_select) ~= "function" then return where .. ".on_select must be a function" end
+  if item.submenu ~= nil then
+    if type(item.submenu) ~= "table" then return where .. ".submenu must be a list" end
+    for i, child in ipairs(item.submenu) do
+      local err = menu_item_error(child, where .. ".submenu[" .. i .. "]")
+      if err then return err end
+    end
+  end
+  return nil
+end
+
+--- Why items are not a menu, or nil.
+function M.menu_error(items)
+  if type(items) ~= "table" then return "items must be a list" end
+  for i, item in ipairs(items) do
+    local err = menu_item_error(item, "items[" .. i .. "]")
+    if err then return err end
+  end
+  return nil
+end
+
+-- The items as data for the page: each chosen one an index into chosen.
+local function menu_wire(items, chosen, depth)
+  local out = {}
+  if depth > 8 then return out end
+  for _, item in ipairs(items) do
+    if item == "-" or item.separator == true then
+      table.insert(out, { separator = true })
+    else
+      local wire = { label = item.label, enabled = item.enabled ~= false, keys = item.accelerator }
+      if type(item.submenu) == "table" then
+        wire.submenu = menu_wire(item.submenu, chosen, depth + 1)
+      else
+        table.insert(chosen, item)
+        wire.id = tostring(#chosen)
+      end
+      table.insert(out, wire)
+    end
+  end
+  return out
+end
+
+--- gui.menu{ items, on_select?, win?, line?, at? }: a native menu. An item:
+--- { label, enabled?, accelerator? (keys as Vim writes them, shown beside the
+--- label), submenu? (items), on_select? } or { separator = true } / "-".
+--- What is chosen runs its on_select(), else on_select(item, index of the
+--- items chosen from in order). At the pointer (at = { x, y }, the page's
+--- point of a right-click), else under the item of line (default: the
+--- cursor's) in win (default: the current window), else under the cursor.
+function M.menu(opts)
+  opts = opts or {}
+  local err = M.menu_error(opts.items)
+  if err then error("devhub_gui.menu: " .. err) end
+  local chosen = {}
+  local items = menu_wire(opts.items, chosen, 0)
+  if #items == 0 then return nil end
+  local id = next_id()
+  M._menus[id] = { chosen = chosen, on_select = opts.on_select }
+  local win = opts.win
+  if not win or win == 0 or not vim.api.nvim_win_is_valid(win) then win = vim.api.nvim_get_current_win() end
+  local line = opts.line or vim.api.nvim_win_get_cursor(win)[1]
+  local view_id
+  local buf = vim.api.nvim_win_get_buf(win)
+  for vid, v in pairs(M._views) do
+    if v.buf == buf then view_id = vid end
+  end
+  local pos = vim.fn.screenpos(win, line, 1)
+  event("menu", { id = id, items = items, win = win, line = line, view = view_id,
+    screen = { row = pos.row, col = pos.col }, at = type(opts.at) == "table" and opts.at or nil })
+  return id
+end
+
+--- The page: what was chosen of menu id ("1", "2"…), or nil.
+function M._menu_done(id, chosen)
+  local menu = M._menus[id]
+  M._menus[id] = nil
+  if not menu or type(chosen) ~= "string" then return end
+  local index = tonumber(chosen)
+  local item = index and menu.chosen[index]
+  if not item then return end
+  if item.on_select then
+    call(item.on_select)
+  elseif type(menu.on_select) == "function" then
+    call(menu.on_select, item, index)
+  end
+end
+
+local function view_menu(view, win, line, at)
+  local ok, items = pcall(view.on_context_menu, line)
+  if not ok then
+    vim.notify("devhub gui: " .. tostring(items), vim.log.levels.ERROR)
+    return nil
+  end
+  if type(items) ~= "table" or #items == 0 then return nil end
+  local okm, id = pcall(M.menu, { items = items, win = win, line = line, at = at })
+  if not okm then vim.notify("devhub gui: " .. tostring(id), vim.log.levels.ERROR) return nil end
+  return id
+end
+
+--- The keyboard's right-click: the menu of the current window's view, for
+--- the cursor's item, under it. Answers the menu's id, or nil (no view with
+--- a menu here, or nothing in it).
+function M.context_menu()
+  local win = vim.api.nvim_get_current_win()
+  local buf = vim.api.nvim_win_get_buf(win)
+  for _, view in pairs(M._views) do
+    if view.buf == buf and view.on_context_menu and not view.frame then
+      return view_menu(view, win, vim.api.nvim_win_get_cursor(win)[1])
+    end
+  end
+  return nil
+end
+
+--- <S-F10> (the page sends the menu key as it) in a view's buffer that has a
+--- menu: its menu, unless the buffer maps the key itself.
+function M._menu_key(view)
+  if vim.fn.maparg("<S-F10>", "n", false, true).buffer == 1 then return end
+  vim.keymap.set("n", "<S-F10>", function() M.context_menu() end,
+    { buffer = view.buf, desc = "DevHub: the item's menu" })
+  view.menu_key = true
+end
+
+--- The page: a right-click on item line of view id in win, at the page's
+--- point x, y. The cursor goes there first, as for a click.
+function M._view_menu(id, win, line, x, y)
+  local view = M._views[id]
+  if not view or not view.on_context_menu then return end
+  if win and vim.api.nvim_win_is_valid(win) then
+    vim.api.nvim_set_current_win(win)
+    if type(line) == "number" then pcall(vim.api.nvim_win_set_cursor, win, { line, 0 }) end
+  end
+  view_menu(view, win, line, type(x) == "number" and type(y) == "number" and { x = x, y = y } or nil)
 end
 
 --- The wheel scrolled a view: its cursor follows to an item in sight.

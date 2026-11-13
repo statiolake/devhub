@@ -39,6 +39,18 @@ describe("a key as Neovim's key notation", () => {
     ],
     ["Ctrl+Space", key(" ", "Space", { ctrlKey: true }), false, "<C-Space>"],
     [
+      "Shift+F10, the keyboard's right-click",
+      key("F10", "F10", { shiftKey: true }),
+      false,
+      "<S-F10>",
+    ],
+    [
+      "the menu key is Shift+F10",
+      key("ContextMenu", "ContextMenu"),
+      false,
+      "<S-F10>",
+    ],
+    [
       "Option as Meta takes the physical key",
       key("≈", "KeyX", { altKey: true }),
       true,

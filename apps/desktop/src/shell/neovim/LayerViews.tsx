@@ -350,6 +350,24 @@ function GuiView({
     },
     [click],
   );
+  // A right-click on a view with a menu (`on_context_menu`): the row is
+  // focused at once, as for a click, and Lua puts its menu up at the
+  // pointer. Without one, a right press is a press.
+  const hasMenu = content.menu === true;
+  const menu = useCallback(
+    (line: number, x: number, y: number) => {
+      const base = placeRef.current.cursor;
+      setPressed(line === base ? undefined : { line, base });
+      hostRef.current.lua("_view_menu", [
+        content.id,
+        placeRef.current.win,
+        line,
+        Math.round(x),
+        Math.round(y),
+      ]);
+    },
+    [content.id],
+  );
 
   const style: CSSProperties = {
     left: box.col * cell.width,
@@ -378,6 +396,8 @@ function GuiView({
     <div
       className={`nvim-view${place.current ? " nvim-view-current" : ""}`}
       style={style}
+      data-view={content.id}
+      data-win={place.win}
       onWheel={(event) => {
         const el = scroller.current;
         if (!el) return;
@@ -451,6 +471,7 @@ function GuiView({
               theme={theme}
               press={press}
               click={click}
+              menu={hasMenu ? menu : undefined}
             />
           );
         })}
@@ -491,6 +512,7 @@ const ViewRow = memo(function ViewRow({
   theme,
   press,
   click,
+  menu,
 }: {
   readonly item: ViewItem;
   readonly focused: boolean;
@@ -503,6 +525,8 @@ const ViewRow = memo(function ViewRow({
   readonly theme: ComponentTheme;
   readonly press: (line: number, clicks: number) => void;
   readonly click: (line: number, action: number | null) => void;
+  /** The view's menu at the pointer (`on_context_menu`), if it has one. */
+  readonly menu: ((line: number, x: number, y: number) => void) | undefined;
 }) {
   const isCard =
     item.node !== undefined &&
@@ -541,7 +565,15 @@ const ViewRow = memo(function ViewRow({
       data-line={item.line}
       onMouseDown={(event) => {
         event.preventDefault();
+        // The right button opens the menu (`contextmenu`), and is no click.
+        if (event.button === 2 && menu !== undefined) return;
         press(item.line, event.detail > 1 ? 2 : 1);
+      }}
+      onContextMenu={(event) => {
+        if (menu === undefined) return;
+        event.preventDefault();
+        event.stopPropagation();
+        menu(item.line, event.clientX, event.clientY);
       }}
     >
       {indent !== undefined
