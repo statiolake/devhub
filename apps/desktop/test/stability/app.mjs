@@ -95,7 +95,7 @@ function ask(socket, request, timeoutMs = 20_000) {
 
 export async function startApp(
   paths,
-  { port, size = [1400, 900], logPath, neovimDelayMs },
+  { port, size = [1400, 900], logPath, neovimDelayMs, scale = 1 },
 ) {
   const env = environment(paths);
   // Every round trip to Neovim this much longer (src/main/neovimHost/delayProxy.ts).
@@ -107,7 +107,7 @@ export async function startApp(
     "--user-data-dir",
     userData,
     `--remote-debugging-port=${port}`,
-    "--force-device-scale-factor=1",
+    `--force-device-scale-factor=${scale}`,
     // Software GL on Xvfb either way; this keeps the compositor on the CPU
     // path every run, rather than whichever the driver probe chose.
     "--disable-gpu",

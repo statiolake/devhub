@@ -107,12 +107,24 @@ export function checkRegions(shots, regions, motion) {
     const moving = motion(region.rect);
     const runs = [];
     decoded.forEach((shot, index) => {
-      if (moving(shot.t)) return;
+      if (!region.still && moving(shot.t)) return;
       const value = regionDigest(shot.image, region.rect);
       const tail = runs[runs.length - 1];
       if (tail && tail.value === value) return;
       runs.push({ value, index });
     });
+    // A still region (rows nothing in the step may change: the command
+    // line's below a window that scrolls) shows one picture throughout.
+    if (region.still && runs.length > 1) {
+      out.push({
+        rule: "changed",
+        key: region.name,
+        message: `region ${region.name} @${region.rect.join(",")} should not change in this step and showed ${runs.length} pictures (screencast frames ${runs.map((r) => r.index).join(", ")})`,
+        frames: [],
+        shots: runs.map((r) => r.index),
+      });
+      continue;
+    }
     if (runs.length > 2) {
       out.push({
         rule: "picture",

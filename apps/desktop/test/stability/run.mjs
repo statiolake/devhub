@@ -99,6 +99,7 @@ function parseArgs(argv) {
     else if (arg === "--keep") args.keep = true;
     else if (arg === "--hold") args.hold = true;
     else if (arg === "--neovim-delay") args.neovimDelay = Number(argv[++i]);
+    else if (arg === "--scale") args.scale = Number(argv[++i]);
     else if (arg === "--port") args.port = Number(argv[++i]);
     else throw new Error(`unknown argument ${arg}`);
   }
@@ -121,6 +122,7 @@ async function main() {
   const paths = makeProfile(root, plugins);
   const app = await startApp(paths, {
     neovimDelayMs: args.neovimDelay,
+    scale: args.scale,
     port: args.port,
     logPath: join(artifacts, "app.log"),
   });
@@ -319,14 +321,23 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
     const rects = wanted
       .map((region, i) => ({
         name: region.name,
+        still: region.still === true,
         rect: (region.from === "before"
           ? before[i]
           : (after[i] ?? before[i])) ?? [0, 0, 0, 0],
       }))
       .filter((region) => region.rect[2] > 0 && region.rect[3] > 0);
     if (!step.live) {
-      for (const v of checkRegions(page.shots, rects, (rect) =>
-        motionAt(page.frames, rect),
+      // The screencast is in device pixels; regions and the recorder's
+      // boxes in CSS pixels.
+      const dpr = await sessions[index].client.eval("devicePixelRatio");
+      const device = (r) => r.map((v) => v * dpr);
+      const scaled = rects.map((r) => ({ ...r, rect: device(r.rect) }));
+      for (const v of checkRegions(page.shots, scaled, (rect) =>
+        motionAt(
+          page.frames,
+          rect.map((v) => v / dpr),
+        ),
       ))
         own.push(`[${v.rule}] ${v.message}`);
     }
@@ -424,7 +435,12 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
 
 async function resolveRegions(client, regions) {
   if (!regions?.length) return [];
-  return client.eval(`(${JSON.stringify(regions.map((r) => r.selector))}).map((s) => {
+  // A region is an element (`selector`), the viewport, or a page
+  // expression answering [x, y, w, h] (`expr`: rows no element covers).
+  const exprs = regions.map((r) => r.expr ?? null);
+  return client.eval(`(${JSON.stringify(regions.map((r) => r.selector ?? null))}).map((s, i) => {
+    const expr = ${JSON.stringify(exprs)}[i];
+    if (expr) { const r = (0, eval)(expr); return r ? r.map(Math.round) : null; }
     if (s === "viewport") return [0, 0, innerWidth, innerHeight];
     const el = document.querySelector(s);
     if (!el) return null;

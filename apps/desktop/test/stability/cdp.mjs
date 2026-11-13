@@ -49,7 +49,10 @@ export async function connect(port, match, { timeoutMs = 30_000 } = {}) {
   const send = (method, params = {}) =>
     new Promise((resolve, reject) => {
       const id = ++nextId;
-      pending.set(id, { resolve, reject });
+      pending.set(id, {
+        resolve,
+        reject: (error) => reject(new Error(`${method}: ${error.message}`)),
+      });
       ws.send(JSON.stringify({ id, method, params }));
     });
   const client = {
