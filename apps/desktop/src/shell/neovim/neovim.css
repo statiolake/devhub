@@ -118,6 +118,18 @@
   inset: 0;
 }
 
+/* A level is the whole editor's size and its own parts are where they are
+   drawn: the level itself lets the pointer through to what is under it
+   (a float's level over the windows' text, which would otherwise take
+   their I-beam and their rows' hover), its parts take it. */
+.nvim-level {
+  pointer-events: none;
+}
+
+:where(.nvim-level) > * {
+  pointer-events: auto;
+}
+
 /* The notifications' level is over every other: it lets the pointer
    through (its toasts take none either), so a press on what is under it —
    a footer's, a view's or a card's node — is that node's. */
