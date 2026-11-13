@@ -319,13 +319,14 @@ export class NeovimEditors {
 	): Promise<NeovimAttachReply> {
 		try {
 			const workspaceId = request.workspaceId;
-			const { socketPath, server, machine } =
+			const { socketPath, server, machine, pane } =
 				await this.options.overlays.connection(workspaceId);
 			const background = this.options.background?.();
 			const ui = {
 				workspaceId,
 				socketPath,
 				server,
+				pane,
 				cols: request.cols,
 				rows: request.rows,
 				...(background === undefined ? {} : { background }),

@@ -50,6 +50,14 @@ export interface NeovimUiTarget {
 	readonly socketPath: string;
 	/** Which server that is (`ManagedNeovims`): a new one is a new connection. */
 	readonly server: number;
+	/**
+	 * The tmux pane whose Neovim this is to be (`%12`). A socket's path is
+	 * only a name: a Workspace's managed Neovim listens on the same one each
+	 * time it is started, so an attach for a pane that has gone could reach
+	 * the Neovim started after it. The attach is refused by any Neovim that
+	 * is not that pane's (`NeovimUi.attach`).
+	 */
+	readonly pane?: string;
 	readonly cols: number;
 	readonly rows: number;
 	/**
@@ -63,6 +71,7 @@ export interface NeovimUiTarget {
 interface Session<P> {
 	readonly server: number;
 	readonly socketPath: string;
+	readonly pane: string | undefined;
 	readonly client: NeovimRpc;
 	readonly ui: NeovimUi;
 	page: P;
@@ -133,6 +142,7 @@ export class NeovimUiSessions<P> {
 			target.cols,
 			target.rows,
 			target.background,
+			session.pane,
 		);
 	}
 
@@ -190,7 +200,10 @@ export class NeovimUiSessions<P> {
 		workspaceId: string,
 		client: NeovimRpc,
 		page: P,
-		target: Pick<NeovimUiTarget, "server" | "socketPath" | "cols" | "rows">,
+		target: Pick<
+			NeovimUiTarget,
+			"server" | "socketPath" | "pane" | "cols" | "rows"
+		>,
 	): Session<P> {
 		if (typeof client.notify !== "function") {
 			client.close();
@@ -199,6 +212,7 @@ export class NeovimUiSessions<P> {
 		const fresh: Session<P> = {
 			server: target.server,
 			socketPath: target.socketPath,
+			pane: target.pane,
 			client,
 			ui: new NeovimUi(client as Notifying, this.options.clipboard),
 			page,
@@ -267,7 +281,13 @@ export class NeovimUiSessions<P> {
 			batches: [[NEOVIM_RESTARTED_EVENT, []]],
 		});
 		await session.ui
-			.attach(this.sinkOf(workspaceId, session), old.cols, old.rows)
+			.attach(
+				this.sinkOf(workspaceId, session),
+				old.cols,
+				old.rows,
+				undefined,
+				old.pane,
+			)
 			.catch(() => {
 				// It went again before the attach finished: its close says so.
 				session.client.close();

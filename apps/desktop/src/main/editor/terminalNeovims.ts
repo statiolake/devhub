@@ -628,11 +628,15 @@ export class TerminalNeovims {
 		if (watch.control !== undefined) void this.confirm(watch);
 	}
 
-	/** Where an overlay's page attaches: the socket, reached from here. */
+	/**
+	 * Where an overlay's page attaches: the socket, reached from here, and
+	 * the pane whose Neovim it is to be (`NeovimUiTarget.pane`).
+	 */
 	async connection(key: string): Promise<{
 		readonly socketPath: string;
 		readonly server: number;
 		readonly machine: RuntimeId;
+		readonly pane?: string;
 	}> {
 		const overlay = this.byKey.get(key);
 		if (overlay === undefined) throw new Error("That Neovim has exited.");
@@ -644,6 +648,7 @@ export class TerminalNeovims {
 			socketPath: await overlay.localPath,
 			server: overlay.serial,
 			machine: overlay.terminal.machine,
+			pane: overlay.paneId,
 		};
 	}
 

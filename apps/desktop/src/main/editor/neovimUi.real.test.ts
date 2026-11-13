@@ -43,14 +43,16 @@ afterEach(() => {
 
 let lastSocket = "";
 
-async function startNvim(): Promise<NeovimClient> {
+async function startNvim(
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<NeovimClient> {
 	const sockets = makeSocketDir("nvim-ui");
 	directories.push(sockets);
 	const socket = join(sockets, "n.sock");
 	const child = spawn(
 		NVIM as string,
 		["--headless", "--clean", "--listen", socket],
-		{ stdio: "ignore" },
+		{ stdio: "ignore", env },
 	);
 	children.push(child);
 	for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -1660,5 +1662,40 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		expect(texts.some((t) => t.includes("plugin words"))).toBe(false);
 		expect(texts.some((t) => t.includes("deleted line"))).toBe(false);
 		h.ui.client.close();
+	});
+});
+
+describe.skipIf(NVIM === undefined)("an attach for a pane's Neovim", () => {
+	const sink: NeovimUiSink = {
+		redraw: () => undefined,
+		guiWindows: () => undefined,
+		guiOpen: () => undefined,
+		guiClose: () => undefined,
+		guiSend: () => undefined,
+		guiEvent: () => undefined,
+	};
+	const clipboard = { read: () => Promise.resolve(""), write: () => undefined };
+
+	it("is refused by a Neovim on that socket that is not its pane's, before any UI is attached", async () => {
+		// The Workspace's next Neovim, on the same socket path, in a new pane.
+		const client = await startNvim({ ...process.env, TMUX_PANE: "%8" });
+		const ui = new NeovimUi(client, clipboard);
+		await expect(ui.attach(sink, 60, 20, undefined, "%7")).rejects.toThrow(
+			/not the Neovim of its pane: %7, not %8/,
+		);
+		expect(await client.request("nvim_list_uis", [])).toEqual([]);
+		expect(
+			await client.request("nvim_exec_lua", [
+				"return package.loaded['devhub_gui'] ~= nil",
+				[],
+			]),
+		).toBe(false);
+	});
+
+	it("attaches to its own pane's Neovim", async () => {
+		const client = await startNvim({ ...process.env, TMUX_PANE: "%7" });
+		const ui = new NeovimUi(client, clipboard);
+		await ui.attach(sink, 60, 20, undefined, "%7");
+		expect(await client.request("nvim_list_uis", [])).toHaveLength(1);
 	});
 });

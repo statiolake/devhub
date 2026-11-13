@@ -137,6 +137,23 @@ end
 /** What `FIRST_UI_LUA` fails with when the attach is not a Neovim's first UI. */
 const NOT_FIRST_UI = "devhub: not the first UI";
 
+const NOT_ITS_PANE = "devhub: not the Neovim of its pane";
+
+/**
+ * Whether the Neovim on this connection is the one its pane runs
+ * (`NeovimUiTarget.pane`): a pane's Neovim has the pane's `$TMUX_PANE`, the
+ * managed one's keeper and a `:restart`'s new server included. Run first in
+ * the attach's request, so an attach that reached another Neovim on the
+ * same socket path — the Workspace's next one, started once the pane it was
+ * for had gone — ends there, before anything is set up or attached.
+ */
+export const PANE_CHECK_LUA = `
+local pane = ...
+if vim.env.TMUX_PANE ~= pane then
+  error("${NOT_ITS_PANE}: " .. pane .. ", not " .. tostring(vim.env.TMUX_PANE))
+end
+`;
+
 /**
  * Whether this attach is the Neovim's first UI (`firstAttach`): it
  * is still starting — an `--embed` Neovim waits for its first UI before it
@@ -1261,6 +1278,7 @@ export class NeovimUi {
 		cols: number,
 		rows: number,
 		background?: "dark" | "light",
+		pane?: string,
 	): Promise<NeovimUiAttach> {
 		for (;;) {
 			const running = this.attaching;
@@ -1285,7 +1303,7 @@ export class NeovimUi {
 			return joined;
 		}
 		const attaching = {
-			done: this.attachNow(sink, cols, rows, background),
+			done: this.attachNow(sink, cols, rows, background, pane),
 			cols,
 			rows,
 		};
@@ -1301,7 +1319,8 @@ export class NeovimUi {
 		sink: NeovimUiSink,
 		cols: number,
 		rows: number,
-		background?: "dark" | "light",
+		background: "dark" | "light" | undefined,
+		pane: string | undefined,
 	): Promise<NeovimUiAttach> {
 		this.sink = sink;
 		// Both answered at once, even while Neovim is starting (fast calls):
@@ -1349,6 +1368,9 @@ export class NeovimUi {
 		const setupCalls = (
 			code: (lua: string) => string | Uint8Array,
 		): readonly (readonly [string, readonly unknown[]])[] => [
+			...(pane === undefined
+				? []
+				: [["nvim_exec_lua", [PANE_CHECK_LUA, [pane]]] as const]),
 			...SETUP_CHUNKS.map(
 				(chunk, index) =>
 					[
