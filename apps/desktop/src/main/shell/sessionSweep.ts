@@ -217,9 +217,18 @@ export class SessionSweeper {
 			// A GUI Agent's host files go with its Agent, by the same rule as its
 			// session: kept while the model has the Agent, and only then. Read
 			// after the sessions are gone, so no host is still writing into one.
+			//
+			// What is accounted for is read after the listing, not before: a
+			// GUI Agent's launch makes its directory before its session, and is
+			// accounted for by its launch from before that, so a directory the
+			// listing found is one whose launch the accounting read after it
+			// sees. Read first, a launch that began in between was taken for
+			// an Agent nobody has, and its directory removed under the host
+			// starting in it.
 			const files = await this.#world.hostFilesFor(machine);
+			const listed = await files.list();
 			const agents = this.#world.accounted().agents;
-			for (const agentId of await files.list()) {
+			for (const agentId of listed) {
 				if (agents.has(agentId)) continue;
 				await files.remove(agentId);
 				removed += 1;

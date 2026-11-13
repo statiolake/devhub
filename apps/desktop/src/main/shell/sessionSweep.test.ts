@@ -387,6 +387,33 @@ describe("sweeping the GUI Agents' host files", () => {
 		expect(world.forgotten).toEqual([]);
 	});
 
+	it("keeps the directory of an Agent whose launch began while the files were being listed", async () => {
+		// A GUI Agent's launch makes its host directory before its session,
+		// and is accounted for by its launch from before that. A sweep that
+		// read what is accounted for before listing the directories took a
+		// launch that began in between for an Agent nobody has, removed the
+		// directory under the host starting in it, and the host ended at
+		// once: the Agent never started, and its ending read "there is no
+		// host state at …". The startup sweep and an SSH host coming back
+		// both run while Agents can be launched.
+		const world = new FakeWorld();
+		world.adapters.set("local", new FakeMachine([]));
+		world.accounted_ = accounting([WORKSPACE_ONE], []);
+		const files = new FakeHostFiles([]);
+		files.list = async () => {
+			// The launch begins, and makes its directory, while the listing runs.
+			world.accounted_ = accounting([WORKSPACE_ONE], [AGENT_ONE]);
+			files.directories = [AGENT_ONE];
+			return [...files.directories];
+		};
+		world.hostFiles.set("local", files);
+
+		await new SessionSweeper(world).sweep("local");
+
+		expect(files.removed).toEqual([]);
+		expect(files.directories).toEqual([AGENT_ONE]);
+	});
+
 	it("postpones a machine whose host files cannot be read, like one that does not answer", async () => {
 		const world = new FakeWorld();
 		world.adapters.set("local", new FakeMachine([]));
