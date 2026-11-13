@@ -13,7 +13,7 @@ const float = (grid: number, win: number): GridBox => ({
   win,
 });
 
-describe("floats not drawn until Lua has said whose they are", () => {
+describe("windows not drawn until Lua has said whose they are", () => {
   it("never paints a framed view's float with the painter's own frame", () => {
     // As a picker opened in a throttled run: Neovim flushed the frame float
     // and the preview (the plugin forced a redraw), and only then did the
@@ -105,11 +105,57 @@ describe("floats not drawn until Lua has said whose they are", () => {
     expect(asks.need([a, b]).waiting).toBe(false);
   });
 
-  it("does not wait for a float a page already claims, nor for windows", () => {
+  it("does not wait for a float a page already claims", () => {
     const asks = new ClaimAsks();
     const claimed = { ...float(5, 1006), bare: true };
-    const window = { ...float(2, 1000), float: false };
-    expect(asks.need([claimed, window]).waiting).toBe(false);
+    expect(asks.need([claimed]).waiting).toBe(false);
+    // grid 1 is no window: never asked about
+    const grid1 = { ...float(1, 0), float: false, win: undefined };
+    expect(asks.need([grid1])).toEqual({ ask: [], waiting: false });
+  });
+
+  it("never paints a split that becomes a view in its cells first", () => {
+    // As nvim-tree opened in a throttled run: Neovim flushed the editor
+    // window shrunk and the tree's window beside it, nvim-tree's own text in
+    // its cells; the view (gui.view over that window) was placed after,
+    // then the `settled` the page asked for.
+    const asks = new ClaimAsks();
+    const editor = { ...float(2, 1000), float: false, col: 0, width: 100 };
+    const settledSeq = { value: 0 };
+    let shown: readonly GridBox[] = [editor];
+    // Drawn before: the editor alone, its ask settled.
+    asks.asking(asks.need(shown).ask, (settledSeq.value = nextSettleSeq()));
+    asks.settle(settledSeq.value);
+    const painted: (readonly GridBox[])[] = [];
+    let viewPlaced = false;
+    const viewAtPaint: boolean[] = [];
+    const paint = () => {
+      const { ask, waiting } = asks.need(shown);
+      if (ask.length > 0) {
+        settledSeq.value = nextSettleSeq();
+        asks.asking(ask, settledSeq.value);
+      }
+      if (!waiting) {
+        painted.push(shown);
+        viewAtPaint.push(viewPlaced);
+      }
+    };
+    paint();
+    const tree = { ...float(5, 1002), float: false, col: 0, width: 33 };
+    shown = [{ ...editor, col: 34, width: 66 }, tree];
+    paint(); // the flush: the tree's cells, no view yet
+    viewPlaced = true; // Lua's placements: the view over window 1002
+    paint();
+    asks.settle(settledSeq.value); // `settled`
+    paint();
+    // The old layout until the view is known, then the new one with it:
+    // the tree's window is never painted without its view over it.
+    const withTree = painted.flatMap((laid, i) =>
+      laid.some((b) => b.win === 1002) ? [i] : [],
+    );
+    expect(withTree.length).toBeGreaterThan(0);
+    for (const i of withTree) expect(viewAtPaint[i]).toBe(true);
+    expect(painted[0]).toEqual([editor]);
   });
 
   it("forgets a float that closed", () => {

@@ -101,9 +101,9 @@ function themeColors(): {
 
 /** What the editor needs from the page: Neovim API calls. */
 /**
- * How long a float not drawn yet waits for Lua to settle it (`ClaimAsks`)
+ * How long a window not drawn yet waits for Lua to settle it (`ClaimAsks`)
  * before it is drawn as it is: an answer is a round trip, Neovim answers
- * once the tick that showed the float is done.
+ * once the tick that showed the window is done.
  */
 export const SETTLE_WAIT_MS = 250;
 
@@ -481,9 +481,12 @@ export class NeovimEditor {
     return this.boxes;
   }
 
-  /** Window `win`'s float as Neovim has laid it out, drawn yet or not. */
+  /**
+   * Window `win` as Neovim has laid it out, drawn yet or not: what covers
+   * it is committed with the paint that draws it (`claimWindows`).
+   */
   laidOut(win: number): GridBox | undefined {
-    return layoutGrids(this.state).find((b) => b.float && b.win === win);
+    return layoutGrids(this.state).find((b) => b.win === win);
   }
 
   /**
@@ -978,10 +981,10 @@ export class NeovimEditor {
    * with it, when it comes.
    */
   /**
-   * Ask Lua to settle the floats not drawn yet (`ClaimAsks`); whether a
+   * Ask Lua to settle the windows not drawn yet (`ClaimAsks`); whether a
    * paint waits for it. The answer comes as Lua's placements and then
    * `settled`, through the page (`claimWindows`); with no Lua to answer,
-   * the floats are drawn as they are.
+   * the windows are drawn as they are.
    */
   private askClaims(boxes: readonly GridBox[]): boolean {
     const request = this.port.request?.bind(this.port);
@@ -995,7 +998,7 @@ export class NeovimEditor {
         this.claimWindows(this.claimed, seq);
       };
       // A Neovim busy in the tick that showed them (a long job flushing
-      // as it goes) answers late: the floats are drawn as they are then.
+      // as it goes) answers late: the windows are drawn as they are then.
       window.setTimeout(unanswered, SETTLE_WAIT_MS);
       request("nvim_exec_lua", [
         "local M = package.loaded['devhub_gui']; if M and M._settle then M._settle(...) return true end return false",

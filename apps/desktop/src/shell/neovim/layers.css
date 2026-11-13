@@ -14,11 +14,12 @@
 }
 
 .nvim-view-scroll {
+  --nvim-view-scroll-pad: 4px;
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  padding: 4px 0;
+  padding: var(--nvim-view-scroll-pad) 0;
 }
 
 .nvim-view-item {
@@ -56,12 +57,49 @@
   border-top-right-radius: 0;
 }
 
-/* Held at the top while the rows scroll under it, in the view's ground. */
-.nvim-view-sticky {
+/* Held at the top while the rows scroll under it, opaque in the view's own
+   ground (`--nvim-ground`, never a mix): its ground (::before) covers the
+   view's padding above it and its margins beside it, where its rounded
+   corners are, so no row shows round it or through it. What marks the row
+   — the focus's band and ring, Visual's band — is drawn over that ground
+   (::after), as on any other row. */
+.nvim-view-item.nvim-view-sticky {
   position: sticky;
   top: 0;
   z-index: 1;
+  background: none;
+  box-shadow: none;
+}
+
+.nvim-view-sticky::before,
+.nvim-view-sticky::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.nvim-view-sticky::before {
+  inset: calc(-1 * var(--nvim-view-scroll-pad, 0px)) -6px 0;
+  z-index: -2;
   background: var(--nvim-ground);
+}
+
+.nvim-view-sticky::after {
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+}
+
+.nvim-view-sticky.nvim-view-focused::after {
+  background: var(--nvim-cursorline);
+}
+
+.nvim-view-current .nvim-view-sticky.nvim-view-focused::after {
+  box-shadow: inset 0 0 0 1px var(--nvim-ring);
+}
+
+.nvim-view-sticky.nvim-view-selected::after {
+  background: var(--nvim-visual);
 }
 
 /* A tree's guides: one hairline per level down the row, so a run of rows

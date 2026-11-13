@@ -143,7 +143,13 @@ export function GuiViews({
     <>
       {layers.placedViews.map((place) => {
         const content = layers.views.get(place.id);
-        const box = host.boxes.find((b) => b.win === place.win);
+        // Where its window is drawn; a window not drawn yet, where it is
+        // laid out: it waited for its view and is drawn with the view over
+        // it in one frame (`ClaimAsks`), so the view cannot wait for that
+        // paint's boxes.
+        const box =
+          host.boxes.find((b) => b.win === place.win) ??
+          host.laidOut(place.win);
         if (!content || !box) return null;
         return createPortal(
           <GuiView content={content} place={place} box={box} host={host} />,

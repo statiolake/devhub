@@ -1101,10 +1101,16 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   the guides down the rows, one hairline per level, the focused row's
   level stronger over the run of its siblings (`viewTree.ts`); an item
   with `sticky = true` stays at the top while the rows scroll under it,
-  and the focus is kept in sight below it; `row_height` is each item's
+  opaque in the view's own ground over the view's padding and its
+  margins (the focus and Visual's band drawn over that ground), so no row
+  shows round it or through it, and the focus is kept in sight below it; `row_height` is each item's
   least height, its content centred (a dense list). The plugin keeps the
   tree — DevHub knows only depths — so a file tree's plugin (nvim-tree,
-  through `nvim-tree-ui.devhub`) keeps its own keys and actions.
+  through `nvim-tree-ui.devhub`) keeps its own keys and actions. A window
+  that becomes a view is never drawn in its cells first: a window the page
+  has not drawn yet waits for Lua to settle it, a split as a float does
+  (`ClaimAsks`, below), and the view is placed where the window is laid
+  out, so the window and the view over it are one frame.
 - **A framed view** (`gui.view{ frame = … }`) — the same view drawn in a
   frame over a float instead of over its window: a picker's frontend,
   whoever's picker it is. The plugin lays out Neovim windows and DevHub
@@ -1134,8 +1140,8 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   the frame float's rounded shape (`claimedShape`), or their square
   corners would cover the line's arc there. A plugin shows its windows
   before it makes them a view (and may flush them first), so the redraw
-  that shows a float can come before any word of its view: a float the
-  page has not drawn yet waits (`ClaimAsks`) until Lua has settled it
+  that shows a float can come before any word of its view: a window the
+  page has not drawn yet — a float or a split — waits (`ClaimAsks`) until Lua has settled it
   (`_settle`, run once Neovim is done with that tick: the placements, then
   `settled`, on the redraws' stream), at most `SETTLE_WAIT_MS`. A framed
   view's floats are drawn bare from their first frame, in the same frame
