@@ -45,13 +45,14 @@ let lastSocket = "";
 
 async function startNvim(
 	env: NodeJS.ProcessEnv = process.env,
+	extra: readonly string[] = [],
 ): Promise<NeovimClient> {
 	const sockets = makeSocketDir("nvim-ui");
 	directories.push(sockets);
 	const socket = join(sockets, "n.sock");
 	const child = spawn(
 		NVIM as string,
-		["--headless", "--clean", "--listen", socket],
+		["--headless", "--clean", ...extra, "--listen", socket],
 		{ stdio: "ignore", env },
 	);
 	children.push(child);
@@ -1691,6 +1692,18 @@ describe.skipIf(NVIM === undefined)("an attach for a pane's Neovim", () => {
 			]),
 		).toBe(false);
 	});
+
+	it("waits for a Neovim still running its config as long as it is told to", async () => {
+		// A config that holds Neovim past a request's usual 5 s: it answers
+		// nothing, fast calls included, until it is done.
+		const client = await startNvim({ ...process.env, TMUX_PANE: "%7" }, [
+			"--cmd",
+			"lua vim.uv.sleep(6500)",
+		]);
+		const ui = new NeovimUi(client, clipboard);
+		await ui.attach(sink, 60, 20, undefined, "%7", 20_000);
+		expect(await client.request("nvim_list_uis", [])).toHaveLength(1);
+	}, 20_000);
 
 	it("attaches to its own pane's Neovim", async () => {
 		const client = await startNvim({ ...process.env, TMUX_PANE: "%7" });

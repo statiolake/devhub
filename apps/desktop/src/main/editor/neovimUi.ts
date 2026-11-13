@@ -26,7 +26,11 @@ import {
 	LAYOUT_SAVE_LUA,
 	SESSION_LUA,
 } from "./neovimSession.js";
-import { NeovimRpcError, type NeovimRpc } from "./neovimRpc.js";
+import {
+	NeovimRpcError,
+	type NeovimRpc,
+	type RequestOptions,
+} from "./neovimRpc.js";
 import {
 	SETUP_LUA_CODE,
 	type LuaChunk,
@@ -1273,12 +1277,25 @@ export class NeovimUi {
 	 * what it draws from here. Only an attach asked once the last one is
 	 * done attaches anew (a page that started over).
 	 */
+	/**
+	 * The options of an attach's requests: a Neovim started for a jump is
+	 * waited for as long as the jump waits (`NeovimUiTarget.startupWaitMs`),
+	 * its config running before it answers anything.
+	 */
+	private attachRequests: RequestOptions = {};
+
+	/** A request of the attach (`attachRequests`). */
+	private ask(method: string, params: readonly unknown[]): Promise<unknown> {
+		return this.client.request(method, params, this.attachRequests);
+	}
+
 	async attach(
 		sink: NeovimUiSink,
 		cols: number,
 		rows: number,
 		background?: "dark" | "light",
 		pane?: string,
+		startupWaitMs?: number,
 	): Promise<NeovimUiAttach> {
 		for (;;) {
 			const running = this.attaching;
@@ -1303,7 +1320,7 @@ export class NeovimUi {
 			return joined;
 		}
 		const attaching = {
-			done: this.attachNow(sink, cols, rows, background, pane),
+			done: this.attachNow(sink, cols, rows, background, pane, startupWaitMs),
 			cols,
 			rows,
 		};
@@ -1321,13 +1338,30 @@ export class NeovimUi {
 		rows: number,
 		background: "dark" | "light" | undefined,
 		pane: string | undefined,
+		startupWaitMs: number | undefined,
+	): Promise<NeovimUiAttach> {
+		this.attachRequests =
+			startupWaitMs === undefined ? {} : { timeoutMs: startupWaitMs };
+		try {
+			return await this.attachSetUp(sink, cols, rows, background, pane);
+		} finally {
+			this.attachRequests = {};
+		}
+	}
+
+	private async attachSetUp(
+		sink: NeovimUiSink,
+		cols: number,
+		rows: number,
+		background: "dark" | "light" | undefined,
+		pane: string | undefined,
 	): Promise<NeovimUiAttach> {
 		this.sink = sink;
 		// Both answered at once, even while Neovim is starting (fast calls):
 		// one round trip, not two (over SSH, each one to the host).
 		const [info, firstMode] = (await Promise.all([
-			this.client.request("nvim_get_api_info", []),
-			this.client.request("nvim_get_mode", []),
+			this.ask("nvim_get_api_info", []),
+			this.ask("nvim_get_mode", []),
 		])) as [
 			[
 				number,
@@ -1342,18 +1376,18 @@ export class NeovimUi {
 			const mode =
 				attempt === 0
 					? firstMode
-					: ((await this.client.request("nvim_get_mode", [])) as
+					: ((await this.ask("nvim_get_mode", [])) as
 							| { readonly blocking?: boolean }
 							| undefined);
 			if (mode?.blocking !== true) break;
-			await this.client.request("nvim_input", ["<Esc>"]);
+			await this.ask("nvim_input", ["<Esc>"]);
 			await new Promise((resolve) => setTimeout(resolve, 30));
 		}
 		const v = info[1]?.version ?? {};
 		const version = `${String(v.major ?? 0)}.${String(v.minor ?? 0)}.${String(v.patch ?? 0)}`;
 		if (this.attached) {
 			// A page that started over: the grid is drawn again from scratch.
-			await this.client.request("nvim_ui_detach", []).catch(() => undefined);
+			await this.ask("nvim_ui_detach", []).catch(() => undefined);
 			this.attached = false;
 		}
 		// DevHub's Lua, in one request (`atomically`): each part runs only
@@ -1426,9 +1460,9 @@ export class NeovimUi {
 		// into it: growing back spreads the rows anew (a split's upper window
 		// left one row tall), so each tab's sizes are kept here and put back
 		// once attached (`LAYOUT_SAVE_LUA`).
-		const layout = await this.client
-			.request("nvim_exec_lua", [LAYOUT_SAVE_LUA, []])
-			.catch(() => undefined);
+		const layout = await this.ask("nvim_exec_lua", [LAYOUT_SAVE_LUA, []]).catch(
+			() => undefined,
+		);
 		this.priming = true;
 		try {
 			// At another size, so every window moves or resizes and is placed
@@ -1438,13 +1472,13 @@ export class NeovimUi {
 				Math.max(6, Math.floor(rows / 2)),
 				{ rgb: true, ext_linegrid: true },
 			);
-			await this.client.request("nvim_command", ["redraw!"]);
-			await this.client.request("nvim_ui_detach", []);
+			await this.ask("nvim_command", ["redraw!"]);
+			await this.ask("nvim_ui_detach", []);
 		} finally {
 			this.priming = false;
 		}
 		// The person's cmdheight, held through the attach that zeroes it.
-		await this.client.request("nvim_exec_lua", [
+		await this.ask("nvim_exec_lua", [
 			"local M = package.loaded['devhub_gui']; if M and M._before_attach then M._before_attach() end",
 			[],
 		]);
@@ -1458,9 +1492,9 @@ export class NeovimUi {
 		// The sizes the priming attach spread, put back once the command line
 		// has its height again.
 		if (layout !== undefined) {
-			await this.client
-				.request("nvim_exec_lua", [LAYOUT_RESTORE_LUA, [layout]])
-				.catch(() => undefined);
+			await this.ask("nvim_exec_lua", [LAYOUT_RESTORE_LUA, [layout]]).catch(
+				() => undefined,
+			);
 		}
 		return { version };
 	}
@@ -1490,11 +1524,11 @@ export class NeovimUi {
 		options: Record<string, unknown>,
 	): Promise<void> {
 		try {
-			await this.client.request("nvim_ui_attach", [cols, rows, options]);
+			await this.ask("nvim_ui_attach", [cols, rows, options]);
 		} catch (error) {
 			if (!alreadyAttached(error)) throw error;
-			await this.client.request("nvim_ui_detach", []);
-			await this.client.request("nvim_ui_attach", [cols, rows, options]);
+			await this.ask("nvim_ui_detach", []);
+			await this.ask("nvim_ui_attach", [cols, rows, options]);
 		}
 	}
 
@@ -1505,12 +1539,10 @@ export class NeovimUi {
 	private async afterAttach(): Promise<void> {
 		// The GUI windows already open (a DevHub restart, a page reload) are
 		// told again: the page knew none of them.
-		await this.client
-			.request("nvim_exec_lua", [
-				`local M = package.loaded['devhub_gui']; if M and M._keep_cmdheight then M._keep_cmdheight() end; if M and M._replay then M._replay() end\n${UI_ATTACHED_LUA}`,
-				[],
-			])
-			.catch(() => undefined);
+		await this.ask("nvim_exec_lua", [
+			`local M = package.loaded['devhub_gui']; if M and M._keep_cmdheight then M._keep_cmdheight() end; if M and M._replay then M._replay() end\n${UI_ATTACHED_LUA}`,
+			[],
+		]).catch(() => undefined);
 	}
 
 	/**
@@ -1521,7 +1553,7 @@ export class NeovimUi {
 	private async atomically(
 		calls: readonly (readonly [string, readonly unknown[]])[],
 	): Promise<readonly unknown[]> {
-		const answer = (await this.client.request("nvim_call_atomic", [
+		const answer = (await this.ask("nvim_call_atomic", [
 			calls.map(([method, params]) => [method, [...params]]),
 		])) as [unknown[], [number, number, string] | null] | undefined;
 		const failed = answer?.[1];

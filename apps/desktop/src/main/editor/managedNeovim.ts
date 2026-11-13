@@ -178,7 +178,77 @@ interface ServerRecord {
 	readonly serial: number;
 	readonly client: NeovimRpc;
 	readonly waitMarkers: Set<string>;
+	/**
+	 * Started for a jump and not yet answered one: until when its config may
+	 * keep it from answering (`startupWaitMs`). The overlay's attach waits as
+	 * long (`startupDeadline`).
+	 */
+	startingUntil: number | undefined;
+	/** The program started, when DevHub started it: for what a failure says. */
+	readonly program?: string;
 }
+
+/**
+ * A Neovim that could not be started, or did not get through its start:
+ * `message` for the CLI and the link, and `window` for the Workspace's
+ * `devhub-nvim` window (`failureArgv`), which shows it in place of Neovim.
+ */
+export class NeovimStartFailure extends Error {
+	constructor(
+		message: string,
+		/** What the window says, in the person's language. */
+		readonly window: string,
+		/** The pane the failed Neovim was in, if one is left: replaced. */
+		readonly paneId: string | undefined,
+		/** Its stderr, on its machine (`neovimStderrPath`), if it ran. */
+		readonly stderrPath: string | undefined,
+	) {
+		super(message);
+		this.name = "NeovimStartFailure";
+	}
+}
+
+/**
+ * Where a managed Neovim's stderr goes (the keeper's `2>`), beside its
+ * socket on its machine: what its config said before it died, for the
+ * window that says it did.
+ */
+export function neovimStderrPath(socketPath: string): string {
+	return `${socketPath}.stderr`;
+}
+
+const FAILURE_SH = `printf '%s\\n\\n' "$1"
+if [ -n "$2" ] && [ -s "$2" ]; then
+  printf '%s\\n\\n' "$3"
+  tail -n 20 "$2"
+  printf '\\n'
+fi
+printf '%s' "$4"
+read -r _ || :`;
+
+/**
+ * What the `devhub-nvim` window runs when Neovim could not be started there:
+ * what happened and what to do, the tail of its stderr when there is one,
+ * and Enter to close it. POSIX `sh`, as on any host.
+ */
+export function failureArgv(
+	text: string,
+	stderrPath: string | undefined,
+): string[] {
+	return [
+		"/bin/sh",
+		"-c",
+		FAILURE_SH,
+		"devhub-nvim",
+		text,
+		stderrPath ?? "",
+		`Neovim のエラー出力（${stderrPath ?? ""}）の最後の 20 行:`,
+		"Enter でこのウィンドウを閉じます。",
+	];
+}
+
+const TRY_IN_TERMINAL = (nvim: string | undefined) =>
+	`確認するには: ターミナルで ${nvim ?? "DevHub の nvim"} を実行すると、設定のエラーがそのまま表示されます。\n直したら、もう一度ファイルを開いてください。`;
 
 /** `sun_path` is 104 bytes on macOS, NUL included; Linux allows 108. */
 export const MAX_SOCKET_PATH_BYTES = 103;
@@ -274,7 +344,10 @@ export function neovimArgv(nvim: string, socketPath: string): string[] {
 
 const KEEPER_SH = `unset VIMRUNTIME VIM
 state=$(mktemp -d "\${TMPDIR:-/tmp}/devhub-nvim.XXXXXX") || state=/nonexistent
-DEVHUB_NEOVIM_GUI=1 ${NVIM_STATE_VARIABLE}=$state "$@" &
+for err; do :; done
+err=$err.stderr
+: 2>/dev/null >"$err" || err=/dev/null
+DEVHUB_NEOVIM_GUI=1 ${NVIM_STATE_VARIABLE}=$state "$@" 2>"$err" &
 pid=$!
 wait "$pid"
 status=$?
@@ -379,6 +452,8 @@ export class ManagedNeovims {
 	private readonly startupWaitMs: number;
 	private readonly pollMs: number;
 	private nextSerial = 1;
+	/** The window that says a Workspace's last start failed, until the next start. */
+	private readonly failurePanes = new Map<string, string>();
 
 	constructor(private readonly options: ManagedNeovimOptions) {
 		this.panes = options.panes;
@@ -413,6 +488,48 @@ export class ManagedNeovims {
 	}
 
 	/**
+	 * Until when the managed Neovim in `paneId` may still be running its
+	 * config — started for a jump that it has not answered yet — or
+	 * `undefined`. An overlay's attach to it waits as long as the jump does,
+	 * so its "Starting Neovim…" stays until Neovim draws, with no gap.
+	 */
+	startupDeadline(machine: string, paneId: string): number | undefined {
+		for (const record of this.records.values()) {
+			if (
+				record.target.machine === machine &&
+				record.paneId === paneId &&
+				!record.client.closed
+			)
+				return record.startingUntil;
+		}
+		return undefined;
+	}
+
+	/**
+	 * A start that failed, said where Neovim would have been: a window of its
+	 * own in the Workspace's session (`failureArgv`), shown, in place of the
+	 * pane the failed Neovim was in. It goes with the next start.
+	 */
+	private async showFailure(
+		target: WorkspaceTerminalTarget,
+		failure: NeovimStartFailure,
+	): Promise<void> {
+		// Made before the old pane goes: the last window of the session
+		// killed first would end the session.
+		const paneId = await this.panes.open(
+			target,
+			failureArgv(failure.window, failure.stderrPath),
+		);
+		await this.panes.show(target, paneId, "");
+		if (failure.paneId !== undefined)
+			await this.panes.kill(target, failure.paneId).catch(() => undefined);
+		const before = this.failurePanes.get(target.workspaceId);
+		this.failurePanes.set(target.workspaceId, paneId);
+		if (before !== undefined)
+			await this.panes.kill(target, before).catch(() => undefined);
+	}
+
+	/**
 	 * Tell every managed Neovim DevHub is connected to about this theme. One
 	 * that refuses (an error in the person's `User DevhubTheme` handler, say)
 	 * is reported and the rest are still told.
@@ -442,7 +559,21 @@ export class ManagedNeovims {
 		target: WorkspaceTerminalTarget,
 		file: NeovimOpen,
 	): Promise<{ readonly started: boolean }> {
-		return this.serially(target.workspaceId, async () => {
+		return this.serially(target.workspaceId, () =>
+			this.jump(target, file).catch(async (error: unknown) => {
+				// Said in its window too, not only to whoever asked.
+				if (error instanceof NeovimStartFailure)
+					await this.showFailure(target, error).catch(() => undefined);
+				throw error;
+			}),
+		);
+	}
+
+	private async jump(
+		target: WorkspaceTerminalTarget,
+		file: NeovimOpen,
+	): Promise<{ readonly started: boolean }> {
+		{
 			for (let ended = 0; ; ended += 1) {
 				const { record, started } = await this.server(target);
 				try {
@@ -456,9 +587,11 @@ export class ManagedNeovims {
 					// one is looked for — a few times at most.
 					const alive = await this.isAlive(target, record).catch(() => true);
 					if (started && !alive) {
-						throw new Error(
+						throw new NeovimStartFailure(
 							"Neovim exited as soon as it had started. Run DevHub's nvim in a terminal to see why — a configuration error is the usual reason.",
-							{ cause: error },
+							`Neovim が起動した直後に終了しました。\n設定（init.lua など）のエラーがよくある原因です。\n\n${TRY_IN_TERMINAL(record.program)}`,
+							record.paneId,
+							neovimStderrPath(record.socketPath),
 						);
 					}
 					if (started || ended >= MAX_ENDED_PER_JUMP || alive) throw error;
@@ -467,7 +600,7 @@ export class ManagedNeovims {
 					record.client.close();
 				}
 			}
-		});
+		}
 	}
 
 	private async openIn(
@@ -485,7 +618,10 @@ export class ManagedNeovims {
 			record.waitMarkers.add(file.waitMarkerPath);
 		}
 		// A Neovim started now answers once its config has run.
-		const timeoutMs = started ? this.startupWaitMs : undefined;
+		const timeoutMs =
+			started && record.startingUntil !== undefined
+				? Math.max(1, record.startingUntil - Date.now())
+				: undefined;
 		try {
 			await this.leaveBlockingPrompt(record.client, timeoutMs);
 			await record.client.request(
@@ -504,12 +640,23 @@ export class ManagedNeovims {
 		} catch (error) {
 			if (!(error instanceof NeovimRequestTimeout) || record.client.closed)
 				throw error;
+			if (started) {
+				// Its config never finished: it is stopped, and its window
+				// says so (`showFailure`), so the next jump starts afresh.
+				const seconds = String(this.startupWaitMs / 1_000);
+				throw new NeovimStartFailure(
+					`Neovim did not finish starting within ${seconds} seconds, and was stopped. Run DevHub's nvim in a terminal to see why.`,
+					`Neovim が ${seconds} 秒たっても起動を終えなかったため、止めました。\n設定（init.lua など）が何かを待っているか、プラグインのインストールに時間がかかっている可能性があります。\n\n${TRY_IN_TERMINAL(record.program)}`,
+					record.paneId,
+					neovimStderrPath(record.socketPath),
+				);
+			}
 			throw new Error(
-				started
-					? `Neovim has not finished starting after ${String(this.startupWaitMs / 1_000)} seconds. Its window shows where it is; ${file.path} opens there once it is done.`
-					: `Neovim is busy and did not open ${file.path}: something in its window is waiting (a prompt, say). The file opens once it is answered.`,
+				`Neovim is busy and did not open ${file.path}: something in its window is waiting (a prompt, say). The file opens once it is answered.`,
 				{ cause: error },
 			);
+		} finally {
+			record.startingUntil = undefined;
 		}
 	}
 
@@ -643,6 +790,7 @@ export class ManagedNeovims {
 			serial: this.nextSerial++,
 			client,
 			waitMarkers: new Set(),
+			startingUntil: undefined,
 		});
 	}
 
@@ -652,10 +800,25 @@ export class ManagedNeovims {
 			sockets.directory,
 			neovimSocketName(target.workspaceId),
 		);
-		const nvim = await this.options.nvim(target);
+		const nvim = await this.options.nvim(target).catch((error: unknown) => {
+			const reason = error instanceof Error ? error.message : String(error);
+			throw new NeovimStartFailure(
+				reason,
+				`DevHub の Neovim を起動できませんでした。\n\n${reason}\n\n上の理由を解消してから、もう一度ファイルを開いてください。`,
+				undefined,
+				undefined,
+			);
+		});
 		await sockets.files.ensurePrivateDirectory(sockets.directory);
 		await sockets.files.remove(socketPath);
+		const stderrPath = neovimStderrPath(socketPath);
 		const paneId = await this.panes.open(target, neovimArgv(nvim, socketPath));
+		// A window that said the last start failed goes once this one is up.
+		const failed = this.failurePanes.get(target.workspaceId);
+		if (failed !== undefined) {
+			this.failurePanes.delete(target.workspaceId);
+			await this.panes.kill(target, failed).catch(() => undefined);
+		}
 		const deadline = Date.now() + this.startTimeoutMs;
 		for (;;) {
 			if (await sockets.files.exists(socketPath)) {
@@ -671,20 +834,27 @@ export class ManagedNeovims {
 						serial: this.nextSerial++,
 						client,
 						waitMarkers: new Set(),
+						startingUntil: Date.now() + this.startupWaitMs,
+						program: nvim,
 					});
 				} catch (error) {
 					if (!isRefused(error)) throw error;
 				}
 			}
 			if ((await this.panes.state(target, paneId)) !== "alive") {
-				await this.panes.kill(target, paneId).catch(() => undefined);
-				throw new Error(
+				throw new NeovimStartFailure(
 					`Neovim (${nvim}) exited before it opened its socket. Run it in a terminal to see why — a configuration error is the usual reason.`,
+					`Neovim が起動の途中で終了しました（ソケットを開く前）。\n設定（init.lua など）のエラーがよくある原因です。\n\n${TRY_IN_TERMINAL(nvim)}`,
+					paneId,
+					stderrPath,
 				);
 			}
 			if (Date.now() >= deadline) {
-				throw new Error(
-					`Neovim (${nvim}) did not open its socket within ${String(this.startTimeoutMs / 1_000)} seconds; it is still running in its tmux window.`,
+				throw new NeovimStartFailure(
+					`Neovim (${nvim}) did not open its socket within ${String(this.startTimeoutMs / 1_000)} seconds, and was stopped. Run it in a terminal to see why.`,
+					`Neovim が ${String(this.startTimeoutMs / 1_000)} 秒たってもソケットを開かなかったため、止めました。\n\n${TRY_IN_TERMINAL(nvim)}`,
+					paneId,
+					stderrPath,
 				);
 			}
 			await delay(this.pollMs);

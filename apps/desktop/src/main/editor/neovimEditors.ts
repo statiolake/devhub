@@ -322,11 +322,20 @@ export class NeovimEditors {
 			const { socketPath, server, machine, pane } =
 				await this.options.overlays.connection(workspaceId);
 			const background = this.options.background?.();
+			// A managed Neovim still starting for a jump: waited for as the
+			// jump waits for it.
+			const until =
+				pane === undefined
+					? undefined
+					: this.options.neovims.startupDeadline(machine, pane);
+			const startupWaitMs =
+				until === undefined ? undefined : Math.max(1, until - Date.now());
 			const ui = {
 				workspaceId,
 				socketPath,
 				server,
 				pane,
+				...(startupWaitMs === undefined ? {} : { startupWaitMs }),
 				cols: request.cols,
 				rows: request.rows,
 				...(background === undefined ? {} : { background }),

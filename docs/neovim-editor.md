@@ -86,7 +86,17 @@ Two kinds of Neovim, drawn the same way:
   - The window is shown first, then the file is asked of Neovim, so what
     holds Neovim up — its config still running (a Neovim started for the
     open is waited for up to a minute), a swap file's question — is on
-    screen. A Neovim that does not answer is said in the CLI, with that.
+    screen. The overlay's own attach waits on the same minute
+    (`ManagedNeovims.startupDeadline`, `NeovimUiTarget.startupWaitMs`), so
+    "Starting Neovim…" stays until Neovim draws. A running Neovim that does
+    not answer is said in the CLI.
+  - A Neovim that cannot be started — no Neovim for the machine, one that
+    exits before or just after it listens, one whose config does not finish
+    within the minute (it is stopped) — is said in the CLI and in the
+    Workspace's `devhub-nvim` window, in Japanese: what happened, how to see
+    why (run DevHub's nvim in a terminal), and the last 20 lines of its
+    stderr, which the keeper writes beside its socket
+    (`neovimStderrPath`). Enter closes that window; the next start does too.
   - A Neovim that ends while the open is at it (`:q` typed as `devhub
     <file>` came, a crash, its window killed) says so by its connection
     closing; the open starts a new one and goes there. The old one's

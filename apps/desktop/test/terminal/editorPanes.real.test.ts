@@ -258,6 +258,63 @@ describe.skipIf(TMUX === undefined || NVIM === undefined)(
       }
     }, 30_000);
 
+    it("says in its window, with Neovim's stderr, why Neovim could not start", async () => {
+      const { tmux, session } = server();
+      const root = makeScratchDir("managed-nvim-fail");
+      const socketDirectory = makeSocketDir("managed-nvim-fail");
+      directories.push(root, socketDirectory);
+      // A Neovim whose config fails before it listens.
+      const broken = join(root, "nvim");
+      writeFileSync(
+        broken,
+        "#!/bin/sh\necho 'E5113: boom in init.lua' >&2\nexit 1\n",
+        { mode: 0o755 },
+      );
+      const neovims = new ManagedNeovims({
+        panes: barePanes(tmux, session),
+        nvim: () => Promise.resolve(broken),
+        socketDirectory,
+        startTimeoutMs: 10_000,
+      });
+      const target = {
+        machine: "local" as const,
+        workspaceId: "6f1c2d3e-4a5b-4c6d-8e7f-001122334477",
+        root,
+      };
+      try {
+        await expect(
+          neovims.open(target, { path: join(root, "a.txt") }),
+        ).rejects.toThrow("exited before it opened its socket");
+        const shown = panes(tmux).find(
+          (row) => row.windowActive && row.windowIndex > 0,
+        );
+        expect(shown).toBeDefined();
+        let screen = "";
+        for (let wait = 0; wait < 100; wait += 1) {
+          screen = tmux(["capture-pane", "-p", "-t", shown!.paneId]);
+          if (screen.includes("Enter")) break;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(screen).toContain("Neovim が起動の途中で終了しました");
+        expect(screen).toContain("E5113: boom in init.lua");
+        expect(screen).toContain("Enter でこのウィンドウを閉じます。");
+        // Enter closes it.
+        tmux(["send-keys", "-t", shown!.paneId, "Enter"]);
+        for (
+          let wait = 0;
+          wait < 100 && panes(tmux).some((row) => row.paneId === shown!.paneId);
+          wait += 1
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(panes(tmux).map((row) => row.paneId)).not.toContain(
+          shown!.paneId,
+        );
+      } finally {
+        neovims.dispose();
+      }
+    }, 30_000);
+
     it("opens the file in a Neovim, whatever the last one was doing as the jump came", async () => {
       // `:q`, `:qa!` over an unsaved buffer, a crash, the window killed:
       // each followed at once by the next jump, as in the app.

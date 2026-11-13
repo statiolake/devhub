@@ -58,6 +58,12 @@ export interface NeovimUiTarget {
 	 * is not that pane's (`NeovimUi.attach`).
 	 */
 	readonly pane?: string;
+	/**
+	 * How long its Neovim may still be running its config: one started for a
+	 * jump (`ManagedNeovims.startupDeadline`). The attach waits that long, not
+	 * a request's usual time, so the overlay is not dropped while it starts.
+	 */
+	readonly startupWaitMs?: number;
 	readonly cols: number;
 	readonly rows: number;
 	/**
@@ -143,6 +149,7 @@ export class NeovimUiSessions<P> {
 			target.rows,
 			target.background,
 			session.pane,
+			target.startupWaitMs,
 		);
 	}
 

@@ -140,6 +140,14 @@ function world() {
 			// The keeper: `sh -c <script> devhub-nvim <nvim and its arguments>`.
 			expect(argv.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
 			expect(argv[3]).toBe("devhub-nvim");
+			if (!argv.includes("--listen")) {
+				// A failure's window (`failureArgv`): what it says, and its stderr.
+				log.push(
+					`failure ${argv[4]!.split("\n")[0]!} [${argv[5]!}] -> ${paneId}`,
+				);
+				panes.set(paneId, "alive");
+				return Promise.resolve(paneId);
+			}
 			log.push(
 				`open ${target.workspaceId} ${argv.slice(4).join(" ")} -> ${paneId}`,
 			);
@@ -213,6 +221,9 @@ function world() {
 		failNextStart: () => {
 			failStart = true;
 		},
+		unfailStart: () => {
+			failStart = false;
+		},
 		noNvim: () => {
 			nvim = undefined;
 		},
@@ -254,7 +265,11 @@ describe("the first jump into a Workspace", () => {
 		await expect(
 			w.make().open(WORKSPACE, { path: "/src/widget/a.ts" }),
 		).rejects.toThrow("nvim was not found");
-		expect(w.log).toEqual([]);
+		// No Neovim: its window says why instead, and is shown.
+		expect(w.log).toEqual([
+			"failure DevHub の Neovim を起動できませんでした。 [] -> %1",
+		]);
+		expect(w.shown).toEqual(["%1 "]);
 	});
 
 	it("says so when Neovim exits before it opens its socket, and leaves no pane", async () => {
@@ -263,8 +278,26 @@ describe("the first jump into a Workspace", () => {
 		await expect(
 			w.make().open(WORKSPACE, { path: "/src/widget/a.ts" }),
 		).rejects.toThrow("exited before it opened its socket");
+		// Its pane goes, and a window in its place says why, with its stderr.
+		expect(w.log).toContain(
+			`failure Neovim が起動の途中で終了しました（ソケットを開く前）。 [${SOCKET}.stderr] -> %2`,
+		);
 		expect(w.log).toContain("kill %1");
-		expect(w.panes.size).toBe(0);
+		expect([...w.panes.keys()]).toEqual(["%2"]);
+		expect(w.shown).toEqual(["%2 "]);
+	});
+
+	it("closes the window that said a start failed once the next one starts", async () => {
+		const w = world();
+		w.failNextStart();
+		const neovims = w.make();
+		await neovims
+			.open(WORKSPACE, { path: "/src/widget/a.ts" })
+			.catch(() => undefined);
+		w.unfailStart();
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		expect(w.log).toContain("kill %2");
+		expect([...w.panes.keys()]).toEqual(["%3"]);
 	});
 
 	it("starts one Neovim for two jumps that arrive together", async () => {
@@ -602,6 +635,9 @@ describe("a jump that meets the Neovim's end", () => {
 			neovims.open(WORKSPACE, { path: "/src/widget/b.ts" }),
 		).rejects.toThrow(/exited as soon as it had started/);
 		expect(w.log.filter((line) => line.startsWith("open"))).toHaveLength(2);
+		expect(
+			w.log.filter((line) => line.startsWith("failure Neovim が起動した直後")),
+		).toHaveLength(1);
 	});
 
 	it("never unlinks the socket of the Neovim started after it, however late its end is heard", async () => {
@@ -683,12 +719,44 @@ describe("a jump's window", () => {
 		};
 		await expect(
 			neovims.open(WORKSPACE, { path: "/src/widget/a.ts" }),
-		).rejects.toThrow(/not finished starting.*window/);
-		expect(w.shown).toEqual([`%1 ${SOCKET}`]);
-		await neovims
-			.open(WORKSPACE, { path: "/src/widget/b.ts" })
-			.catch((error: unknown) => {
-				expect(String(error)).toMatch(/busy.*waiting/);
-			});
+		).rejects.toThrow(/did not finish starting.*stopped/);
+		// Shown at once; then, its start given up on, stopped and said.
+		expect(w.shown).toEqual([`%1 ${SOCKET}`, "%2 "]);
+		expect(w.log).toContain("kill %1");
+	});
+
+	it("says a running Neovim that does not answer is busy in its window, and leaves it running", async () => {
+		const w = world();
+		const neovims = w.make();
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		w.server()!.before = (method) =>
+			method === "nvim_exec_lua" ? "hang" : undefined;
+		await expect(
+			neovims.open(WORKSPACE, { path: "/src/widget/b.ts" }),
+		).rejects.toThrow(/busy.*waiting/);
+		expect(w.log.filter((line) => line.startsWith("kill"))).toEqual([]);
+		expect(w.log.filter((line) => line.startsWith("failure"))).toEqual([]);
+	});
+
+	it("lets an overlay's attach wait as long as a jump waits on a Neovim it started", async () => {
+		const w = world();
+		const neovims = w.make({ startupWaitMs: 45_000 });
+		let during: number | undefined;
+		const listening = w.listening;
+		const set = listening.set.bind(listening);
+		listening.set = (socket, server) => {
+			server.before = (method) => {
+				if (method === "nvim_get_mode")
+					during = neovims.startupDeadline("local", server.pane!);
+				return undefined;
+			};
+			return set(socket, server);
+		};
+		const before = Date.now();
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		expect(during).toBeGreaterThanOrEqual(before + 45_000);
+		// Answered: an attach from now on waits as for any Neovim.
+		expect(neovims.startupDeadline("local", "%1")).toBeUndefined();
+		expect(neovims.startupDeadline("ssh:build", "%1")).toBeUndefined();
 	});
 });
