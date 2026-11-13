@@ -192,7 +192,64 @@ const THEME_CHANGED =
 
 const floatSpec = { single: ["frame", "frame-edge"] };
 
+// The rows under a window that scrolls (its footer's foot to the editor's):
+// the command line's, nothing in a scroll may draw there.
+const CMDLINE_ROWS = `(() => {
+  const f = [...document.querySelectorAll(".nvim-footer")].pop();
+  const e = document.querySelector(".nvim-editor");
+  if (!f || !e) return null;
+  const a = f.getBoundingClientRect(), b = e.getBoundingClientRect();
+  return [b.x, a.bottom, b.width, b.bottom - a.bottom];
+})()`;
+
+/** A burst of `<C-d>`/`<C-u>` as a held key gives them, 33 ms apart. */
+async function burst(ctx, keys) {
+  for (const key of keys) {
+    await ctx.press("pane", key);
+    await new Promise((r) => setTimeout(r, 33));
+  }
+}
+
 export const SCENARIOS = [
+  {
+    name: "scroll-burst",
+    description:
+      "repeated <C-d> and <C-u> at key-repeat speed in a long file, cmdheight=2 and scrolloff=0 as the person has them: nothing drawn outside the window's text area",
+    ...neovim,
+    setup: async (ctx) => {
+      await editorAtRest(ctx);
+      ctx.nvimExpr(
+        "execute('edit! src/long.ts | set cmdheight=2 scrolloff=0 | normal! 600Gzt')",
+      );
+      await ctx.settle("pane");
+    },
+    steps: ["down", "up", "alternating"].map((way) => ({
+      name: way,
+      act: (ctx) =>
+        burst(
+          ctx,
+          Array.from({ length: 20 }, (_, i) =>
+            way === "down"
+              ? "C-d"
+              : way === "up"
+                ? "C-u"
+                : i % 2
+                  ? "C-u"
+                  : "C-d",
+          ),
+        ),
+      // Found by hand (the person's report): the scroll's ghost, the old
+      // view sliding, was left outside its port at the first scroll after
+      // rest and drew over the command line's rows (<C-u>) and over what is
+      // above the window (<C-d>).
+      regions: [{ name: "cmdline-rows", expr: CMDLINE_ROWS, still: true }],
+      spec: { only: [] },
+      quietMs: 900,
+    })),
+    teardown: (ctx) => {
+      ctx.nvimExpr("execute('set cmdheight=1')");
+    },
+  },
   {
     name: "picker",
     description:

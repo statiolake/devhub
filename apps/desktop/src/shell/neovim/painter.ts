@@ -1757,7 +1757,13 @@ export class GridPainter {
       }
       slot.ghost = into;
     }
-    if (into.parentElement !== canvas.parentElement) canvas.before(into);
+    if (into.parentElement !== canvas.parentElement) {
+      // Beside the canvas, hidden, until `placeScroll` has it in the port:
+      // never a frame of it outside the text area.
+      if (!canvas.parentElement?.classList.contains("nvim-scroll-port"))
+        into.style.display = "none";
+      canvas.before(into);
+    }
   }
 
   /** Forget a grid's pixel scrolling: its canvas shows Neovim's grid as it is. */
@@ -1811,6 +1817,14 @@ export class GridPainter {
       canvas.before(port);
       port.append(canvas);
     }
+    // The ghost is the window's last view: it is in the port, under the
+    // canvas, cut where the text area is. Taken (`takeGhost`) before the
+    // canvas was moved into a new port, it was left beside it, in the
+    // level, unclipped: the old view sliding down for <C-u> was drawn over
+    // the status line and the command line's rows, and sliding up for
+    // <C-d> over what is above the window.
+    if (slot.ghost && slot.ghost.parentElement !== port)
+      canvas.before(slot.ghost);
     const left = `${String(box.col * cw - entry.bleed.l)}px`;
     const top = `${String(box.row * ch)}px`;
     port.dataset.left = left;
