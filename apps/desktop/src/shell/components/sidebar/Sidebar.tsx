@@ -1243,15 +1243,16 @@ function OrchestratorRow({
                     {
                       id: "show-editor",
                       label: "Show Editor",
+                      // The folder's editor is the board's Terminal tab, as
+                      // `Cmd+Q E` on the row: the person stays on the
+                      // Orchestrator screen.
                       run: () => {
                         selectRow(
                           { detail: 1 },
                           {
-                            type: "select_context",
-                            context: {
-                              kind: "workspace",
-                              workspaceId: workspace.id,
-                            },
+                            type: "show_orchestrator_view",
+                            view: { kind: "terminal" },
+                            reason: "explicit",
                           },
                         );
                       },

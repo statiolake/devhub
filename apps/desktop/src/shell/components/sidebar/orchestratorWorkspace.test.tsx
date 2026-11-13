@@ -219,7 +219,7 @@ describe("the Orchestrator row's Workspace", () => {
     ).toHaveAttribute("aria-current", "page");
   });
 
-  it("keeps the folder's editor reachable: Show Editor on the row, which stays highlighted there", async () => {
+  it("shows the folder's editor as the board's Terminal tab: Show Editor on the row, never the Workspace full", async () => {
     const dispatch = mount(snapshot({ kind: "orchestrator" }));
     fireEvent.contextMenu(topRows()[0]!.querySelector(".orchestrator-row")!);
     expect(showContextMenu).toHaveBeenCalledWith(
@@ -229,14 +229,17 @@ describe("the Orchestrator row's Workspace", () => {
     );
     await vi.waitFor(() => {
       expect(dispatch).toHaveBeenCalledWith({
-        type: "select_context",
-        context: { kind: "workspace", workspaceId: ROOT_ID },
+        type: "show_orchestrator_view",
+        view: { kind: "terminal" },
         reason: "explicit",
       });
     });
-    cleanup();
-    mount(snapshot({ kind: "workspace", workspaceId: ROOT_ID }));
-    expect(topRows()[0]).toHaveAttribute("aria-selected", "true");
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "select_context",
+        context: { kind: "workspace", workspaceId: ROOT_ID },
+      }),
+    );
   });
 
   it("starts a helper in the orchestrator's folder from its +", () => {

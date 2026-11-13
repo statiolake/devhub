@@ -57,11 +57,10 @@ orchestrator's folder.
   window, for skills and `decisions.md`) is the board's **ターミナル** tab
   (below, "ターミナル: the orchestrator's terminal"): `devhub <file>` inside
   the root, a `devhub:file` link to a file there, and a path in a task that
-  no open Workspace holds all open there, and `Cmd+Q E` on the row shows it.
-  The row's right-click **Show Editor** still selects the Workspace, the
-  content area its editor as Scratch's is when Scratch is selected, with the
-  Orchestrator row the highlighted one; a click on the row goes back to the
-  board.
+  no open Workspace holds all open there, and `Cmd+Q E` and the row's
+  right-click **Show Editor** show it. Neither selects the Workspace on its
+  own: the person stays on the Orchestrator screen, and a click on the row
+  goes back to the board.
 - **Selecting it** shows the Orchestrator screen: the board on the left, the
   orchestrator agent's pane on the right. It is the Agents view over the whole
   content area (`NavigationContext` `orchestrator`, `SurfaceLayout`

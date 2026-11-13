@@ -196,13 +196,13 @@ apart from `scratch` and `rows`), and its Agents other than the orchestrator
 are the row's children, with the Workspaces the orchestrator manages
 (`managed`, by `Workspace.managed`), grouped by lane
 (`docs/orchestrator.md`, "The orchestrator's work in the Sidebar"). A child selected is an ordinary Agent selection — its pane, full
-or beside the root's editor. The root's editor itself is that Workspace
-selected, and the content area is its editor as for Scratch; the
-Orchestrator row stays highlighted, and its right-click **Show Editor** is
-the way there from the Sidebar. The same editor area is also the board's
-**ターミナル** tab, laid over the board's body beside the orchestrator's pane
-(`LayoutState.boardTerminal`, `boardTerminalRect`): one terminal page, shown
-in one place at a time.
+or beside the root's editor. The root's editor is the board's **ターミナル**
+tab, laid over the board's body beside the orchestrator's pane
+(`LayoutState.boardTerminal`, `boardTerminalRect`): the Workspace's own
+terminal page, the one its editor area would be. The row's right-click
+**Show Editor** and `Cmd+Q E` show that tab, so the person stays on the
+Orchestrator screen; the row offers no way to the Workspace selected on its
+own.
 
 ## A close asks once, then acts
 
