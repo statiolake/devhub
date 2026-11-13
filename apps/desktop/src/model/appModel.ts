@@ -206,6 +206,8 @@ export interface AgentSnapshot {
   readonly promptCache: PromptCache | undefined;
   /** The turn running is upkeep, not work (`isMaintenanceTurn`). */
   readonly maintenance?: boolean;
+  /** Which context a message sent now lands in (`contextKey`); GUI only. */
+  readonly contextKey?: string;
   readonly injection: AgentInjection;
   /** The actions ticked as automatic for it. */
   readonly automaticActions: readonly string[];
@@ -1584,6 +1586,10 @@ export class AppModel {
       ) {
         this.bumpRevision();
       }
+      // Read by main only (the orchestrator's deliveries): no revision.
+      this.requireAgent(observation.agentId).setContextKey(
+        observation.contextKey,
+      );
       this.setAgentInjection(observation.agentId, observation.injection);
       this.setAgentRuntimeHealth(
         observation.agentId,
@@ -2545,6 +2551,9 @@ export class AppModel {
         activity: agent.activity,
         promptCache: agent.promptCache,
         ...(agent.maintenance ? { maintenance: true } : {}),
+        ...(agent.contextKey === undefined
+          ? {}
+          : { contextKey: agent.contextKey }),
         injection: agent.injection,
         automaticActions: agent.automaticActions,
         failure: agent.failure,

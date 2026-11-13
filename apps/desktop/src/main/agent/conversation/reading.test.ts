@@ -49,6 +49,7 @@ describe("reading a conversation", () => {
 		).toEqual({
 			status: "working",
 			activity: "Bash: npm test",
+			contextKey: "-:0",
 			failure: undefined,
 		});
 	});
@@ -63,6 +64,7 @@ describe("reading a conversation", () => {
 		).toEqual({
 			status: "unknown",
 			activity: undefined,
+			contextKey: "-:0",
 			failure: undefined,
 		});
 	});
@@ -121,6 +123,7 @@ describe("reading a conversation", () => {
 		).toEqual({
 			status: "error",
 			activity: undefined,
+			contextKey: "-:0",
 			failure: {
 				code: "conversation_protocol_mismatch",
 				detail: "assistant.message.content: expected an array",

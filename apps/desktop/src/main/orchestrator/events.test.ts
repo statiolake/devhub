@@ -7,6 +7,8 @@ import {
 	eventLine,
 	eventsMessage,
 	humanMessages,
+	invokedSkill,
+	skillPointer,
 	merge,
 	shortId,
 	subjectOf,
@@ -52,6 +54,7 @@ function world(
 		relevant?: (event: OrchestratorEvent) => boolean;
 		standing?: () => readonly OrchestratorEvent[];
 		orchestrator?: () => string | undefined;
+		context?: () => string | undefined;
 	} = {},
 ) {
 	const sent: string[] = [];
@@ -73,6 +76,9 @@ function world(
 			delivered.push(...events);
 		},
 		busy: () => state.busy,
+		...(options.context === undefined
+			? {}
+			: { context: () => options.context?.() }),
 		...(options.relevant === undefined ? {} : { relevant: options.relevant }),
 		...(options.standing === undefined ? {} : { standing: options.standing }),
 		now: () => state.now,
@@ -613,6 +619,117 @@ describe("the preview", () => {
 		expect(plan.events).toHaveLength(MAX_DELIVERY_LINES);
 		expect(plan.more).toBe(2);
 		expect(plan.batch?.split("\n").at(-1)).toMatch(/ほか 2 件/u);
+	});
+});
+
+describe("a skill the template invokes", () => {
+	const POINTER = skillPointer("make-progress");
+	function skilled(init_prompt?: string) {
+		const context = { key: "s1:0" as string | undefined };
+		const one = world({
+			event_prompt: "/make-progress {EVENT}",
+			...(init_prompt === undefined ? {} : { init_prompt }),
+			interval: "10s",
+			context: () => context.key,
+		});
+		/** One batch, past the interval and the pickup wait. */
+		const batch = (text: string) => {
+			one.dispatcher.dispatch({ type: "custom.t", text });
+			for (let waited = 0; waited < 62_000; waited += 2_000) one.advance(2_000);
+			return one.sent.at(-1);
+		};
+		return { ...one, context, batch };
+	}
+
+	it("is named by the template's first word", () => {
+		expect(invokedSkill("/make-progress {EVENT}")).toBe("make-progress");
+		expect(invokedSkill("  $make-progress\n{EVENT}")).toBe("make-progress");
+		expect(invokedSkill("handle: {EVENT}")).toBeUndefined();
+		expect(invokedSkill("/{EVENT}")).toBeUndefined();
+	});
+
+	it("goes in full once per context: at start, then a pointer with the lines", () => {
+		const { dispatcher, sent, advance, batch } = skilled();
+		dispatcher.dispatch({ type: "init" });
+		advance(300);
+		expect(sent[0]).toMatch(/^\/make-progress \[init\]/u);
+		expect(batch("a")).toBe(`${POINTER}\n[custom.t] — a`);
+		expect(batch("b")).toBe(`${POINTER}\n[custom.t] — b`);
+	});
+
+	it("goes in full again on the first batch after a compaction, and once only", () => {
+		const { context, batch } = skilled();
+		expect(batch("a")).toBe("/make-progress [custom.t] — a");
+		expect(batch("b")).toBe(`${POINTER}\n[custom.t] — b`);
+		context.key = "s1:1";
+		expect(batch("c")).toBe("/make-progress [custom.t] — c");
+		expect(batch("d")).toBe(`${POINTER}\n[custom.t] — d`);
+	});
+
+	it("is not used up by a /compact that runs between batches", () => {
+		// The key moves when the /compact starts (`contextKey`) and holds once
+		// its compaction is written: one full batch, the first one after it.
+		const { context, batch } = skilled();
+		expect(batch("a")).toBe("/make-progress [custom.t] — a");
+		context.key = "s1:1"; // the /compact is running
+		expect(batch("b")).toBe("/make-progress [custom.t] — b");
+		// written, ended: still s1:1
+		expect(batch("c")).toBe(`${POINTER}\n[custom.t] — c`);
+	});
+
+	it("goes in full in another session, and with every init", () => {
+		const { dispatcher, sent, advance, context, batch } = skilled();
+		expect(batch("a")).toBe("/make-progress [custom.t] — a");
+		context.key = "s2:0";
+		expect(batch("b")).toBe("/make-progress [custom.t] — b");
+		dispatcher.dispatch({ type: "init" });
+		for (let waited = 0; waited < 62_000; waited += 2_000) advance(2_000);
+		expect(sent.at(-1)).toMatch(/^\/make-progress \[init\]/u);
+	});
+
+	it("tells init_prompt's skill and event_prompt's apart", () => {
+		const { dispatcher, sent, advance, batch } = skilled(
+			"/start-orchestrating {EVENT}",
+		);
+		dispatcher.dispatch({ type: "init" });
+		advance(300);
+		expect(sent[0]).toMatch(/^\/start-orchestrating /u);
+		expect(batch("a")).toBe("/make-progress [custom.t] — a");
+		expect(batch("b")).toBe(`${POINTER}\n[custom.t] — b`);
+	});
+
+	it("goes in full every time where the context cannot be read", () => {
+		const { context, batch } = skilled();
+		context.key = undefined;
+		expect(batch("a")).toBe("/make-progress [custom.t] — a");
+		expect(batch("b")).toBe("/make-progress [custom.t] — b");
+	});
+
+	it("is a fresh start for a new dispatcher (a restart of DevHub)", () => {
+		const first = skilled();
+		expect(first.batch("a")).toBe("/make-progress [custom.t] — a");
+		expect(first.batch("b")).toBe(`${POINTER}\n[custom.t] — b`);
+		const again = skilled();
+		expect(again.batch("c")).toBe("/make-progress [custom.t] — c");
+	});
+
+	it("is previewed as it would go", () => {
+		const { dispatcher, batch } = skilled();
+		batch("a");
+		dispatcher.dispatch({ type: "custom.t", text: "b" });
+		expect(dispatcher.preview().batch).toBe(`${POINTER}\n[custom.t] — b`);
+	});
+
+	it("leaves a template that invokes nothing as it was", () => {
+		const { dispatcher, sent, advance } = world({
+			interval: "10s",
+			context: () => "s1:0",
+		});
+		dispatcher.dispatch({ type: "custom.t", text: "a" });
+		advance(300);
+		dispatcher.dispatch({ type: "custom.t", text: "b" });
+		for (let waited = 0; waited < 62_000; waited += 2_000) advance(2_000);
+		expect(sent).toEqual(["handle: [custom.t] — a", "handle: [custom.t] — b"]);
 	});
 });
 

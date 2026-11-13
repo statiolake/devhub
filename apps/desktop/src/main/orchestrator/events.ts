@@ -68,6 +68,17 @@
  * wait; the interval counts from there. The sources start again alongside:
  * what their catch-up finds goes with the next delivery.
  *
+ * A template that invokes a skill (`/make-progress {EVENT}`) has the CLI
+ * expand that skill's whole text into the conversation each time it is
+ * sent: Claude Code writes a SKILL.md in full on every `/name`, Codex reads
+ * the file again. So the invocation goes once per context — the first
+ * batch after the orchestrator starts, after each compaction, and in
+ * another session (`contextKey`, read through `context`) — and every other
+ * batch carries a one-line pointer in its place (`skillPointer`), with the
+ * lines as before. A batch carrying `init` always invokes it. Where the
+ * context cannot be read (a terminal orchestrator), every batch does, as
+ * before.
+ *
  * What the next delivery would send is `preview()`: the same composition
  * (`composeDelivery`) a delivery makes, read off the same state, with
  * nothing marked, logged or changed — for the board's hover card.
@@ -984,6 +995,12 @@ export interface EventDelivery {
 	/** Queue `text` for `agentId` as the person's message (held mid-turn). */
 	readonly deliver: (agentId: string, text: string) => void;
 	/**
+	 * Which context a message sent to `agentId` now lands in (`contextKey`):
+	 * a skill the template invokes goes once per key. Undefined, or absent:
+	 * unknown, and every batch invokes it.
+	 */
+	readonly context?: (agentId: string) => string | undefined;
+	/**
 	 * Whether `agentId` cannot take a batch now: in a foreground turn, or
 	 * something of ours is still queued for it. Absent: it always can.
 	 */
@@ -1064,6 +1081,8 @@ export class EventDispatcher {
 	#lastBatchAt: number | undefined;
 	/** Each standing subject's `statePrint` when its line last went. */
 	readonly #said = new Map<string, string>();
+	/** The skills a batch invoked in the context `key` (agent and `context`). */
+	#expanded: { readonly key: string; readonly skills: Set<string> } | undefined;
 
 	constructor(private readonly delivery: EventDelivery) {
 		this.#mode = delivery.mode ?? "full";
@@ -1195,10 +1214,14 @@ export class EventDispatcher {
 			entry.settledAt = now;
 			return;
 		}
+		const settings = this.delivery.settings();
 		this.delivery.deliver(
 			agentId,
-			eventsMessage([entry.event], this.delivery.settings(), now),
+			eventsMessage([entry.event], settings, now, {
+				expanded: this.#expandedIn(agentId),
+			}),
 		);
+		this.#invoked(agentId, [entry.event], settings);
 		entry.fate = "delivered";
 		entry.settledAt = now;
 		this.delivery.delivered?.([entry.event]);
@@ -1440,15 +1463,20 @@ export class EventDispatcher {
 			...going,
 			...standing.map((event) => this.#logged(event, now)),
 		];
+		const settings = this.delivery.settings();
 		const plan = composeDelivery(
 			[],
 			lines.map((line) => line.entry.event),
-			this.delivery.settings(),
+			settings,
 			now,
+			this.#expandedIn(agentId),
 		);
 		const sent = lines.slice(0, plan.events.length);
 		const over = lines.slice(plan.events.length);
-		if (plan.batch !== undefined) this.delivery.deliver(agentId, plan.batch);
+		if (plan.batch !== undefined) {
+			this.delivery.deliver(agentId, plan.batch);
+			this.#invoked(agentId, plan.events, settings);
+		}
 		for (const line of sent) {
 			line.entry.fate = "delivered";
 			line.entry.settledAt = now;
@@ -1468,6 +1496,34 @@ export class EventDispatcher {
 		// Still needing action at the next delivery: it is said again then.
 		if (standing.length > 0) this.#retry(Math.max(1_000, this.#intervalMs()));
 		return standing.length;
+	}
+
+	/** The context a message to `agentId` lands in now; undefined: unknown. */
+	#contextOf(agentId: string): string | undefined {
+		const context = this.delivery.context?.(agentId);
+		return context === undefined ? undefined : `${agentId}\u0000${context}`;
+	}
+
+	/** The skills already invoked in the context a message lands in now. */
+	#expandedIn(agentId: string): ReadonlySet<string> {
+		const key = this.#contextOf(agentId);
+		return key !== undefined && this.#expanded?.key === key
+			? this.#expanded.skills
+			: NONE_EXPANDED;
+	}
+
+	/** A batch of `events` went: the skill its template invokes is in that context now. */
+	#invoked(
+		agentId: string,
+		events: readonly OrchestratorEvent[],
+		prompts: EventPrompts,
+	): void {
+		const key = this.#contextOf(agentId);
+		const skill = invokedSkill(templateFor(events, prompts));
+		if (key === undefined || skill === undefined) return;
+		if (this.#expanded?.key !== key)
+			this.#expanded = { key, skills: new Set() };
+		this.#expanded.skills.add(skill);
 	}
 
 	/**
@@ -1530,6 +1586,10 @@ export class EventDispatcher {
 			going.map((one) => one.event),
 			this.delivery.settings(),
 			now,
+			(() => {
+				const id = this.delivery.orchestrator();
+				return id === undefined ? NONE_EXPANDED : this.#expandedIn(id);
+			})(),
 		);
 		const agentId = this.delivery.orchestrator();
 		if (agentId === undefined) return { ...plan, when: { kind: "nobody" } };
@@ -1629,11 +1689,9 @@ export interface DeliveryPreview extends DeliveryPlan {
 export function composeDelivery(
 	human: readonly HumanInputEvent[],
 	lines: readonly OrchestratorEvent[],
-	prompts: {
-		readonly event_prompt: string;
-		readonly init_prompt: string | undefined;
-	},
+	prompts: EventPrompts,
 	now: number,
+	expanded: ReadonlySet<string> = NONE_EXPANDED,
 ): DeliveryPlan {
 	const events = lines.slice(0, MAX_DELIVERY_LINES);
 	const more = lines.length - events.length;
@@ -1643,29 +1701,66 @@ export function composeDelivery(
 		more,
 		...(events.length === 0
 			? {}
-			: { batch: eventsMessage(events, prompts, now, { more }) }),
+			: { batch: eventsMessage(events, prompts, now, { more, expanded }) }),
 	};
+}
+
+/** The two templates a batch is sent through. */
+export interface EventPrompts {
+	readonly event_prompt: string;
+	readonly init_prompt: string | undefined;
+}
+
+const NONE_EXPANDED: ReadonlySet<string> = new Set();
+
+/**
+ * A template's leading skill invocation — `/make-progress …`, or Codex's
+ * `$make-progress …` — as its name; undefined when it starts with text.
+ */
+const SKILL_INVOCATION = /^\s*[/$]([A-Za-z0-9][\w.:-]*)(?=\s|$)/u;
+
+export function invokedSkill(template: string): string | undefined {
+	return SKILL_INVOCATION.exec(template)?.[1];
+}
+
+/** What a batch says in place of `/name` when the skill is in the context already. */
+export function skillPointer(skill: string): string {
+	return `(DevHub: /${skill} スキルはこの文脈に展開済みなので、今回は呼び出していません。その手順どおりに次の行を処理してください。手順が文脈に見当たらなければ /${skill} の SKILL.md を読み直してください。)`;
+}
+
+/** The template a batch of `events` goes through: `init_prompt` when it carries `init` (and one is set). */
+export function templateFor(
+	events: readonly OrchestratorEvent[],
+	prompts: EventPrompts,
+): string {
+	return prompts.init_prompt !== undefined &&
+		events.some((event) => event.type === "init")
+		? prompts.init_prompt
+		: prompts.event_prompt;
 }
 
 /**
  * The message a batch is sent as: `init_prompt` when it carries `init` (and
  * one is set), else `event_prompt`; `{EVENT}` the lines, one per subject,
- * `{EVENT_JSON}` — only when the template names it — the array.
+ * `{EVENT_JSON}` — only when the template names it — the array. A template
+ * that invokes a skill already `expanded` in the context has the invocation
+ * replaced by `skillPointer` — never in a batch carrying `init`.
  */
 export function eventsMessage(
 	events: readonly OrchestratorEvent[],
-	prompts: {
-		readonly event_prompt: string;
-		readonly init_prompt: string | undefined;
-	},
+	prompts: EventPrompts,
 	now: number,
-	options: { readonly more?: number } = {},
+	options: {
+		readonly more?: number;
+		readonly expanded?: ReadonlySet<string>;
+	} = {},
 ): string {
-	const template =
-		prompts.init_prompt !== undefined &&
+	const template = shortened(
+		templateFor(events, prompts),
 		events.some((event) => event.type === "init")
-			? prompts.init_prompt
-			: prompts.event_prompt;
+			? NONE_EXPANDED
+			: (options.expanded ?? NONE_EXPANDED),
+	);
 	const more = options.more ?? 0;
 	const text = [
 		...events.map((event) => eventLine(event, now)),
@@ -1675,6 +1770,16 @@ export function eventsMessage(
 		? JSON.stringify(events.map(eventJson))
 		: undefined;
 	return renderEventPrompt(template, text, json);
+}
+
+/** `template` with its skill invocation replaced by the pointer, when that skill is `expanded`. */
+function shortened(template: string, expanded: ReadonlySet<string>): string {
+	const match = SKILL_INVOCATION.exec(template);
+	if (match === null || !expanded.has(match[1]!)) return template;
+	const rest = template.slice(match[0].length).replace(/^[ \t]+/u, "");
+	return rest === ""
+		? skillPointer(match[1]!)
+		: `${skillPointer(match[1]!)}\n${rest}`;
 }
 
 export { EVENT_JSON_PLACEHOLDER, EVENT_PLACEHOLDER };

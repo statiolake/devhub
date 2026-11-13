@@ -873,6 +873,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				activity: string | undefined;
 				promptCache?: PromptCache | undefined;
 				maintenance?: boolean;
+				contextKey?: string;
 				injection: AgentInjection;
 				failure: AgentFailure | undefined;
 			}[] = [];
@@ -909,6 +910,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					readonly activity: string | undefined;
 					readonly promptCache?: PromptCache | undefined;
 					readonly maintenance?: boolean;
+					readonly contextKey?: string;
 					readonly failure: AgentFailure | undefined;
 				};
 				let send: (text: string) => Promise<void>;
@@ -959,6 +961,9 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 						? {}
 						: { promptCache: reading.promptCache }),
 					...(reading.maintenance === true ? { maintenance: true } : {}),
+					...(reading.contextKey === undefined
+						? {}
+						: { contextKey: reading.contextKey }),
 					runtimeHealth: health,
 					injection: injections.state(id, reading.status),
 					failure: reading.failure,

@@ -1734,6 +1734,37 @@ export function isMaintenanceTurn(transcript: Transcript): boolean {
 }
 
 /**
+ * Which context a message sent now lands in, as a key that changes exactly
+ * when the model's context starts afresh: another session (a `/resume` to
+ * another conversation, a new CLI) or a compaction. A compaction is counted
+ * once a `/compact` turn runs (`isMaintenanceTurn`: whatever is sent during
+ * it is taken after it, into the compacted context), and not again when its
+ * entry is written. A compaction the CLI does by itself (Claude's auto
+ * compact, Codex's `contextCompaction`) counts once its entry is written;
+ * a subagent's own compaction (`parent`) is not the conversation's. The
+ * orchestrator's skill text goes once per key (`EventDispatcher`).
+ */
+export function contextKey(transcript: Transcript): string {
+  const { state, entries } = transcript;
+  let compactions = 0;
+  for (const entry of entries)
+    if (entry.kind === "compaction" && entry.parent === null) compactions += 1;
+  let compacting =
+    state.phase === "ready" &&
+    state.turn === "running" &&
+    isMaintenanceTurn(transcript);
+  for (let index = entries.length - 1; compacting && index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.kind === "turn-end") break;
+    if (entry.kind === "compaction" && entry.parent === null)
+      compacting = false;
+  }
+  return `${transcript.session.sessionId ?? "-"}:${String(
+    compactions + (compacting ? 1 : 0),
+  )}`;
+}
+
+/**
  * The status a watcher of work goes by: while a maintenance turn runs
  * (`isMaintenanceTurn`), the one the Agent had before it — idle when none
  * was seen — so it neither starts nor ends anything.

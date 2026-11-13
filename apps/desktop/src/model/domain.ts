@@ -1024,6 +1024,11 @@ export interface AgentObservation {
    * work.
    */
   readonly maintenance?: boolean;
+  /**
+   * Which context a message sent to a GUI Agent now lands in
+   * (`contextKey` in `conversation.ts`); absent for a terminal Agent.
+   */
+  readonly contextKey?: string;
   /** What DevHub is holding for this Agent, and why it has not gone yet. */
   readonly injection: AgentInjection;
   /**
@@ -1185,6 +1190,7 @@ export class Agent {
   private activityValue: string | undefined;
   private promptCacheValue: PromptCache | undefined;
   private maintenanceValue = false;
+  private contextKeyValue: string | undefined;
   private injectionValue: AgentInjection = NO_INJECTION;
   /**
    * The ids of the actions a person ticked as automatic for this Agent: sent
@@ -1318,6 +1324,7 @@ export class Agent {
     copy.activityValue = this.activityValue;
     copy.promptCacheValue = this.promptCacheValue;
     copy.maintenanceValue = this.maintenanceValue;
+    copy.contextKeyValue = this.contextKeyValue;
     copy.injectionValue = this.injectionValue;
     copy.automaticActionsValue = this.automaticActionsValue;
     copy.metaValue = this.metaValue;
@@ -1389,6 +1396,17 @@ export class Agent {
   /** Whether the turn running is upkeep, not work (`isMaintenanceTurn`). */
   get maintenance(): boolean {
     return this.maintenanceValue;
+  }
+
+  /** Which context a message sent now lands in (`contextKey`), if known. */
+  get contextKey(): string | undefined {
+    return this.contextKeyValue;
+  }
+
+  setContextKey(key: string | undefined): boolean {
+    if (this.contextKeyValue === key) return false;
+    this.contextKeyValue = key;
+    return true;
   }
 
   setMaintenance(maintenance: boolean): boolean {

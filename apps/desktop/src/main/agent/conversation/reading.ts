@@ -11,6 +11,7 @@
 import {
 	conversationActivity,
 	conversationStatus,
+	contextKey,
 	isMaintenanceTurn,
 	type ConversationFailureCode,
 	type PromptCache,
@@ -29,6 +30,8 @@ export interface ConversationObservation {
 	readonly promptCache?: PromptCache | undefined;
 	/** The turn running is upkeep, not work (`isMaintenanceTurn`). */
 	readonly maintenance?: boolean;
+	/** Which context a message sent now lands in (`contextKey`). */
+	readonly contextKey?: string;
 	readonly failure: AgentFailure | undefined;
 }
 
@@ -91,6 +94,7 @@ export function observeConversation(
 		...(isMaintenanceTurn(transcript) || reading.restoring === true
 			? { maintenance: true }
 			: {}),
+		contextKey: contextKey(transcript),
 		promptCache: promptCacheOf(
 			transcript.usage?.promptCache,
 			reading.autoCompactAt,

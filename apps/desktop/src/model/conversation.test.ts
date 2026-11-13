@@ -19,6 +19,7 @@ import {
   childrenOf,
   conversationActivity,
   conversationStatus,
+  contextKey,
   pendingId,
   rewindTargets,
   entryId,
@@ -1214,6 +1215,83 @@ describe("what the CLI says that DevHub does not know", () => {
     expect(
       childrenOf(noticed, entryId("task1")).map((each) => each.id),
     ).toEqual(["n1"]);
+  });
+});
+
+describe("which context a message lands in", () => {
+  const compactCommand = (id: string): ConversationEvent => ({
+    type: "entry",
+    entry: {
+      kind: "command",
+      id: entryId(id),
+      parent: null,
+      line: "/compact",
+      output: undefined,
+      failed: false,
+    },
+  });
+  const compaction = (
+    id: string,
+    parent: string | null = null,
+  ): ConversationEvent => ({
+    type: "entry",
+    entry: {
+      kind: "compaction",
+      id: entryId(id),
+      parent: parent === null ? null : entryId(parent),
+      trigger: "manual",
+      preTokens: 1000,
+      postTokens: 100,
+    },
+  });
+  const session = (sessionId: string): ConversationEvent => ({
+    type: "session",
+    session: { ...EMPTY_TRANSCRIPT.session, sessionId },
+  });
+  const worked = fold(
+    session("s1"),
+    READY,
+    user("u1", "first"),
+    RUNNING,
+    turnEnd("e1", "completed"),
+    READY,
+  );
+
+  it("is the session and how many times it was compacted", () => {
+    expect(contextKey(worked)).toBe("s1:0");
+    const compacted = applyEvents(worked, [
+      compactCommand("c1"),
+      RUNNING,
+      compaction("k1"),
+      turnEnd("e2", "completed"),
+      READY,
+    ]);
+    expect(contextKey(compacted)).toBe("s1:1");
+    expect(contextKey(applyEvents(compacted, [session("s2")]))).toBe("s2:1");
+  });
+
+  it("is already the compacted one while a /compact runs, and stays it once its entry is written", () => {
+    const compacting = applyEvents(worked, [compactCommand("c1"), RUNNING]);
+    expect(contextKey(compacting)).toBe("s1:1");
+    const written = applyEvents(compacting, [compaction("k1")]);
+    expect(contextKey(written)).toBe("s1:1");
+    expect(
+      contextKey(applyEvents(written, [turnEnd("e2", "completed"), READY])),
+    ).toBe("s1:1");
+  });
+
+  it("counts the CLI's own compaction inside a turn of work, and not a subagent's", () => {
+    const working = applyEvents(worked, [user("u2", "second"), RUNNING]);
+    expect(contextKey(working)).toBe("s1:0");
+    expect(contextKey(applyEvents(working, [compaction("k1")]))).toBe("s1:1");
+    expect(
+      contextKey(
+        applyEvents(working, [
+          tool("task1", { tool: "Task" }),
+          compaction("k2", "task1"),
+        ]),
+      ),
+    ).toBe("s1:0");
   });
 });
 

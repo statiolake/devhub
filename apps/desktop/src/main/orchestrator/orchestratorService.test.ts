@@ -26,6 +26,8 @@ function world(
 		timers?: boolean;
 		/** The person's messages, as `personMessages` reads them. */
 		conversation?: { since: string; text: string }[];
+		/** The orchestrator's context (`contextKey`); absent: unknown. */
+		context?: string;
 	} = {},
 ) {
 	const pending: { at: number; run: () => void; live: boolean }[] = [];
@@ -41,6 +43,9 @@ function world(
 		status: "idle",
 		stopping: false,
 		...(id === WORKER ? options.worker : {}),
+		...(id === ORCH && options.context !== undefined
+			? { contextKey: options.context }
+			: {}),
 	}));
 	const invariant = {
 		items: options.items as ItemFacts[] | undefined,
@@ -162,6 +167,7 @@ function world(
 		pass,
 		of,
 		invariant,
+		agents,
 	};
 }
 
@@ -745,5 +751,26 @@ describe("an agent the person hands over from the window", () => {
 		expect(run.of("agent_managed").at(-1)).toMatchObject({
 			fate: "delivered",
 		});
+	});
+});
+
+describe("the orchestrator's skill, once per context", () => {
+	it("invokes event_prompt's skill on the first batch after init and after a compaction, and points to it in between", () => {
+		const { service, sent, later, agents } = world({
+			prompt: "/make-progress {EVENT}",
+			context: "s1:0",
+		});
+		const orchestrator = agents.find((one) => one.id === ORCH) as {
+			contextKey?: string;
+		};
+		// init went in full at assign: what follows is in the same context.
+		service.events.dispatch({ type: "custom.a", text: "a" });
+		later(61_000);
+		expect(sent.at(-1)).toMatch(/^\(DevHub: \/make-progress /u);
+		expect(sent.at(-1)).toContain("[custom.a] — a");
+		orchestrator.contextKey = "s1:1";
+		service.events.dispatch({ type: "custom.b", text: "b" });
+		later(61_000);
+		expect(sent.at(-1)).toBe("/make-progress [custom.b] — b");
 	});
 });

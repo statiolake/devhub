@@ -8197,6 +8197,9 @@ export class AppController {
 				status: agent.status,
 				stopping: agent.controlState.kind !== "running",
 				...(agent.maintenance === true ? { maintenance: true } : {}),
+				...(agent.contextKey === undefined
+					? {}
+					: { contextKey: agent.contextKey }),
 			})),
 		);
 	}

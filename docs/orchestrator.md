@@ -1641,7 +1641,49 @@ interval = "30m"                 # at least 10s
 line never does, and refuses a folder that is not there.
 
 `event_prompt` can invoke a skill: `"/make-progress {EVENT}"`; `{EVENT_JSON}`
-may be added for a script. Its default, `DEFAULT_EVENT_PROMPT`, says what a
+may be added for a script.
+
+**A skill goes once per context.** The CLI expands a skill's whole SKILL.md
+into the conversation every time it is invoked — Claude Code writes it in
+full on each `/name`, and a Codex orchestrator, told by its `AGENTS.md`,
+reads the file again — so a template that invokes one would put the
+person's whole make-progress into the context with every batch: one every
+`delivery_interval` (5m) while anything needs action, several thousand
+tokens each, and the reason the context fills and is compacted. A template
+that starts with an invocation (`/name` or `$name`, `invokedSkill`) is sent
+with it only on the first batch in a context — after the orchestrator
+starts, after each compaction, after a move to another session — and on a
+batch carrying `init`. Every other batch has a one-line pointer in its
+place, the lines unchanged (`skillPointer`):
+
+```text
+(DevHub: /make-progress スキルはこの文脈に展開済みなので、今回は呼び出していません。その手順どおりに次の行を処理してください。手順が文脈に見当たらなければ /make-progress の SKILL.md を読み直してください。)
+[needs_action] task=7「ログイン修正」 ws=web — idle
+```
+
+Which context a batch lands in is read off the orchestrator's conversation
+(`contextKey` in `model/conversation.ts`, through the round's reading to
+`LiveAgent.contextKey`): its session id and how many times it was
+compacted. A `/compact` — the person's, or DevHub's keep-warm one
+(`CacheKeeper`, origin `auto-compact`) — counts from the moment its turn
+runs (`isMaintenanceTurn`), since whatever is queued during it is taken
+after it, and not again when its compaction entry is written, so the
+maintenance turn neither uses up the first batch after it nor earns a
+second one. The CLI's own compaction inside a turn of work (Claude's auto
+compact, Codex's `contextCompaction`) counts once its entry is written; a
+subagent's does not. What DevHub remembers is in memory only: after a
+restart of DevHub the first batch invokes the skill again (once more than
+needed at worst, never once too few). A terminal orchestrator's context
+cannot be read, and every batch invokes the skill as before. A line sent
+at its time alone (a timer, a `--check-at`) goes by the same rule; the
+person's words never go through `event_prompt`, and the default
+`event_prompt` invokes nothing and is sent as it is.
+
+The charter is not affected: it rides in the system prompt
+(`--append-system-prompt`), sent with every request but cached, and kept
+across a compaction; it is not expanded into the conversation.
+
+Its default, `DEFAULT_EVENT_PROMPT`, says what a
 batch is and to hand each line to a new background subagent and return
 (「DevHub からの通知です (対象ごとに 1 行)。各行をそれぞれバックグラウンドの fork
 サブエージェント (Agent ツールの subagent_type: "fork") に渡して処理し、すぐに戻ってください。」
@@ -1934,7 +1976,11 @@ the orchestrator agent, and no other agent, a skill for **writing** one:
   event, escalation rules, a reconcile on `init` — shows it, and writes it to
   `<root>/.claude/skills/<name>/SKILL.md` (plus an `AGENTS.md` pointer for
   Codex). It never writes `settings.toml`: it gives the person the
-  `[orchestrator]` lines to add, or to set in Settings.
+  `[orchestrator]` lines to add, or to set in Settings. It says that the
+  invocation goes once per context (see `[orchestrator]`, "A skill goes
+  once per context"), so make-progress is written to work from the
+  pointer line too, with a short SKILL.md and its long playbook in files
+  beside it, read when needed.
 - **Where it is**: rewritten on every start at
   `<userData>/devhub/orchestrator-skill/.claude/skills/devhub-orchestrator/SKILL.md`
   (`~/Library/Application Support/DevHub/…` on a Mac), beside `/devhub`'s

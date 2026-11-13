@@ -113,6 +113,11 @@ export interface LiveAgent {
 	readonly stopping: boolean;
 	/** Its turn running is upkeep, not work (`isMaintenanceTurn`). */
 	readonly maintenance?: boolean;
+	/**
+	 * Which context a message sent to it now lands in (`contextKey` in
+	 * `model/conversation.ts`); absent when DevHub cannot tell (a terminal).
+	 */
+	readonly contextKey?: string;
 }
 
 export interface OrchestratorServicePorts {
@@ -429,6 +434,8 @@ export class OrchestratorService {
 			statePrint: (event) => this.#invariant.print(event),
 			orchestrator: () => this.orchestratorAgentId,
 			settings: () => this.ports.settings(),
+			context: (agentId) =>
+				this.ports.agents().find((agent) => agent.id === agentId)?.contextKey,
 			deliver: (agentId, text) => {
 				this.ports.deliver(agentId, text);
 			},
