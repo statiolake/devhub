@@ -600,3 +600,36 @@
   text-align: center;
   box-sizing: border-box;
 }
+
+/* A document (`gui.document`, `DocumentPane.tsx`): the conversation's
+   Markdown over its window, on the window's ground, scrolled by the page
+   (the keys ask, the wheel scrolls it). */
+.nvim-document {
+  position: absolute;
+  overflow: hidden;
+}
+
+.nvim-document-scroll {
+  overflow-x: hidden;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: var(--space-4, 16px) var(--space-5, 24px) var(--space-5, 24px);
+  color: var(--primary);
+  /* DevHub's proportional type, as the conversation's; not the grid's. */
+  font-family: var(--nvim-ui-font, system-ui, sans-serif);
+  font-size: var(--conversation-font-size);
+  line-height: 1.6;
+  scrollbar-width: thin;
+}
+
+.nvim-document-body {
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+/* The link the keyboard is on (<Tab>), in the cursor's place. */
+.nvim-document [data-document-focus] {
+  border-radius: 3px;
+  outline: 2px solid var(--focus-ring, var(--accent));
+  outline-offset: 2px;
+}

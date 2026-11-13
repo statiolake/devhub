@@ -94,6 +94,7 @@ import {
   type LayerHost,
 } from "./LayerViews";
 import { GuiFrames } from "./FramedView";
+import { GuiDocuments } from "./DocumentViews";
 import {
   LAYER_EVENTS,
   NO_LAYERS,
@@ -120,7 +121,10 @@ import type {
   NeovimGuiWindowWire,
   NeovimGuiWindowsWire,
 } from "../../ipc/neovim";
-import type { TerminalNeovimKeyWire } from "../../ipc/contract";
+import type {
+  ContextMenuRequestWire,
+  TerminalNeovimKeyWire,
+} from "../../ipc/contract";
 import type { AppAppearance } from "../../ipc/appShell";
 
 type Connection =
@@ -149,6 +153,13 @@ interface GuiContent {
 export interface NeovimSurfaceBridge {
   readonly neovim: DevhubNeovimApi;
   openExternalUrl(url: string): Promise<void>;
+  /** A native menu over the window (a link's, in a `gui.document`): the id chosen. */
+  showContextMenu?(
+    request: ContextMenuRequestWire,
+  ): Promise<string | undefined>;
+  writeClipboard?(text: string): Promise<void>;
+  /** Copy text with DevHub's "copied" notice. */
+  copyText?(text: string): Promise<void>;
 }
 
 /** What the page that places a Neovim asks of it (`PaneNeovims`). */
@@ -908,6 +919,7 @@ export function NeovimSurface({
           laidOut: (win) => editor.shownAt(win),
           caret: caretLook(nvim),
           mono: `${ICON_FAMILY}, ${fontFamily ? `${fontFamily}, ` : ""}monospace`,
+          fontSize,
           defaults: nvim.defaults,
           lua: (fn, args) => {
             send("nvim_exec_lua", [
@@ -919,6 +931,19 @@ export function NeovimSurface({
           refocus: () => {
             editor?.focus();
           },
+          request: async (fn, args) => {
+            const answer = await bridge.neovim.request({
+              workspaceId,
+              method: "nvim_exec_lua",
+              params: [
+                "local M = package.loaded['devhub_gui']; local fn = ...; if M and M[fn] then return M[fn](select(2, ...)) end",
+                [fn, ...args],
+              ],
+            });
+            if (!answer.ok) throw new Error(answer.message);
+            return answer.value;
+          },
+          bridge,
           ride,
           over: (grid, part) => editor.over(grid, part),
         }
@@ -1090,6 +1115,7 @@ export function NeovimSurface({
               <>
                 <InlineCards layers={layers} host={layerHost} />
                 <GuiViews layers={layers} host={layerHost} />
+                <GuiDocuments layers={layers} host={layerHost} />
                 <GuiFrames layers={layers} host={layerHost} />
                 <Popups
                   layers={layers}

@@ -19,6 +19,7 @@ import { MsgpackExt, decode } from "./msgpack.js";
 import { DECOR_LUA } from "./neovimDecor.js";
 import { MESSAGES_LUA } from "./neovimMessages.js";
 import { LAYERS_LUA } from "./neovimGuiLayers.js";
+import { DOCUMENT_LUA } from "./neovimDocument.js";
 import { STATUSLINE_LUA } from "./neovimStatusline.js";
 import { NVIM_STATE_VARIABLE, RESTART_STATE_LUA } from "./neovimRestart.js";
 import {
@@ -1204,6 +1205,8 @@ export const SETUP_CHUNKS: readonly LuaChunk[] = [
 	// Views (framed or not), inline cards and popups (`gui.view`,
 	// `gui.inline`, `gui.popup`): the same module, grown by its own file.
 	{ name: "layers", lua: LAYERS_LUA },
+	// Documents DevHub renders over a window (`gui.document`).
+	{ name: "document", lua: DOCUMENT_LUA },
 	// Each window's footer in its status line row (`gui.statusline`).
 	{ name: "statusline", lua: STATUSLINE_LUA },
 	// Where virtual text and folds' text are, for a proportional face.

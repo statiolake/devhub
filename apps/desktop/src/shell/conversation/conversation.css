@@ -827,6 +827,17 @@
   margin-bottom: 0;
 }
 
+/* A picture from the web in a document that draws none (`gui.document`
+   without remote_images): its words in a quiet frame, where it would be. */
+.conversation-remote-image {
+  display: inline-block;
+  padding: 0.1em 0.5em;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-control);
+  color: var(--secondary);
+  font-size: 0.9em;
+}
+
 .conversation-markdown :is(p, ul, ol, blockquote, .conversation-table-block) {
   margin: 0.75em 0;
 }

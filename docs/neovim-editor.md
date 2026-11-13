@@ -1362,6 +1362,74 @@ for instance, makes each thread a `gui.inline` card under its lines and its
 panel a `gui.view`, with the card's buttons naming the buffer-local keys
 that do the same.
 
+### Documents
+
+`gui.document` is a document DevHub renders beside a Neovim window: a
+Markdown preview, whoever's (markdown-preview.devhub is one). It is drawn by
+the renderer the conversation and the Orchestrator draw with
+(`shell/conversation/Markdown.tsx`'s `MarkdownDocument`): GFM tables, task
+lists, fenced code in Shiki's colours, KaTeX math, Mermaid diagrams and the
+other fence previews, the `conversation-typeset` typesetting and the link
+menus — all of it bundled and pinned, nothing fetched.
+
+```lua
+local doc = gui.document{ text = text, format = 'markdown', base = dir, split = 'right',
+  title = 'README.md', remote_images = false, scroll = { line = 1 },
+  on_link = function(link) end,         -- { path, line?, col?, href }: true when handled
+  on_close = function(doc) end }
+doc:update(text, base?); doc:scroll_to(line); doc:view(); doc:close(); doc:is_open()
+```
+
+- **The window is Neovim's.** It is an ordinary split (`nvim_open_win{
+  split }`, beside the current window, which keeps the keys unless `enter`)
+  on a scratch buffer (`filetype=devhub_document`) that holds the text line
+  for line, so `/` and `:42` work in it; `:close`, `<C-w>` moves and
+  layouts move it. The Lua is `main/editor/neovimDocument.ts`
+  (`DOCUMENT_LUA`), after `LAYERS_LUA`; its placement is a `documents`
+  event sent with every `layers` one.
+- **Scrolling is the one state the page keeps**, in pixels: the drawing is
+  taller or shorter than the text, so a source line is not a row. The
+  renderer tags each block with the source line it starts at
+  (`MarkdownDocument{ sourceLines }`, `data-source-line`), and
+  `shell/neovim/documents.ts` turns a line into a height and back,
+  interpolated within a block. The window's keys (buffer maps: `j`/`k`,
+  `<C-d>`/`<C-u>`, `<C-f>`/`<C-b>`, `<Space>`, `gg`/`G`) ask the page for a
+  scroll (`document_scroll`); `doc:scroll_to(line)` asks for a line at the
+  top; the wheel scrolls it on the page. Each way the page says back which
+  source lines are in sight (`_document_view`), and the window's view
+  follows; when Neovim moves the window's top itself (a search), the
+  drawing follows. The page reflows around the line at the top: a picture
+  or a diagram arriving does not move what is being read.
+- **Links.** `<Tab>`/`<S-Tab>` move a focus between the links of the source
+  (Lua reads them off the lines: `[…](…)`, `<…>`, bare URLs), from the top
+  of what is in sight; the page rings that link (`data-href`, the link's
+  target as written) and `<CR>` has it clicked (`document_activate`). A
+  click and `<CR>` do the same: a URL opens in the browser, with the link
+  menu on a right-click (the pane's `showContextMenu`); a `#fragment`
+  scrolls to the heading GitHub's anchor names; a link to a file is looked
+  for relative to `base` (`_document_resolve`) and opened in Neovim
+  (`_document_open`: `on_link` first, else `:edit` in the window the
+  document was opened from, at `#L12`'s line). `<Esc>` goes back to that
+  window; `q` closes the document.
+- **Files are read by Neovim, on its machine.** A picture
+  (`![](img/a.png)`), an embedded Markdown or SVG file and a path in the
+  prose are found and read by Lua (`_document_resolve`, `_document_read`,
+  `_document_signature`, as requests from the page) relative to `base` —
+  the same on an SSH host, where the file is. A picture from the web is a
+  placeholder naming its host unless the document asks for them
+  (`remote_images = true`, `RemoteImagesContext`): opening a file is not a
+  request to fetch what it names, and a preview that reaches the network on
+  every keystroke would say where you are and what you read.
+- **Its chunk is loaded when first needed.** `DocumentViews.tsx` is on the
+  pane page from the start; `DocumentPane.tsx` (the renderer, KaTeX, Shiki)
+  is its own chunk, so a pane that never shows a document does not load it.
+- Gaps: the drawing is sent whole on every update (a diff would save little:
+  the renderer parses the whole document anyway); a math block written
+  `$$…$$` on one line is drawn as inline math (the conversation's
+  `normalizeMath`, which turns it into a block, is not applied: it adds
+  lines, and lines are what the scroll maps); a link to `other.md#heading`
+  opens the file at its top.
+
 ### Status lines
 
 DevHub does not draw grid 1, the cells Neovim draws round its windows: its

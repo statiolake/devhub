@@ -1960,6 +1960,14 @@ export interface PaneBridge
 		AppearanceBridge,
 		TerminalSurfaceBridge {
 	/**
+	 * Put a Neovim's menu up over the window, as a native menu (a link's
+	 * right-click in a `gui.document`). Resolves to the id chosen, or
+	 * `undefined`. `at` is in this page's coordinates.
+	 */
+	showContextMenu(request: ContextMenuRequestWire): Promise<string | undefined>;
+	/** Copy text, with DevHub's "copied" notice (a link menu's Copy Link). */
+	copyText(text: string): Promise<void>;
+	/**
 	 * What the terminal's panes are — the shown window's, which is active,
 	 * every pane's mode and `@devhub-nvim` — for the Neovims drawn over them;
 	 * `null` once the surface goes (`main/editor/terminalNeovims.ts`, "Where

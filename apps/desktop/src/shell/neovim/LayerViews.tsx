@@ -49,6 +49,7 @@ import { placePopup, popupMaxWidth, popupScrollTop } from "./popup";
 import type { OverPart } from "./painter";
 import { createPortal } from "react-dom";
 import type { GridBox } from "./redraw";
+import type { ContextMenuRequestWire } from "../../ipc/contract";
 import { formatKeys } from "../../model/keyNotation";
 import { activeGuide, bandPart, guideX } from "./viewTree";
 
@@ -87,6 +88,8 @@ export interface LayerHost {
   readonly caret: CaretLook | undefined;
   /** The grid's font family, for `mono` and icons. */
   readonly mono: string;
+  /** The grid's font size, in pixels: a document's prose is a step larger. */
+  readonly fontSize?: number | undefined;
   readonly defaults: {
     readonly foreground: number;
     readonly background: number;
@@ -96,6 +99,17 @@ export interface LayerHost {
   readonly openLink: (url: string) => void;
   /** Give the keyboard back to Neovim. */
   readonly refocus: () => void;
+  /** Run a function of `devhub_gui` in Neovim and wait for its answer. */
+  readonly request: (fn: string, args: readonly unknown[]) => Promise<unknown>;
+  /** What the page's bridge offers beyond Neovim (a menu, the clipboard). */
+  readonly bridge: {
+    openExternalUrl(url: string): Promise<void>;
+    showContextMenu?(
+      request: ContextMenuRequestWire,
+    ): Promise<string | undefined>;
+    writeClipboard?(text: string): Promise<void>;
+    copyText?(text: string): Promise<void>;
+  };
   /** Move what rides the windows' text to it (`riders.ts`). */
   readonly ride: () => void;
   /**

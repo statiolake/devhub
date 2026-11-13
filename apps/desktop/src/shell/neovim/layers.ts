@@ -23,6 +23,12 @@ import {
   type ComponentNode,
   type HlTable,
 } from "./components";
+import {
+  DOCUMENT_EVENTS,
+  NO_DOCUMENTS,
+  applyDocumentEvent,
+  type DocumentLayers,
+} from "./documents";
 
 export interface ViewItem {
   /** The buffer line (1-based) the item is. */
@@ -184,7 +190,7 @@ export interface FramePlace {
   readonly preview: (FrameRect & { readonly win: number }) | undefined;
 }
 
-export interface Layers {
+export interface Layers extends DocumentLayers {
   readonly views: ReadonlyMap<number, ViewContent>;
   readonly inlines: ReadonlyMap<number, InlineContent>;
   readonly placedViews: readonly ViewPlace[];
@@ -213,6 +219,7 @@ export const NO_LAYERS: Layers = {
   popupScrolls: new Map(),
   placedFrames: [],
   settled: 0,
+  ...NO_DOCUMENTS,
 };
 
 /** The events this reducer takes. */
@@ -228,6 +235,8 @@ export const LAYER_EVENTS: ReadonlySet<string> = new Set([
   "popup_pane",
   "layers",
   "settled",
+  // `gui.document` (`documents.ts`)
+  ...DOCUMENT_EVENTS,
 ]);
 
 type Rec = Readonly<Record<string, unknown>>;
@@ -602,6 +611,6 @@ export function applyLayerEvent(
         placedFrames: luaList(p["frames"]).flatMap(framePlace),
       };
     default:
-      return state;
+      return applyDocumentEvent(state, kind, payload);
   }
 }

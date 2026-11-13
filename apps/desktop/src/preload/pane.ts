@@ -12,6 +12,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
 	CHANNELS,
+	type ContextMenuRequestWire,
 	type PaneBridge,
 	type TerminalNeovimKeyWire,
 	type TerminalNeovimsWire,
@@ -63,6 +64,12 @@ const api: PaneBridge = {
 	reportUntypedTerminalKeys(terminalId, keys) {
 		ipcRenderer.send(CHANNELS.reportUntypedTerminalKeys, terminalId, keys);
 	},
+	showContextMenu: (request: ContextMenuRequestWire) =>
+		ipcRenderer.invoke(CHANNELS.showContextMenu, request) as Promise<
+			string | undefined
+		>,
+	copyText: (text: string) =>
+		ipcRenderer.invoke(CHANNELS.copyText, text) as Promise<void>,
 	reportNeovimPointer(terminalId, key) {
 		ipcRenderer.send(CHANNELS.reportNeovimPointer, terminalId, key);
 	},

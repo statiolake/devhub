@@ -28,7 +28,13 @@
  * reference link or a loose list can reach across it.
  */
 
-import { memo, useMemo, type ReactNode } from "react";
+import {
+  createContext,
+  memo,
+  useContext,
+  useMemo,
+  type ReactNode,
+} from "react";
 import ReactMarkdown, {
   defaultUrlTransform,
   type Components,
@@ -129,6 +135,7 @@ export function ExternalLink({
     return (
       <a
         href="#"
+        data-href={href}
         className="conversation-path-link"
         title={`Open ${file.path}${rangeSuffix(file.range)} in the editor`}
         onClick={(event) => {
@@ -154,6 +161,7 @@ export function ExternalLink({
   return (
     <a
       href={href}
+      data-href={href}
       onClick={(event) => {
         // The view is the Agents page; following a link in place would
         // replace it with the link's page.
@@ -203,6 +211,100 @@ function rehypeLinks() {
   return (tree: { children: ElementContent[] }) => visit(tree);
 }
 
+/**
+ * Pictures from the web are drawn (the conversation's default). A document
+ * that is the person's own file (`gui.document`) draws a placeholder for one
+ * instead, unless they asked for them: opening a file is not a request to
+ * fetch what it names.
+ */
+export const RemoteImagesContext = createContext(true);
+
+/** The blocks `rehypeSourceLines` tags with the source line they start at. */
+const SOURCE_BLOCKS = new Set([
+  "p",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "ul",
+  "ol",
+  "li",
+  "blockquote",
+  "pre",
+  "table",
+  "tr",
+  "hr",
+  "div",
+]);
+
+/** The property a tagged block carries: `data-source-line` on the element. */
+const SOURCE_LINE = "dataSourceLine";
+
+/**
+ * Tag every block with the source line it starts at (`data-source-line`),
+ * for a drawing that is scrolled along with its source (`gui.document`'s
+ * preview follows the editor's cursor). Off for a conversation.
+ */
+function rehypeSourceLines() {
+  const visit = (parent: { children: ElementContent[] }) => {
+    for (const child of parent.children) {
+      if (child.type !== "element") continue;
+      const line = child.position?.start.line;
+      if (SOURCE_BLOCKS.has(child.tagName) && line !== undefined)
+        child.properties[SOURCE_LINE] = line;
+      visit(child);
+    }
+  };
+  return (tree: { children: ElementContent[] }) => visit(tree);
+}
+
+/** The source line a block was tagged with, as a prop to pass on. */
+function sourceLineOf(node: Element | undefined): {
+  "data-source-line"?: number;
+} {
+  const line = node?.properties[SOURCE_LINE];
+  return typeof line === "number" ? { "data-source-line": line } : {};
+}
+
+/**
+ * A block the renderer draws as a component of its own (a code block, a
+ * table, an embed), in a box that carries its source line when it has one.
+ */
+function SourceBlock({
+  node,
+  children,
+}: {
+  readonly node: Element | undefined;
+  readonly children: ReactNode;
+}) {
+  const line = sourceLineOf(node);
+  if (line["data-source-line"] === undefined) return <>{children}</>;
+  return (
+    <div className="conversation-source-block" {...line}>
+      {children}
+    </div>
+  );
+}
+
+/** A picture from the web where they are not drawn: its words, and where it is. */
+function RemotePicture({
+  src,
+  alt,
+}: {
+  readonly src: string;
+  readonly alt: string;
+}) {
+  const allowed = useContext(RemoteImagesContext);
+  if (allowed) return <Picture src={src} alt={alt} boxed />;
+  return (
+    <span className="conversation-remote-image" title={src}>
+      {alt || "Image"} (not loaded: {new URL(src, "https://x").host || src})
+    </span>
+  );
+}
+
 // Math is typeset first so that `rehypeLinks` can leave it alone. A formula
 // that does not parse (a streamed half of one) is drawn as its source.
 const KATEX = [
@@ -216,6 +318,7 @@ const KATEX = [
 ] as const;
 const REHYPE_PLUGINS = [KATEX, rehypeLinks] as never;
 const REHYPE_PLUGINS_UNSETTLED = [KATEX] as never;
+const REHYPE_PLUGINS_LINES = [rehypeSourceLines, KATEX, rehypeLinks] as never;
 
 function componentsFor(settled: boolean, depth: number): Components {
   const renderMarkdown = (source: string) => (
@@ -237,16 +340,22 @@ function componentsFor(settled: boolean, depth: number): Components {
         : undefined;
       if (kind !== undefined) {
         return (
-          <FencePreview
-            kind={kind}
-            code={source}
-            info={info}
-            depth={depth}
-            renderMarkdown={renderMarkdown}
-          />
+          <SourceBlock node={node}>
+            <FencePreview
+              kind={kind}
+              code={source}
+              info={info}
+              depth={depth}
+              renderMarkdown={renderMarkdown}
+            />
+          </SourceBlock>
         );
       }
-      return <CodeBlock code={source} info={info} settled={settled} />;
+      return (
+        <SourceBlock node={node}>
+          <CodeBlock code={source} info={info} settled={settled} />
+        </SourceBlock>
+      );
     },
     span({ node, children, className, style }) {
       // Raw HTML is skipped, so every span is one `rehypeLinks` or KaTeX made.
@@ -275,20 +384,22 @@ function componentsFor(settled: boolean, depth: number): Components {
         const path = pathOfHref(image.properties.src)?.path;
         if (path !== undefined) {
           return (
-            <FileEmbed
-              path={path}
-              alt={
-                typeof image.properties.alt === "string"
-                  ? image.properties.alt
-                  : ""
-              }
-              depth={depth}
-              renderMarkdown={renderMarkdown}
-            />
+            <SourceBlock node={node}>
+              <FileEmbed
+                path={path}
+                alt={
+                  typeof image.properties.alt === "string"
+                    ? image.properties.alt
+                    : ""
+                }
+                depth={depth}
+                renderMarkdown={renderMarkdown}
+              />
+            </SourceBlock>
           );
         }
       }
-      return <p>{children}</p>;
+      return <p {...sourceLineOf(node)}>{children}</p>;
     },
     // An image of a file inside a line of text or a table cell is drawn in
     // place from the file's bytes, when it is a picture (`InlineImage`), and
@@ -303,7 +414,7 @@ function componentsFor(settled: boolean, depth: number): Components {
       // A picture from the web: its size is not known until it has loaded,
       // so it is drawn in a box of a fixed shape (`Picture.tsx`).
       return typeof src === "string" ? (
-        <Picture src={src} alt={alt ?? ""} boxed />
+        <RemotePicture src={src} alt={alt ?? ""} />
       ) : null;
     },
     a({ href, children }) {
@@ -313,10 +424,14 @@ function componentsFor(settled: boolean, depth: number): Components {
         return <DevhubLink href={href}>{children}</DevhubLink>;
       return <ExternalLink href={href}>{children}</ExternalLink>;
     },
-    table({ children }) {
+    table({ node, children }) {
       // Wide tables scroll inside their own box rather than widening the
       // transcript, and copy as CSV (`Table.tsx`).
-      return <Table>{children}</Table>;
+      return (
+        <SourceBlock node={node}>
+          <Table>{children}</Table>
+        </SourceBlock>
+      );
     },
   };
 }
@@ -350,16 +465,34 @@ export const MarkdownDocument = memo(function MarkdownDocument({
   source,
   settled,
   depth = 0,
+  sourceLines = false,
 }: {
   readonly source: string;
   readonly settled: boolean;
   readonly depth?: number;
+  /**
+   * Tag each block with the source line it starts at (`data-source-line`):
+   * a drawing scrolled with its source. Line numbers are of `source` as
+   * given: such a source is the person's own file, taken as remark-math
+   * reads it, without `normalizeMath` (which can add lines: a one-line
+   * `$$…$$` becomes a block of three).
+   */
+  readonly sourceLines?: boolean;
 }) {
-  const text = useMemo(() => normalizeMath(source), [source]);
+  const text = useMemo(
+    () => (sourceLines ? source : normalizeMath(source)),
+    [source, sourceLines],
+  );
   return (
     <ReactMarkdown
       remarkPlugins={REMARK_PLUGINS}
-      rehypePlugins={settled ? REHYPE_PLUGINS : REHYPE_PLUGINS_UNSETTLED}
+      rehypePlugins={
+        !settled
+          ? REHYPE_PLUGINS_UNSETTLED
+          : sourceLines
+            ? REHYPE_PLUGINS_LINES
+            : REHYPE_PLUGINS
+      }
       skipHtml
       urlTransform={urlTransform}
       components={componentsAt(settled, depth)}
