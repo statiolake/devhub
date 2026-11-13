@@ -43,8 +43,9 @@ The Go command does what the client half did, and nothing the app does:
 - build the request, with `DEVHUB_ORIGIN` and `DEVHUB_MACHINE` carried as
   they arrived and relative paths made absolute where they were typed;
 - `devhub -`: spool stdin to a 0600 file and open that;
-- `--wait`: make the marker before the open, poll it, fail if DevHub stops
-  answering `ping`, send `wait-ended`, print nothing;
+- `--wait`: make the marker before the open, look at it every 250 ms, ping
+  DevHub every two seconds and fail if it stops answering (a ping on a host
+  is a round trip; a look is a `stat`), send `wait-ended`, print nothing;
 - start DevHub when nothing answers on this Mac (`DEVHUB_LAUNCH_COMMAND`), or
   say why it cannot be started from a host;
 - print the answer: the sentence, or for `--tell --json`
@@ -65,8 +66,8 @@ Electron) is left to the workbench dead-code removal.
 
 ## Protocol
 
-The socket, the framing (one JSON line each way, then close) and every
-request but one are unchanged: `ping`, `activate`, `open`, `wait-ended`,
+The socket, the framing (one JSON line each way, then close — but see
+`stdin` and `files` below) and every request but one are unchanged: `ping`, `activate`, `open`, `wait-ended`,
 `version`, `metrics`, `add-agent`, `terminal-profile`.
 
 `tell` changes from a parsed command to the words:
@@ -92,6 +93,13 @@ Asked for, as stdin is, so a command that attaches nothing sends nothing
 extra, and the app's parser stays the one place that knows which words are
 files. A request may then be up to 36 MB (`MAX_REQUEST_BYTES`; it was 64 KB).
 Both may be asked for in turn: the command answers each once.
+
+**On the connection that asked.** An answer with `stdin` or `files` leaves
+the connection open, and the command sends the request again on it rather
+than on a new one; every other answer closes it. On a host a connection is a
+new channel on the ssh connection, so the second asking costs one round trip
+rather than two. The command never sends again on a new connection after one
+failed mid-request: the app may have acted on what it read.
 
 `--tell help` is answered with the usage text. Asking for stdin rather than
 reading it whenever a `-` appears means the command never blocks on a pipe
@@ -177,6 +185,19 @@ machine. It was a POSIX `sh` script; the Go program starts the Neovim DevHub
 attaches to after one `tmux` client instead of a dozen processes, which is
 most of the time between Enter and an editor in a DevHub terminal that a
 plain terminal does not spend.
+
+## Timing it
+
+`DEVHUB_TRACE=1` makes the command write, as it exits, one line on stderr
+with the end of each stage in milliseconds since `main`
+(`devhub-trace: connected=… written=… answered=… exit=…`; a second request on
+the same command adds `written#2`, `answered#2`). `scripts/bench-cli.sh`
+runs a set of commands against a running DevHub that many times and prints
+the wall time and the median of each stage — process start, connect, the
+app's answer (its work and the transport, the network on a host), a second
+request, printing — so a regression shows as the stage it is in. It starts
+nothing: point `DEVHUB_CONTROL_SOCKET` (and `DEVHUB_MACHINE`, to ask as a
+host's pane does) at a DevHub on a throwaway profile.
 
 ## Tests
 

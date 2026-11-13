@@ -1,9 +1,11 @@
 /**
  * The socket the `devhub` command talks to.
  *
- * One request per connection: a line of JSON in, a line of JSON out, close.
- * Nothing is streamed and nothing is kept, so a client that dies mid-request
- * costs one socket and no state.
+ * One request per connection: a line of JSON in, a line of JSON out, close —
+ * except that an answer asking the command for what only it can read (`--tell`'s
+ * piped text, its `--attach` files) leaves the connection open for the request
+ * again. Nothing is streamed and nothing is kept, so a client that dies
+ * mid-request costs one socket and no state.
  *
  * Every failure becomes `{ ok: false, message }` and is *printed by the CLI* —
  * that is the report, not a log line nobody reads. A handler that throws is
@@ -132,27 +134,65 @@ export async function startControlServer(
 	};
 }
 
+/**
+ * How many times one connection is asked again after an answer that asked for
+ * something: the command answers the piped text and the files once each.
+ */
+const MAX_REQUESTS_PER_CONNECTION = 3;
+
 function serve(socket: Socket, handlers: ControlHandlers): void {
-	let buffer = "";
-	let answered = false;
+	// The request arrives in chunks; they are kept as they came and joined
+	// once, when the newline is in, and only the newest chunk is searched for
+	// it. A 36 MB `--attach` request is then read in time linear in its size —
+	// a string grown by `+=` and searched from the start on every chunk was
+	// quadratic: tens of seconds of main's time for one large attachment.
+	let chunks: string[] = [];
+	let length = 0;
+	let requests = 0;
+	let busy = false;
+	let closed = false;
 
 	const answer = (response: ControlResponse) => {
-		if (answered) return;
-		answered = true;
-		socket.end(`${JSON.stringify(response)}\n`);
+		if (closed) return;
+		const line = `${JSON.stringify(response)}\n`;
+		// An answer that asks the command for its piped text or its files
+		// leaves the connection open for the request again: on a host, a new
+		// connection is a new channel on the ssh connection, and a round trip.
+		if (asksAgain(response) && requests < MAX_REQUESTS_PER_CONNECTION) {
+			socket.write(line);
+			busy = false;
+			return;
+		}
+		closed = true;
+		socket.end(line);
 	};
 
 	socket.setEncoding("utf8");
 	socket.on("data", (chunk: string) => {
-		buffer += chunk;
-		if (buffer.length > MAX_REQUEST_BYTES) {
+		if (closed) return;
+		if (busy) {
+			// The command never sends ahead of an answer; one that does is
+			// refused rather than queued.
+			closed = true;
+			socket.destroy();
+			return;
+		}
+		length += chunk.length;
+		if (length > MAX_REQUEST_BYTES) {
 			answer({ ok: false, message: "the request is too large" });
 			return;
 		}
-		const newline = buffer.indexOf("\n");
-		if (newline < 0) return;
-		const line = buffer.slice(0, newline);
-		buffer = "";
+		const newline = chunk.indexOf("\n");
+		if (newline < 0) {
+			chunks.push(chunk);
+			return;
+		}
+		chunks.push(chunk.slice(0, newline));
+		const line = chunks.join("");
+		chunks = [];
+		length = 0;
+		busy = true;
+		requests += 1;
 		void answerControlRequest(line, handlers).then(answer);
 	});
 	socket.on("error", (error) => {
@@ -161,6 +201,18 @@ function serve(socket: Socket, handlers: ControlHandlers): void {
 		if ((error as NodeJS.ErrnoException).code === "EPIPE") return;
 		console.error(`[devhub] control socket: ${error.message}`);
 	});
+	socket.on("close", () => {
+		closed = true;
+	});
+}
+
+/** An answer the command replies to on the same connection. */
+function asksAgain(response: ControlResponse): boolean {
+	return (
+		!response.ok &&
+		(response.stdin === true ||
+			(response.files !== undefined && response.files.length > 0))
+	);
 }
 
 /**

@@ -61,25 +61,67 @@ func encodeLine(value any) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// Ask sends one request and reads the one line that answers it.
+// Ask sends one request on a connection of its own and reads the one line
+// that answers it.
 func Ask(socketPath string, request Request) (Response, error) {
-	connection, err := net.Dial("unix", socketPath)
+	session, err := Dial(socketPath)
 	if err != nil {
-		if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
-			return Response{}, ErrNotRunning
-		}
 		return Response{}, err
 	}
-	defer connection.Close()
+	defer session.Close()
+	return session.Ask(request)
+}
+
+// Session is one connection to the control socket. The app answers a request
+// and closes, except when the answer asks for what only the command can read
+// (`--tell`'s piped text or attached files): then it keeps the connection
+// open for the request again, so the second asking costs no new connection —
+// over a host's forwarded socket, a new channel on the ssh connection and so
+// a network round trip (docs/devhub-cli.md, "Protocol").
+type Session struct {
+	socketPath string
+	connection net.Conn
+	reader     *bufio.Reader
+}
+
+// Dial connects to the control socket.
+func Dial(socketPath string) (*Session, error) {
+	traceAsk()
+	connection, err := net.Dial("unix", socketPath)
+	traceStage("connected")
+	if err != nil {
+		if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
+			return nil, ErrNotRunning
+		}
+		return nil, err
+	}
+	return &Session{socketPath: socketPath, connection: connection}, nil
+}
+
+// Close lets the connection go.
+func (s *Session) Close() {
+	if s.connection != nil {
+		s.connection.Close()
+		s.connection = nil
+	}
+}
+
+// Ask sends one request on this connection and reads the line that answers
+// it.
+func (s *Session) Ask(request Request) (Response, error) {
 	line, err := encodeLine(request)
 	if err != nil {
 		return Response{}, err
 	}
-	if _, err := connection.Write(line); err != nil {
+	if _, err := s.connection.Write(line); err != nil {
 		return Response{}, err
 	}
-	reader := bufio.NewReaderSize(connection, 1<<16)
-	answer, err := reader.ReadBytes('\n')
+	traceStage("written")
+	if s.reader == nil {
+		s.reader = bufio.NewReaderSize(s.connection, 1<<16)
+	}
+	answer, err := s.reader.ReadBytes('\n')
+	traceStage("answered")
 	if len(bytes.TrimRight(answer, "\n")) == 0 {
 		if err != nil && !errors.Is(err, net.ErrClosed) && err.Error() != "EOF" {
 			return Response{}, err
@@ -91,6 +133,18 @@ func Ask(socketPath string, request Request) (Response, error) {
 		return Response{}, fmt.Errorf("DevHub answered something that is not a response: %w", err)
 	}
 	return response, nil
+}
+
+// AskAgain sends a request once more after an answer that asked for
+// something, on this connection, which the app kept open for it. Never on a
+// new one if this one failed: the app may have read the request and acted on
+// it before the answer was lost, and `agent send` twice is two messages.
+func (s *Session) AskAgain(request Request) (Response, error) {
+	if s.connection == nil {
+		return Response{}, errors.New("DevHub closed the connection without answering.")
+	}
+	traceAsk()
+	return s.Ask(request)
 }
 
 // LivenessTimeout bounds a ping: an app that cannot answer one in this long

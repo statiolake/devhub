@@ -11,13 +11,15 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"time"
 )
 
 func main() {
+	start := time.Now()
 	if isNvimName(os.Args[0]) {
 		os.Exit(nvimMain(executableDirectory(), os.Args[1:]))
 	}
-	os.Exit(devhubMain(os.Args[1:], osEnvironment()))
+	os.Exit(devhubMain(os.Args[1:], osEnvironment(), start))
 }
 
 // executableDirectory is where this binary is, for the facts beside it.

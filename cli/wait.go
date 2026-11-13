@@ -10,8 +10,15 @@ import (
 	"time"
 )
 
-// WaitPoll is how often --wait looks at its marker.
+// WaitPoll is how often --wait looks at its marker: a stat, here.
 const WaitPoll = 250 * time.Millisecond
+
+// WaitPingEvery is how many marker looks there are to one ping. A ping is a
+// connection to DevHub — on a host, a channel opened on the ssh connection
+// and a round trip — so it is asked every two seconds, not with every look:
+// a closed editor is still seen within WaitPoll, and a DevHub that went away
+// within two seconds plus a ping.
+const WaitPingEvery = 8
 
 func randomHex(bytes int) string {
 	buffer := make([]byte, bytes)
@@ -62,11 +69,11 @@ func MarkerWorld(marker, socketPath string) WaitWorld {
 // WaitForClose returns once the marker is gone, and fails if DevHub stops
 // answering first: nobody is left to close the file.
 func WaitForClose(world WaitWorld) error {
-	for {
+	for look := 0; ; look++ {
 		if !world.MarkerExists() {
 			return nil
 		}
-		if !world.DevhubAnswers() {
+		if look%WaitPingEvery == 0 && !world.DevhubAnswers() {
 			return fmt.Errorf("DevHub is not listening on %s: it stopped while the file was still open, so the file was never closed and nothing was saved by closing it.", world.SocketPath)
 		}
 		world.Pause(WaitPoll)

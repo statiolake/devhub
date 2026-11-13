@@ -15,7 +15,10 @@ const (
 	LaunchCommandVariable = "DEVHUB_LAUNCH_COMMAND"
 	InstallCommandHint    = "\"DevHub: Install 'devhub' command in PATH\" from DevHub's command palette (Cmd+Q :)"
 	LaunchTimeout         = 30 * time.Second
-	LaunchPoll            = 200 * time.Millisecond
+	// How often the socket is looked at while DevHub starts. A socket file
+	// that is not there yet is a failed connect, which costs nothing, so the
+	// look is often: DevHub is answered within this of being up.
+	LaunchPoll = 20 * time.Millisecond
 )
 
 // Launcher is what to do when nothing answers: start DevHub (this Mac) or
@@ -26,8 +29,10 @@ type Launcher struct {
 	CannotStart func(reason string) string
 	Open        func() error // returns once started, or with why not
 	Answers     func() bool
-	Pause       func(time.Duration)
-	Now         func() time.Time
+	// Pause waits one poll, or less if the start fails meanwhile (its
+	// error, then).
+	Pause func(time.Duration, <-chan error) error
+	Now   func() time.Time
 }
 
 // ParseLaunchCommand reads DEVHUB_LAUNCH_COMMAND, a JSON array of strings.
@@ -46,7 +51,7 @@ func systemLauncher(socketPath string) Launcher {
 	return Launcher{
 		SocketPath: socketPath,
 		Answers:    func() bool { return SocketAnswers(socketPath, LivenessTimeout) },
-		Pause:      time.Sleep,
+		Pause:      pauseOrFail,
 		Now:        time.Now,
 	}
 }
@@ -122,7 +127,8 @@ func SendOrLaunch(send func() (Response, error), launcher Launcher) (Response, e
 }
 
 // LaunchAndWait starts DevHub and waits for the socket, whichever ends
-// first: a start that failed, or an answer.
+// first: a start that failed, or an answer. A start that failed is said as
+// soon as it fails, not at the next poll.
 func LaunchAndWait(launcher Launcher) error {
 	failed := make(chan error, 1)
 	go func() {
@@ -143,7 +149,22 @@ func LaunchAndWait(launcher Launcher) error {
 		if !launcher.Now().Before(deadline) {
 			return fmt.Errorf("DevHub was started with %s, but nothing was listening on %s within %d seconds.", launcher.Description, launcher.SocketPath, int(LaunchTimeout/time.Second))
 		}
-		launcher.Pause(LaunchPoll)
+		if err := launcher.Pause(LaunchPoll, failed); err != nil {
+			return err
+		}
+	}
+}
+
+// pauseOrFail waits the poll out, or returns at once with a start that
+// failed meanwhile.
+func pauseOrFail(poll time.Duration, failed <-chan error) error {
+	timer := time.NewTimer(poll)
+	defer timer.Stop()
+	select {
+	case err := <-failed:
+		return err
+	case <-timer.C:
+		return nil
 	}
 }
 

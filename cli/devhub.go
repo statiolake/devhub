@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -83,14 +84,17 @@ type IO struct {
 	TempDir       string
 }
 
-func devhubMain(argv []string, env map[string]string) int {
+func devhubMain(argv []string, env map[string]string, start time.Time) int {
+	startTrace(env, start)
 	cwd, _ := os.Getwd()
 	home, _ := os.UserHomeDir()
-	return Run(argv, env, IO{
+	code := Run(argv, env, IO{
 		Stdin: os.Stdin, StdinTerminal: isTerminal(os.Stdin),
 		Stdout: os.Stdout, Stderr: os.Stderr,
 		Cwd: cwd, Home: home, TempDir: os.TempDir(),
 	}, os.Environ())
+	writeTrace(os.Stderr)
+	return code
 }
 
 // Run is the whole `devhub` command.
@@ -156,7 +160,25 @@ func send(command Command, socketPath string, launcher Launcher, caller Caller, 
 	if !ok {
 		return 2, nil
 	}
-	response, err := SendOrLaunch(func() (Response, error) { return Ask(socketPath, request) }, launcher)
+	// One connection for the request and, if the answer asks for the piped
+	// text or files, for the request again (the app keeps it open for that).
+	var session *Session
+	defer func() {
+		if session != nil {
+			session.Close()
+		}
+	}()
+	response, err := SendOrLaunch(func() (Response, error) {
+		opened, err := Dial(socketPath)
+		if err != nil {
+			return Response{}, err
+		}
+		if session != nil {
+			session.Close()
+		}
+		session = opened
+		return session.Ask(request)
+	}, launcher)
 	if err != nil {
 		return 1, err
 	}
@@ -188,7 +210,7 @@ func send(command Command, socketPath string, launcher Launcher, caller Caller, 
 			asked = 2
 			continue
 		}
-		if response, err = Ask(socketPath, request); err != nil {
+		if response, err = session.AskAgain(request); err != nil {
 			return 1, err
 		}
 	}
@@ -203,6 +225,7 @@ func send(command Command, socketPath string, launcher Launcher, caller Caller, 
 		fmt.Fprintln(io_.Stdout, response.Message)
 		return 0, nil
 	}
+	session.Close()
 	// Nothing is printed for a --wait: this is somebody's EDITOR. The
 	// report is the exit status, and the file.
 	if err := WaitForClose(MarkerWorld(marker, socketPath)); err != nil {

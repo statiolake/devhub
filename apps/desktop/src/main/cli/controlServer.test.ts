@@ -56,6 +56,50 @@ function ask(socketPath: string, line: string): Promise<ControlResponse> {
 	});
 }
 
+/**
+ * Lines sent one after another on one connection, each once the one before
+ * it is answered: the answers, and whether the server closed after the last.
+ */
+function converse(
+	socketPath: string,
+	lines: readonly string[],
+): Promise<{ answers: ControlResponse[]; closed: boolean }> {
+	return new Promise((resolve, reject) => {
+		const socket = connect(socketPath);
+		const answers: ControlResponse[] = [];
+		let buffer = "";
+		let closed = false;
+		const settle = () => {
+			// A moment for a close that follows the last answer to arrive.
+			setTimeout(() => {
+				socket.destroy();
+				resolve({ answers, closed });
+			}, 50);
+		};
+		socket.setEncoding("utf8");
+		socket.on("connect", () => socket.write(lines[0] ?? ""));
+		socket.on("data", (chunk: string) => {
+			buffer += chunk;
+			for (;;) {
+				const newline = buffer.indexOf("\n");
+				if (newline < 0) return;
+				answers.push(JSON.parse(buffer.slice(0, newline)) as ControlResponse);
+				buffer = buffer.slice(newline + 1);
+				const next = lines[answers.length];
+				if (next === undefined) {
+					settle();
+					return;
+				}
+				socket.write(next);
+			}
+		});
+		socket.on("end", () => {
+			closed = true;
+		});
+		socket.on("error", reject);
+	});
+}
+
 describe("the DevHub control socket", () => {
 	let scratch: string;
 	let socketPath: string;
@@ -364,16 +408,47 @@ describe("the DevHub control socket", () => {
 
 	it("asks for what is piped in when a '-' is text, then uses it", async () => {
 		expect(
-			await ask(socketPath, tell(["agent", "send", "a", "-"])),
-		).toMatchObject({ ok: false, stdin: true });
-		expect(calls).toEqual([]);
-		expect(
 			await ask(
 				socketPath,
 				tell(["agent", "send", "a", "-"], { stdin: "hi\n" }),
 			),
 		).toMatchObject({ ok: true });
 		expect(calls).toEqual(["tell agent-send"]);
+	});
+
+	it("asks for the piped text on the connection that will carry it", async () => {
+		const { answers, closed } = await converse(socketPath, [
+			tell(["agent", "send", "a", "-"]),
+			tell(["agent", "send", "a", "-"], { stdin: "hi\n" }),
+		]);
+		expect(answers).toMatchObject([
+			{ ok: false, stdin: true },
+			{ ok: true, message: "2 agents" },
+		]);
+		expect(calls).toEqual(["tell agent-send"]);
+		// Answered, it closes as every connection does.
+		expect(closed).toBe(true);
+	});
+
+	it("closes after an answer that asks for nothing", async () => {
+		const { answers, closed } = await converse(socketPath, [
+			`${JSON.stringify({ kind: "version" })}\n`,
+		]);
+		expect(answers).toMatchObject([{ ok: true }]);
+		expect(closed).toBe(true);
+	});
+
+	it("reads a large request whole, in time linear in its size", async () => {
+		const text = "x".repeat(20 * 1024 * 1024);
+		const started = performance.now();
+		const answer = await ask(
+			socketPath,
+			tell(["agent", "send", "a", "-"], { stdin: text }),
+		);
+		expect(answer).toMatchObject({ ok: true });
+		expect(calls).toEqual(["tell agent-send"]);
+		// Searched from the start on every chunk, 20 MB took tens of seconds.
+		expect(performance.now() - started).toBeLessThan(5_000);
 	});
 
 	it("carries the orchestration commands to the app", async () => {

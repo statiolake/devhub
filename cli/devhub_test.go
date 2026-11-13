@@ -14,7 +14,8 @@ import (
 )
 
 // fakeDevhub answers the control socket the way the app does: one JSON line
-// in, one out, then close. answer sees every request but pings.
+// in, one out, then close — or, after an answer that asks for stdin or files,
+// the next line on the same connection. answer sees every request but pings.
 func fakeDevhub(t *testing.T, socketPath string, answer func(map[string]any) map[string]any) (requests func() []map[string]any) {
 	t.Helper()
 	listener, err := net.Listen("unix", socketPath)
@@ -31,19 +32,28 @@ func fakeDevhub(t *testing.T, socketPath string, answer func(map[string]any) map
 			}
 			go func() {
 				defer connection.Close()
-				line, err := bufio.NewReader(connection).ReadBytes('\n')
-				if err != nil {
-					return
+				reader := bufio.NewReader(connection)
+				for {
+					line, err := reader.ReadBytes('\n')
+					if err != nil {
+						return
+					}
+					var request map[string]any
+					_ = json.Unmarshal(line, &request)
+					if request["kind"] == "ping" {
+						connection.Write([]byte("{\"ok\":true,\"message\":\"pong\"}\n"))
+						return
+					}
+					seen <- request
+					replied := answer(request)
+					reply, _ := json.Marshal(replied)
+					connection.Write(append(reply, '\n'))
+					// As the app does: open for the request again only when
+					// the answer asks for the piped text or the files.
+					if replied["stdin"] != true && replied["files"] == nil {
+						return
+					}
 				}
-				var request map[string]any
-				_ = json.Unmarshal(line, &request)
-				if request["kind"] == "ping" {
-					connection.Write([]byte("{\"ok\":true,\"message\":\"pong\"}\n"))
-					return
-				}
-				seen <- request
-				reply, _ := json.Marshal(answer(request))
-				connection.Write(append(reply, '\n'))
 			}()
 		}
 	}()
@@ -234,7 +244,7 @@ func TestLaunchesDevhubWhenNothingAnswers(t *testing.T) {
 		fakeDevhub(t, socket, func(map[string]any) map[string]any { return map[string]any{"ok": true, "message": "up"} })
 		return nil
 	}
-	launcher.Pause = func(time.Duration) { time.Sleep(10 * time.Millisecond) }
+	launcher.Pause = func(time.Duration, <-chan error) error { time.Sleep(10 * time.Millisecond); return nil }
 	response, err := SendOrLaunch(func() (Response, error) { return Ask(socket, Request{Kind: "activate"}) }, launcher)
 	if err != nil || !started || response.Message != "up" {
 		t.Errorf("started %v response %+v err %v", started, response, err)
