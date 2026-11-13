@@ -388,6 +388,17 @@ export type TellCommand =
 			readonly id: number;
 			readonly note?: string;
 	  }
+	| {
+			/**
+			 * The person settled it directly (`task.human_direct`): closed as
+			 * answered with their words, with the orchestrator's note.
+			 */
+			readonly verb: "escalation-resolve";
+			readonly id: number;
+			readonly note?: string;
+			/** Which agent's instruction, when several were told. */
+			readonly agent?: string;
+	  }
 	// --- tasks (`model/tasks.ts`) -------------------------------------------
 	| {
 			readonly verb: "task-new";
@@ -919,6 +930,14 @@ orchestrator (the Orchestrator row: tasks, escalations, events)
                                    the question no longer stands: take it
                                    back (the person answers in DevHub only:
                                    no command writes an answer)
+  escalation resolve <id> [--note <how>] [--agent <a>]
+                                   the person settled it directly: what
+                                   they told an agent of its task
+                                   (task.human_direct) answers or overrides
+                                   it. Closed as answered by the person,
+                                   with their words as DevHub read them
+                                   (refused when no such instruction was
+                                   told); --note: how it settles it
   orchestrator start --root <path> --profile <p> --gui|--tui [--prompt <text>|-]
                                    (all but [] required) open <path> as a
                                    workspace, start the orchestrator agent in
@@ -1653,6 +1672,21 @@ function parseEscalation(
 				...defined({ note: one(flags, "--note") }),
 			};
 		}
+		case "resolve": {
+			const flags = readFlags(rest, {
+				values: ["--note", "--agent"],
+				switches: [],
+			});
+			const [id] = positionals(flags, ["<id>"]);
+			return {
+				verb: "escalation-resolve",
+				id: escalationId(id),
+				...defined({
+					note: one(flags, "--note"),
+					agent: one(flags, "--agent"),
+				}),
+			};
+		}
 		case "answer":
 			throw new Refusal(
 				"an escalation is answered by the person, in DevHub's window, and by no command.",
@@ -1668,7 +1702,9 @@ function parseEscalation(
 				`escalation ${sub} is gone: an escalation is one question and its answer. A follow-up is a new one on the same task (escalation new --task T); one that no longer stands is withdrawn (escalation withdraw ID); waiting, links and priority are the task's (task status / task link / task edit).`,
 			);
 		default:
-			throw new Refusal("escalation takes: new, show, list, withdraw.");
+			throw new Refusal(
+				"escalation takes: new, show, list, withdraw, resolve.",
+			);
 	}
 }
 

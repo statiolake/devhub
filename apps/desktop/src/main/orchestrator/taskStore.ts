@@ -34,6 +34,7 @@ import {
 	answerEscalation,
 	createEscalation,
 	isOpen,
+	resolveEscalation,
 	withdrawEscalation,
 	type Escalation,
 	type NewEscalation,
@@ -435,11 +436,30 @@ export class TaskStore {
 	 * else. Its task goes 処理中: the answer is work to carry out.
 	 */
 	answer(id: number, markdown: string, now: number): Escalation {
-		const answered = answerEscalation(
-			this.requireEscalation(id),
-			markdown,
+		return this.#settle(
+			answerEscalation(this.requireEscalation(id), markdown, now),
 			now,
 		);
+	}
+
+	/**
+	 * Settled by the person directly (`resolveEscalation`): closed as
+	 * answered, with their words to the agent, and its task 処理中 as an
+	 * answer leaves it. The service checks the instruction was theirs.
+	 */
+	resolve(
+		id: number,
+		direct: Parameters<typeof resolveEscalation>[1],
+		now: number,
+	): Escalation {
+		return this.#settle(
+			resolveEscalation(this.requireEscalation(id), direct, now),
+			now,
+		);
+	}
+
+	#settle(answered: Escalation, now: number): Escalation {
+		const id = answered.id;
 		const task = this.task(answered.taskId);
 		this.#commit({
 			...this.#file,

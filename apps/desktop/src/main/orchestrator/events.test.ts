@@ -9,6 +9,7 @@ import {
 	humanMessages,
 	merge,
 	shortId,
+	subjectOf,
 	workspaceToken,
 	type OrchestratorEvent,
 } from "./events.js";
@@ -208,8 +209,57 @@ describe("the person's words", () => {
 				messages: [{ text: "月曜の朝に流して" }],
 			}),
 		).toEqual([
-			"task=7「ログイン修正」 agent=a1b2c3d4 に人が直接送ったメッセージ:\n月曜の朝に流して",
+			[
+				"task=7「ログイン修正」 agent=a1b2c3d4 に人が直接送ったメッセージ:",
+				"月曜の朝に流して",
+				"",
+				"整理してください (人の判断です。agent=a1b2c3d4 には届いているので、同じ指示を送り直さない):",
+				"- 人の判断として記録する: task edit 7 --memo の「決めたこと」に (エスカレーションへの回答と同じ扱い)、ほかの仕事にも効くなら decisions.md にも",
+				"- タスクを指示に合わせる: メモの次にすること、状態 (task status 7 …)、方針が変わったなら題名 (task edit 7 --title) とリンク",
+				"- 同じタスクのほかのエージェントはいません",
+			].join("\n"),
 		]);
+	});
+
+	it("to an agent directly: a burst is one message, in order, then what to tidy up", () => {
+		const [message] = humanMessages({
+			type: "task.human_direct",
+			task: TASK,
+			agent: AGENT,
+			since: "e39",
+			messages: [{ text: "staging だけで" }, { text: "あ、本番は来週" }],
+			escalations: [{ id: 12, title: "本番DB" }],
+			others: [{ id: "e5f6a7b8-0000-4000-8000-000000000000", name: "UI" }],
+		});
+		expect(message!.split("\n")).toEqual([
+			"task=7「ログイン修正」 agent=a1b2c3d4 に人が直接送ったメッセージ (2 通、送った順):",
+			"[1]",
+			"staging だけで",
+			"[2]",
+			"あ、本番は来週",
+			"",
+			"整理してください (人の判断です。agent=a1b2c3d4 には届いているので、同じ指示を送り直さない):",
+			'- 開いている質問 esc=12「本番DB」: この指示が答えている・覆しているなら devhub --tell escalation resolve 12 --note "人が agent=a1b2c3d4 に直接指示: <要点>" で閉じる (取り下げない)。関係なければ開いたまま',
+			"- 人の判断として記録する: task edit 7 --memo の「決めたこと」に (エスカレーションへの回答と同じ扱い)、ほかの仕事にも効くなら decisions.md にも",
+			"- タスクを指示に合わせる: メモの次にすること、状態 (task status 7 …)、方針が変わったなら題名 (task edit 7 --title) とリンク",
+			"- 同じタスクのほかのエージェント (agent=e5f6a7b8 (UI)) の作業がこの指示と食い違うなら、止めるか指示し直す",
+		]);
+	});
+
+	it("to an agent on no task: it is bound or given a task, keyed on the agent", () => {
+		const event = {
+			type: "task.human_direct" as const,
+			agent: AGENT,
+			messages: [{ text: "README を直して" }],
+		};
+		expect(subjectOf(event)).toBe(`agent ${AGENT.id}`);
+		const lines = humanMessages(event)[0]!.split("\n");
+		expect(lines.slice(0, 2)).toEqual([
+			"agent=a1b2c3d4 に人が直接送ったメッセージ:",
+			"README を直して",
+		]);
+		expect(lines[4]).toContain("どのタスクにも紐づいていません");
+		expect(lines[4]).toContain("task bind <タスク> a1b2c3d4");
 	});
 
 	it("are sent at once, whatever is pending or busy, and never in the template", () => {

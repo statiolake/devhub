@@ -7,6 +7,8 @@ import {
   escalationState,
   isOpen,
   parseEscalationId,
+  resolveEscalation,
+  settledDirectly,
   withdrawEscalation,
 } from "./escalations.js";
 
@@ -61,6 +63,56 @@ describe("an escalation: one question, one answer", () => {
     expect(() => withdrawEscalation(withdrawn, undefined, 200)).toThrow(
       /withdrawn already/u,
     );
+  });
+
+  it("is settled by the person directly: answered with their words, not withdrawn, and read back", () => {
+    const resolved = resolveEscalation(
+      asked(),
+      {
+        words: "staging だけで進めて",
+        agentId: "a1b2c3d4-0000",
+        sentAt: 180,
+        note: "人が agent=a1b2c3d4 に直接指示: staging のみ",
+      },
+      200,
+    );
+    expect(escalationState(resolved)).toBe("answered");
+    expect(resolved.withdrawn).toBeUndefined();
+    expect(settledDirectly(resolved)).toBe(true);
+    expect(resolved.answer).toEqual({
+      markdown: "staging だけで進めて",
+      at: 200,
+      direct: {
+        agentId: "a1b2c3d4-0000",
+        sentAt: 180,
+        note: "人が agent=a1b2c3d4 に直接指示: staging のみ",
+      },
+    });
+    // Kept on disk, and read back as it was.
+    expect(escalationFrom(JSON.parse(JSON.stringify(resolved)), "e")).toEqual(
+      resolved,
+    );
+    // An answer of before reads as it did: no direct, the person's own.
+    const plain = answerEscalation(asked(), "はい", 200);
+    const read = escalationFrom(JSON.parse(JSON.stringify(plain)), "e");
+    expect(read).toEqual(plain);
+    expect(settledDirectly(read)).toBe(false);
+    // A direct that does not read is left out: still the person's answer.
+    expect(
+      escalationFrom(
+        {
+          ...JSON.parse(JSON.stringify(plain)),
+          answer: { markdown: "はい", at: 200, direct: { agentId: 3 } },
+        },
+        "e",
+      ).answer,
+    ).toEqual({ markdown: "はい", at: 200 });
+    expect(() =>
+      resolveEscalation(resolved, { words: "w", agentId: "a", sentAt: 1 }, 300),
+    ).toThrow(/answered already/u);
+    expect(() =>
+      resolveEscalation(asked(), { words: " ", agentId: "a", sentAt: 1 }, 300),
+    ).toThrow(EscalationError);
   });
 
   it("checks what it is given", () => {

@@ -48,6 +48,23 @@ export interface EscalationAnswer {
   readonly at: number;
   /** The quick reply it is, when the person picked one. */
   readonly option?: string;
+  /**
+   * Settled by the person directly, not in the window: they told an agent
+   * of the task what to do (`task.human_direct`), and the orchestrator
+   * closed the question with it (`escalation resolve`). `markdown` is then
+   * what they wrote to that agent, as DevHub read it; `note` is the
+   * orchestrator's line on how it settles the question.
+   */
+  readonly direct?: EscalationDirect;
+}
+
+/** How a direct instruction settled a question (`resolveEscalation`). */
+export interface EscalationDirect {
+  /** The agent the person wrote to. */
+  readonly agentId: string;
+  /** When they wrote it (the first of a burst). */
+  readonly sentAt: number;
+  readonly note?: string;
 }
 
 export interface Escalation {
@@ -273,6 +290,48 @@ export function answerEscalation(
   };
 }
 
+/**
+ * The person settled it directly: what they told an agent of its task
+ * (`words`, as DevHub read it off that agent's conversation) answers or
+ * overrides the question. Closes it as answered — by the person, with their
+ * own words — never as withdrawn. Reached by `escalation resolve`, and only
+ * for an instruction DevHub saw the person give (`OrchestratorService`
+ * checks); the orchestrator writes the note, never the words.
+ */
+export function resolveEscalation(
+  escalation: Escalation,
+  direct: {
+    readonly words: string;
+    readonly agentId: string;
+    readonly sentAt: number;
+    readonly note?: string;
+  },
+  now: number,
+): Escalation {
+  if (!isOpen(escalation))
+    refuse(
+      `#${String(escalation.id)} is ${escalationState(escalation)} already.`,
+    );
+  const note = checkNote(direct.note);
+  return {
+    ...escalation,
+    answer: {
+      markdown: checkMarkdown(direct.words, "the person's instruction"),
+      at: now,
+      direct: {
+        agentId: direct.agentId,
+        sentAt: direct.sentAt,
+        ...(note === undefined ? {} : { note }),
+      },
+    },
+  };
+}
+
+/** Whether it was settled by the person directly (`resolveEscalation`). */
+export function settledDirectly(escalation: Escalation): boolean {
+  return escalation.answer?.direct !== undefined;
+}
+
 /** The orchestrator takes it back: the question no longer stands. */
 export function withdrawEscalation(
   escalation: Escalation,
@@ -372,6 +431,7 @@ export function escalationFrom(value: unknown, where: string): Escalation {
             ...(typeof answer["option"] === "string"
               ? { option: answer["option"] }
               : {}),
+            ...directFrom(answer["direct"]),
           },
         }),
     ...(withdrawn === undefined || answer !== undefined
@@ -385,6 +445,23 @@ export function escalationFrom(value: unknown, where: string): Escalation {
               : {}),
           },
         }),
+  };
+}
+
+/** An answer's `direct`, read back; anything that does not read is left out. */
+function directFrom(value: unknown): { direct?: EscalationDirect } {
+  if (!isRecord(value)) return {};
+  const agentId = value["agentId"];
+  const sentAt = value["sentAt"];
+  if (typeof agentId !== "string" || agentId === "") return {};
+  if (typeof sentAt !== "number" || !Number.isFinite(sentAt)) return {};
+  const note = value["note"];
+  return {
+    direct: {
+      agentId,
+      sentAt,
+      ...(typeof note === "string" && note !== "" ? { note } : {}),
+    },
   };
 }
 

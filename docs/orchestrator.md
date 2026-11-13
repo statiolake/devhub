@@ -133,7 +133,7 @@ the Sidebar is the person's places, as before.
 
 - **its helpers**: the agents in the orchestrator's own folder, the
   orchestrator agent itself apart (it is the row);
-- **the managed Workspaces.** *Managed* is one flag, said of agents and of
+- **the managed Workspaces.** _Managed_ is one flag, said of agents and of
   Workspaces alike (`Agent.managed`, `Workspace.managed`): the
   orchestrator's work is in it. There is no second notion — "opened by the
   orchestrator" is the same thing, and is how most Workspaces come to be
@@ -363,12 +363,14 @@ An escalation is **one question and its answer**, on one task (`model/escalation
 ```text
 { id, taskId, title, question: { markdown, at, options? },
   links: [urls], linkLabels?: {url: label}, createdAt,
-  answer?: { markdown, at, option? }, withdrawn?: { at, note? } }
+  answer?: { markdown, at, option?, direct?: { agentId, sentAt, note? } },
+  withdrawn?: { at, note? } }
 ```
 
-It is `open` until the person answers it (`answered`) or the orchestrator
-takes it back (`withdrawn`, `escalation withdraw ID [--note]`, or the task
-done). An answered or withdrawn one is never asked again: **a follow-up is a
+It is `open` until the person answers it (`answered`: in the window, or
+directly to an agent of its task, which `escalation resolve ID [--note]`
+records as `answer.direct` — below) or the orchestrator takes it back
+(`withdrawn`, `escalation withdraw ID [--note]`, or the task done). An answered or withdrawn one is never asked again: **a follow-up is a
 new escalation** on the same task. Answered and withdrawn ones are kept, in
 `orchestrator-tasks.json`, for the orchestrator (`escalation show` /
 `escalation list`, `task show`) and for what it learns from the person's
@@ -379,13 +381,58 @@ may have more than one open; each is answered on its own.
 **The person answers in DevHub's window only.** The board's composer is the
 one door (`answerEscalation` on the Agents page's bridge); no `devhub --tell`
 command and no `TellPorts` member can write an answer, and
-`escalation answer` is refused by name. `service.test.ts` holds both.
+`escalation answer` is refused by name. `service.test.ts` holds both. The
+one port that closes a question as answered, `resolve`, carries no words:
+it closes it with what the person told an agent directly, as DevHub read
+it (below).
 
-**When the person writes to a bound agent directly.** When the person's own
-composer sets an agent of a task with an open question working, the
-orchestrator is told at once (`task.human_direct`, with what they wrote):
-what was said may answer or change the question. It writes nothing on the
-escalation, which stays open until it is answered or withdrawn.
+**When the person writes to an agent directly.** When the person's own
+composer sets working an agent the orchestrator is responsible for — a
+**managed** one, or one **bound to an open task**, whether or not a question
+is open — the orchestrator is told (`task.human_direct`, with what they
+wrote). It is the person's decision, given past the orchestrator, and the
+message says what to tidy up (`directTidyLines`):
+
+- **The escalation.** If it answers or overrides an open question on that
+  task, the orchestrator closes it with `escalation resolve ID --note "人が
+agent=… に直接指示: …"` — never `withdraw`, which would say the
+  orchestrator took it back.
+- **The task.** Its memo (the next step) and status follow the instruction;
+  if the direction changed, its title and links too.
+- **An agent with no task** (a managed one) is bound to the open task it
+  belongs to, or given a new one.
+- **The other agents of the task**: stopped or redirected where the
+  instruction conflicts with what they are doing.
+- **The record.** It is noted as an escalation answer is (the memo's
+  決めたこと, `decisions.md` when it reaches other work).
+- **Not twice.** The agent has it already: the orchestrator does not send it
+  again.
+
+Which agents: the orchestrator itself, an agent that is neither managed nor
+bound to an open task, and a maintenance turn (below) tell nothing. **A
+burst is one message**: the person's messages to one agent are gathered
+until 10 seconds pass with no more (`DIRECT_QUIET_MS`), at most 30 seconds
+after the first (`DIRECT_BURST_MS`), and go as one `task.human_direct` with
+every text in the order sent (`personMessages`: the person's messages from
+the one that started the burst on, so messages queued into one turn are
+all there; each is told once). Then it goes as the person's words always
+do: at once, as its own message, never held — off and saving included.
+
+**`escalation resolve`: settled by the person directly.** It closes an open
+escalation as **answered** — by the person, with their own words — not as
+withdrawn: `answer.markdown` is what they told the agent, as DevHub read it
+off that agent's conversation, and `answer.direct` says so (`agentId`, its
+`sentAt`, the orchestrator's `note`). The command carries an id, `--note`
+and `--agent` (which agent's instruction, when several), never words, and it
+is refused unless DevHub told the orchestrator a `task.human_direct` with
+words since the question was asked — on that task, or to an agent bound to
+it now — in this run (`OrchestratorService.resolve`, at most the last 50
+kept). So the orchestrator still cannot write an answer: it can only point
+at one the person gave. Its task goes 処理中, as an answer leaves it. The
+board shows the escalation closed (state `answered`); `escalation show`
+heads it `settled by the person directly … what they told agent=…`; and an
+answer kept before `direct` existed reads exactly as it did, so the decision
+memory (`escalation list --state answered`, decisions.md) reads both alike.
 
 **A maintenance turn is not work.** A turn that only compacts the
 conversation — DevHub's keep-warm `/compact` just before the prompt cache
@@ -763,7 +810,7 @@ reading of the invariant and before each triage):
   changed, and no event is sent for it.
 - **Every triage re-checks.** The `triage` line is followed by one indented
   line per open task — `task=12「…」 処理中 — 古いかも: PR acme/pay#12
-  はマージ済み` — and asks the orchestrator to confirm each still holds,
+はマージ済み` — and asks the orchestrator to confirm each still holds,
   and to complete it, relink it, or keep it with a reason in its memo
   (charter section 8). One already marked when the last triage went says
   `(前回の triage から: この triage で解決する)` and is to be resolved in that
@@ -1000,20 +1047,20 @@ work, with its own tools (`gh`), not by the orchestrator.
 
 ### The event types
 
-| type                  | when                                                                                                                                                                | example                                                                                                                                                        |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init`                | the orchestrator has just started (or restarted)                                                                                                                    | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認`                                                                                  |
-| `escalation_answered` | the person answered an escalation (its task → 処理中). Sent at once, as its own message: the person's words                                                         | `task=7「本番DB移行」 esc=12「本番DBマイグレーション承認」 への人の回答 (選択肢「承認する」):` and, on the next line, `承認する`                               |
-| `task.human_direct`   | the person wrote from its own composer to a bound agent of a task with an open question, and it went working. Sent at once, as its own message                      | `task=7「本番DB移行」 agent=a1b2c3d4 に人が直接送ったメッセージ:` and, on the next line, what they wrote                                                       |
-| `needs_action`        | a task, a managed agent or an item of the population breaks the invariant: on every delivery while it does (every `delivery_interval`)                              | `[needs_action] task=7「本番DB移行」 ws=web — idle`, `[needs_action] agent=ab12cd34 (API fix) ws=web — no_task`, `[needs_action] issue=acme/web#123 — no_task` |
-| `task.changed`        | a 待機 task may be ready: what it is about changed (`subjects_changed`), or its `--check-at` came (`due`, once per wait)                                            | `[task.changed] task=12「リリース日」 — subjects_changed`, `[task.changed] task=15「…」 — due`                                                                 |
-| `usage.threshold`     | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                              | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                    |
-| `triage`              | time to rank the open tasks again and re-check them (listed under it, the maybe-stale ones with why): every 30 minutes in full, every hour in saving (see "Triage") | `[triage] — 見直し: …` and, on the lines under it, `  task=12「…」 処理中 — 古いかも: PR acme/pay#12 はマージ済み`                                             |
-| `request`             | the person sent a request from the board's + (it is a 待機 task already). Sent at once, as its own message: the person's words                                      | `task=3「請求書 CSV の文字化け」 人からの依頼 (…):` and, on the next line, what they wrote                                                                     |
-| `agent_managed`       | the person handed an existing agent to the orchestrator from the window (Manage with Orchestrator, `Cmd+Q Shift+M`). Sent at once, as its own message; dropped while off | `人がエージェント agent=a1b2c3d4 (API fix, ws=web, branch=fix/login) をあなたの管理下に移しました。devhub:agent/…` and its status, last request, task, what to do |
-| `agent_unmanaged`     | the person took it back (Stop Managing). Sent at once, as its own message; waits while off or with no orchestrator                                                 | `人がエージェント agent=a1b2c3d4 (…) をあなたの管理から外しました。人が自分で進めます。…` and `task unbind` for its task                                     |
-| `timer.elapsed`       | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                             | `[timer.elapsed] sweep`                                                                                                                                        |
-| `custom.*`            | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                       | `[custom.deploy] — staging に deploy 完了`                                                                                                                     |
+| type                  | when                                                                                                                                                                        | example                                                                                                                                                           |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init`                | the orchestrator has just started (or restarted)                                                                                                                            | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認`                                                                                     |
+| `escalation_answered` | the person answered an escalation (its task → 処理中). Sent at once, as its own message: the person's words                                                                 | `task=7「本番DB移行」 esc=12「本番DBマイグレーション承認」 への人の回答 (選択肢「承認する」):` and, on the next line, `承認する`                                  |
+| `task.human_direct`   | the person wrote from its own composer to a managed agent, or one bound to an open task, and it went working. A burst is one; sent as its own message, with what to tidy up | `task=7「本番DB移行」 agent=a1b2c3d4 に人が直接送ったメッセージ:`, what they wrote, then `整理してください (人の判断です。…):` and its lines                      |
+| `needs_action`        | a task, a managed agent or an item of the population breaks the invariant: on every delivery while it does (every `delivery_interval`)                                      | `[needs_action] task=7「本番DB移行」 ws=web — idle`, `[needs_action] agent=ab12cd34 (API fix) ws=web — no_task`, `[needs_action] issue=acme/web#123 — no_task`    |
+| `task.changed`        | a 待機 task may be ready: what it is about changed (`subjects_changed`), or its `--check-at` came (`due`, once per wait)                                                    | `[task.changed] task=12「リリース日」 — subjects_changed`, `[task.changed] task=15「…」 — due`                                                                    |
+| `usage.threshold`     | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                                      | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                       |
+| `triage`              | time to rank the open tasks again and re-check them (listed under it, the maybe-stale ones with why): every 30 minutes in full, every hour in saving (see "Triage")         | `[triage] — 見直し: …` and, on the lines under it, `  task=12「…」 処理中 — 古いかも: PR acme/pay#12 はマージ済み`                                                |
+| `request`             | the person sent a request from the board's + (it is a 待機 task already). Sent at once, as its own message: the person's words                                              | `task=3「請求書 CSV の文字化け」 人からの依頼 (…):` and, on the next line, what they wrote                                                                        |
+| `agent_managed`       | the person handed an existing agent to the orchestrator from the window (Manage with Orchestrator, `Cmd+Q Shift+M`). Sent at once, as its own message; dropped while off    | `人がエージェント agent=a1b2c3d4 (API fix, ws=web, branch=fix/login) をあなたの管理下に移しました。devhub:agent/…` and its status, last request, task, what to do |
+| `agent_unmanaged`     | the person took it back (Stop Managing). Sent at once, as its own message; waits while off or with no orchestrator                                                          | `人がエージェント agent=a1b2c3d4 (…) をあなたの管理から外しました。人が自分で進めます。…` and `task unbind` for its task                                          |
+| `timer.elapsed`       | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                                     | `[timer.elapsed] sweep`                                                                                                                                           |
+| `custom.*`            | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                               | `[custom.deploy] — staging に deploy 完了`                                                                                                                        |
 
 The `needs_action` codes: a task's `no_agent` or `idle` (`task=` names it
 by its number and title, `ws=` its first agent's Workspace); a managed
@@ -1046,7 +1093,9 @@ the task and the escalation (or the agent) and whose rest is the person's text e
 typed, unquoted and uncut. The orchestrator reads it as the person's own
 input: an auto-mode approval classifier treats text quoted inside a prompt
 template conservatively and may refuse the external writes the person just
-asked for. Several answers are several messages. Nothing holds them, off
+asked for. Several answers are several messages; a burst of direct
+messages to one agent is one message, every text in order, and after the
+words, past a blank line, the tidy-up it asks for (`整理してください …`). Nothing holds them, off
 included: someone answered, and the work they unblock goes on. With no
 orchestrator running they wait, in order, until one starts (as a request
 does). A busy orchestrator does not hold them either: the message is queued
@@ -1131,11 +1180,11 @@ rebindable like every command) and `devhub --tell orchestrator mode
 full`. The Sidebar row's tooltip names the mode; the header shows `auto`
 beside it when saving came by itself, and its card says why.
 
-| mode       | what is delivered                                                                                                                                                                                                                                                                                                |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **full**   | everything, as described above: a batch at most every `delivery_interval`, each carrying every `needs_action` subject again (what "on" was)                                                                                                                                                                      |
-| **saving** | the same, more rarely: at most every **3 ×** `delivery_interval` (`SAVING_INTERVAL_FACTOR`). **State changes** about the work always go; **nudges** go only when high, and while 2 or more tasks are in progress only about those tasks (below). The person's words, requests, `init` and `triage` go as in full |
-| **off**    | the person's answers (`escalation_answered`, `task.human_direct`), as in full; everything else is held, requests and `agent_unmanaged` too (`agent_managed` is dropped: the agent is `no_task` once on), and GitHub is not polled. Timers are off: one that comes due (a task's `--check-at` too) is dropped, not sent on turning on                                                                |
+| mode       | what is delivered                                                                                                                                                                                                                                                                                                                    |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **full**   | everything, as described above: a batch at most every `delivery_interval`, each carrying every `needs_action` subject again (what "on" was)                                                                                                                                                                                          |
+| **saving** | the same, more rarely: at most every **3 ×** `delivery_interval` (`SAVING_INTERVAL_FACTOR`). **State changes** about the work always go; **nudges** go only when high, and while 2 or more tasks are in progress only about those tasks (below). The person's words, requests, `init` and `triage` go as in full                     |
+| **off**    | the person's answers (`escalation_answered`, `task.human_direct`), as in full; everything else is held, requests and `agent_unmanaged` too (`agent_managed` is dropped: the agent is `no_task` once on), and GitHub is not polled. Timers are off: one that comes due (a task's `--check-at` too) is dropped, not sent on turning on |
 
 - **A batch** is the pending lines and the standing `needs_action` lines,
   the message that has the orchestrator act on its agents (or itself). In
@@ -1177,7 +1226,7 @@ waiting on the orchestrator. So it tells two kinds of line apart
 - **On time** — an explicit timer and a wait's time: the person's
   `[[orchestrator.timers]]` (what they have the orchestrator do on a clock,
   such as reading Slack), a timer the orchestrator set (`orchestrator timer
-  set`, "re-read the thread in 30 minutes"), and the time it gave a 待機
+set`, "re-read the thread in 30 minutes"), and the time it gave a 待機
   task (`task status T waiting --check-at`). **Sent at its time, alone** — its one line in `event_prompt`
   as a message of its own, like the person's words: never batched, never
   held by the interval, the pickup wait, the priority gate or the tasks in
@@ -1208,7 +1257,7 @@ Every kind of line the dispatcher handles, explicitly:
 | kind                              | class        | what it is                                                                                                                                                                                      |
 | --------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `escalation_answered`             | never held   | the person's answer                                                                                                                                                                             |
-| `task.human_direct`               | never held   | the person wrote to a bound agent of a task with an open question                                                                                                                               |
+| `task.human_direct`               | never held   | the person wrote to a managed agent, or one bound to an open task                                                                                                                               |
 | `request`                         | never held   | the person's request from the board's +                                                                                                                                                         |
 | `init`                            | never held   | the orchestrator started                                                                                                                                                                        |
 | `triage`                          | never held   | time to rank the open tasks; takes everything with it                                                                                                                                           |
@@ -1338,7 +1387,7 @@ gives the keyboard back to the +.
   waits for one, and goes once it starts, as do the ones kept from before a
   restart (a task's request without `sentAt`).
 - **The orchestrator takes it from there**: `task edit` to retitle it, `task
-  link`, agents bound to it, `task status T in_progress`, `task done`.
+link`, agents bound to it, `task status T in_progress`, `task done`.
 
 ### Resuming the agent that did the work
 
@@ -1425,7 +1474,7 @@ devhub --tell task edit 12 --clear-memo
 - **Not on every delivered line**: the charter has the subagent that
   handles a line read the task first (`status`), which carries it.
 - **Passed to the agent that picks the work up.** `agent resume`, `agent new
-  --task` and `issue assign` with `--prompt` put the task's memo after the
+--task` and `issue assign` with `--prompt` put the task's memo after the
   prompt, whole.
 - **The person reads it on the board**, read-only, as light Markdown: on the
   card and in the task's view.
@@ -1572,6 +1621,7 @@ devhub --tell escalation new --task T --title T --body -|TEXT [--link URL[=LABEL
 devhub --tell escalation show ID [--json]           # the question and its answer (acknowledges the answer)
 devhub --tell escalation list [--state open|answered|withdrawn] [--task T] [--json]
 devhub --tell escalation withdraw ID [--note TEXT]  # the question no longer stands
+devhub --tell escalation resolve ID [--note TEXT] [--agent A]  # the person settled it by telling an agent directly
 devhub --tell attachment add FILE[=CAPTION]...      # a worker hands pictures over: an id each, for --attach
 devhub --tell link agent A | workspace W | file PATH[:L[:C]] | task T | escalation ID | orchestrator | session S   # a devhub: link
 devhub --tell agent resume task=T|AGENT [--prompt -|TEXT] [--model M]   # bring back the task's agent, on its conversation (see "Resuming")
@@ -1657,7 +1707,7 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
    whole state with one `devhub --tell --json status <subject>`, then has an
    agent go on (`agent send`, `agent resume`), asks the person
    (`escalation new`), parks the task with what it waits for (`task status T
-   waiting --note`), or completes it. An agent or an item with no task
+waiting --note`), or completes it. An agent or an item with no task
    (`no_task`) is given one (`task new`, `task bind`); one not worth going on
    with is closed: a subagent first asks the agent about unpushed work or an
    open pull request, then `agent stop` (and `workspace close` with its
@@ -1665,7 +1715,7 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
    reason to look, never to decide.
 5. **DevHub's conventions**: a task before the work (`task new`, linked to
    its Issue or pull request), agents bound from the start (`agent new
-   --task`, `issue assign --task`; `task bind` for one already running);
+--task`, `issue assign --task`; `task bind` for one already running);
    work with no Issue yet is a task with no link, linked once the Issue is
    filed; `--managed` (and `--meta parent=<its id>`) on every agent it
    starts, never approving a permission prompt, never writing the person's
@@ -1725,17 +1775,17 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
    that has none; what saving still delivers and what off drops; the
    person's request is a 待機 task to retitle and take forward.
 10. **Choosing each agent's model** (see "Choosing the model"): `--model
-   haiku` for mechanical, well-specified, low-risk work (lookups, reading
-   and summarising logs or CI output, small renames, format or lint fixes,
-   simple doc edits, checking a status); `sonnet` for ordinary
-   implementation with a clear spec (a bug with a known cause, tests,
-   routine features, docs, straightforward reviews); `opus` for design and
-   ambiguous work (hard debugging with an unknown cause, cross-cutting
-   refactors, UI and taste, security-sensitive changes, the final review of
-   a deliverable). The stronger one when unsure; a cheaper agent that fails
-   or loops is resumed or restarted on a stronger `--model`; the choice is
-   noted in a line of the memo only when it is not obvious; and it is a
-   reversible decision (7), never asked.
+haiku` for mechanical, well-specified, low-risk work (lookups, reading
+    and summarising logs or CI output, small renames, format or lint fixes,
+    simple doc edits, checking a status); `sonnet` for ordinary
+    implementation with a clear spec (a bug with a known cause, tests,
+    routine features, docs, straightforward reviews); `opus` for design and
+    ambiguous work (hard debugging with an unknown cause, cross-cutting
+    refactors, UI and taste, security-sensitive changes, the final review of
+    a deliverable). The stronger one when unsure; a cheaper agent that fails
+    or loops is resumed or restarted on a stronger `--model`; the choice is
+    noted in a line of the memo only when it is not obvious; and it is a
+    reversible decision (7), never asked.
 
 How it is given: Claude (terminal and GUI) gets it appended to the system
 prompt — `--append-system-prompt`, after the profile's own, which is kept
@@ -1765,12 +1815,19 @@ alone:
 
 ```markdown
 ## 背景 — what was made, and why (restated)
+
 ## やったこと — what the orchestrator decided on the way, a line each with why
+
 ## 実行結果 — test results, real output or an excerpt (screenshots: --attach)
+
 ## 確認方法 — how to try it; the PR and commits as full URLs
+
 ## 既知の制限 — what it does not do, known issues
+
 ## 決めてほしいこと — この成果物で完了としてよいか (完了 / 直してほしい)
+
 ## 人に聞く理由 — 成果物のレビュー: whether it is done is the person's
+
 ## 推奨
 ```
 

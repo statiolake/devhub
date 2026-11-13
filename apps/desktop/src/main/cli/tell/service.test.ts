@@ -315,6 +315,8 @@ class FakePorts implements TellPorts {
 			return escalationWire(this.service.raise(request));
 		},
 		withdraw: (id, note) => escalationWire(this.service.withdraw(id, note)),
+		resolve: (id, note, agent) =>
+			escalationWire(this.service.resolve(id, note, agent)),
 		acknowledge: (id) => {
 			this.service.acknowledge(id);
 		},
@@ -4496,6 +4498,29 @@ describe("the Orchestrator row from the command line", () => {
 				)
 			).data,
 		).toMatchObject({ escalations: [{ id: 2, state: "withdrawn" }] });
+		// resolve closes one with the person's direct words, only when told.
+		await viaSocket(
+			service,
+			[
+				"escalation",
+				"new",
+				"--task",
+				"1",
+				"--title",
+				"本番も",
+				"--body",
+				BRIEF,
+			],
+			coordinator,
+		);
+		await expect(
+			viaSocket(
+				service,
+				["escalation", "resolve", "3", "--note", "n"],
+				coordinator,
+			),
+		).rejects.toThrow(/no direct instruction from the person/u);
+		expect(ports.service.escalation(3)?.answer).toBeUndefined();
 		// The verbs of a thread are gone, each saying where its job went.
 		for (const verb of [
 			"ask",
@@ -4698,6 +4723,9 @@ describe("the Orchestrator row from the command line", () => {
 				"newTask",
 				"pause",
 				"raise",
+				// Closes one with the person's own words to an agent, as DevHub
+				// read them: the command carries an id and a note, never words.
+				"resolve",
 				"resume",
 				"resumeTarget",
 				"setMode",

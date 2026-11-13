@@ -112,7 +112,7 @@ export const RETIRED_EVENT_TYPES: Readonly<Record<string, string>> = {
   "waiting.changed":
     "waiting is a task's now: a 待機 task that may be ready is `task.changed`",
   "escalation.human_direct":
-    "the person's words to an agent of a task with an open question are `task.human_direct`",
+    "the person's words to an agent the orchestrator runs are `task.human_direct`",
   "github.assigned":
     "an open Issue assigned to you with nobody on it is `needs_action`",
   "github.unattended":

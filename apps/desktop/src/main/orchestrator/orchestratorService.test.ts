@@ -22,8 +22,13 @@ function world(
 		managed?: boolean;
 		/** WORKER as the first reading finds it (a restart restoring it). */
 		worker?: { status: string; maintenance?: boolean };
+		/** A clock for timers (`run.pass`); absent: none (told at once). */
+		timers?: boolean;
+		/** The person's messages, as `personMessages` reads them. */
+		conversation?: { since: string; text: string }[];
 	} = {},
 ) {
+	const pending: { at: number; run: () => void; live: boolean }[] = [];
 	const clock = { now: 1_000_000 };
 	const sent: string[] = [];
 	const read: [string, number][] = [];
@@ -44,6 +49,8 @@ function world(
 	};
 	const store = TaskStore.inMemory();
 	const cursor = options.cursor ?? { value: "e39" };
+	// The last of the conversation is the person's last message, when given.
+	const last = () => options.conversation?.at(-1);
 	const service = new OrchestratorService({
 		store,
 		agents: () => agents,
@@ -59,10 +66,12 @@ function world(
 		acknowledged: (agentId, id) => read.push([agentId, id]),
 		publish: () => undefined,
 		personMessage: () =>
-			Promise.resolve({
-				...(cursor.value === undefined ? {} : { since: cursor.value }),
-				...(cursor.text === undefined ? {} : { text: cursor.text }),
-			}),
+			Promise.resolve(
+				last() ?? {
+					...(cursor.value === undefined ? {} : { since: cursor.value }),
+					...(cursor.text === undefined ? {} : { text: cursor.text }),
+				},
+			),
 		invariant: () => ({
 			items: invariant.items,
 			agents: agents.map(
@@ -80,6 +89,28 @@ function world(
 				}),
 			),
 		}),
+		...(options.conversation === undefined
+			? {}
+			: {
+					personMessages: (_agent: string, from: string) => {
+						const all = options.conversation!;
+						const at = all.findIndex((one) => one.since === from);
+						return at >= 0 ? all.slice(at) : all.slice(-1);
+					},
+				}),
+		...(options.timers === true
+			? {
+					setTimer: (ms: number, run: () => void) => {
+						const timer = { at: clock.now + ms, run, live: true };
+						pending.push(timer);
+						return {
+							cancel: () => {
+								timer.live = false;
+							},
+						};
+					},
+				}
+			: {}),
 		now: () => clock.now,
 		// On, as the tests below were written; a launch starts off.
 		mode: "full",
@@ -103,6 +134,20 @@ function world(
 		service.observe();
 		service.events.flush();
 	};
+	/** Time passes: the timers due run. */
+	const pass = (ms: number) => {
+		const until = clock.now + ms;
+		for (;;) {
+			const next = pending
+				.filter((one) => one.live && one.at <= until)
+				.sort((a, b) => a.at - b.at)[0];
+			if (next === undefined) break;
+			next.live = false;
+			clock.now = next.at;
+			next.run();
+		}
+		clock.now = until;
+	};
 	const of = (type: string) =>
 		service.events.recent(200).filter((entry) => entry.event.type === type);
 	return {
@@ -114,6 +159,7 @@ function world(
 		clock,
 		status,
 		later,
+		pass,
 		of,
 		invariant,
 	};
@@ -313,9 +359,11 @@ describe("the person's words", () => {
 		run.service.personSent(WORKER);
 		run.status(WORKER, "working");
 		await tick();
-		expect(run.sent).toEqual([
-			"task=1「移行」 agent=a1b2c3d4 に人が直接送ったメッセージ:\nやっぱり staging だけで",
-		]);
+		expect(run.sent).toHaveLength(1);
+		expect(run.sent[0]).toMatch(
+			/^task=1「移行」 agent=a1b2c3d4 に人が直接送ったメッセージ:\nやっぱり staging だけで\n\n整理してください/u,
+		);
+		expect(run.sent[0]).toContain("devhub --tell escalation resolve 1 --note");
 		expect(run.service.escalation(one.id)?.answer).toBeUndefined();
 		expect(run.service.statusOf(run.service.task(task.id)!)).toBe("answer");
 	});
@@ -331,6 +379,187 @@ describe("the person's words", () => {
 		run.status(WORKER, "working");
 		await tick();
 		expect(run.of("task.human_direct")).toEqual([]);
+	});
+});
+
+describe("the person's direct instructions (task.human_direct)", () => {
+	const direct = (run: ReturnType<typeof world>) =>
+		run.of("task.human_direct").map((entry) => entry.event);
+
+	it("are told for a managed agent on no task, keyed on the agent", async () => {
+		const run = world({
+			managed: true,
+			cursor: { value: "e1", text: "README を直して" },
+		});
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		await tick();
+		expect(direct(run)).toEqual([
+			{
+				type: "task.human_direct",
+				agent: { id: WORKER, name: "agent a1" },
+				since: "e1",
+				messages: [{ text: "README を直して" }],
+			},
+		]);
+		expect(run.sent[0]).toContain("どのタスクにも紐づいていません");
+	});
+
+	it("are told for an agent bound to an open task with no question open, naming its other agents", async () => {
+		const run = world({ cursor: { value: "e2", text: "テストも足して" } });
+		const task = run.service.newTask({ title: "移行" });
+		run.service.bindTask(task.id, [WORKER, OTHER]);
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		await tick();
+		expect(direct(run)).toEqual([
+			{
+				type: "task.human_direct",
+				task: { id: task.id, title: "移行" },
+				agent: { id: WORKER, name: "agent a1" },
+				since: "e2",
+				messages: [{ text: "テストも足して" }],
+				others: [{ id: OTHER, name: "agent e5" }],
+			},
+		]);
+		expect(run.sent[0]).toContain("agent=e5f6a7b8 (agent e5)");
+		expect(run.sent[0]).not.toContain("escalation resolve");
+	});
+
+	it("are not told for an agent neither managed nor bound, nor for a maintenance turn", async () => {
+		const run = world({ managed: true });
+		run.service.personSent(OTHER);
+		run.status(OTHER, "working");
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working", true);
+		await tick();
+		expect(direct(run)).toEqual([]);
+	});
+
+	it("gather a burst to one agent into one event, the messages in order", async () => {
+		const conversation = [{ since: "e1", text: "staging だけで" }];
+		const run = world({ managed: true, timers: true, conversation });
+		const task = run.service.newTask({ title: "移行" });
+		run.service.bindTask(task.id, [WORKER]);
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		run.status(WORKER, "idle");
+		conversation.push({ since: "e2", text: "あ、本番は来週" });
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		await tick();
+		expect(direct(run)).toEqual([]);
+		run.pass(10_000);
+		await tick();
+		expect(direct(run)).toHaveLength(1);
+		expect(direct(run)[0]).toMatchObject({
+			since: "e1",
+			messages: [{ text: "staging だけで" }, { text: "あ、本番は来週" }],
+		});
+		expect(run.sent).toHaveLength(1);
+		expect(run.sent[0]).toContain("(2 通、送った順)");
+		// The next one is its own, and only what came after.
+		run.status(WORKER, "idle");
+		conversation.push({ since: "e3", text: "やっぱり今日" });
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		run.pass(10_000);
+		await tick();
+		expect(direct(run).at(-1)).toMatchObject({
+			since: "e3",
+			messages: [{ text: "やっぱり今日" }],
+		});
+	});
+
+	it("are told at most DIRECT_BURST_MS after the first, however the burst goes on", async () => {
+		const conversation = [{ since: "e1", text: "一" }];
+		const run = world({ managed: true, timers: true, conversation });
+		for (let index = 0; index < 5; index += 1) {
+			run.service.personSent(WORKER);
+			run.status(WORKER, "working");
+			run.pass(8_000);
+			run.status(WORKER, "idle");
+		}
+		await tick();
+		expect(direct(run)).toHaveLength(1);
+	});
+
+	it("go at once in saving and off, as in full", async () => {
+		for (const mode of ["saving", "off"] as const) {
+			const run = world({
+				managed: true,
+				cursor: { value: "e1", text: "止めて" },
+			});
+			run.service.setMode(mode);
+			run.sent.length = 0;
+			run.service.personSent(WORKER);
+			run.status(WORKER, "working");
+			await tick();
+			expect(run.sent).toHaveLength(1);
+			expect(run.sent[0]).toMatch(
+				/^agent=a1b2c3d4 に人が直接送ったメッセージ:\n止めて/u,
+			);
+		}
+	});
+});
+
+describe("escalation resolve: a question the person settled directly", () => {
+	async function told() {
+		const run = world({
+			cursor: { value: "e9", text: "staging だけで進めて" },
+		});
+		const task = run.service.newTask({ title: "移行" });
+		run.service.bindTask(task.id, [WORKER]);
+		const one = run.service.raise({
+			taskId: task.id,
+			title: "本番も流すか",
+			markdown: BODY,
+		});
+		run.clock.now += 1_000;
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		await tick();
+		return { run, task, one };
+	}
+
+	it("is refused with no direct instruction told since it was asked", () => {
+		const run = world();
+		const task = run.service.newTask({ title: "移行" });
+		const one = run.service.raise({
+			taskId: task.id,
+			title: "q",
+			markdown: BODY,
+		});
+		expect(() => run.service.resolve(one.id, "n")).toThrow(
+			/no direct instruction from the person/u,
+		);
+		expect(run.service.escalation(one.id)?.answer).toBeUndefined();
+	});
+
+	it("closes it as answered by the person, with their words and the note — not withdrawn — and the board shows it closed", async () => {
+		const { run, task, one } = await told();
+		const resolved = run.service.resolve(
+			one.id,
+			"人が agent=a1b2c3d4 に直接指示: staging のみ",
+		);
+		expect(resolved.withdrawn).toBeUndefined();
+		expect(resolved.answer).toMatchObject({
+			markdown: "staging だけで進めて",
+			direct: {
+				agentId: WORKER,
+				note: "人が agent=a1b2c3d4 に直接指示: staging のみ",
+			},
+		});
+		const board = run.service.wire();
+		expect(board.answer).toEqual([]);
+		const card = board.inProgress.find((one) => one.id === task.id)!;
+		expect(card.status).toBe("in_progress");
+		expect(card.escalations.find((one) => one.id === resolved.id)?.state).toBe(
+			"answered",
+		);
+		expect(() => run.service.resolve(one.id, "again")).toThrow(
+			/answered already/u,
+		);
 	});
 });
 

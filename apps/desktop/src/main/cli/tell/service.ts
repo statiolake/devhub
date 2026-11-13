@@ -29,7 +29,11 @@ import type { UsageReport } from "../../shell/usageLimits.js";
 import { usageJson, usageText } from "./usage.js";
 import { ORCHESTRATOR_CANNOT_CLOSE } from "./windowActs.js";
 import { ISSUE_LINK_KEY, itemLinkKey } from "../../orchestrator/invariant.js";
-import { breachWords, type Breach } from "../../orchestrator/events.js";
+import {
+	breachWords,
+	shortId as shortAgent,
+	type Breach,
+} from "../../orchestrator/events.js";
 import type {
 	StatusItem,
 	SubjectStatus,
@@ -709,6 +713,16 @@ export interface TellOrchestratorPorts {
 	raise(request: TellNewEscalation): EscalationWire;
 	withdraw(id: number, note: string | undefined): EscalationWire;
 	/**
+	 * The person settled it directly, by what they told an agent of its task
+	 * (`escalation resolve`): closed as answered with their words. Refused
+	 * when DevHub told no such instruction. Absent: refused.
+	 */
+	resolve?(
+		id: number,
+		note: string | undefined,
+		agent: string | undefined,
+	): EscalationWire;
+	/**
 	 * The orchestrator has been shown escalation `id` with its answer
 	 * (`escalation show`, `task show`): `agent wait --any` stops owing it.
 	 */
@@ -1308,6 +1322,16 @@ export class TellService {
 				return {
 					message: `Withdrew #${String(withdrawn.id)} 「${withdrawn.title}」 (task=${String(withdrawn.taskId)}).`,
 					data: withdrawn,
+				};
+			}
+			case "escalation-resolve": {
+				const resolve = this.ports.orchestrator.resolve;
+				if (resolve === undefined)
+					throw new Error("escalation resolve is not available here.");
+				const resolved = resolve(command.id, command.note, command.agent);
+				return {
+					message: `Resolved #${String(resolved.id)} 「${resolved.title}」 (task=${String(resolved.taskId)}) with the person's direct instruction to agent=${shortAgent(resolved.answer?.direct?.agentId ?? "")}: answered by the person, not withdrawn.`,
+					data: resolved,
 				};
 			}
 			case "task-new":
@@ -5530,7 +5554,9 @@ function escalationLines(one: EscalationWire): string[] {
 		...(one.answer === undefined
 			? []
 			: [
-					`--- the person's answer, ${new Date(one.answer.at).toISOString()}${one.answer.option === undefined ? "" : ` (option ${JSON.stringify(one.answer.option)})`}`,
+					one.answer.direct === undefined
+						? `--- the person's answer, ${new Date(one.answer.at).toISOString()}${one.answer.option === undefined ? "" : ` (option ${JSON.stringify(one.answer.option)})`}`
+						: `--- settled by the person directly, ${new Date(one.answer.at).toISOString()}: what they told agent=${shortAgent(one.answer.direct.agentId)}${one.answer.direct.note === undefined ? "" : ` (${one.answer.direct.note})`}`,
 					one.answer.markdown,
 				]),
 		...(one.withdrawn === undefined

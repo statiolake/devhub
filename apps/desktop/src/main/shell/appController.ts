@@ -8104,6 +8104,18 @@ export class AppController {
 					? { since: last.id, text: last.text }
 					: undefined;
 			},
+			// A burst of them, in order, from the one that started it on.
+			personMessages: async (agentId, from) => {
+				const conversation = await this.tellPorts().conversation(agentId);
+				const entries = conversation?.entries() ?? [];
+				const start = entries.findIndex((one) => one.id === from);
+				return (start < 0 ? entries.slice(-1) : entries.slice(start)).flatMap(
+					(one) =>
+						one.kind === "user" && one.origin === "person"
+							? [{ since: one.id, text: one.text }]
+							: [],
+				);
+			},
 			// An answer delivered in its event is read: `agent wait --any`
 			// (the orchestrator's `TellMemory`) stops reporting it.
 			acknowledged: (agentId, id) => {
@@ -8524,6 +8536,8 @@ export class AppController {
 				},
 				withdraw: (id, note) =>
 					escalationWire(orchestrator().withdraw(id, note)),
+				resolve: (id, note, agent) =>
+					escalationWire(orchestrator().resolve(id, note, agent)),
 				triage: () => ({
 					...(orchestrator().triagedAt === undefined
 						? {}

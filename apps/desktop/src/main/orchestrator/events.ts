@@ -142,19 +142,15 @@ export type OrchestratorEvent =
 			readonly answers?: readonly HumanWords[];
 	  }
 	/**
-	 * The person talked directly, from its own composer, to an agent of a
-	 * task with an open question, and it took that up (went working). The
-	 * question stays open; what was said may answer it, or change it.
+	 * The person talked directly, from its own composer, to an agent the
+	 * orchestrator is responsible for — a managed one, or one bound to an
+	 * open task — and it took that up (went working). A burst to the same
+	 * agent is one event (`DIRECT_QUIET_MS`), its messages in order. The
+	 * person's decision: the orchestrator tidies its bookkeeping around it
+	 * (`directTidyLines`) — an open question it settles is closed with
+	 * `escalation resolve`, never left open, never withdrawn.
 	 */
-	| {
-			readonly type: "task.human_direct";
-			readonly task: EventTask;
-			readonly agent: EventAgent;
-			/** `agent read --since`: the person's message. */
-			readonly since?: string;
-			/** What they said; absent when it could not be read. */
-			readonly messages?: readonly HumanWords[];
-	  }
+	| HumanDirectEvent
 	/**
 	 * The person handed an agent over to the orchestrator from DevHub's
 	 * window (the row menu's Manage with Orchestrator, `Cmd+Q Shift+M`):
@@ -279,6 +275,28 @@ export function isHandover(
 	event: OrchestratorEvent,
 ): event is AgentHandoverEvent {
 	return event.type === "agent_managed" || event.type === "agent_unmanaged";
+}
+
+/** An escalation, as an event names it. */
+export interface EventEscalation {
+	readonly id: number;
+	readonly title: string;
+}
+
+/** `task.human_direct`: see `OrchestratorEvent`. */
+export interface HumanDirectEvent {
+	readonly type: "task.human_direct";
+	/** The open task the agent is bound to; absent: it is on none (managed). */
+	readonly task?: EventTask;
+	readonly agent: EventAgent;
+	/** `agent read --since`: the first of the person's messages. */
+	readonly since?: string;
+	/** What they said, in order; absent when it could not be read. */
+	readonly messages?: readonly HumanWords[];
+	/** The task's questions open when it was said. */
+	readonly escalations?: readonly EventEscalation[];
+	/** The task's other bound agents, which the instruction may conflict with. */
+	readonly others?: readonly EventAgent[];
 }
 
 /** An open task, as a `triage` lists it for the re-check. */
@@ -565,7 +583,7 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 		case "task.human_direct":
 			return {
 				head: [
-					taskToken(event.task),
+					...(event.task === undefined ? [] : [taskToken(event.task)]),
 					agentToken(event.agent),
 					...(event.since === undefined ? [] : [`since=${event.since}`]),
 				],
@@ -635,8 +653,8 @@ export function humanMessage(
 	>,
 	piece: HumanWords | undefined,
 ): string {
-	const task = taskToken(event.task);
 	if (event.type === "escalation_answered") {
+		const task = taskToken(event.task);
 		const esc = `esc=${String(event.escalationId)}${title(event.title)}`;
 		const option =
 			piece?.option === undefined
@@ -646,10 +664,70 @@ export function humanMessage(
 			? `${task} ${esc} に人が回答しました (devhub --tell escalation show ${String(event.escalationId)} で読む)`
 			: `${task} ${esc} への人の回答${option}:\n${piece.text}`;
 	}
+	return directMessage(event);
+}
+
+/**
+ * The message a `task.human_direct` goes as: one line naming the task (if
+ * any) and the agent, the person's words exactly as typed — several, in
+ * the order sent, each under its number — and, after a blank line, what the
+ * orchestrator tidies up (`directTidyLines`).
+ */
+export function directMessage(event: HumanDirectEvent): string {
 	const agent = shortId(event.agent.id);
-	return piece === undefined
-		? `${task} agent=${agent} に人が直接話しかけました (devhub --tell agent read ${agent}${event.since === undefined ? "" : ` --since ${event.since}`} で読む)`
-		: `${task} agent=${agent} に人が直接送ったメッセージ:\n${piece.text}`;
+	const where =
+		event.task === undefined
+			? `agent=${agent}`
+			: `${taskToken(event.task)} agent=${agent}`;
+	const messages = event.messages ?? [];
+	const words =
+		messages.length === 0
+			? [
+					`${where} に人が直接話しかけました (devhub --tell agent read ${agent}${event.since === undefined ? "" : ` --since ${event.since}`} で読む)`,
+				]
+			: messages.length === 1
+				? [`${where} に人が直接送ったメッセージ:`, messages[0]!.text]
+				: [
+						`${where} に人が直接送ったメッセージ (${String(messages.length)} 通、送った順):`,
+						...messages.flatMap((one, index) => [
+							`[${String(index + 1)}]`,
+							one.text,
+						]),
+					];
+	return [...words, "", ...directTidyLines(event)].join("\n");
+}
+
+/**
+ * What the orchestrator does with an instruction the person gave an agent
+ * directly: it is the person's decision, the agent has it already, and the
+ * bookkeeping around it — the open question, the task, the other agents —
+ * is brought in line with it.
+ */
+export function directTidyLines(event: HumanDirectEvent): string[] {
+	const agent = shortId(event.agent.id);
+	const head = `整理してください (人の判断です。agent=${agent} には届いているので、同じ指示を送り直さない):`;
+	if (event.task === undefined)
+		return [
+			head,
+			`- このエージェントはどのタスクにも紐づいていません: devhub --tell agent read ${agent} で中身を確かめ、合う開いたタスクがあれば task bind <タスク> ${agent}、なければ task new --title … --status in_progress で作って task bind する`,
+			"- 人の判断として記録する: そのタスクのメモの「決めたこと」(task edit --memo) に、ほかの仕事にも効くなら decisions.md にも",
+			"- その指示がほかのタスクやエージェントの作業と食い違うなら、そちらを止めるか指示し直す",
+		];
+	const id = String(event.task.id);
+	const escalations = event.escalations ?? [];
+	const others = event.others ?? [];
+	return [
+		head,
+		...escalations.map(
+			(one) =>
+				`- 開いている質問 esc=${String(one.id)}${title(one.title)}: この指示が答えている・覆しているなら devhub --tell escalation resolve ${String(one.id)} --note "人が agent=${agent} に直接指示: <要点>" で閉じる (取り下げない)。関係なければ開いたまま`,
+		),
+		`- 人の判断として記録する: task edit ${id} --memo の「決めたこと」に (エスカレーションへの回答と同じ扱い)、ほかの仕事にも効くなら decisions.md にも`,
+		`- タスクを指示に合わせる: メモの次にすること、状態 (task status ${id} …)、方針が変わったなら題名 (task edit ${id} --title) とリンク`,
+		others.length === 0
+			? "- 同じタスクのほかのエージェントはいません"
+			: `- 同じタスクのほかのエージェント (${others.map(agentToken).join(", ")}) の作業がこの指示と食い違うなら、止めるか指示し直す`,
+	];
 }
 
 /**
@@ -703,10 +781,9 @@ export function humanMessages(event: HumanInputEvent): string[] {
 		return [
 			`${taskToken(event.task)} 人からの依頼 (この依頼からタスクを作りました。devhub --tell task edit ${String(event.task.id)} で題名を整え、task link / エージェントの割り当てで進めてください):\n${event.text}`,
 		];
-	const pieces =
-		event.type === "escalation_answered"
-			? (event.answers ?? [])
-			: (event.messages ?? []);
+	// A burst of direct messages is one message: the words, then the tidy-up.
+	if (event.type === "task.human_direct") return [directMessage(event)];
+	const pieces = event.answers ?? [];
 	return pieces.length === 0
 		? [humanMessage(event, undefined)]
 		: pieces.map((piece) => humanMessage(event, piece));
@@ -726,8 +803,11 @@ export function subjectOf(event: OrchestratorEvent): string {
 	switch (event.type) {
 		case "init":
 			return "init";
-		case "escalation_answered":
 		case "task.human_direct":
+			return event.task === undefined
+				? `agent ${event.agent.id}`
+				: `task ${String(event.task.id)}`;
+		case "escalation_answered":
 		case "request":
 			return `task ${String(event.task.id)}`;
 		case "agent_managed":

@@ -666,6 +666,26 @@ describe("devhub --tell task", () => {
 		expect(
 			told("escalation", "list", "--state", "answered", "--task", "2"),
 		).toEqual({ verb: "escalation-list", state: "answered", task: 2 });
+		expect(
+			told(
+				"escalation",
+				"resolve",
+				"esc=4",
+				"--note",
+				"人が agent=a1b2c3d4 に直接指示: staging のみ",
+				"--agent",
+				"a1b2c3d4",
+			),
+		).toEqual({
+			verb: "escalation-resolve",
+			id: 4,
+			note: "人が agent=a1b2c3d4 に直接指示: staging のみ",
+			agent: "a1b2c3d4",
+		});
+		expect(told("escalation", "resolve", "4")).toEqual({
+			verb: "escalation-resolve",
+			id: 4,
+		});
 	});
 });
 

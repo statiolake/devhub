@@ -589,6 +589,15 @@ export interface EscalationWire {
 		readonly markdown: string;
 		readonly at: number;
 		readonly option?: string;
+		/**
+		 * Settled by the person directly, by what they told `agentId` of
+		 * the task (`escalation resolve`): `markdown` is their words.
+		 */
+		readonly direct?: {
+			readonly agentId: string;
+			readonly sentAt: number;
+			readonly note?: string;
+		};
 	};
 	readonly withdrawn?: { readonly at: number; readonly note?: string };
 	readonly links: readonly string[];

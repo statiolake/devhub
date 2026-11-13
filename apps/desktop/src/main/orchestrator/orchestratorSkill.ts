@@ -215,7 +215,8 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 ## 2. DevHub が make-progress に渡すもの
 
 - **人の言葉はそのまま、すぐ届く。** エスカレーションへの回答 (\`escalation_answered\`)、
-  質問が開いているタスクのエージェントに人が会話欄で直接送ったメッセージ (\`task.human_direct\`)、
+  受け持ちのエージェント (管理対象か、開いたタスクに紐づくもの) に人が会話欄で直接送ったメッセージ
+  (\`task.human_direct\`。続けて送ったものは 1 通にまとまり、後ろに「整理してください」が付く)、
   ボードの + からの依頼 (\`request\`) は、待たずに (ターン中でも)、それぞれ **1 通のユーザーメッセージ**
   として届く。1 行目に DevHub がどのタスクかを書き
   (\`task=7「…」 esc=12「…」 への人の回答:\` / \`task=7「…」 agent=a1b2c3d4 に人が直接送ったメッセージ:\` /
@@ -287,7 +288,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | --- | --- | --- |
 | \`init\` | オーケストレーターが起動 / 再起動した (整合性チェックの合図) | - |
 | \`escalation_answered\` | 人がエスカレーションに回答した (エスカレーションは閉じ、タスクは処理中へ)。人の言葉として単独ですぐ届く (上記) | task, esc |
-| \`task.human_direct\` | 質問が開いているタスクのエージェントと、人がその会話欄で直接やりとりし、エージェントが動き出した (質問は開いたまま)。人の言葉として単独ですぐ届く | task, agent |
+| \`task.human_direct\` | 人が受け持ちのエージェント (管理対象か、開いたタスクに紐づくもの。質問が開いていなくても) に会話欄で直接指示し、エージェントが動き出した。続けて送ったもの (10 秒以内、最長 30 秒) は 1 通にまとまる。人の言葉として単独ですぐ届き (off でも)、後ろに整理のしかた (質問を escalation resolve で閉じる、記録、タスクを合わせる、ほかのエージェント、送り直さない) が付く | task (なければ agent), agent |
 | \`needs_action\` | 不変条件 (下記) を満たしていないタスク、タスクのないアイテム (Issue / PR) か管理対象エージェントと、満たしていない条項のコード。解消しないうちは配信のたび (\`[orchestrator] delivery_interval\`、既定 5m ごと) に毎回 | task / issue / pr / agent, ws, コード |
 | \`task.changed\` | 待機のタスクが動けるかもしれない: リンクしたアイテム (Issue / PR) や紐づくエージェントの状態が変わった (\`subjects_changed\`) か、\`--check-at\` の時刻が来た (\`due\`、時刻 1 つにつき 1 回)。行はどのタスクかと、そのどちらかだけ | task, 理由 |
 | \`usage.threshold\` | CLI のプラン枠の使用率が \`[orchestrator] usage_thresholds\` (既定 80, 95) を上向きに超えた | cli, window, pct, resets |
@@ -344,7 +345,9 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
 
 - エスカレーションは**人への 1 つの質問と、その 1 つの回答**。必ずタスクに属する
   (\`escalation new --task T\`)。答えが来たら閉じる。追加で聞くことは**新しいエスカレーション**。
-  もう要らなくなった質問は \`escalation withdraw ID --note "<理由>"\`。
+  もう要らなくなった質問は \`escalation withdraw ID --note "<理由>"\`。人がエージェントに直接指示して決まった
+  質問は \`escalation resolve ID --note "人が agent=… に直接指示: <要点>"\` (人が答えたものとして閉じる。
+  言葉は DevHub が読んだ人の言葉。DevHub がその指示を届けていなければ断られる)。
 - 聞くのは**取り消せない・壊す・外に届く**判断と、人にしか決められないことだけ (憲章の 7):
   データやブランチの削除、force-push や履歴の書き換え、他の人に届くマージ・リリース・デプロイ、
   人へのメッセージ、お金がかかること。**あとで直せる判断** (設計・実装の選び方、命名、作業の順番) は
@@ -395,6 +398,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     devhub --tell escalation show 12
     devhub --tell escalation list --task 7
     devhub --tell escalation withdraw 12 --note "仕様が変わり不要になった"
+    devhub --tell escalation resolve 12 --note "人が agent=a1b2c3d4 に直接指示: staging だけで進める"
     devhub --tell link file src/app.ts:12
 
 ## 5. make-progress から使う CLI (抜粋)
@@ -520,9 +524,11 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     agent resume task=N) で伝える。タスクは処理中に戻っている。決定を decisions.md に追記。
     まだ聞くことがあれば、同じタスクに新しい escalation new。
 
-    ## 人がエージェントに直接送ったメッセージ (「task=N … に人が直接送ったメッセージ:」)
-    開いている質問の答えになっていれば escalation withdraw (理由に要点) して進める。
-    答えになっていなければ質問はそのまま待つ。
+    ## 人がエージェントに直接送ったメッセージ (「… agent=… に人が直接送ったメッセージ:」)
+    人の判断。後ろの「整理してください」に沿う: 開いている質問に答えていれば escalation resolve ID
+    --note "人が agent=… に直接指示: <要点>" (答えていなければ開いたまま)、決定を decisions.md とメモの
+    「決めたこと」に、メモ・状態を指示に合わせ、タスクがなければ bind か task new、食い違うほかの
+    エージェントは止めるか指示し直す。そのエージェントには送り直さない。
 
     ## 人からの依頼 (「task=N … 人からの依頼:」)
     task edit で題名を整え、Issue があれば task link、エージェントを agent new --task / issue assign --task で始める。

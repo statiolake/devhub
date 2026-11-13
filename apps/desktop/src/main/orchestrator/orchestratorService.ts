@@ -17,10 +17,12 @@
  * per time when its `--check-at` came. An agent bound to a 待機 task going
  * to work moves it to 処理中 (`TaskStore.agentWorking`): DevHub's
  * bookkeeping, never a decision. When the person writes from an agent's
- * own composer (`personSent`) to an agent of a task with an open question,
- * the orchestrator is told (`task.human_direct`): what was said may answer
- * or change it. Nothing ever proceeds by a deadline: an open question waits
- * for the person.
+ * own composer (`personSent`) to an agent the orchestrator is responsible
+ * for — a managed one, or one bound to an open task — the orchestrator is
+ * told (`task.human_direct`, a burst gathered into one): it is the person's
+ * decision, and the orchestrator tidies its bookkeeping around it; a
+ * question it settles is closed with their words (`resolve`). Nothing ever
+ * proceeds by a deadline: an open question waits for the person.
  *
  * A maintenance turn (`isMaintenanceTurn`: a `/compact`) is not work: every
  * reading here goes by the status the agent had before it (`workStatus`).
@@ -36,6 +38,7 @@ import type {
 	UsageLimitsWire,
 } from "../../ipc/contract.js";
 import {
+	EscalationError,
 	escalationState,
 	isOpen,
 	type Escalation,
@@ -151,6 +154,18 @@ export interface OrchestratorServicePorts {
 		agentId: string,
 	) => Promise<PersonMessage | undefined> | PersonMessage | undefined;
 	/**
+	 * The person's messages to `agentId`, in order, from the entry `from` on
+	 * (it included): a burst, from the message that started it. Undefined,
+	 * or `from` no longer there: the last one. Absent: `personMessage`'s.
+	 */
+	readonly personMessages?: (
+		agentId: string,
+		from: string,
+	) =>
+		| Promise<readonly PersonMessage[] | undefined>
+		| readonly PersonMessage[]
+		| undefined;
+	/**
 	 * The orchestrator `agentId` has been delivered escalation `id`'s answer
 	 * in its event, whole: as read as if it had run `escalation show`
 	 * (`agent wait --any` stops reporting it).
@@ -185,6 +200,29 @@ export interface OrchestratorServicePorts {
 export interface PersonMessage {
 	readonly since?: string;
 	readonly text?: string;
+}
+
+/**
+ * How long the person's messages to one agent are gathered into one
+ * `task.human_direct`: told once this long passes with no more of them
+ * (`DIRECT_QUIET_MS`), and never later than `DIRECT_BURST_MS` after the
+ * first. Two quick messages ("あ、それと…") are one instruction; a few
+ * seconds is nothing to an orchestrator that acts on it in minutes.
+ */
+export const DIRECT_QUIET_MS = 10_000;
+export const DIRECT_BURST_MS = 30_000;
+/** How many direct instructions are kept for `escalation resolve`. */
+const INSTRUCTIONS_KEPT = 50;
+
+/** A direct instruction told to the orchestrator (`task.human_direct`). */
+export interface DirectInstruction {
+	readonly agentId: string;
+	/** The open task the agent was on when it was told. */
+	readonly taskId?: number;
+	/** When DevHub saw the first of it taken up. */
+	readonly sentAt: number;
+	/** What the person wrote, in order. */
+	readonly texts: readonly string[];
 }
 
 /** An item, as `status` gives it. */
@@ -326,6 +364,26 @@ export class OrchestratorService {
 	 * held mid-turn starts the turn after the one running).
 	 */
 	readonly #direct = new Map<string, { armed: boolean }>();
+	/**
+	 * A burst of the person's messages to one agent, being gathered into one
+	 * `task.human_direct` (`DIRECT_QUIET_MS`, `DIRECT_BURST_MS`).
+	 */
+	readonly #bursts = new Map<
+		string,
+		{
+			readonly firstAt: number;
+			/** The message that started it, as read when it did. */
+			readonly first: Promise<string | undefined>;
+			timer: { cancel(): void } | undefined;
+		}
+	>();
+	/** The last of the person's messages told, per agent (its entry id). */
+	readonly #toldUpTo = new Map<string, string>();
+	/**
+	 * The person's direct instructions told this run, newest last: what
+	 * `escalation resolve` may close a question with.
+	 */
+	#instructions: DirectInstruction[] = [];
 	/** Each agent's status at the last projection: what moved to working. */
 	readonly #status = new Map<string, string>();
 	#revision = 0;
@@ -885,6 +943,50 @@ export class OrchestratorService {
 		return this.#store().withdraw(id, note, this.#now());
 	}
 
+	/**
+	 * `escalation resolve`: the person settled escalation `id` directly, by
+	 * what they told an agent of its task. Closed as answered with their
+	 * words (`resolveEscalation`), never withdrawn; its task 処理中. Refused
+	 * unless DevHub told the orchestrator such an instruction
+	 * (`task.human_direct`) since the question was asked — on that task, or
+	 * to an agent bound to it now: the orchestrator closes a question with
+	 * the person's words, never with its own. `agentId` picks one when there
+	 * are several (the latest otherwise).
+	 */
+	resolve(id: number, note: string | undefined, agentId?: string): Escalation {
+		const escalation = this.#store().escalation(id);
+		if (escalation === undefined)
+			throw new EscalationError(`there is no escalation #${String(id)}.`);
+		const task = this.#store().task(escalation.taskId);
+		const bound = new Set((task?.agents ?? []).map((one) => one.agentId));
+		const candidates = this.#instructions.filter(
+			(one) =>
+				one.sentAt >= escalation.createdAt &&
+				one.texts.length > 0 &&
+				(one.taskId === escalation.taskId || bound.has(one.agentId)) &&
+				(agentId === undefined ||
+					one.agentId === agentId ||
+					one.agentId.startsWith(agentId)),
+		);
+		const instruction = candidates.at(-1);
+		if (instruction === undefined)
+			throw new EscalationError(
+				`#${String(id)} has no direct instruction from the person to settle it: resolve closes a question with what the person told an agent of task=${String(escalation.taskId)} directly (a task.human_direct since it was asked, this run). A question that no longer stands for another reason is withdrawn (escalation withdraw ${String(id)} --note …).`,
+			);
+		const resolved = this.#store().resolve(
+			id,
+			{
+				words: instruction.texts.join("\n\n"),
+				agentId: instruction.agentId,
+				sentAt: instruction.sentAt,
+				...(note === undefined ? {} : { note }),
+			},
+			this.#now(),
+		);
+		this.publish();
+		return resolved;
+	}
+
 	escalation(id: number): Escalation | undefined {
 		return this.#store().escalation(id);
 	}
@@ -971,26 +1073,124 @@ export class OrchestratorService {
 	#startedWorking(agent: LiveAgent, byPerson: boolean, now: number): void {
 		if (agent.id === this.#store().orchestratorAgentId) return;
 		const task = this.#store().taskOfAgent(agent.id);
-		if (task === undefined) return;
-		this.#store().agentWorking(agent.id, now);
-		if (!byPerson || this.statusOf(task) !== "answer") return;
-		const say = (message: PersonMessage | undefined) => {
-			const since = message?.since;
-			const text = message?.text;
-			this.events.dispatch({
-				type: "task.human_direct",
-				task: { id: task.id, title: task.title },
-				agent: { id: agent.id, name: agent.name },
-				...(since === undefined ? {} : { since }),
-				...(text === undefined || text.trim().length === 0
-					? {}
-					: { messages: [{ text }] }),
-			});
+		if (task !== undefined) this.#store().agentWorking(agent.id, now);
+		// The orchestrator's own: bound to an open task, or managed.
+		if (!byPerson || (task === undefined && !this.#managed(agent.id))) return;
+		this.#gatherDirect(agent.id, now);
+	}
+
+	/** Whether the person handed `agentId` to the orchestrator (`--managed`). */
+	#managed(agentId: string): boolean {
+		const agents =
+			this.#invariantAgents.length > 0
+				? this.#invariantAgents
+				: (this.ports.invariant?.().agents ?? []);
+		return agents.some((one) => one.id === agentId && one.managed);
+	}
+
+	/**
+	 * The person set `agentId` going from its composer: gathered with any
+	 * more of their messages to it (`DIRECT_QUIET_MS`, at most
+	 * `DIRECT_BURST_MS`), then told as one `task.human_direct`. With no
+	 * clock (tests), told at once.
+	 */
+	#gatherDirect(agentId: string, now: number): void {
+		const setTimer = this.ports.setTimer;
+		if (setTimer === undefined) {
+			void this.#tellDirect(agentId, now, undefined);
+			return;
+		}
+		const burst = this.#bursts.get(agentId) ?? {
+			firstAt: now,
+			first: Promise.resolve(this.ports.personMessage?.(agentId))
+				.then((one) => one?.since)
+				.catch(() => undefined),
+			timer: undefined,
 		};
-		const message = this.ports.personMessage?.(agent.id);
-		if (message instanceof Promise)
-			void message.catch(() => undefined).then(say);
-		else say(message);
+		this.#bursts.set(agentId, burst);
+		burst.timer?.cancel();
+		const wait = Math.max(
+			0,
+			Math.min(DIRECT_QUIET_MS, burst.firstAt + DIRECT_BURST_MS - now),
+		);
+		burst.timer = setTimer(wait, () => {
+			if (this.#bursts.get(agentId) !== burst) return;
+			this.#bursts.delete(agentId);
+			void this.#tellDirect(agentId, burst.firstAt, burst.first);
+		});
+	}
+
+	/**
+	 * Tell the orchestrator what the person wrote to `agentId` since it was
+	 * last told: their words in order, the task it is on (as it is now) with
+	 * its open questions and other agents — what it tidies up.
+	 */
+	async #tellDirect(
+		agentId: string,
+		sentAt: number,
+		first: Promise<string | undefined> | undefined,
+	): Promise<void> {
+		const from = await first;
+		const read = await Promise.resolve(
+			this.ports.personMessages !== undefined && from !== undefined
+				? this.ports.personMessages(agentId, from)
+				: Promise.resolve(this.ports.personMessage?.(agentId)).then((one) =>
+						one === undefined ? [] : [one],
+					),
+		).catch(() => undefined);
+		// Each told once: a burst begun on a message told already goes on after it.
+		const told = this.#toldUpTo.get(agentId);
+		const at = (read ?? []).findIndex((one) => one.since === told);
+		const messages =
+			told === undefined || at < 0 ? (read ?? []) : (read ?? []).slice(at + 1);
+		const last = messages.findLast((one) => one.since !== undefined)?.since;
+		if (last !== undefined) this.#toldUpTo.set(agentId, last);
+		const live = this.ports.agents().find((one) => one.id === agentId);
+		const task = this.#store().taskOfAgent(agentId);
+		if (task === undefined && !this.#managed(agentId)) return;
+		const names = new Map(this.ports.agents().map((one) => [one.id, one.name]));
+		const texts = messages
+			.map((one) => one.text ?? "")
+			.filter((text) => text.trim().length > 0);
+		const since = messages.find((one) => one.since !== undefined)?.since;
+		const escalations =
+			task === undefined
+				? []
+				: this.#store()
+						.escalations()
+						.filter((one) => one.taskId === task.id && isOpen(one))
+						.map((one) => ({ id: one.id, title: one.title }));
+		const others =
+			task === undefined
+				? []
+				: task.agents
+						.filter((one) => one.agentId !== agentId && names.has(one.agentId))
+						.map((one) => ({ id: one.agentId, name: names.get(one.agentId)! }));
+		this.#instructions = [
+			...this.#instructions,
+			{
+				agentId,
+				...(task === undefined ? {} : { taskId: task.id }),
+				sentAt,
+				texts,
+			},
+		].slice(-INSTRUCTIONS_KEPT);
+		this.events.dispatch({
+			type: "task.human_direct",
+			...(task === undefined
+				? {}
+				: { task: { id: task.id, title: task.title } }),
+			agent: {
+				id: agentId,
+				...(live === undefined ? {} : { name: live.name }),
+			},
+			...(since === undefined ? {} : { since }),
+			...(texts.length === 0
+				? {}
+				: { messages: texts.map((text) => ({ text })) }),
+			...(escalations.length === 0 ? {} : { escalations }),
+			...(others.length === 0 ? {} : { others }),
+		});
 	}
 
 	// --- live state ------------------------------------------------------------
@@ -1518,6 +1718,8 @@ export class OrchestratorService {
 	}
 
 	dispose(): void {
+		for (const burst of this.#bursts.values()) burst.timer?.cancel();
+		this.#bursts.clear();
 		this.#timer?.cancel();
 		this.#resetTimer?.cancel();
 		this.events.dispose();
