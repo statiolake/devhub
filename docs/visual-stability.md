@@ -179,6 +179,10 @@ Flaky and not excused (it fails the run when it shows):
   for a frame between its first page and its settled one. The view's items
   are rendered from a `vim.schedule` after the list buffer changes, and one
   such render caught snacks' list mid-rewrite.
+- `tree/scroll-sticky` at 6x, two runs in five: the command line's box is
+  on screen for one frame during `<C-d>`. The screencast missed that frame,
+  so what it held is not known; Neovim's `showcmd` of `^D` flushed mid-key
+  (as in `cmdline/open`) is the likely cause, not a confirmed one.
 
 ## Adding a scenario
 
