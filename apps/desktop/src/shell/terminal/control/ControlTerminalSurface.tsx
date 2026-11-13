@@ -119,6 +119,8 @@ import type { TerminalSurfaceProps } from "../TerminalSurface";
 import { WindowStrip } from "./WindowStrip";
 import { ChooserSheet } from "./ChooserSheet";
 import { createRoot } from "react-dom/client";
+import { PerFrame } from "../../neovim/perFrame";
+import { PROVISIONAL_TTL_MS } from "../../neovim/provisional";
 import { CompletionMenu } from "../../completion/CompletionMenu";
 import type { Kind } from "../../neovim/kinds";
 
@@ -316,6 +318,10 @@ export function ControlTerminalSurface({
     grids.className = "nvim-grids control-grids";
     const lines = document.createElement("div");
     lines.className = "control-borders";
+    // The boundary a drag resizes, lit under the pointer and, while dragged,
+    // at the pointer at once (`placeSash`).
+    const sashEl = document.createElement("div");
+    sashEl.className = "control-sash";
     const cursor = document.createElement("div");
     cursor.className = "control-cursor";
     // The text under a block cursor, in its colours (`cursorInk.ts`, as
@@ -367,6 +373,7 @@ export function ControlTerminalSurface({
     host.append(
       grids,
       lines,
+      sashEl,
       popupFrame,
       promptLine,
       menuEl,
@@ -1953,46 +1960,122 @@ export function ControlTerminalSurface({
         reports,
       };
     };
-    // A boundary dragged with the first button: the pane before it (left
-    // of a vertical one, above a horizontal one) resized to the pointer's
-    // cell, each cell as the pointer reaches it; placed at once, no motion
-    // (`dragging`), so the boundary stays under the hand.
-    const onBoundaryDrag = (event: MouseEvent): boolean => {
-      if (event.button !== 0 || view.popup !== undefined) return false;
-      const { col, row } = cellAt(event);
+    /**
+     * The boundary between two panes at a cell, when there is one: the pane
+     * before it (left of a vertical one, above a horizontal one).
+     */
+    const boundaryAt = (
+      col: number,
+      row: number,
+    ): { readonly before: PaneBox; readonly vertical: boolean } | undefined => {
+      if (view.popup !== undefined) return undefined;
       const left = paneAt(view, col - 1, row);
       const above = paneAt(view, col, row - 1);
       const vertical =
         left !== undefined &&
         left.x + left.width === col &&
         paneAt(view, col + 1, row) !== undefined;
-      const before = vertical
-        ? left
-        : above !== undefined &&
-            above.y + above.height === row &&
-            paneAt(view, col, row + 1) !== undefined
-          ? above
-          : undefined;
-      if (before === undefined) return false;
+      if (vertical) return { before: left, vertical };
+      if (
+        above !== undefined &&
+        above.y + above.height === row &&
+        paneAt(view, col, row + 1) !== undefined
+      )
+        return { before: above, vertical: false };
+      return undefined;
+    };
+    /** The boundary under the pointer (its cursor and band), when not dragged. */
+    let boundaryHover: ReturnType<typeof boundaryAt>;
+    /**
+     * The pointer's shape over the cells: a boundary's resize arrows, a
+     * link's hand, else the cells' own I-beam (`control.css`).
+     */
+    const placePointer = () => {
+      const next =
+        boundaryHover !== undefined
+          ? boundaryHover.vertical
+            ? "col-resize"
+            : "row-resize"
+          : hover !== undefined
+            ? "pointer"
+            : "";
+      if (grids.style.cursor !== next) grids.style.cursor = next;
+    };
+    /**
+     * The band over a boundary, moved to `cells` from the pane before it
+     * while dragged (ahead of tmux's layout, which lands under it), or
+     * hidden.
+     */
+    const placeSash = (
+      at: ReturnType<typeof boundaryAt>,
+      cells: number | undefined,
+    ) => {
+      sashEl.classList.toggle("control-sash-on", at !== undefined);
+      sashEl.classList.toggle("control-sash-dragged", cells !== undefined);
+      if (at === undefined) return;
+      const { width, height } = cell();
+      const b = at.before;
+      const st = sashEl.style;
+      if (at.vertical) {
+        const col = b.x + (cells ?? b.width);
+        st.left = `${String((col + 0.5) * width - 2)}px`;
+        st.top = `${String(b.y * height)}px`;
+        st.width = "4px";
+        st.height = `${String(b.height * height)}px`;
+      } else {
+        const row = b.y + (cells ?? b.height);
+        st.left = `${String(b.x * width)}px`;
+        st.top = `${String((row + 0.5) * height - 2)}px`;
+        st.width = `${String(b.width * width)}px`;
+        st.height = "4px";
+      }
+    };
+    let sashTimer = 0;
+    // A boundary dragged with the first button: the pane before it (left
+    // of a vertical one, above a horizontal one) resized to the pointer's
+    // cell, a step a frame at most (`PerFrame`: a fast hand over a slow
+    // link asks for where it is now, not every cell it went over); placed
+    // at once, no motion (`dragging`), so the boundary stays under the
+    // hand, and its band is at the pointer before tmux's layout comes.
+    const onBoundaryDrag = (event: MouseEvent): boolean => {
+      if (event.button !== 0) return false;
+      const { col, row } = cellAt(event);
+      const at = boundaryAt(col, row);
+      if (at === undefined) return false;
+      const { before, vertical } = at;
       const id = before.pane;
       let last = vertical ? before.width : before.height;
       dragging = true;
+      window.clearTimeout(sashTimer);
+      placeSash(at, last);
+      const steps = new PerFrame<number>((cells) => {
+        send({ kind: "resize-pane", pane: id, vertical, cells });
+      });
       const onMove = (e: MouseEvent) => {
-        const at = cellAt(e);
+        const where = cellAt(e);
         const box = view.panes.find((p) => p.pane === id);
         if (box === undefined) return;
-        const cells = Math.max(1, vertical ? at.col - box.x : at.row - box.y);
+        const cells = Math.max(
+          1,
+          vertical ? where.col - box.x : where.row - box.y,
+        );
         if (cells === last) return;
         last = cells;
-        send({ kind: "resize-pane", pane: id, vertical, cells });
+        placeSash({ before: box, vertical }, cells);
+        steps.push(cells);
       };
       const onUp = () => {
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
-        // The last step's layout may still be on its way.
+        steps.flush();
+        // The last step's layout may still be on its way: the band stays
+        // where it was let go until it has come.
         setTimeout(() => {
           dragging = false;
         }, STEP_REPEAT_MS);
+        sashTimer = window.setTimeout(() => {
+          placeSash(undefined, undefined);
+        }, PROVISIONAL_TTL_MS);
       };
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
@@ -2088,7 +2171,7 @@ export function ControlTerminalSurface({
       if (JSON.stringify(next) === JSON.stringify(hover)) return;
       const before = hover;
       hover = next;
-      grids.style.cursor = next === undefined ? "" : "pointer";
+      placePointer();
       grids.title = next?.span.uri ?? "";
       if (before !== undefined) drawMarks(before.pane);
       if (next !== undefined && next.pane !== before?.pane)
@@ -2472,6 +2555,20 @@ export function ControlTerminalSurface({
         return;
       }
       const hit = mouseFor(event);
+      // Over a boundary between panes: its resize arrows, and its band lit.
+      if (!dragging) {
+        const { col, row } = cellAt(event);
+        const next = hit === undefined ? boundaryAt(col, row) : undefined;
+        if (
+          next?.before.pane !== boundaryHover?.before.pane ||
+          next?.vertical !== boundaryHover?.vertical
+        ) {
+          boundaryHover = next;
+          window.clearTimeout(sashTimer);
+          placeSash(next, undefined);
+          placePointer();
+        }
+      }
       if (hit === undefined || hit.pane.pane < 0) {
         setHover(undefined);
         return;
@@ -2494,7 +2591,14 @@ export function ControlTerminalSurface({
         });
       }
     };
-    const onHoverLeave = () => setHover(undefined);
+    const onHoverLeave = () => {
+      setHover(undefined);
+      if (boundaryHover !== undefined && !dragging) {
+        boundaryHover = undefined;
+        placeSash(undefined, undefined);
+        placePointer();
+      }
+    };
     // Cmd pressed or let go over a URL shows or hides its underline.
     const onModifier = (event: KeyboardEvent) => {
       if (hoverAt !== undefined)

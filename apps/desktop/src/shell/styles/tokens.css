@@ -787,7 +787,11 @@ body {
    selection model, a GUI Agent's transcript is read and quoted, and a text
    field is a text field. Their text shows the I-beam: `auto` is set where
    the text starts and inherited below it, so a link inside the transcript
-   keeps the hand, and a control the arrow (below), for what it holds. */
+   keeps the hand, and a control the arrow (below), for what it holds.
+   A terminal's cells are canvases, over which `auto` is the arrow: their
+   I-beam is set on the grids themselves (`control.css`) and inherited by
+   what a pointer of its own (a border's resize, a link's hand) does not
+   override. */
 .failure-title,
 .failure-detail,
 .surface-line,
@@ -807,8 +811,6 @@ textarea {
 .surface-line,
 .toast-summary,
 .toast-detail,
-.terminal-surface,
-.terminal-surface *,
 .conversation-selectable,
 input,
 textarea {
