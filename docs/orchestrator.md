@@ -53,14 +53,15 @@ orchestrator's folder.
   and the one at the old root is an ordinary row again. An orchestrator
   started with a `--root` other than the setting is the same: its folder is
   the row's while it runs.
-- **Its editor** (the root's Neovim, for skills and `decisions.md`) is the
-  Workspace selected: the content area is its editor, as Scratch's is
-  when Scratch is selected, and the Orchestrator row stays the highlighted
-  one. It is reached by the row's right-click **Show Editor**, by the Files
-  tab's **エディタで開く** (which opens the folder first, unselected, when it
-  is not open, rather than sending the file to Scratch), by `devhub <file>`
-  inside the root, and by a `devhub:file` link. A click on the row goes back
-  to the board.
+- **Its editor** (the root's terminal, and the Neovim in its `devhub-nvim`
+  window, for skills and `decisions.md`) is the board's **ターミナル** tab
+  (below, "ターミナル: the orchestrator's terminal"): `devhub <file>` inside
+  the root, a `devhub:file` link to a file there, and a path in a task that
+  no open Workspace holds all open there, and `Cmd+Q E` on the row shows it.
+  The row's right-click **Show Editor** still selects the Workspace, the
+  content area its editor as Scratch's is when Scratch is selected, with the
+  Orchestrator row the highlighted one; a click on the row goes back to the
+  board.
 - **Selecting it** shows the Orchestrator screen: the board on the left, the
   orchestrator agent's pane on the right. It is the Agents view over the whole
   content area (`NavigationContext` `orchestrator`, `SurfaceLayout`
@@ -90,12 +91,11 @@ orchestrator's folder.
 
   | Showing                            | Title                                                                   |
   | ---------------------------------- | ----------------------------------------------------------------------- |
-  | the board, or the Files tab's tree | `Orchestrator — DevHub`                                                 |
+  | the board, or the Terminal tab     | `Orchestrator — DevHub`                                                 |
   | a task                             | `payments · 本番DBマイグレーション承認 — Orchestrator — DevHub`         |
   | a task, Workspace on an Issue      | `payments #123 · 本番DBマイグレーション承認 — Orchestrator — DevHub`    |
   | a task, Workspace on a PR          | `payments PR #130 · 本番DBマイグレーション承認 — Orchestrator — DevHub` |
   | a task with no agent               | `本番DBマイグレーション承認 — Orchestrator — DevHub`                    |
-  | a file in the Files tab            | `decisions.md — Orchestrator — DevHub`                                  |
   | a helper agent under the row       | as any Agent: `helper — Orchestrator — DevHub`                          |
 
   The Workspace is that of the task's first open bound agent (by its usual
@@ -103,7 +103,7 @@ orchestrator's folder.
   — `#123`, `owner/repo#123` when the Issue is in another repository,
   `PR #130` on a pull request's branch with no Issue, nothing when none is
   known ([window-and-pages.md](window-and-pages.md#the-windows-title)). The
-  task's title and the file name are put on one line and cut near 80 characters; no question or answer text is ever in the title. It follows
+  task's title is put on one line and cut near 80 characters; no question or answer text is ever in the title. It follows
   every open, Back, Forward and tab, and the screen coming back as it was.
 
 ## The orchestrator's work in the Sidebar
@@ -492,8 +492,10 @@ link when it names a file on this Mac under one of the task's folders,
 looked through in order: each bound agent's own folder (its worktree, when it
 is on this Mac) and its Workspace's, the latest agent first, then the
 orchestrator's folder (`taskPlaces`). A click opens it in the editor of the
-open Workspace that holds it, as a `devhub:file` link does; one in no open
-Workspace opens on the latest agent's machine. Its right-click menu, and
+open Workspace that holds it, as a `devhub:file` link does (the
+orchestrator's own folder in the Terminal tab); one in no open Workspace
+opens in the Orchestrator's own Neovim — the `devhub-nvim` window of the
+Orchestrator row's Workspace — in the Terminal tab (`openOrchestratorFile`). Its right-click menu, and
 every other link's, is the conversation's (`docs/agent-gui.md`, "A link's
 right-click menu"), the task's and question's URL chips included.
 
@@ -752,37 +754,59 @@ a Workspace from a task is a deliberate move (`reason: "explicit"`), so Back
 
 The left pane is where it was left. Whichever way the Orchestrator row is
 selected again — Back, its Sidebar row, `focus orchestrator` — the pane
-shows the same tab, the same task or file over it, scrolled as it was and
-each unsent answer still in its composer (per escalation), and on the Files
-tab the same folders open (`shell/agents/orchestratorMemory.ts`). It is
-shown in place, without sliding in again. A task that is gone lands on the
-board instead; so does a file that is gone. A task open, or a file, is a
-place in Back and Forward of its own: opening one is an entry, Back from it
-is the board (or the tree) as it was left — its scroll and folded lanes
+shows the same tab, the same task over it, scrolled as it was and each
+unsent answer still in its composer (per escalation)
+(`shell/agents/orchestratorMemory.ts`). It is shown in place, without
+sliding in again. A task that is gone lands on the board instead. A task
+open is a place in Back and Forward of its own: opening one is an entry,
+Back from it is the board as it was left — its scroll and folded lanes
 included — and its ‹ is "up to the board", which is Back when it was opened
 from that board (`docs/window-and-pages.md`, Back and Forward). This is kept
 for the session only; a restart starts on the board.
 
-### ファイル: the orchestrator's folder
+### ターミナル: the orchestrator's terminal
 
-The left pane's second tab, ボード | ファイル (the board is the default; the
-choice is kept for the session), is the orchestrator's folder — the running
-orchestrator's Workspace root, else `[orchestrator] root` — as a tree: where
-it keeps what it decided (`decisions.md`) and its skills (`.claude/skills`).
-`.git`, `node_modules`, `.DS_Store` and the like are left out, and so is what
-the folder's `.gitignore` ignores; dot-folders stay. A file opens over the
-tree the way an escalation opens over the board, read-only: Markdown with
-the conversation's renderer, other text as a highlighted code block, images
-(SVG included) inline. **エディタで開く** opens it in the editor of the
-Workspace that contains it — the Orchestrator row's own — as `devhub <file>` would,
-and that too is a place in Back and Forward.
+The left pane's second tab, ボード | ターミナル (the board is the default; the
+choice is kept for the session), is the terminal of the Orchestrator row's
+Workspace — its `ws-` tmux session, the very terminal page
+(`pane.html#ws:<id>`) that is the Workspace's editor area — laid by main over
+the board's body, under the tabs, left of the orchestrator agent's pane
+(`LayoutState.boardTerminal`, `boardTerminalRect` in
+`main/shell/windowLayout.ts`; the header is 38px in both). So everything a
+Workspace's terminal does it does here: tmux control mode, the Neovim GUI
+drawn over its panes, `devhub <file>`, copy, links.
 
-Main reads the folder and watches it
-(`main/orchestrator/orchestratorFiles.ts`): the page lists, reads and is told
-what changed (debounced), so when the orchestrator writes `decisions.md` the
-tree and the open file follow, and the tab shows a dot while the board is in
-front. Every path is from the root and confined to it: an absolute path,
-`..`, or a symlink that leads out is refused.
+- **Which session.** The Workspace's, not one of its own: that session's
+  `devhub-nvim` window is where `devhub <file>` opens a file in the
+  orchestrator's folder, so a file sent to the tab is in the tab. While no
+  Workspace is the row's yet (no orchestrator has run, the folder was never
+  opened), choosing the tab opens `[orchestrator] root` unselected — made if
+  it is missing, as Start makes it — which is the Workspace the row is anyway;
+  the tab says it is opening the folder until it is there.
+- **What lands there.** `devhub <file>` inside the root (from the tab's own
+  shell, the orchestrator agent, anything), a `devhub:file` link to a file
+  there, a path in a task or escalation found in the orchestrator's folder,
+  and a path in one that no open Workspace holds (the Orchestrator's own
+  Neovim opens it by its absolute path). Each selects the row on this tab as
+  a deliberate move — a place in Back and Forward at once — and puts the keys
+  in the Neovim. A helper agent's `devhub <file>` still opens beside that
+  agent, as any Agent's does.
+- **Keys.** Choosing the tab puts the keys in the terminal; a click into the
+  board's header or the orchestrator's pane takes them back out, and a click
+  into the terminal puts them in again. On the tab strip, ←/→, Home and End
+  move between the tabs (one tab stop, as the mode control's segments).
+  `Cmd+Q E` on the row is the Terminal tab.
+- **History.** A tab chosen is the same place showing another page: the
+  entry on screen is written over, as for any tab. Back and Forward put the
+  tab back as each entry had it, the board with its task over it included.
+- **Lifetime.** The page is made the first time the tab (or the Workspace's
+  editor) is shown and kept, attached, while DevHub runs; the tmux session
+  outlives DevHub, so after a restart the tab attaches to the same session
+  with its windows, scrollback and `devhub-nvim` Neovim where they were.
+
+The Files tab that used to be here (a read-only tree of the folder, with a
+file pushed over it and エディタで開く) is gone: the folder is a terminal
+away, and its files open in the one Neovim there is.
 
 ### 待機: parked on an outside condition
 

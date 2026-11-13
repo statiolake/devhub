@@ -67,15 +67,10 @@ describe("text spacing", () => {
     expect(ruleFor(conversation, ROOT)).toMatch(TYPESETTING);
   });
 
-  it("is the Orchestrator's task and file views' too", () => {
-    for (const view of [
-      "shell/agents/OrchestratorScreen.tsx",
-      "shell/agents/OrchestratorFiles.tsx",
-    ]) {
-      expect(read(view), view).toMatch(
-        /className="orchestrator-thread[^"]*\bconversation-typeset\b/,
-      );
-    }
+  it("is the Orchestrator's task view's too", () => {
+    expect(read("shell/agents/OrchestratorScreen.tsx")).toMatch(
+      /className="orchestrator-thread[^"]*\bconversation-typeset\b/,
+    );
   });
 
   it("is inherited by every form control, which the browser would not do for font", () => {

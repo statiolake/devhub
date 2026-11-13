@@ -24,12 +24,11 @@
  * reason.
  *
  * **The Orchestrator's part comes from its page, by id.** The screen reports
- * which task or file its left pane shows (`reportOrchestratorView`) and
+ * which task its left pane shows (`reportOrchestratorView`) and
  * main reads the task's title and Workspace off its own store, so the
  * title is the time spent on the project the task is about:
  *
  *     {workspace} · {subject} — Orchestrator — DevHub
- *     {file name} — Orchestrator — DevHub
  *     Orchestrator — DevHub
  *
  * **Wherever a Workspace is named, its Issue is named with it.** A time
@@ -98,10 +97,9 @@ export type OrchestratorTitleView =
 			readonly subject: string;
 			/** The agents bound to it, in order; the first one's Workspace counts. */
 			readonly agentIds: readonly string[];
-	  }
-	| { readonly kind: "file"; readonly path: string };
+	  };
 
-/** How long a subject or a file name may run in the title, in characters. */
+/** How long a subject may run in the title, in characters. */
 export const TITLE_TEXT_LIMIT = 80;
 
 /** Between the Workspace a task is about and its subject. */
@@ -245,8 +243,8 @@ function workspaceName(
 
 /**
  * The Orchestrator screen's element: the task being read — after the
- * Workspace it is about, so the time lands on that project — or the file
- * open in the Files tab. The board has none.
+ * Workspace it is about, so the time lands on that project. The board and
+ * the Terminal tab have none.
  */
 function orchestratorElement(facts: ShellTitleFacts): string | undefined {
 	const view = facts.orchestratorView;
@@ -254,10 +252,6 @@ function orchestratorElement(facts: ShellTitleFacts): string | undefined {
 		case undefined:
 		case "board":
 			return undefined;
-		case "file": {
-			const name = titleText(view.path.split("/").at(-1) ?? "");
-			return name === "" ? undefined : name;
-		}
 		case "task": {
 			const subject = titleText(view.subject);
 			const found = taskWorkspace(facts, view);
@@ -329,10 +323,6 @@ export function orchestratorViewWire(
 		case "task":
 			return typeof view["id"] === "number" && Number.isInteger(view["id"])
 				? { kind: "task", id: view["id"] }
-				: undefined;
-		case "file":
-			return typeof view["path"] === "string" && view["path"] !== ""
-				? { kind: "file", path: view["path"] }
 				: undefined;
 		default:
 			return undefined;

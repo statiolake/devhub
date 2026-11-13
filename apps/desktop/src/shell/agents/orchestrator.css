@@ -594,107 +594,16 @@
   outline: none;
 }
 
-/* Something in the folder changed since the tab was last looked at. */
-.orchestrator-tab-dot {
-  position: absolute;
-  top: 3px;
-  right: 2px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-}
+/* ---------------------------------------------------------- terminal */
 
-/* ------------------------------------------------------------- files */
-
-.orchestrator-files {
-  padding: var(--space-2) 0 var(--space-4);
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-
-.orchestrator-files-root {
-  overflow: hidden;
-  padding: 0 var(--board-pad) var(--space-2);
-  color: var(--tertiary);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.orchestrator-tree {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.orchestrator-files > .orchestrator-tree {
-  padding: 0 var(--space-2);
-}
-
-.orchestrator-file-row {
+/* The Terminal tab's body: main lays the Orchestrator row's Workspace's
+   terminal page over exactly this (`boardTerminalRect` in
+   `main/shell/windowLayout.ts`, under the header's 38px), so what is drawn
+   here is only the wait before it is. */
+.orchestrator-terminal {
   display: flex;
-  width: 100%;
-  height: 24px;
-  box-sizing: border-box;
   align-items: center;
-  gap: 4px;
-  padding-right: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-row);
-  background: transparent;
-  color: var(--primary);
-  font: inherit;
-  font-size: 12.5px;
-  text-align: left;
-}
-
-.orchestrator-file-row:hover {
-  background: var(--wash);
-}
-
-.orchestrator-file-row:focus-visible {
-  box-shadow: var(--focus-ring);
-  outline: none;
-}
-
-.orchestrator-file-chevron {
-  width: 12px;
-  flex: none;
-  color: var(--tertiary);
-  font-size: 10px;
-  text-align: center;
-}
-
-.orchestrator-file-name {
-  overflow: hidden;
-  min-width: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.orchestrator-file-row[data-kind="directory"] .orchestrator-file-name {
-  color: var(--secondary);
-}
-
-.orchestrator-file-folder {
-  overflow: hidden;
-  margin-top: 2px;
-  color: var(--tertiary);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.orchestrator-open-editor {
-  flex: none;
-}
-
-.orchestrator-file-image {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  margin: 0 auto;
+  justify-content: center;
 }
 
 /* ------------------------------------------------------------- lanes */

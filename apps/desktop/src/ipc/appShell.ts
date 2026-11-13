@@ -646,15 +646,15 @@ export interface AppErrorWire {
 }
 /**
  * What the Orchestrator screen's left pane shows, as a place in Back and
- * Forward: the board, the Files tab's tree, a task read over the
- * board, or a file read over the tree. Part of a history entry whenever the
+ * Forward: the board, a task read over the board, or the Terminal tab.
+ * Part of a history entry whenever the
  * Orchestrator row is selected (`model/orchestratorView.ts`).
  */
 export type OrchestratorPlaceWire =
 	| { readonly kind: "board" }
-	| { readonly kind: "files" }
 	| { readonly kind: "task"; readonly id: number }
-	| { readonly kind: "file"; readonly path: string };
+	/** The Terminal tab: the Orchestrator row's Workspace's terminal. */
+	| { readonly kind: "terminal" };
 
 /**
  * The model's word on the Orchestrator pane, in the snapshot.
@@ -718,7 +718,7 @@ export type AppIntentWire =
 			readonly drawn?: boolean;
 	  }
 	/**
-	 * A task's (or a file's) own way back to the board (or the tree):
+	 * A task's own way back to the board:
 	 * Back, when Back leads there; otherwise a navigation there.
 	 */
 	| { readonly type: "leave_orchestrator_view"; readonly drawn?: boolean }

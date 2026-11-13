@@ -199,7 +199,10 @@ are the row's children, with the Workspaces the orchestrator manages
 or beside the root's editor. The root's editor itself is that Workspace
 selected, and the content area is its editor as for Scratch; the
 Orchestrator row stays highlighted, and its right-click **Show Editor** is
-the way there from the Sidebar (the Files tab's エディタで開く is the other).
+the way there from the Sidebar. The same editor area is also the board's
+**ターミナル** tab, laid over the board's body beside the orchestrator's pane
+(`LayoutState.boardTerminal`, `boardTerminalRect`): one terminal page, shown
+in one place at a time.
 
 ## A close asks once, then acts
 
@@ -865,8 +868,8 @@ should feel as it does in a browser.
 
 **An entry is a place**: the selection (`AppModel.selection`) — a Workspace,
 an Agent, or the two side by side, with the presentation it was shown in —
-and, on the Orchestrator row, what the row's pane shows: the board, the Files
-tab's tree, an escalation read over the board, or a file read over the tree
+and, on the Orchestrator row, what the row's pane shows: the board, an
+escalation read over the board, or the Terminal tab
 (`model/orchestratorView.ts`). Opening an escalation is going somewhere, as
 following a link is, so it is an entry of its own, and Back from it is the
 board it was opened from.
@@ -882,7 +885,7 @@ there** — not when the selection only passes over it:
 | What happened                                                                                                                                                                                                                                                                                                                                                                                    | Recorded?             |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
 | going there on purpose: a click on a `devhub:` link's chip (in a conversation, an escalation's thread, the board), a click on a Sidebar row, `Cmd+Q F`'s picker, the Go to picker (`Cmd+Q G`), `Cmd+Q 0`–`9`, a command chosen in the palette, `Cmd+Q Shift+J` and `Cmd+Q Shift+O` (both ways), a new Agent, `devhub --tell focus`, Enter or a click on a not-running editor's placeholder | yes, at once          |
-| on the Orchestrator pane: an escalation opened (a card clicked, Enter on the board, a `devhub:escalation` link), a file opened in the Files tab                                                                                                                                                                                                                                                    | yes, at once          |
+| on the Orchestrator pane: an escalation opened (a card clicked, Enter on the board, a `devhub:escalation` link), a file sent to the Terminal tab (a path in a task or an escalation, a `devhub:file` link, `devhub <file>` in the orchestrator's folder)                                                                                                                                         | yes, at once          |
 | a key typed into the place (not a chord's strokes, not a modifier alone, not Back or Forward's own keys), a press or a scroll in it                                                                                                                                                                                                                                                             | yes, at the first one |
 | `Cmd+Q N`/`P` (stepping past places), the Sidebar walked from the keyboard (its Return included), a selection repaired after a close or an exit, a command line that does not take focus, an Agent finishing                                                                                                                                                                                  | no                    |
 | a tab chosen on the Orchestrator pane, an escalation that left the board while it was read                                                                                                                                                                                                                                                                                                        | written over the entry on screen, as `replaceState` does |

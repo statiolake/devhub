@@ -756,8 +756,8 @@ export class AppModel {
    * with it.
    *
    * `"explicit"` is going there — a card opened, a `devhub:escalation` link,
-   * a file opened — and records the place at once, as a click on a Sidebar
-   * row does, so Back from it is wherever the person was. Absent is the pane
+   * a file sent to the Terminal tab — and records the place at once, as a
+   * click on a Sidebar row does, so Back from it is wherever the person was. Absent is the pane
    * changing under the same place (a tab chosen, an escalation that left the
    * board): the entry on screen is written over, as `replaceState` does, and
    * nothing is selected that was not.
@@ -801,8 +801,7 @@ export class AppModel {
   }
 
   /**
-   * An escalation's own way back to the board — its ‹, Esc, an answer sent
-   * — or a file's back to the tree.
+   * An escalation's own way back to the board — its ‹, Esc, an answer sent.
    *
    * It means "up to the page under". When Back leads to exactly that page
    * (the escalation was opened from this board) it *is* Back, so Forward

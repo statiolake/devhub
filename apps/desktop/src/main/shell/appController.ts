@@ -322,14 +322,6 @@ import {
 	writeEscalationAttachments,
 	type AttachmentFile,
 } from "../orchestrator/attachments.js";
-import {
-	insideRoot,
-	listFolder,
-	OrchestratorFileError,
-	readRootFile,
-	rootProblem,
-	watchRoot,
-} from "../orchestrator/orchestratorFiles.js";
 import { workspaceToken } from "../orchestrator/events.js";
 import { GitHubItemSource } from "../orchestrator/githubItems.js";
 import {
@@ -2164,6 +2156,10 @@ export class AppController {
 			setOrchestratorMode: (mode) => {
 				this.orchestrator?.setMode(mode);
 			},
+			showOrchestratorTerminal: () => {
+				this.keyboardInSidebar = false;
+				void this.showOrchestratorTerminal().catch(report);
+			},
 			// The screen first (a deliberate move, as the row's click is),
 			// then the composer on it.
 			openOrchestratorRequest: () => {
@@ -2551,6 +2547,15 @@ export class AppController {
 	 */
 	private paneFocused(pane: ContentFocus): void {
 		const model = this.coordinator.model;
+		// A click into the Terminal tab, or out of it into the board or the
+		// orchestrator's pane: where the keys stay while the tab is shown.
+		if (this.boardTerminalKeys !== undefined && pane.kind !== "terminal") {
+			const keys = pane.kind === "editor";
+			if (keys !== this.boardTerminalKeys) {
+				this.boardTerminalKeys = keys;
+				this.publishLayoutState();
+			}
+		}
 		if (pane.kind === "terminal") {
 			if (model.paneFocus === pane.terminalId) return;
 			this.dispatchOwn({
@@ -4767,6 +4772,11 @@ export class AppController {
 		// time it is shown and kept, with every Neovim in it drawn over its
 		// pane.
 		if (editorKey !== undefined) this.neovimShown.add(editorKey);
+		// The Orchestrator's Terminal tab: its Workspace's editor area, laid
+		// over the board's body (`LayoutState.boardTerminal`), made the first
+		// time the tab is shown and kept the same way.
+		const boardTerminalKey = this.boardTerminalKey(snapshot);
+		if (boardTerminalKey !== undefined) this.neovimShown.add(boardTerminalKey);
 		const neovimPages = this.coordinator.model.workspaces.flatMap(
 			(workspace) =>
 				this.neovimShown.has(workspace.key)
@@ -4815,10 +4825,17 @@ export class AppController {
 		shell.syncTerminalViews(
 			model.agentTerminals().map((one) => one.terminalId),
 		);
+		const shownEditorKey =
+			surface.kind === "none"
+				? undefined
+				: surface.kind === "agent"
+					? boardTerminalKey
+					: editorKey;
 		const editorWorkspace =
-			editorKey !== undefined && surface.kind !== "none"
-				? neovimPages.find((page) => page.editorKey === editorKey)?.workspaceId
-				: undefined;
+			shownEditorKey === undefined
+				? undefined
+				: neovimPages.find((page) => page.editorKey === shownEditorKey)
+						?.workspaceId;
 		this.syncTerminalNeovims(
 			shell,
 			neovimPages.map((page) => page.workspaceId),
@@ -4852,13 +4869,22 @@ export class AppController {
 				? ("beside-board" as const)
 				: ("whole" as const);
 		const paneFocus = model.paneFocus;
+		// On the Terminal tab the keys are the terminal's from the moment it
+		// is chosen until the person clicks into the board or the
+		// orchestrator's pane (`paneFocused`).
+		const onBoardTerminal =
+			surface.kind === "agent" && boardTerminalKey !== undefined;
+		if (!onBoardTerminal) this.boardTerminalKeys = undefined;
+		else if (this.boardTerminalKeys === undefined)
+			this.boardTerminalKeys = true;
 		const keyboard: KeyboardHalf = this.keyboardInSidebar
 			? "sidebar"
 			: paneFocus !== undefined
 				? { terminal: paneFocus }
 				: surface.kind === "editor" ||
 					  (surface.kind === "split" &&
-							snapshot.selection.context.kind !== "agent")
+							snapshot.selection.context.kind !== "agent") ||
+					  (onBoardTerminal && this.boardTerminalKeys === true)
 					? "editor"
 					: "agents";
 		// While a divider is being dragged the views follow the pointer as
@@ -4892,10 +4918,87 @@ export class AppController {
 				...(terminal === undefined ? {} : { terminal }),
 				...(conversation === undefined ? {} : { conversation }),
 				...(this.agentsOverlay ? { agentsOverlay: true } : {}),
+				...(onBoardTerminal ? { boardTerminal: boardTerminalKey } : {}),
 			},
 			{ live },
 		);
 		this.publishAreas(shell);
+	}
+
+	/**
+	 * Whether the keys are the Terminal tab's while it is on screen:
+	 * undefined while it is not, so choosing it again starts in it.
+	 */
+	private boardTerminalKeys: boolean | undefined;
+
+	/**
+	 * The Workspace whose editor area the Orchestrator's Terminal tab shows,
+	 * by its editor key, while the tab is on screen: the Orchestrator row's
+	 * own Workspace (`AppModel.orchestratorWorkspaceId`) — the one whose
+	 * `ws-` session holds the `devhub-nvim` window that `devhub <file>` in
+	 * the orchestrator's folder opens in. None open yet: the folder is opened
+	 * for it, unselected, and the tab waits (`openOrchestratorWorkspace`).
+	 */
+	private boardTerminalKey(snapshot: AppSnapshotWire): string | undefined {
+		if (snapshot.readiness !== "ready") return undefined;
+		if (snapshot.layout.kind !== "orchestrator") return undefined;
+		const model = this.coordinator.model;
+		if (model.orchestratorView.kind !== "terminal") {
+			this.orchestratorWorkspaceRefused = undefined;
+			return undefined;
+		}
+		const id = model.orchestratorWorkspaceId;
+		const workspace =
+			id === undefined
+				? undefined
+				: model.workspaces.find((one) => one.id === id);
+		if (workspace === undefined) {
+			void this.openOrchestratorWorkspace().catch(() => undefined);
+			return undefined;
+		}
+		return workspace.key;
+	}
+
+	/** The open in flight, so asking twice opens once. */
+	private orchestratorWorkspaceOpening: Promise<WorkspaceId> | undefined;
+	/** A root that would not open: not tried again until the tab is left. */
+	private orchestratorWorkspaceRefused: string | undefined;
+
+	/**
+	 * The Orchestrator row's Workspace, opened (unselected) at the
+	 * orchestrator's folder when none is open — the folder made if it is the
+	 * setting's and missing, as the window's Start makes it. It is the
+	 * Workspace the row is anyway (`AppModel.orchestratorWorkspaceId`), so its
+	 * `ws-` session is the orchestrator's own and lives as long as tmux does.
+	 */
+	private async openOrchestratorWorkspace(): Promise<WorkspaceId> {
+		const model = this.coordinator.model;
+		const open = model.orchestratorWorkspaceId;
+		if (open !== undefined) return open;
+		if (this.orchestratorWorkspaceOpening !== undefined)
+			return this.orchestratorWorkspaceOpening;
+		const root =
+			this.orchestratorFolder() ??
+			expandOrchestratorRoot(this.config.orchestrator.root);
+		if (this.orchestratorWorkspaceRefused === root)
+			throw new Error(`the orchestrator's folder ${root} would not open`);
+		const opening = (async () => {
+			const path = ensureOrchestratorRoot(root, { create: true });
+			return this.openFolderUnfocused(
+				requestedLocation({ kind: "local", path }),
+			);
+		})();
+		this.orchestratorWorkspaceOpening = opening;
+		try {
+			return await opening;
+		} catch (error: unknown) {
+			this.orchestratorWorkspaceRefused = root;
+			this.publishError(errorWire(error));
+			throw error;
+		} finally {
+			this.orchestratorWorkspaceOpening = undefined;
+			this.publishLayoutState();
+		}
 	}
 
 	/**
@@ -7574,10 +7677,21 @@ export class AppController {
 		// the editor is what this open is handing the person to type in. Two
 		// ordinary selections, and no second notion of "arrangement" for the
 		// layout to be reconciled with; see `model/appModel.ts`.
+		// The orchestrator agent's own pane is the Orchestrator screen's: its
+		// opens go to the Terminal tab beside it, not to a split.
 		const besideAgent =
-			destination.reason === "origin-agent"
+			destination.reason === "origin-agent" &&
+			!this.isOrchestratorAgent(destination.agentId)
 				? this.runningAgent(destination.agentId)
 				: undefined;
+		// The Orchestrator row's Workspace shows its editor in the board's
+		// Terminal tab, which is where `devhub <file>` in its folder — from
+		// the tab's own shell, the orchestrator, a link on the board — lands:
+		// the screen stays the Orchestrator's. A helper's pane asking still
+		// gets the split, as any Agent's does.
+		const onBoard =
+			besideAgent === undefined &&
+			workspace.id === this.coordinator.model.orchestratorWorkspaceId;
 		if (besideAgent) {
 			await this.dispatchAwaiting({
 				type: "select_context",
@@ -7585,12 +7699,14 @@ export class AppController {
 				presentation: "beside",
 			});
 		}
-		await this.dispatchAwaiting({
-			type: "select_context",
-			context: { kind: "workspace", workspaceId: workspace.id },
-			presentation: besideAgent ? "beside" : "full",
-			...(reason === undefined ? {} : { reason }),
-		});
+		if (onBoard) await this.showOrchestratorTerminal(reason);
+		else
+			await this.dispatchAwaiting({
+				type: "select_context",
+				context: { kind: "workspace", workspaceId: workspace.id },
+				presentation: besideAgent ? "beside" : "full",
+				...(reason === undefined ? {} : { reason }),
+			});
 		await this.openInEditor(workspace, target, position, waitMarkerPath);
 		this.rememberWaitReturn(waitMarkerPath, before);
 		this.bringToFront();
@@ -7599,7 +7715,9 @@ export class AppController {
 		// it is the one place they will see why it happened.
 		const beside = besideAgent
 			? `, beside the Agent ${besideAgent.displayName}`
-			: "";
+			: onBoard
+				? ", in the Orchestrator's Terminal tab"
+				: "";
 		return `${target.path}${at(position)} is open in the workspace at ${root}${beside}: ${because(destination.reason)}`;
 	}
 
@@ -7962,10 +8080,10 @@ export class AppController {
 	}
 
 	/**
-	 * The folder the Files tab shows: the running orchestrator's Workspace,
-	 * else `[orchestrator] root` — the folder it would start in.
+	 * The orchestrator's folder on this Mac: the running orchestrator's
+	 * Workspace, else `[orchestrator] root` — the folder it would start in.
 	 */
-	private orchestratorFilesRoot(): string | undefined {
+	private orchestratorFolder(): string | undefined {
 		const agentId = this.orchestrator?.orchestratorAgentId;
 		const workspace =
 			agentId === undefined
@@ -7977,13 +8095,6 @@ export class AppController {
 		return root === undefined ? undefined : expandOrchestratorRoot(root);
 	}
 
-	private requireOrchestratorFilesRoot(): string {
-		const root = this.orchestratorFilesRoot();
-		if (root === undefined)
-			throw new OrchestratorFileError("No orchestrator folder is set.");
-		return root;
-	}
-
 	/**
 	 * What an escalation's relative paths are relative to: its workspace,
 	 * else its first agent's, else the orchestrator's folder.
@@ -7993,7 +8104,7 @@ export class AppController {
 		const workspace = agents
 			.map((id) => model.workspaceForAgent(parseAgentId(id)))
 			.find((one) => one !== undefined && one.location.kind === "local");
-		return workspace?.root ?? this.orchestratorFilesRoot();
+		return workspace?.root ?? this.orchestratorFolder();
 	}
 
 	/**
@@ -8011,7 +8122,7 @@ export class AppController {
 		const roots = this.coordinator.model.workspaces
 			.filter((one) => one.location.kind === "local")
 			.map((one) => one.root as string);
-		const orchestratorRoot = this.orchestratorFilesRoot();
+		const orchestratorRoot = this.orchestratorFolder();
 		const storeRoot = join(this.userDataPath, "devhub", "escalations");
 		const imported = importEscalationFiles(markdown, {
 			storeRoot,
@@ -8028,28 +8139,6 @@ export class AppController {
 		);
 	}
 
-	/** The watch on the Files tab's folder: one, on the root last listed. */
-	private orchestratorFilesWatch:
-		| { readonly root: string; readonly stop: () => void }
-		| undefined;
-
-	private watchOrchestratorFiles(root: string): void {
-		if (this.orchestratorFilesWatch?.root === root) return;
-		this.orchestratorFilesWatch?.stop();
-		this.orchestratorFilesWatch = {
-			root,
-			stop: watchRoot(root, (paths) => {
-				this.send(CHANNELS.orchestratorFilesChanged, paths);
-			}),
-		};
-	}
-
-	/**
-	 * "エディタで開く": the file opened the way \`devhub <file>\` opens it — in
-	 * the Workspace that contains it (the root's own row), its workbench woken
-	 * as usual and switched to. The person asked for it, so the Workspace is a
-	 * place in Back and Forward at once (\`NavigationReason\`).
-	 */
 	/**
 	 * A `devhub:file` link, clicked (`model/devhubLink.ts`): the file, on the
 	 * machine of the Workspace the page found holding it, opened in that
@@ -8121,37 +8210,68 @@ export class AppController {
 		return prefixed.length === 1 ? prefixed[0]!.id : undefined;
 	}
 
-	private async openOrchestratorFile(path: unknown): Promise<void> {
+	/**
+	 * A file an escalation names that no open Workspace holds: opened in the
+	 * Orchestrator's own Neovim — the `devhub-nvim` window of the Orchestrator
+	 * row's Workspace, opened first (unselected) when there is none — and
+	 * shown in the board's Terminal tab, as a deliberate move (a place in
+	 * Back and Forward at once). On this Mac only: an escalation's paths are
+	 * resolved here.
+	 */
+	private async openOrchestratorFile(
+		path: unknown,
+		range: unknown,
+	): Promise<void> {
 		this.personStartedAction();
-		const root = this.requireOrchestratorFilesRoot();
-		const absolute = await insideRoot(root, path);
+		if (typeof path !== "string" || !path.startsWith("/"))
+			throw new Error(`${JSON.stringify(path)} is not a file to open`);
 		const machine = runtimeMachine("local");
-		const target = await canonicalise(runtimeById(machine), absolute);
-		if (!target.exists || target.isDirectory)
-			throw fileNotFound(absolute, `${absolute} is not a file to open.`);
-		let destination = routeOpen(
-			target.path,
-			machine,
-			this.routableWorkspaces(),
-		);
-		// The folder is not open (no orchestrator has run, or its Workspace
-		// was never opened): open it, unselected, as the Orchestrator row's
-		// Workspace, and open the file there rather than in Scratch.
-		if (destination.kind === "scratch") {
-			await this.openFolderUnfocused(
-				requestedLocation({ kind: "local", path: root }),
+		const target = await canonicalise(runtimeById(machine), path);
+		if (!target.exists)
+			throw fileNotFound(path, `It is not there${runtimeById(machine).where}.`);
+		if (target.isDirectory)
+			throw fileNotFound(
+				target.path,
+				`${target.path} is a folder, not a file to open.`,
 			);
-			destination = routeOpen(target.path, machine, this.routableWorkspaces());
-		}
-		await this.openRouted(
-			destination,
-			machine,
-			target,
-			undefined,
-			undefined,
-			this.coordinator.model.selection,
-			"explicit",
+		const workspaceId = await this.openOrchestratorWorkspace();
+		const workspace = this.coordinator.model.workspaces.find(
+			(one) => one.id === workspaceId,
 		);
+		if (workspace === undefined)
+			throw new Error("the orchestrator's folder is no longer open");
+		await this.showOrchestratorTerminal("explicit");
+		await this.openInEditor(workspace, target, fileSelection(range), undefined);
+		this.bringToFront();
+	}
+
+	/**
+	 * The Orchestrator screen on its Terminal tab, the keys in it: a file
+	 * sent there (`explicit`, a place of its own), or `Cmd+Q E` on the row
+	 * (the tab chosen, written over the entry on screen as a click is).
+	 */
+	private async showOrchestratorTerminal(reason?: "explicit"): Promise<void> {
+		this.boardTerminalKeys = true;
+		// A view said without `explicit` only writes over the entry on the
+		// row, and selects nothing: the row is selected first.
+		if (
+			reason === undefined &&
+			this.coordinator.model.selection.context.kind !== "orchestrator"
+		)
+			await this.dispatchAwaiting(
+				intentFromWire({
+					type: "select_context",
+					context: { kind: "orchestrator" },
+				}),
+			);
+		await this.dispatchAwaiting(
+			intentFromWire({
+				type: "show_orchestrator_view",
+				view: { kind: "terminal" },
+				...(reason === undefined ? {} : { reason }),
+			}),
+		);
+		this.publishLayoutState();
 	}
 
 	private startOrchestratorService(userDataPath: string): void {
@@ -10607,30 +10727,6 @@ export class AppController {
 				);
 			this.requireOrchestrator().request(text.trim());
 		});
-		// The Files tab: the orchestrator's folder, read-only and confined to
-		// it (`orchestrator/orchestratorFiles.ts`).
-		handle(CHANNELS.listOrchestratorFolder, async (_event, path: unknown) => {
-			const root = this.orchestratorFilesRoot();
-			const problem = await rootProblem(root);
-			if (root === undefined || problem !== undefined)
-				return { path: "", entries: [], problem };
-			this.watchOrchestratorFiles(root);
-			try {
-				return await listFolder(root, typeof path === "string" ? path : "");
-			} catch (error: unknown) {
-				throw namedFailure(error);
-			}
-		});
-		handle(CHANNELS.readOrchestratorFile, async (_event, path: unknown) => {
-			try {
-				return await readRootFile(
-					this.requireOrchestratorFilesRoot(),
-					String(path),
-				);
-			} catch (error: unknown) {
-				throw namedFailure(error);
-			}
-		});
 		// An escalation's embeds: the conversation's own readers, on this Mac
 		// (its pictures are copied here when it is raised: `escalationFiles.ts`).
 		handle(
@@ -10656,13 +10752,16 @@ export class AppController {
 		handle(CHANNELS.escalationEmbedSignature, (_event, path: unknown) =>
 			embedSignature(runtimeById("local"), path),
 		);
-		handle(CHANNELS.openOrchestratorFile, async (_event, path: unknown) => {
-			try {
-				await this.openOrchestratorFile(path);
-			} catch (error: unknown) {
-				throw namedFailure(error);
-			}
-		});
+		handle(
+			CHANNELS.openOrchestratorFile,
+			async (_event, path: unknown, range: unknown) => {
+				try {
+					await this.openOrchestratorFile(path, range);
+				} catch (error: unknown) {
+					throw namedFailure(error);
+				}
+			},
+		);
 		handle(CHANNELS.getUsageLimits, () => this.usageLimits.wire());
 
 		// Destructive. `force` says the page already asked and was told to go

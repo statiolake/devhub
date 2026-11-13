@@ -19,6 +19,8 @@ import {
 	workbenchRect,
 	movesStalePicture,
 	conversationsRect,
+	boardTerminalRect,
+	ORCHESTRATOR_BOARD_HEADER,
 	type LayoutInput,
 	type TooltipPlacement,
 	type LayoutState,
@@ -1250,5 +1252,97 @@ describe("which moves would show a stale picture", () => {
 		expect(
 			movesStalePicture(agentsRect(WINDOW, split), agentsRect(wider, split)),
 		).toBe(true);
+	});
+});
+
+describe("the Orchestrator's Terminal tab", () => {
+	const neovim = (children: ReturnType<typeof windowLayout>, key: string) =>
+		children.find(
+			(one) => one.identity.kind === "neovim" && one.identity.editorKey === key,
+		)!;
+	const agentsOf = (children: ReturnType<typeof windowLayout>) =>
+		children.find((one) => one.identity.kind === "agents")!;
+
+	it("lays the row's Workspace's terminal page over the board's body, under its tabs and inside its hairline", () => {
+		const tab = input({
+			state: state({
+				surface: { kind: "agent" },
+				keyboard: "agents",
+				boardTerminal: "/b",
+			}),
+		});
+		const children = windowLayout(tab);
+		const agents = agentsOf(children);
+		const terminal = neovim(children, "/b");
+		const board = orchestratorBoardWidth(agents.rect.width);
+		expect(terminal).toEqual({
+			identity: { kind: "neovim", editorKey: "/b" },
+			rect: {
+				x: agents.rect.x,
+				y: agents.rect.y + ORCHESTRATOR_BOARD_HEADER,
+				width: board - 1,
+				height: agents.rect.height - ORCHESTRATOR_BOARD_HEADER,
+			},
+			visible: true,
+		});
+		expect(boardTerminalRect(WINDOW, tab.state)).toEqual(terminal.rect);
+		// Over the Agents view, which goes on drawing the tabs and the
+		// orchestrator's pane; the other Workspace's stays hidden.
+		expect(agents.visible).toBe(true);
+		expect(children.indexOf(terminal)).toBeGreaterThan(
+			children.indexOf(agents),
+		);
+		expect(neovim(children, "/a").visible).toBe(false);
+		expect(onScreenNeovim(tab)).toBe("/b");
+	});
+
+	it("stays beside a GUI orchestrator's conversation, never under it", () => {
+		const tab = input({
+			state: state({
+				surface: { kind: "agent" },
+				keyboard: "agents",
+				conversation: "beside-board",
+				boardTerminal: "/b",
+			}),
+		});
+		const children = windowLayout(tab);
+		const terminal = neovim(children, "/b").rect;
+		const conversation = children.find(
+			(one) => one.identity.kind === "conversations",
+		)!.rect;
+		expect(terminal.x + terminal.width).toBeLessThanOrEqual(conversation.x);
+	});
+
+	it("takes the keys when the editor half has them, and gives them back to the board", () => {
+		const editor = input({
+			state: state({
+				surface: { kind: "agent" },
+				keyboard: "editor",
+				boardTerminal: "/b",
+			}),
+		});
+		expect(keyboardChild(editor)).toEqual({ kind: "neovim", editorKey: "/b" });
+		expect(
+			keyboardChild({
+				...editor,
+				state: { ...editor.state, keyboard: "agents" },
+			}),
+		).toEqual({ kind: "agents" });
+	});
+
+	it("is not drawn before its page exists, nor with anything but the row's Agent surface", () => {
+		const unmade = input({
+			neovims: ["/a"],
+			state: state({
+				surface: { kind: "agent" },
+				keyboard: "editor",
+				boardTerminal: "/b",
+			}),
+		});
+		expect(onScreenNeovim(unmade)).toBeUndefined();
+		expect(keyboardChild(unmade)).toEqual({ kind: "shell" });
+		const editor = input({ state: state({ boardTerminal: "/b" }) });
+		expect(onScreenNeovim(editor)).toBe("/a");
+		expect(neovim(windowLayout(editor), "/b").visible).toBe(false);
 	});
 });

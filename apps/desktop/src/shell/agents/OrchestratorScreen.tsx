@@ -1,7 +1,9 @@
 /**
  * The Orchestrator screen's left half: two tabs, ボード (the board of tasks,
- * and a task opened on it) and ファイル (the orchestrator's folder,
- * `OrchestratorFiles.tsx`), each a navigation stack (`navStack.ts`).
+ * and a task opened on it, a navigation stack: `navStack.ts`) and ターミナル
+ * (the Orchestrator row's Workspace's terminal — its editor, where
+ * `devhub <file>` in its folder opens — laid over the tab's body by main,
+ * `TerminalPage`).
  *
  * The right half is the orchestrator agent's own pane — an ordinary Agent
  * pane from the pool (`AgentPane`), so its conversation is exactly the one
@@ -24,6 +26,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -52,7 +55,6 @@ import { linkMenuHandlers, urlMenu } from "../conversation/linkMenu";
 import { RichText, type ThreadPlaces } from "./orchestratorRichText";
 import { splitAttachments } from "../../model/escalationAttachments";
 import { listenForLightboxes } from "../conversation/lightboxLayer";
-import { FilesPage } from "./OrchestratorFiles";
 import { ModeControl } from "./OrchestratorDelivery";
 import { RequestButton } from "./OrchestratorRequest";
 import { GitHubPill } from "./OrchestratorGitHub";
@@ -119,6 +121,12 @@ export { NAV_MS } from "./navStack";
 /** The left pane's two tabs; the board is the default. */
 export type { BoardTab } from "./orchestratorMemory";
 
+/** The tabs, in their order on screen. */
+const TABS: readonly { readonly tab: BoardTab; readonly label: string }[] = [
+  { tab: "board", label: "ボード" },
+  { tab: "terminal", label: "ターミナル" },
+];
+
 export function OrchestratorBoard({
   snapshot,
 }: {
@@ -126,17 +134,17 @@ export function OrchestratorBoard({
 }) {
   const { board, reportFailure, dispatch } = useAgents();
   const [tab, setTab] = useState<BoardTab>(() => initialTab(snapshot));
-  // Something in the folder changed while the Files tab was not looked at.
-  const [filesChanged, setFilesChanged] = useState(false);
   const section = useRef<HTMLElement>(null);
+  const tabButtons = useRef<(HTMLButtonElement | null)[]>([]);
   const show = useCallback((next: BoardTab) => {
     setTab(next);
-    if (next === "files") setFilesChanged(false);
     rememberTab(next);
     reportOrchestratorView();
   }, []);
   // A tab chosen is the same place, showing another page: the entry on
-  // screen is written over (`orchestratorHistory.ts`).
+  // screen is written over (`orchestratorHistory.ts`). Main reads the
+  // model's view, so the Terminal tab's view is laid over its body and the
+  // keys go into it (`LayoutState.boardTerminal`).
   const choose = useCallback(
     (next: BoardTab) => {
       show(next);
@@ -148,8 +156,27 @@ export function OrchestratorBoard({
     },
     [show, dispatch],
   );
-  // Back, Forward or a link onto the other tab's page: that tab, which
-  // mounts on the model's view.
+  // One tab stop; the arrows, Home and End move the choice and the focus,
+  // as the mode control's segments do (`OrchestratorDelivery.tsx`).
+  const onTabKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const index = TABS.findIndex((one) => one.tab === tab);
+    const to =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? TABS.length - 1
+          : event.key === "ArrowRight"
+            ? (index + 1) % TABS.length
+            : event.key === "ArrowLeft"
+              ? (index - 1 + TABS.length) % TABS.length
+              : undefined;
+    if (to === undefined) return;
+    event.preventDefault();
+    tabButtons.current[to]?.focus();
+    if (to !== index) choose(TABS[to]!.tab);
+  };
+  // Back, Forward, a link or a file sent to the Terminal tab: that tab,
+  // which mounts on the model's view.
   useFollowModelView(snapshot, ({ view }) => {
     if (tabOfView(view) !== tab) show(tabOfView(view));
   });
@@ -170,14 +197,6 @@ export function OrchestratorBoard({
       }),
     [],
   );
-  useEffect(() => {
-    if (tab === "files") return;
-    const files = devhub().onOrchestratorFilesChanged;
-    if (typeof files !== "function") return;
-    return files(() => {
-      setFilesChanged(true);
-    });
-  }, [tab]);
   // The mouse's side buttons over the pane are the window's Back and
   // Forward (`historyButtons.ts`), which walk the pane's views too.
   return (
@@ -192,40 +211,28 @@ export function OrchestratorBoard({
             className="orchestrator-tabs"
             role="tablist"
             aria-label="Orchestrator"
+            onKeyDown={onTabKey}
           >
-            <button
-              type="button"
-              role="tab"
-              id="orchestrator-tab-board"
-              className="orchestrator-tab"
-              aria-selected={tab === "board"}
-              aria-controls="orchestrator-panel-board"
-              onClick={() => {
-                choose("board");
-              }}
-            >
-              ボード
-            </button>
-            <button
-              type="button"
-              role="tab"
-              id="orchestrator-tab-files"
-              className="orchestrator-tab"
-              aria-selected={tab === "files"}
-              aria-controls="orchestrator-panel-files"
-              onClick={() => {
-                choose("files");
-              }}
-            >
-              ファイル
-              {filesChanged ? (
-                <span
-                  className="orchestrator-tab-dot"
-                  role="status"
-                  aria-label="changed"
-                />
-              ) : null}
-            </button>
+            {TABS.map((one, index) => (
+              <button
+                key={one.tab}
+                ref={(element) => {
+                  tabButtons.current[index] = element;
+                }}
+                type="button"
+                role="tab"
+                id={`orchestrator-tab-${one.tab}`}
+                className="orchestrator-tab"
+                aria-selected={tab === one.tab}
+                aria-controls={`orchestrator-panel-${one.tab}`}
+                tabIndex={tab === one.tab ? 0 : -1}
+                onClick={() => {
+                  if (tab !== one.tab) choose(one.tab);
+                }}
+              >
+                {one.label}
+              </button>
+            ))}
           </div>
           {tab === "board" ? (
             <span className="orchestrator-board-counts">
@@ -259,13 +266,40 @@ export function OrchestratorBoard({
           workspaces={snapshot.workspaces}
         />
       ) : (
-        <FilesPage
-          pane={section}
-          snapshot={snapshot}
-          orchestratorAgentId={board.orchestratorAgentId}
-        />
+        <TerminalPage snapshot={snapshot} />
       )}
     </section>
+  );
+}
+
+/**
+ * The Terminal tab's body: the hole main lays the Orchestrator row's
+ * Workspace's terminal page into (`boardTerminalRect` in
+ * `main/shell/windowLayout.ts`) — the same page, attached to the same `ws-`
+ * tmux session, as that Workspace's editor area, so tmux control mode, the
+ * Neovim GUI over its panes, `devhub <file>`, copy and links are all its
+ * own. What is drawn here is only seen until that view is over it.
+ */
+function TerminalPage({ snapshot }: { readonly snapshot: AppSnapshot }) {
+  const id = snapshot.orchestratorWorkspaceId;
+  const workspace =
+    id === undefined
+      ? undefined
+      : snapshot.workspaces.find((one) => one.id === id);
+  return (
+    <div
+      className="orchestrator-stage orchestrator-terminal"
+      role="tabpanel"
+      id="orchestrator-panel-terminal"
+      aria-labelledby="orchestrator-tab-terminal"
+      data-workspace-id={workspace?.id}
+    >
+      <p className="orchestrator-lane-empty">
+        {workspace === undefined
+          ? "オーケストレータのフォルダを開いています…"
+          : `${workspace.root} に接続しています…`}
+      </p>
+    </div>
   );
 }
 
@@ -687,7 +721,6 @@ function BoardPage({
           task={open}
           now={now}
           leaving={!reading}
-          orchestratorAgentId={board.orchestratorAgentId}
           base={taskBase(open, workspaces, board.start.root)}
           workspaces={workspaces}
           onBack={() => {
@@ -960,7 +993,6 @@ function TaskView({
   task,
   now,
   leaving,
-  orchestratorAgentId,
   onBack,
   base,
   workspaces,
@@ -972,7 +1004,6 @@ function TaskView({
   readonly now: number;
   /** Going back to the board: drawn while it slides out, and not used. */
   readonly leaving: boolean;
-  readonly orchestratorAgentId: string | undefined;
   readonly onBack: () => void;
   /** What its relative paths are relative to (`taskBase`). */
   readonly base: string | undefined;
@@ -982,7 +1013,6 @@ function TaskView({
   readonly onFocusAgent: (agentId: string) => void;
   readonly onFocusWorkspace: (workspaceId: string) => void;
 }) {
-  const pathsOn = task.agents.at(-1)?.agentId ?? orchestratorAgentId;
   // The same places across the board's revisions, so the thread's links are
   // not asked about again each time the snapshot or the task changes.
   const placesKey = JSON.stringify(taskPlaces(task, workspaces, base));
@@ -1171,7 +1201,6 @@ function TaskView({
             <div className="orchestrator-memo-text">
               <RichText
                 source={task.memo.text}
-                agentId={pathsOn}
                 cwd={places.bases[0]}
                 places={places}
               />
@@ -1190,7 +1219,6 @@ function TaskView({
             <div className="orchestrator-entry-body">
               <RichText
                 source={task.request.text}
-                agentId={pathsOn}
                 cwd={places.bases[0]}
                 places={places}
               />
@@ -1223,11 +1251,7 @@ function TaskView({
               </div>
             )}
             <div className="orchestrator-entry-body">
-              <QuestionBody
-                markdown={one.question.markdown}
-                agentId={pathsOn}
-                places={places}
-              />
+              <QuestionBody markdown={one.question.markdown} places={places} />
             </div>
             <AnswerComposer escalation={one} onAnswered={onAnswered} />
           </article>
@@ -1256,11 +1280,9 @@ function TaskView({
  */
 function QuestionBody({
   markdown,
-  agentId,
   places,
 }: {
   readonly markdown: string;
-  readonly agentId: string | undefined;
   readonly places: ThreadPlaces;
 }) {
   const { body, attachments } = useMemo(
@@ -1270,7 +1292,6 @@ function QuestionBody({
   return (
     <RichText
       source={body}
-      agentId={agentId}
       cwd={places.bases[0]}
       places={places}
       attachments={attachments}

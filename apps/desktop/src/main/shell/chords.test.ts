@@ -689,6 +689,12 @@ describe("the layout toggles", () => {
 		).toEqual(selects({ kind: "workspace", workspaceId: "two" }));
 		expect(run("focus_editor", snapshotOf())).toEqual(selects(SCRATCH));
 	});
+
+	it("shows the Orchestrator row's editor as its Terminal tab", () => {
+		expect(
+			run("focus_editor", snapshotOf({ context: { kind: "orchestrator" } })),
+		).toEqual({ kind: "orchestrator-terminal" });
+	});
 });
 
 describe("the commands that act on what is selected", () => {

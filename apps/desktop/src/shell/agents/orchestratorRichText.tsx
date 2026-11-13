@@ -1,11 +1,12 @@
 /**
  * The conversation's Markdown renderer, set up for the Orchestrator screen's
- * left pane — an escalation's thread, a file in the orchestrator's folder —
- * where nothing is a conversation: links, copies and diagrams go through the
+ * left pane — a task's memo, its request, an escalation's thread — where
+ * nothing is a conversation: links, copies and diagrams go through the
  * bridge; a file it draws (`![…](path)`) is read on this Mac, relative to
  * `cwd`. A file path in it is a link when it names a file under any of the
  * task's folders (`bases`, first match wins), and opens in the editor of the
- * open Workspace that holds it — else on `agentId`'s.
+ * open Workspace that holds it — else in the Orchestrator's own Neovim, in
+ * the board's Terminal tab.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -92,12 +93,11 @@ export function workspaceHolding(
 /**
  * What the conversation's renderer asks of the page, for an escalation's
  * thread: links, copies and diagrams through the bridge; a file path is
- * looked up on the agent the escalation is about (or the orchestrator's).
+ * looked up in the task's folders (`places`).
  * Nothing here sends anything to an agent — the composer below is the
  * board's own.
  */
 function useThreadActions(
-  agentId: string | undefined,
   places: ThreadPlaces,
   reportFailure: (error: unknown) => void,
 ): ConversationActions {
@@ -145,21 +145,18 @@ function useThreadActions(
       readEmbedFile: (path) => bridge.readEscalationEmbed(path),
       embedSignature: (path) => bridge.escalationEmbedSignature(path),
       // In the editor of the open Workspace that holds it, as a `devhub:file`
-      // link goes; a file in none of them, on the agent's machine.
+      // link goes (the Orchestrator's own folder: its Terminal tab); a file
+      // in none of them, in the Orchestrator's own Neovim, in that tab.
       openFile: (path, range) => {
         const workspace = workspaceHolding(places.workspaces, path);
         if (workspace !== undefined)
           return bridge.openLinkedFile(workspace, path, range);
-        return agentId === undefined
-          ? Promise.reject(
-              new Error(`${path} is in no open Workspace, and no agent has it`),
-            )
-          : bridge.conversation.openFile(agentId, path, range);
+        return bridge.openOrchestratorFile(path, range);
       },
       copyText: (text) => bridge.copyText(text),
       reportFailure,
     } satisfies ConversationActions;
-  }, [agentId, places, reportFailure]);
+  }, [places, reportFailure]);
 }
 
 /**
@@ -169,13 +166,11 @@ function useThreadActions(
  */
 export function RichText({
   source,
-  agentId,
   cwd,
   places = NO_PLACES,
   attachments = NO_ATTACHMENTS,
 }: {
   readonly source: string;
-  readonly agentId: string | undefined;
   /** What a relative path in it is relative to first. */
   readonly cwd?: string;
   /** Where else a path is looked for, and where a file opens. */
@@ -184,7 +179,7 @@ export function RichText({
   readonly attachments?: readonly EscalationAttachment[];
 }) {
   const { reportFailure } = useAgents();
-  const actions = useThreadActions(agentId, places, reportFailure);
+  const actions = useThreadActions(places, reportFailure);
   const links = useMemo(
     () => new PathLinks(actions.resolvePaths, actions.reportFailure),
     [actions],

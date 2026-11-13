@@ -243,6 +243,8 @@ export type ChordEffect =
 	| { readonly kind: "restart-terminals" }
 	/** The Orchestrator screen, with its request composer open. */
 	| { readonly kind: "orchestrator-request" }
+	/** The Orchestrator screen's Terminal tab, its editor: `Cmd+Q E` there. */
+	| { readonly kind: "orchestrator-terminal" }
 	/** The Orchestrator's mode, as the person chooses it. */
 	| {
 			readonly kind: "orchestrator-mode";
@@ -639,6 +641,10 @@ export function resolveChord(
 		}
 
 		case "focus_editor":
+			// The Orchestrator row's editor is its Terminal tab: the row's
+			// Workspace's terminal, where its `devhub-nvim` window is.
+			if (snapshot.selection.context.kind === "orchestrator")
+				return { kind: "orchestrator-terminal" };
 			// What "focused" means for DevHub's content area is what is selected:
 			// the selection decides the layout, and `ShellWindow.focusSurface` puts
 			// the keyboard wherever the layout put the surface. So this selects the

@@ -1,6 +1,6 @@
 /**
  * Where the Orchestrator screen's left pane was, for the next time it is
- * shown: the tab, the task or file open over it, how far it was scrolled,
+ * shown: the tab, the task open over the board, how far it was scrolled,
  * and the answers being written.
  *
  * The left pane unmounts whenever the Orchestrator row is not selected
@@ -10,7 +10,7 @@
  * starts on the board. Only the tab is also kept in `sessionStorage`, so it
  * survives a reload of the page as it did before.
  *
- * A task or a file open here is a place of its own in Back and
+ * A task open here is a place of its own in Back and
  * Forward (`orchestratorHistory.ts`, `docs/window-and-pages.md`): the model
  * keeps which one each entry showed, and this memory is what the pane draws
  * from when no snapshot says otherwise.
@@ -19,7 +19,7 @@
 import type { OrchestratorViewWire } from "../../ipc/contract";
 import { devhub } from "./client";
 
-export type BoardTab = "board" | "files";
+export type BoardTab = "board" | "terminal";
 
 const TAB_KEY = "devhub.orchestrator.tab";
 
@@ -35,10 +35,7 @@ export interface OrchestratorMemory {
   folded: { waiting: boolean; closed: boolean };
   /** The task open over the board, and whether it was done then. */
   task: { readonly id: number; readonly done: boolean } | undefined;
-  /** The file open over the tree, and the folders expanded under it. */
-  file: string | undefined;
-  expanded: readonly string[];
-  /** Per `task:<id>` or `file:<path>`. */
+  /** Per `task:<id>`. */
   readonly scroll: Map<string, ThreadScroll>;
   /** The unsent answer, per escalation (one question each). */
   readonly drafts: Map<number, string>;
@@ -49,8 +46,6 @@ function fresh(): OrchestratorMemory {
     tab: undefined,
     folded: { waiting: false, closed: true },
     task: undefined,
-    file: undefined,
-    expanded: [],
     scroll: new Map(),
     drafts: new Map(),
   };
@@ -68,8 +63,8 @@ export function forgetOrchestratorMemory(): void {
 export function rememberedTab(): BoardTab {
   if (memory.tab !== undefined) return memory.tab;
   try {
-    return window.sessionStorage.getItem(TAB_KEY) === "files"
-      ? "files"
+    return window.sessionStorage.getItem(TAB_KEY) === "terminal"
+      ? "terminal"
       : "board";
   } catch {
     return "board";
@@ -86,14 +81,12 @@ export function rememberTab(tab: BoardTab): void {
 }
 
 /**
- * What the left pane shows now, by id or path: the tab's page, and what is
- * open over it. Read off this memory, which every move updates.
+ * What the left pane shows now, by id: the task open over the board, if
+ * the board is the tab in front (the Terminal tab is named as the board
+ * is). Read off this memory, which every move updates.
  */
 export function orchestratorView(): OrchestratorViewWire {
-  if (rememberedTab() === "files")
-    return memory.file === undefined
-      ? { kind: "board" }
-      : { kind: "file", path: memory.file };
+  if (rememberedTab() === "terminal") return { kind: "board" };
   return memory.task === undefined
     ? { kind: "board" }
     : { kind: "task", id: memory.task.id };

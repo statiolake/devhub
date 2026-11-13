@@ -212,6 +212,8 @@ export interface ChordHost {
 	openOrchestratorRequest(): void;
 	/** The Orchestrator's mode: the person's choice. */
 	setOrchestratorMode(mode: "full" | "saving" | "off"): void;
+	/** The Orchestrator screen's Terminal tab, the keys in it. */
+	showOrchestratorTerminal(): void;
 	/** Every command, by name — `Cmd+Q :`. */
 	openCommandPalette(): void;
 }
@@ -384,6 +386,9 @@ function perform(
 			return;
 		case "orchestrator-mode":
 			host.setOrchestratorMode(effect.mode);
+			return;
+		case "orchestrator-terminal":
+			host.showOrchestratorTerminal();
 			return;
 		case "open-command-palette":
 			host.openCommandPalette();

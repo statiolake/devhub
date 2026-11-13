@@ -104,7 +104,6 @@ describe("scrollbars", () => {
       ["shell/styles/macos.css", ".picker-aside"],
       ["shell/styles/toast.css", ".notice-center-list"],
       ["shell/agents/orchestrator.css", ".orchestrator-lanes"],
-      ["shell/agents/orchestrator.css", ".orchestrator-files"],
       ["shell/agents/orchestrator.css", ".orchestrator-thread"],
       ["shell/conversation/conversation.css", ".conversation-scroll"],
       ["shell/conversation/conversation.css", ".conversation-background-list"],

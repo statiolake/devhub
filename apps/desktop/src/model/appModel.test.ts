@@ -1213,17 +1213,17 @@ describe("Back and Forward over the Orchestrator pane", () => {
     model.showOrchestratorView(esc(1), "explicit", true);
     // The escalation was deleted while it was read.
     model.showOrchestratorView(BOARD, undefined, true);
-    model.showOrchestratorView({ kind: "files" }, undefined, true);
+    model.showOrchestratorView({ kind: "terminal" }, undefined, true);
     expect(model.snapshot().history.canGoForward).toBe(false);
-    // The escalation's entry is the Files tab now; the board it was opened
-    // from is still behind it.
+    // The escalation's entry is the Terminal tab now; the board it was
+    // opened from is still behind it.
     model.navigateHistory("back");
     expect(on(model)).toEqual({ context: ORCH, view: BOARD });
     model.navigateHistory("back");
     expect(on(model)).toEqual({ context: A, view: undefined });
     model.navigateHistory("forward");
     model.navigateHistory("forward");
-    expect(on(model)).toEqual({ context: ORCH, view: { kind: "files" } });
+    expect(on(model)).toEqual({ context: ORCH, view: { kind: "terminal" } });
   });
 
   it("skips a task that is no longer on the board, as it does a closed Agent", () => {

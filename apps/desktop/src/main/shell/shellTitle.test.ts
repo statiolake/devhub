@@ -464,12 +464,6 @@ describe("the shell window's title on the Orchestrator screen", () => {
 		).toBe("方針の確認 — Orchestrator — DevHub");
 	});
 
-	it("names the file open in the Files tab", () => {
-		expect(
-			shellTitleFor(orchestrator({ kind: "file", path: "notes/decisions.md" })),
-		).toBe("decisions.md — Orchestrator — DevHub");
-	});
-
 	it("calls a child agent of the row what any agent is called", () => {
 		expect(
 			shellTitleFor(
@@ -509,16 +503,16 @@ describe("titleText", () => {
 });
 
 describe("what the Orchestrator screen may report", () => {
-	it("is an id or a path, and nothing else", () => {
+	it("is the board or a task's id, and nothing else", () => {
 		expect(orchestratorViewWire({ kind: "board" })).toEqual({ kind: "board" });
 		expect(orchestratorViewWire({ kind: "task", id: 4, body: "x" })).toEqual({
 			kind: "task",
 			id: 4,
 		});
-		expect(orchestratorViewWire({ kind: "file", path: "a.md" })).toEqual({
-			kind: "file",
-			path: "a.md",
-		});
+		// The Files tab, and the file it showed, are gone.
+		expect(
+			orchestratorViewWire({ kind: "file", path: "a.md" }),
+		).toBeUndefined();
 		expect(orchestratorViewWire({ kind: "task", id: "4" })).toBeUndefined();
 		expect(orchestratorViewWire({ kind: "title", text: "x" })).toBeUndefined();
 		expect(orchestratorViewWire(null)).toBeUndefined();

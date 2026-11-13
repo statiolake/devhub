@@ -11,9 +11,7 @@ import {
 	CHANNELS,
 	type AgentsBridge,
 	type ContextMenuRequestWire,
-	type OrchestratorFileWire,
 	type OrchestratorModeWire,
-	type OrchestratorFolderWire,
 	type OrchestratorViewWire,
 	type RichClipboardWire,
 	type SlideImagesRequestWire,
@@ -64,18 +62,12 @@ const api: AgentsBridge = {
 	reportOrchestratorView: (view: OrchestratorViewWire) => {
 		ipcRenderer.send(CHANNELS.reportOrchestratorView, view);
 	},
-	listOrchestratorFolder: (path: string) =>
+	openOrchestratorFile: (path, range) =>
 		ipcRenderer.invoke(
-			CHANNELS.listOrchestratorFolder,
+			CHANNELS.openOrchestratorFile,
 			path,
-		) as Promise<OrchestratorFolderWire>,
-	readOrchestratorFile: (path: string) =>
-		ipcRenderer.invoke(
-			CHANNELS.readOrchestratorFile,
-			path,
-		) as Promise<OrchestratorFileWire>,
-	openOrchestratorFile: (path: string) =>
-		ipcRenderer.invoke(CHANNELS.openOrchestratorFile, path) as Promise<void>,
+			range,
+		) as Promise<void>,
 	openLinkedFile: (workspaceId, path, range) =>
 		ipcRenderer.invoke(
 			CHANNELS.openLinkedFile,
@@ -107,8 +99,6 @@ const api: AgentsBridge = {
 		ipcRenderer.invoke(CHANNELS.escalationEmbedSignature, path) as Promise<
 			string | null
 		>,
-	onOrchestratorFilesChanged: (listener) =>
-		on<readonly string[]>(CHANNELS.orchestratorFilesChanged, listener),
 
 	openModal,
 	openExternalUrl,

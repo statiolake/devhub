@@ -40,6 +40,8 @@ const FILES: Record<string, Uint8Array> = {
   "/w/payments/out/shot.png": new Uint8Array([137, 80, 78, 71]),
   "/w/wt/src/auth/login.ts": new Uint8Array(),
   "/w/payments/src/auth/retry.ts": new Uint8Array(),
+  // In no open Workspace: the Orchestrator's own Neovim opens it.
+  "/elsewhere/notes/plan.md": new Uint8Array(),
   "/abs/flow.svg": new TextEncoder().encode(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>',
   ),
@@ -68,10 +70,12 @@ const showContextMenu = vi.fn(
 );
 const copyText = vi.fn((_text: string) => Promise.resolve());
 const openLinkedFile = vi.fn(() => Promise.resolve());
+const openOrchestratorFile = vi.fn(() => Promise.resolve());
 window.devhub = {
   showContextMenu,
   copyText,
   openLinkedFile,
+  openOrchestratorFile,
   answerEscalation,
   reportOrchestratorView,
   setOrchestratorPaused: vi.fn(() => Promise.resolve()),
@@ -734,6 +738,36 @@ describe("a question, drawn as the conversation draws a message", () => {
     });
   });
 
+  it("opens a path in no open Workspace in the Orchestrator's own Neovim, in its Terminal tab", async () => {
+    motion(true);
+    const task = askingTask(11, {
+      title: "計画の見直し",
+      agents: [],
+      escalations: [
+        questionWire({
+          id: 11,
+          taskId: 11,
+          question: {
+            markdown: "`/elsewhere/notes/plan.md` を読んで決める。",
+            at: NOW,
+          },
+        }),
+      ],
+    });
+    mount({ ...BOARD, answer: [task] }, WORKSPACES);
+    fireEvent.click(
+      document.querySelector<HTMLElement>('[data-task-id="11"]')!,
+    );
+    fireEvent.click(
+      await screen.findByTitle("Open /elsewhere/notes/plan.md in the editor"),
+    );
+    expect(openOrchestratorFile).toHaveBeenCalledWith(
+      "/elsewhere/notes/plan.md",
+      undefined,
+    );
+    expect(openLinkedFile).not.toHaveBeenCalled();
+  });
+
   it("gives a URL chip the conversation's link menu", async () => {
     motion(true);
     mount(
@@ -1000,7 +1034,10 @@ describe("opening an escalation and going back", () => {
  * `orchestratorView` and `historyEntry` are set by the test as the model
  * would set them, and every intent the pane sends is recorded.
  */
-function mountWithModel(board: OrchestratorBoardWire = BOARD) {
+function mountWithModel(
+  board: OrchestratorBoardWire = BOARD,
+  orchestrator?: { readonly id: string; readonly root: string },
+) {
   const dispatch = vi.fn().mockResolvedValue(undefined);
   let state: NonNullable<AppSnapshot["orchestratorView"]> = {
     view: { kind: "board" },
@@ -1017,7 +1054,18 @@ function mountWithModel(board: OrchestratorBoardWire = BOARD) {
       <OrchestratorBoard
         snapshot={
           {
-            workspaces: [],
+            workspaces:
+              orchestrator === undefined
+                ? []
+                : [
+                    {
+                      ...orchestrator,
+                      label: "Orchestrator",
+                      location: LOCAL,
+                      agents: [],
+                    },
+                  ],
+            orchestratorWorkspaceId: orchestrator?.id,
             orchestratorView: state,
             historyEntry: entry,
           } as unknown as AppSnapshot
@@ -1228,6 +1276,115 @@ describe("the board in Back and Forward", () => {
     fireEvent.scroll(lanes);
     model.move({ kind: "board" }, "back", 1);
     expect(lanes.scrollTop).toBe(120);
+  });
+});
+
+describe("the Terminal tab", () => {
+  const ORCH_WS = { id: "w-orch", root: "/Users/me/orchestrator" };
+
+  function tab(name: string): HTMLElement {
+    return screen.getByRole("tab", { name });
+  }
+
+  it("is the tab behind the board, and there is no Files tab", () => {
+    mount();
+    expect(screen.getAllByRole("tab").map((one) => one.textContent)).toEqual([
+      "ボード",
+      "ターミナル",
+    ]);
+    expect(screen.queryByRole("tab", { name: /ファイル/u })).toBeNull();
+    expect(tab("ボード")).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("is chosen with a click, as the same place on another page: the entry on screen written over", () => {
+    motion(true);
+    const model = mountWithModel(BOARD, ORCH_WS);
+    fireEvent.click(tab("ターミナル"));
+    expect(tab("ターミナル")).toHaveAttribute("aria-selected", "true");
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toHaveAttribute("id", "orchestrator-panel-terminal");
+    // The hole main lays the Workspace's terminal page into, and what it
+    // says until that view is over it.
+    expect(panel).toHaveAttribute("data-workspace-id", "w-orch");
+    expect(panel).toHaveTextContent("/Users/me/orchestrator");
+    expect(document.querySelector(".orchestrator-lanes")).toBeNull();
+    expect(model.said()).toEqual([
+      {
+        type: "show_orchestrator_view",
+        view: { kind: "terminal" },
+        drawn: true,
+      },
+    ]);
+    fireEvent.click(tab("ボード"));
+    expect(document.querySelector(".orchestrator-lanes")).not.toBeNull();
+    expect(model.said().at(-1)).toEqual({
+      type: "show_orchestrator_view",
+      view: { kind: "board" },
+      drawn: true,
+    });
+  });
+
+  it("says it is opening the folder while the Orchestrator row has no Workspace", () => {
+    mountWithModel();
+    fireEvent.click(tab("ターミナル"));
+    expect(screen.getByRole("tabpanel")).toHaveTextContent(
+      "オーケストレータのフォルダを開いています",
+    );
+  });
+
+  it("is one tab stop, the arrows, Home and End moving the choice and the focus", () => {
+    motion(true);
+    const model = mountWithModel(BOARD, ORCH_WS);
+    expect(tab("ボード")).toHaveAttribute("tabindex", "0");
+    expect(tab("ターミナル")).toHaveAttribute("tabindex", "-1");
+    tab("ボード").focus();
+    fireEvent.keyDown(tab("ボード"), { key: "ArrowRight" });
+    expect(tab("ターミナル")).toHaveAttribute("aria-selected", "true");
+    expect(tab("ターミナル")).toHaveFocus();
+    expect(tab("ターミナル")).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(tab("ターミナル"), { key: "ArrowRight" });
+    expect(tab("ボード")).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(tab("ボード"), { key: "End" });
+    expect(tab("ターミナル")).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(tab("ターミナル"), { key: "Home" });
+    expect(tab("ボード")).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(tab("ボード"), { key: "ArrowLeft" });
+    expect(tab("ターミナル")).toHaveAttribute("aria-selected", "true");
+    expect(model.said().map((one) => (one as { view?: unknown }).view)).toEqual(
+      [
+        { kind: "terminal" },
+        { kind: "board" },
+        { kind: "terminal" },
+        { kind: "board" },
+        { kind: "terminal" },
+      ],
+    );
+  });
+
+  it("follows Back and Forward across the switch: onto the Terminal tab, and back to the task it left", () => {
+    motion(true);
+    const model = mountWithModel(BOARD, ORCH_WS);
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    model.settle({ kind: "task", id: 1 }, 2);
+    // Forward (or a file sent to the tab) onto the Terminal tab.
+    model.move({ kind: "terminal" }, "forward", 3);
+    expect(tab("ターミナル")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "id",
+      "orchestrator-panel-terminal",
+    );
+    // Back: the board, with the task open over it, as the entry left it.
+    model.move({ kind: "task", id: 1 }, "back", 2);
+    expect(tab("ボード")).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.getByRole("textbox", { name: "Your answer to #1" }),
+    ).toBeVisible();
+    // Neither move was the pane's to report.
+    expect(
+      model.said().filter((one) => one.type === "show_orchestrator_view"),
+    ).toHaveLength(1);
   });
 });
 
@@ -1503,19 +1660,13 @@ describe("leaving the Orchestrator screen and coming back", () => {
 
   it("restores the tab", () => {
     motion(true);
-    window.devhub = {
-      ...(window.devhub as object),
-      listOrchestratorFolder: () =>
-        Promise.resolve({ root: "/o", path: "", entries: [] }),
-      onOrchestratorFilesChanged: () => () => undefined,
-    } as unknown as typeof window.devhub;
     const screenNow = mountScreen();
-    fireEvent.click(screen.getByRole("tab", { name: /ファイル/u }));
+    fireEvent.click(screen.getByRole("tab", { name: "ターミナル" }));
     screenNow.leave();
     // Not only `sessionStorage`: the page's own memory for the session.
     window.sessionStorage.clear();
     screenNow.back();
-    expect(screen.getByRole("tab", { name: /ファイル/u })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "ターミナル" })).toHaveAttribute(
       "aria-selected",
       "true",
     );

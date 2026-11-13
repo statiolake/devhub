@@ -907,9 +907,9 @@ describe("the Orchestrator pane's intents", () => {
     expect(
       intentFromWire({
         type: "show_orchestrator_view",
-        view: { kind: "files" },
+        view: { kind: "terminal" },
       }),
-    ).toEqual({ type: "show_orchestrator_view", view: { kind: "files" } });
+    ).toEqual({ type: "show_orchestrator_view", view: { kind: "terminal" } });
     expect(intentFromWire({ type: "leave_orchestrator_view" })).toEqual({
       type: "leave_orchestrator_view",
     });
@@ -919,7 +919,8 @@ describe("the Orchestrator pane's intents", () => {
     for (const view of [
       { kind: "task", id: 0 },
       { kind: "task", id: 1.5 },
-      { kind: "file", path: "" },
+      { kind: "files" },
+      { kind: "file", path: "decisions.md" },
       { kind: "tab" },
     ])
       expect(() =>

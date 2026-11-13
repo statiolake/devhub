@@ -1,6 +1,6 @@
 /**
  * The Orchestrator pane in Back and Forward: the hooks that keep its stack —
- * the board (or the tree) with a task (or a file) over it — and the
+ * the board with a task over it, and the Terminal tab beside it — and the
  * window's history the same thing.
  *
  * The model holds the history (`model/navigationHistory.ts`); an entry on
@@ -14,7 +14,7 @@
  *
  * What the pane says, and what it means:
  *
- * - the person opens a card or a file (a click, Enter, a link in a thread):
+ * - the person opens a card (a click, Enter, a link in a thread):
  *   a navigation, one entry;
  * - its own ‹, Esc, or an answer sent: "up to the board" — Back when Back
  *   leads to the board it was opened from, else a navigation to the board
@@ -56,7 +56,7 @@ export function modelView(
 
 /** The tab a view is on. */
 export function tabOfView(view: OrchestratorPlaceWire): BoardTab {
-  return view.kind === "file" || view.kind === "files" ? "files" : "board";
+  return view.kind === "terminal" ? "terminal" : "board";
 }
 
 /** The tab the screen opens on: the model's view's, else the one remembered. */
@@ -67,10 +67,7 @@ export function initialTab(snapshot: AppSnapshot | undefined): BoardTab {
 
 /** What the pane shows on `tab`, read off its memory. */
 export function paneViewOn(tab: BoardTab): OrchestratorPlaceWire {
-  if (tab === "files")
-    return memory.file === undefined
-      ? { kind: "files" }
-      : { kind: "file", path: memory.file };
+  if (tab === "terminal") return { kind: "terminal" };
   return memory.task === undefined
     ? { kind: "board" }
     : { kind: "task", id: memory.task.id };

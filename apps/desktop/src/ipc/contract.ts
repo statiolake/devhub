@@ -846,57 +846,18 @@ export interface OrchestratorBoardBridge {
 	): () => void;
 }
 
-/** One entry of a folder in the orchestrator's root, for the Files tab. */
-export interface OrchestratorFileEntryWire {
-	readonly name: string;
-	/** From the root, `/`-separated: `decisions.md`, `.claude/skills`. */
-	readonly path: string;
-	readonly kind: "directory" | "file";
-}
-
-/** A folder in the orchestrator's root, listed (noise and ignored left out). */
-export interface OrchestratorFolderWire {
-	/** The root, absolute; absent while none is set or it is not there. */
-	readonly root?: string;
-	/** The folder, from the root; `""` is the root itself. */
-	readonly path: string;
-	/** Folders first, then files, each by name. */
-	readonly entries: readonly OrchestratorFileEntryWire[];
-	/** Why there is nothing to list, in a sentence. */
-	readonly problem?: string;
-}
-
 /**
- * A file in the orchestrator's root, read for the Files tab. Markdown and
- * other text carry `text`; an image (SVG included) a `data:` URL; a file
- * too large or not text carries neither.
+ * The Orchestrator's own Neovim, in its Terminal tab: the editor of the
+ * Orchestrator row's Workspace (`docs/orchestrator.md`).
  */
-export interface OrchestratorFileWire {
-	readonly path: string;
-	readonly kind: "markdown" | "text" | "image" | "binary" | "too_large";
-	readonly size: number;
-	/** Last written (ms since the epoch): what "changed" is measured against. */
-	readonly modifiedAt: number;
-	readonly text?: string;
-	/** For `text`: the highlighter's language, from the extension. */
-	readonly language?: string;
-	readonly dataUrl?: string;
-}
-
-/**
- * The orchestrator's folder, read-only: list, read, and be told when it
- * changes. Every path is from the root and stays inside it — `..`, absolute
- * paths and symlinks that lead out are refused in main.
- */
-export interface OrchestratorFilesBridge {
-	listOrchestratorFolder(path: string): Promise<OrchestratorFolderWire>;
-	readOrchestratorFile(path: string): Promise<OrchestratorFileWire>;
-	/** Open the file in the workbench of the Workspace it belongs to. */
-	openOrchestratorFile(path: string): Promise<void>;
-	/** The paths (from the root) that changed, a moment after they did. */
-	onOrchestratorFilesChanged(
-		listener: (paths: readonly string[]) => void,
-	): () => void;
+export interface OrchestratorTerminalBridge {
+	/**
+	 * Open an absolute path on this Mac — a file in no open Workspace — in
+	 * the `devhub-nvim` window of the Orchestrator's Workspace, and show it
+	 * in the Terminal tab. The folder is opened (unselected) first when no
+	 * Workspace is the Orchestrator row's yet.
+	 */
+	openOrchestratorFile(path: string, range?: FileRange): Promise<void>;
 }
 
 /**
@@ -936,19 +897,18 @@ export interface OrchestratorActionsBridge {
 	/**
 	 * What the left pane is showing, for the window's title: main names the
 	 * window (`main/shell/shellTitle.ts`), so the page says only which
-	 * task or file — an id or a path, never a body.
+	 * task — an id, never a body.
 	 */
 	reportOrchestratorView(view: OrchestratorViewWire): void;
 }
 
 /**
- * What the Orchestrator screen's left pane shows: the board (or the Files
- * tab's tree), a task read over the board, or a file over the tree.
+ * What the Orchestrator screen's left pane shows, for the window's title:
+ * the board (or the Terminal tab), or a task read over the board.
  */
 export type OrchestratorViewWire =
 	| { readonly kind: "board" }
-	| { readonly kind: "task"; readonly id: number }
-	| { readonly kind: "file"; readonly path: string };
+	| { readonly kind: "task"; readonly id: number };
 
 /**
  * What the page has put in the content area.
@@ -1885,7 +1845,7 @@ export interface AgentsBridge
 		AgentActionsBridge,
 		OrchestratorBoardBridge,
 		OrchestratorActionsBridge,
-		OrchestratorFilesBridge,
+		OrchestratorTerminalBridge,
 		EscalationEmbedsBridge {
 	/** Put a modal on screen — an injection to review. */
 	openModal(request: ModalRequest): Promise<string>;
@@ -2514,8 +2474,6 @@ export const CHANNELS = {
 	sendOrchestratorRequest: "devhub:send-orchestrator-request",
 	openOrchestratorRequest: "devhub:open-orchestrator-request",
 	reportOrchestratorView: "devhub:report-orchestrator-view",
-	listOrchestratorFolder: "devhub:list-orchestrator-folder",
-	readOrchestratorFile: "devhub:read-orchestrator-file",
 	openOrchestratorFile: "devhub:open-orchestrator-file",
 	openLinkedFile: "devhub:open-linked-file",
 	devhubSessionAgent: "devhub:devhub-session-agent",
@@ -2640,8 +2598,6 @@ export const CHANNELS = {
 	usageLimitsChanged: "devhub:usage-limits-changed",
 	/** The Orchestrator board moved: an escalation, the pause. */
 	orchestratorBoardChanged: "devhub:orchestrator-board-changed",
-	/** Something in the orchestrator's folder was written (debounced). */
-	orchestratorFilesChanged: "devhub:orchestrator-files-changed",
 } as const;
 
 /**

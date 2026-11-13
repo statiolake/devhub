@@ -161,7 +161,7 @@ Every place DevHub starts a program at runtime, with its category:
 | program | where | why |
 | --- | --- | --- |
 | `ssh` (`sshPath`, default `ssh` on the login PATH) | `runtime/ssh.ts` | the person's keys, agent, `~/.ssh/config`, ProxyJump, FIDO support; a bundled ssh would not read them as theirs does |
-| `git` (`runtimes.git`), and `git check-ignore` for the Orchestrator's file listing | `shell/git.ts`, `repositoryStatus.ts`, `orchestratorFiles.ts` | the person's repositories, config, hooks, signing and credential helpers |
+| `git` (`runtimes.git`) | `shell/git.ts`, `repositoryStatus.ts` | the person's repositories, config, hooks, signing and credential helpers |
 | `gh` | `shell/github.ts` | the person's GitHub sign-in |
 | the Agent CLIs (`claude`, `codex`, a profile's `command`), their usage readers, MCP sign-in | `agentWiring.ts`, `hostCommand.ts`, `usageReaders.ts`, `mcpSignIn.ts` | the programs the person chose and keeps up to date; DevHub runs them by the path it resolved |
 | a picker's command source (`[[workspace_sources]] command`) | `workspacePicker.ts` | the person's own command, by their configuration |

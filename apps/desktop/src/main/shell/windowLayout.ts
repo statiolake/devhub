@@ -231,6 +231,15 @@ export interface LayoutState {
 	 * floating Sidebar; absent is nothing open.
 	 */
 	readonly agentsOverlay?: boolean;
+	/**
+	 * The Orchestrator's board is on its Terminal tab: this Workspace's
+	 * editor area (its terminal page, by editor key — the Orchestrator
+	 * row's own Workspace) is laid over the board's body, under the tabs
+	 * the Agents view goes on drawing (`boardTerminalRect`). Only with an
+	 * `agent` surface, which is what the Orchestrator row is; absent is the
+	 * board.
+	 */
+	readonly boardTerminal?: string;
 }
 
 export interface LayoutInput {
@@ -611,6 +620,42 @@ export function orchestratorBoardWidth(width: number): number {
 }
 
 /**
+ * `.orchestrator-board-header`'s height in `shell/agents/orchestrator.css`
+ * (border-box, its hairline inside): the tabs the Terminal tab's view is
+ * laid under.
+ */
+export const ORCHESTRATOR_BOARD_HEADER = 38;
+
+/**
+ * Where the Orchestrator's Terminal tab lays its Workspace's terminal page:
+ * the board's body — under its header, inside its trailing hairline, so the
+ * tabs above and the seam beside it are the Agents page's as ever.
+ */
+export function boardTerminalRect(
+	windowSize: LayoutSize,
+	state: LayoutState,
+): LayoutRect {
+	const agents = agentsRect(windowSize, state);
+	const board = Math.min(agents.width, orchestratorBoardWidth(agents.width));
+	return {
+		x: agents.x,
+		y: agents.y + ORCHESTRATOR_BOARD_HEADER,
+		width: Math.max(0, board - HAIRLINE),
+		height: Math.max(0, agents.height - ORCHESTRATOR_BOARD_HEADER),
+	};
+}
+
+/** Whether a Workspace's terminal page is on screen as the Terminal tab. */
+function onBoard(input: LayoutInput): string | undefined {
+	const key = input.state.boardTerminal;
+	return key !== undefined &&
+		input.state.surface.kind === "agent" &&
+		(input.neovims ?? []).includes(key)
+		? key
+		: undefined;
+}
+
+/**
  * The rectangle the Conversations view is laid into: the Agents' own, or
  * the part of it right of the Orchestrator's board.
  */
@@ -783,9 +828,13 @@ export function tooltipRect(
 	};
 }
 
-/** Which Workspace's terminal is in the editor area, if any. */
+/**
+ * Which Workspace's terminal is on screen, if any: in the editor area, or
+ * as the Orchestrator's Terminal tab.
+ */
 export function onScreenNeovim(input: LayoutInput): string | undefined {
 	const surface = input.state.surface;
+	if (surface.kind === "agent") return onBoard(input);
 	if (surface.kind !== "editor" && surface.kind !== "split") return undefined;
 	return (input.neovims ?? []).includes(surface.editorKey)
 		? surface.editorKey
@@ -970,6 +1019,7 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	// had when it was last hidden lays itself out against that size first,
 	// and reflows visibly when it catches up.
 	const onScreenNeovimKey = onScreenNeovim(input);
+	const boardKey = onBoard(input);
 	for (const editorKey of input.neovims ?? []) {
 		if (editorKey === onScreenNeovimKey) continue;
 		children.push({
@@ -978,7 +1028,7 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 			visible: false,
 		});
 	}
-	if (onScreenNeovimKey !== undefined) {
+	if (onScreenNeovimKey !== undefined && boardKey === undefined) {
 		children.push({
 			identity: { kind: "neovim", editorKey: onScreenNeovimKey },
 			rect: editorRect,
@@ -1007,6 +1057,15 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 		rect: conversationsRect(windowSize, state),
 		visible: agentsVisible(state) && state.conversation !== undefined,
 	});
+	// The Terminal tab: over the board's body, which is the Agents view's,
+	// and so above it (and beside the conversation, which is never over it).
+	if (boardKey !== undefined) {
+		children.push({
+			identity: { kind: "neovim", editorKey: boardKey },
+			rect: boardTerminalRect(windowSize, state),
+			visible: true,
+		});
+	}
 	// Every Agent terminal that has a view: the one on screen at the right,
 	// and every other one hidden at the content area's size, so that coming
 	// back to its Agent is a move rather than a reflow. It is a tile beside
