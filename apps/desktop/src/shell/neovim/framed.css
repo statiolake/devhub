@@ -161,8 +161,12 @@
 }
 
 /* The row under the pointer, faintly (`layers.css`), under the selection's
-   own ground. */
-.nvim-view-frame-row:not(.nvim-view-frame-selected):hover {
+   own ground: `.nvim-view-frame-hover` where the pointer's moves are handed
+   on to the frame by a float's level over it (`FrameList`). */
+.nvim-view-frame-row:not(.nvim-view-frame-selected):is(
+    :hover,
+    .nvim-view-frame-hover
+  ) {
   background: color-mix(in srgb, currentcolor 5%, transparent);
 }
 

@@ -574,6 +574,30 @@ function FrameList({
   }, [pressed, actual]);
   const cursor =
     pressed !== undefined && pressed.base === actual ? pressed.line : actual;
+  // The row under the pointer. A frame lies under the levels of the floats
+  // above it, which take the pointer (`forwardedToFrame` hands its events
+  // on), so CSS's :hover never reaches a row: the moves handed on say
+  // which, and the first real move outside the list ends it.
+  const [hovered, setHovered] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (hovered === undefined) return;
+    const off = (event: MouseEvent) => {
+      const el = scroller.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (
+        event.clientX < r.left ||
+        event.clientX >= r.right ||
+        event.clientY < r.top ||
+        event.clientY >= r.bottom
+      )
+        setHovered(undefined);
+    };
+    window.addEventListener("mousemove", off);
+    return () => {
+      window.removeEventListener("mousemove", off);
+    };
+  }, [hovered]);
 
   // How many rows fit, told once per change; and the selected row in sight.
   // After every render, as the list's size and its rows may have changed;
@@ -631,7 +655,10 @@ function FrameList({
               </div>
             ) : null}
             <div
-              className={`nvim-view-frame-row${item.line === cursor ? " nvim-view-frame-selected" : ""}`}
+              className={`nvim-view-frame-row${item.line === cursor ? " nvim-view-frame-selected" : ""}${item.line === hovered ? " nvim-view-frame-hover" : ""}`}
+              onMouseMove={() => {
+                if (hovered !== item.line) setHovered(item.line);
+              }}
               onMouseDown={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
