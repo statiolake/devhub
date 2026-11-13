@@ -713,6 +713,43 @@ export class NeovimEditor {
     this.commit = commit;
   }
 
+  /**
+   * Run `apply` (a change of the page's own state) in the commit of the
+   * paint of Neovim's next flush, so what it draws lands in that frame: a
+   * popup closed on the command line goes with the command line Neovim is
+   * about to hide. At most `capMs` later when no flush comes.
+   */
+  withNextFlush(apply: () => void, capMs: number): void {
+    this.atFlush.push(apply);
+    window.clearTimeout(this.atFlushTimer);
+    this.atFlushTimer = window.setTimeout(() => {
+      this.runAtFlush();
+    }, capMs);
+  }
+
+  private atFlush: (() => void)[] = [];
+  private atFlushTimer = 0;
+  /** What `withNextFlush` holds once its flush has come: for the paint. */
+  private atPaint: (() => void)[] = [];
+
+  private runAtFlush(): void {
+    window.clearTimeout(this.atFlushTimer);
+    const apply = this.atFlush.splice(0);
+    if (apply.length === 0) return;
+    this.commit(() => {
+      for (const fn of apply) fn();
+    });
+  }
+
+  /**
+   * Whether an ask is out (`ClaimAsks.regathering`): a window not drawn
+   * yet, or a framed view whose windows changed. The page holds Lua's
+   * placements till it has settled.
+   */
+  framesSettling(): boolean {
+    return this.claimAsks.regathering();
+  }
+
   /** A footer that waits for the flush it was made for (`setStatusline`). */
   private statuslineAtFlush: Statusline | undefined;
 
@@ -724,6 +761,16 @@ export class NeovimEditor {
     if (banded) this.unband();
     applyRedraw(this.state, batches, this.pending);
     if (this.visualBand !== undefined || banded) this.drawBand();
+    // A framed view whose windows this flush changed is asked about again
+    // now, before the plugin's own placements that follow the flush come
+    // in (`ClaimAsks`, `framesSettling`).
+    if (this.pending.flushed && this.claimed.size > 0) {
+      this.askClaims(claimFloats(layoutGrids(this.state), this.claimed));
+    }
+    if (this.pending.flushed && this.atFlush.length > 0) {
+      window.clearTimeout(this.atFlushTimer);
+      this.atPaint.push(...this.atFlush.splice(0));
+    }
     if (this.pending.flushed && this.statuslineAtFlush !== undefined) {
       this.painter.setStatusline(this.statuslineAtFlush);
       this.statuslineAtFlush = undefined;
@@ -815,6 +862,8 @@ export class NeovimEditor {
       };
       return;
     }
+    // What waited for this flush (`withNextFlush`), in the same commit.
+    for (const fn of this.atPaint.splice(0)) fn();
     if (this.labelsPaint !== undefined) {
       forceAll ||= this.labelsPaint.force;
       this.labelsPaint = undefined;

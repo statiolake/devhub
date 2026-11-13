@@ -53,7 +53,7 @@ import { createPortal, flushSync } from "react-dom";
 import { Footers } from "./FooterViews";
 import { applyStatuslineEvent, NO_STATUSLINE } from "./statusline";
 import { decorOf } from "./decor";
-import { NeovimEditor } from "./editor";
+import { NeovimEditor, SETTLE_WAIT_MS } from "./editor";
 import { terminalCellFont } from "./cellFont";
 import { cmdlineMenuPlace, cmdlineUiPos, popupmenuPlace } from "./place";
 import {
@@ -439,6 +439,22 @@ export function NeovimSurface({
         ?.contentWindow?.postMessage({ devhubGui: message.message }, "*");
     });
     let statusline = NO_STATUSLINE;
+    let heldLayers: { kind: string; payload: unknown }[] = [];
+    let heldTimer = 0;
+    const releaseLayers = () => {
+      window.clearTimeout(heldTimer);
+      const events = heldLayers;
+      heldLayers = [];
+      if (events.length === 0) return;
+      const scrolled = editor.scrolledRows();
+      const rowsOf = (win: number) => scrolled.get(win) ?? 0;
+      setLayers((before) =>
+        events.reduce(
+          (state, e) => applyLayerEvent(state, e.kind, e.payload, rowsOf),
+          before,
+        ),
+      );
+    };
     const offEvent = bridge.neovim.onGuiEvent((event) => {
       if (event.workspaceId !== workspaceId) return;
       // Where Lua placed something is counted from the rows its window had
@@ -500,7 +516,34 @@ export function NeovimSurface({
         editor.setStatusline(statusline, withFlush);
         return;
       }
+      if (event.kind === "popup_clear" && editor.state.cmdline.length > 0) {
+        // A popup closed while the command line is up closes with the
+        // flush that follows: blink's command-line menu closes on
+        // CmdlineLeave, before Neovim flushes the command line's hide, and
+        // went a frame before it.
+        const payload = event.payload;
+        editor.withNextFlush(() => {
+          setLayers((before) =>
+            applyLayerEvent(before, "popup_clear", payload, rowsOf),
+          );
+        }, POPUP_CLEAR_CAP_MS);
+        return;
+      }
       if (LAYER_EVENTS.has(event.kind)) {
+        // A framed view whose windows changed waits for Lua to settle
+        // (`framesSettling`): what Lua places meanwhile is taken in with
+        // `settled`, in one commit, so the frame and its windows are drawn
+        // anew in one frame (a picker's preview toggled).
+        if (editor.framesSettling() || heldLayers.length > 0) {
+          heldLayers.push({ kind: event.kind, payload: event.payload });
+          window.clearTimeout(heldTimer);
+          if (event.kind === "settled") {
+            releaseLayers();
+          } else {
+            heldTimer = window.setTimeout(releaseLayers, SETTLE_WAIT_MS);
+          }
+          return;
+        }
         setLayers((before) =>
           applyLayerEvent(before, event.kind, event.payload, rowsOf),
         );
@@ -1327,6 +1370,13 @@ function countLabel(count: string): string {
  * only the search echo is shown, in the box over the status line, for a
  * few seconds (Neovim draws nothing there either).
  */
+/**
+ * How long a popup closed on the command line waits for Neovim's flush at
+ * most (`withNextFlush`): one is all but certain to follow, as the command
+ * line is leaving or changing; this is only for a Neovim that says nothing.
+ */
+const POPUP_CLEAR_CAP_MS = 250;
+
 function CmdlineBand({
   state,
   editor,

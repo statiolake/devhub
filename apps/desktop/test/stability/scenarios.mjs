@@ -149,26 +149,12 @@ export const SCENARIOS = [
       },
       {
         name: "preview-off",
-        known: [
-          {
-            match: /^pane: \[picture\] region picker/,
-            owner: "outside",
-            why: "snacks-ui.devhub sends the frame's new layout from a scheduled WinResized handler, after Neovim has flushed the preview's float: for a frame the preview's column is empty before the list takes its width (seen at 1x, not every run)",
-          },
-        ],
         act: (ctx) => ctx.press("pane", "F4"),
         regions: [{ name: "picker", selector: ".nvim-view-frame-edge" }],
         spec: floatSpec,
       },
       {
         name: "preview-on",
-        known: [
-          {
-            match: /^pane: \[picture\] region picker/,
-            owner: "outside",
-            why: "snacks-ui.devhub sends the frame's new layout from a scheduled WinResized handler, after Neovim has flushed the preview's float: for a frame the preview's column is empty before the list takes its width (seen at 1x, not every run)",
-          },
-        ],
         act: (ctx) => ctx.press("pane", "F4"),
         regions: [{ name: "picker", selector: ".nvim-view-frame-edge" }],
         spec: floatSpec,
@@ -291,13 +277,6 @@ export const SCENARIOS = [
     steps: [
       {
         name: "open",
-        known: [
-          {
-            match: /^pane: \[picture\] region cmdline/,
-            owner: "outside",
-            why: "Neovim shows the typed : in its showcmd (msg_showcmd) for a frame before the command line opens (seen at 6x, not every run)",
-          },
-        ],
         act: (ctx) => ctx.press("pane", ":"),
         regions: [{ name: "cmdline", selector: ".nvim-cmdline" }],
         spec: { single: ["cmdline"] },
@@ -315,13 +294,6 @@ export const SCENARIOS = [
       },
       {
         name: "close",
-        known: [
-          {
-            match: /^pane: \[picture\] region cmdline/,
-            owner: "devhub",
-            why: "blink-ui's command-line menu is closed by a Lua event that arrives before the flush with cmdline_hide: the menu goes a frame before the command line (seen at 6x, not every run)",
-          },
-        ],
         act: (ctx) => ctx.press("pane", "Escape"),
         regions: [
           { name: "cmdline", selector: ".nvim-cmdline", from: "before" },

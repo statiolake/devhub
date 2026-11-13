@@ -166,4 +166,46 @@ describe("windows not drawn until Lua has said whose they are", () => {
     // Opened again (a new float on the same window id): asked again.
     expect(asks.need([a]).ask).toEqual([1020]);
   });
+
+  it("asks a framed view again when its windows change, and waits for it", () => {
+    // Seen in the stability suite (picker/preview-off): the preview float
+    // closed in one flush; the plugin laid its frame out anew from a
+    // scheduled WinResized, after it. Drawn at once, the preview's column
+    // was empty for a frame.
+    const asks = new ClaimAsks();
+    const claimed = new Map([
+      [1030, 1030],
+      [1031, 1030],
+    ]);
+    const root = { ...float(50, 1030), row: 2, col: 4, width: 80, height: 30 };
+    const preview = {
+      ...float(50, 1031),
+      row: 3,
+      col: 44,
+      width: 40,
+      height: 28,
+    };
+    const first = asks.need(claimFloats([root, preview], claimed));
+    asks.asking(first.ask, nextSettleSeq());
+    asks.settle(nextSettleSeq());
+    // At rest: nothing to ask.
+    expect(asks.need(claimFloats([root, preview], claimed))).toEqual({
+      ask: [],
+      waiting: false,
+    });
+    // The preview closes: the frame's window that is left is asked again,
+    // claimed as it is, and the paint waits.
+    const changed = asks.need(claimFloats([root], claimed));
+    expect(changed).toEqual({ ask: [1030], waiting: true });
+    const seq = nextSettleSeq();
+    asks.asking(changed.ask, seq);
+    expect(asks.need(claimFloats([root], claimed)).waiting).toBe(true);
+    expect(asks.regathering()).toBe(true);
+    // Lua has settled: drawn.
+    expect(asks.settle(seq)).toBe(true);
+    expect(asks.need(claimFloats([root], claimed))).toEqual({
+      ask: [],
+      waiting: false,
+    });
+  });
 });
