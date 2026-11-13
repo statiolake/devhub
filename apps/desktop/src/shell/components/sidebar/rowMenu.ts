@@ -30,7 +30,7 @@ import { devhub } from "../../sidebar/client";
  */
 export type CopyLink = (link: string, markdown: boolean) => void;
 
-/** 「リンクをコピー」 and 「Markdown リンクをコピー」, for one place. */
+/** Copy Link and Copy Markdown Link, for one place. */
 export function copyLinkItems(
   link: DevhubLink,
   copyLink: CopyLink,
@@ -39,14 +39,14 @@ export function copyLinkItems(
   return [
     {
       id: "copy-link",
-      label: "リンクをコピー",
+      label: "Copy Link",
       run: () => {
         copyLink(text, false);
       },
     },
     {
       id: "copy-markdown-link",
-      label: "Markdown リンクをコピー",
+      label: "Copy Markdown Link",
       run: () => {
         copyLink(text, true);
       },
@@ -101,7 +101,7 @@ export function workspaceMenuItems(
     readonly fixed: boolean;
     /** Raise an intent: `set_workspace_managed`, as the chord does. */
     readonly dispatch: (intent: AppIntent) => void;
-    /** 「リンクをコピー」: absent, the menu has none. */
+    /** Copy Link: absent, the menu has none. */
     readonly copyLink?: CopyLink;
   },
 ): RowMenuItem[] {
@@ -147,7 +147,13 @@ export function workspaceMenuItems(
  * Continue in Terminal / Continue in GUI are here and nowhere else on a
  * healthy Agent (`agentContinuation` says when); Stop Agent is the row's own
  * button and what `Cmd+Q X` does to an Agent, the last item and apart.
- * 「リンクをコピー」 is the link that opens this Agent, from DevHub or from
+ * Manage with Orchestrator (Stop Managing, on a managed one:
+ * `Agent.managed`, which `Cmd+Q Shift+M` toggles on the selected Agent) is
+ * where the Workspace's is, ahead of the links: the person handing the
+ * Agent to the Orchestrator, which main tells to adopt it — its Workspace
+ * goes under management with it. Never on the Orchestrator itself
+ * (`orchestratorAgentId`).
+ * Copy Link is the link that opens this Agent, from DevHub or from
  * Slack and a browser (`Cmd+Q Y` on the selected one).
  */
 export function agentMenuItems(
@@ -156,6 +162,7 @@ export function agentMenuItems(
   onRename: (agent: AgentSnapshot) => void,
   onContinue: (agent: AgentSnapshot) => void,
   copyLink?: CopyLink,
+  orchestratorAgentId?: string,
 ): RowMenuItem[] {
   const items: RowMenuItem[] = [
     {
@@ -202,6 +209,20 @@ export function agentMenuItems(
           : "Continue in GUI",
       run: () => {
         onContinue(agent);
+      },
+    });
+  }
+  if (agent.id !== orchestratorAgentId) {
+    const managed = agent.managed === true;
+    items.push({
+      id: "manage",
+      label: managed ? "Stop Managing" : "Manage with Orchestrator",
+      run: () => {
+        dispatch({
+          type: "set_agent_managed",
+          agentId: agent.id,
+          managed: !managed,
+        });
       },
     });
   }

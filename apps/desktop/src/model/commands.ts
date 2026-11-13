@@ -333,7 +333,7 @@
  * open over its board (`devhub:task/<id>`) or the row itself; Scratch is
  * today's folder and has no link that would last, so the chord is a no-op
  * there. `Shift+Y` is the same link as Markdown, `[name](devhub:…)`, for a
- * body or a note. The row menu has both (「リンクをコピー」), so the copy is
+ * body or a note. The row menu has both (Copy Link), so the copy is
  * not a right-click only; the link opens DevHub from Slack, Notes or a
  * browser (`main/shell/openFromUrl.ts`).
  *
@@ -774,10 +774,15 @@ export const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     // The row menu's Manage with Orchestrator / Stop Managing: the managed
-    // flag (`Workspace.managed`), set or cleared. Never Scratch or the
-    // Orchestrator row's own Workspace.
+    // flag, set or cleared — the selected Agent's (`Agent.managed`: handed
+    // to the Orchestrator, which is told; never the Orchestrator itself),
+    // the small thing if you are standing on one, as `close_selection` is;
+    // else the Workspace's (`Workspace.managed`; never Scratch or the
+    // Orchestrator row's own). The id is the one it always had, so a
+    // binding made for it keeps working.
     id: "toggle_workspace_managed",
-    label: "Manage this workspace with the Orchestrator, or stop managing it",
+    label:
+      "Manage the selected Agent or workspace with the Orchestrator, or stop managing it",
     needs: "workspace",
     category: "Workspace",
     defaultKeys: ["M"],
@@ -961,14 +966,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
     // Vim's yank: the selection's `devhub:` link, on the clipboard. What it
     // names is `chords.ts`'s (`copyLinkOf`); the row menu has the same two.
     id: "copy_link",
-    label: "リンクをコピー",
+    label: "Copy Link",
     needs: "nothing",
     category: "Navigate",
     defaultKeys: ["y"],
   },
   {
     id: "copy_markdown_link",
-    label: "Markdown リンクをコピー",
+    label: "Copy Markdown Link",
     needs: "nothing",
     category: "Navigate",
     defaultKeys: ["Y"],

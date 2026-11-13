@@ -806,6 +806,17 @@ export type AppIntentWire =
 			readonly type: "set_agent_meta";
 	  }
 	/**
+	 * Under the orchestrator's management, or not (`AgentWire.managed`): an
+	 * Agent row's Manage with Orchestrator and Stop Managing. Main tells the
+	 * orchestrator (`agent_managed`, `agent_unmanaged`); never the
+	 * orchestrator itself.
+	 */
+	| {
+			readonly agentId: string;
+			readonly managed: boolean;
+			readonly type: "set_agent_managed";
+	  }
+	/**
 	 * Under the orchestrator's management, or not (`WorkspaceWire.managed`):
 	 * the Sidebar's Manage with Orchestrator and Stop Managing.
 	 */

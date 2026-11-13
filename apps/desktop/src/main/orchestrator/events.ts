@@ -15,6 +15,10 @@
  *    `event_prompt` template, so the orchestrator reads it as the person's
  *    own input. Nothing holds them, off included (`isAnswer`); with no
  *    orchestrator running they wait for one. A request waits while off;
+ *    so does an agent the person took back (`agent_unmanaged`), which also
+ *    waits for an orchestrator to start. An agent handed over
+ *    (`agent_managed`) goes the same way, at once in full and saving; off,
+ *    or with no orchestrator, it is dropped — the board's `no_task` says it;
  * 3. keeps the rest **pending** as action items, not a history: **one line
  *    per subject** (`subjectOf`: a task, an item, an agent, a timer,
  *    a usage window, a custom type and text). A newer statement about a
@@ -152,6 +156,20 @@ export type OrchestratorEvent =
 			readonly messages?: readonly HumanWords[];
 	  }
 	/**
+	 * The person handed an agent over to the orchestrator from DevHub's
+	 * window (the row menu's Manage with Orchestrator, `Cmd+Q Shift+M`):
+	 * the orchestrator adopts it — binds it to a task, or makes one — and
+	 * decides its next step. Its own message, at once (`humanMessages`).
+	 */
+	| AgentHandover<"agent_managed">
+	/**
+	 * The person took an agent back from the orchestrator (Stop Managing):
+	 * it is theirs again — not to be sent to or resumed, its task binding
+	 * undone. Its own message, at once; while off, or with no orchestrator,
+	 * it waits for one.
+	 */
+	| AgentHandover<"agent_unmanaged">
+	/**
 	 * A subject that breaks the invariant (`invariant.ts`): an open task,
 	 * an item of the population with no task, or a managed agent with no
 	 * task, and the clause it fails. No state: that is `task show` /
@@ -231,6 +249,38 @@ export type OrchestratorEvent =
 
 export type OrchestratorEventType = OrchestratorEvent["type"];
 
+/**
+ * An agent the person handed to the orchestrator or took back
+ * (`agent_managed`, `agent_unmanaged`): who it is and where, and what it was
+ * doing — enough to adopt it, or let go of it, without a call first.
+ */
+export interface AgentHandover<T extends "agent_managed" | "agent_unmanaged"> {
+	readonly type: T;
+	readonly agent: EventAgent;
+	/** Its Workspace as `ws=` names it (`workspaceToken`). */
+	readonly ws: string;
+	/** Its Workspace's branch, when it is a repository. */
+	readonly branch?: string;
+	/** working, background, waiting, idle, error, unknown, stopping. */
+	readonly status: string;
+	/** The open task it is bound to, when it is. */
+	readonly task?: EventTask;
+	/** The person's last message to it (`excerpt`), when it has one. */
+	readonly request?: string;
+}
+
+/** `agent_managed` or `agent_unmanaged`. */
+export type AgentHandoverEvent =
+	| AgentHandover<"agent_managed">
+	| AgentHandover<"agent_unmanaged">;
+
+/** The person handed an agent over, or took it back. */
+export function isHandover(
+	event: OrchestratorEvent,
+): event is AgentHandoverEvent {
+	return event.type === "agent_managed" || event.type === "agent_unmanaged";
+}
+
 /** An open task, as a `triage` lists it for the re-check. */
 export interface TriageTask {
 	readonly id: number;
@@ -296,6 +346,8 @@ export const EVENT_TYPES = [
 	"usage.threshold",
 	"triage",
 	"request",
+	"agent_managed",
+	"agent_unmanaged",
 	"custom.*",
 ] as const;
 
@@ -304,20 +356,29 @@ export function customTypeProblem(type: string): boolean {
 	return !/^custom\.[a-z0-9][a-z0-9_-]{0,39}$/u.test(type);
 }
 
-/** An event that carries the person's own words. */
-export type HumanInputEvent = Extract<
-	OrchestratorEvent,
-	{ type: "escalation_answered" | "task.human_direct" | "request" }
->;
+/**
+ * An event that carries the person's own words, or their own act: a
+ * message of its own, at once.
+ */
+export type HumanInputEvent =
+	| Extract<
+			OrchestratorEvent,
+			{ type: "escalation_answered" | "task.human_direct" | "request" }
+	  >
+	| AgentHandoverEvent;
 
-/** The person's own words: sent at once, as they typed them. */
+/**
+ * The person's own words (sent as they typed them), or their own act — an
+ * agent handed over or taken back: sent at once, as a message of its own.
+ */
 export function isHumanInput(
 	event: OrchestratorEvent,
 ): event is HumanInputEvent {
 	return (
 		event.type === "escalation_answered" ||
 		event.type === "task.human_direct" ||
-		event.type === "request"
+		event.type === "request" ||
+		isHandover(event)
 	);
 }
 
@@ -330,6 +391,16 @@ export function isAnswer(event: OrchestratorEvent): boolean {
 	return (
 		event.type === "escalation_answered" || event.type === "task.human_direct"
 	);
+}
+
+/**
+ * What waits for an orchestrator to start when there is none: the person's
+ * answers, and an agent taken back from it — which must reach it before it
+ * resumes that agent. An agent handed over does not wait: the next start's
+ * board says it (`no_task`).
+ */
+export function waitsForOrchestrator(event: OrchestratorEvent): boolean {
+	return isAnswer(event) || event.type === "agent_unmanaged";
 }
 
 /**
@@ -522,6 +593,19 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 				head: [taskToken(event.task)],
 				summary: excerpt(event.text, 200),
 			};
+		case "agent_managed":
+		case "agent_unmanaged":
+			return {
+				head: [
+					agentToken(event.agent),
+					`ws=${event.ws}`,
+					...(event.task === undefined ? [] : [taskToken(event.task)]),
+				],
+				summary:
+					event.type === "agent_managed"
+						? "人が管理下に移しました"
+						: "人が管理から外しました",
+			};
 		case "usage.threshold":
 			return {
 				head: [
@@ -568,8 +652,53 @@ export function humanMessage(
 		: `${task} agent=${agent} に人が直接送ったメッセージ:\n${piece.text}`;
 }
 
+/**
+ * The message an agent handed over (`agent_managed`) or taken back
+ * (`agent_unmanaged`) goes as: who and where it is, its link, what it was
+ * doing, and what the orchestrator does now.
+ */
+export function handoverMessage(event: AgentHandoverEvent): string {
+	const agent = shortId(event.agent.id);
+	const where = [
+		...(event.agent.name === undefined ? [] : [excerpt(event.agent.name, 40)]),
+		`ws=${event.ws}`,
+		...(event.branch === undefined ? [] : [`branch=${event.branch}`]),
+	].join(", ");
+	const who = `エージェント agent=${agent} (${where})`;
+	const link = `devhub:agent/${event.agent.id}`;
+	const request =
+		event.request === undefined || event.request.length === 0
+			? "人からの依頼は読めません"
+			: `人からの最後の依頼:「${excerpt(event.request, 200)}」`;
+	const task =
+		event.task === undefined
+			? undefined
+			: `${taskToken(event.task)} に紐づいています`;
+	if (event.type === "agent_managed") {
+		const adopt =
+			event.task === undefined
+				? `引き取ってください: 中身を devhub --tell agent read ${agent} で確かめ、合う開いたタスクがあれば devhub --tell task bind <タスク> ${agent}、なければ devhub --tell task new --title … --status in_progress で作って task bind ${agent} し、次の一手を決める。`
+				: `引き取ってください: 中身を devhub --tell agent read ${agent} で確かめ、そのタスクのまま進めるか (合わなければ別のタスクに task bind し直す)、次の一手を決める。`;
+		return [
+			`人が${who} をあなたの管理下に移しました。${link}`,
+			`状態: ${event.status}。${request}。${task ?? "どのタスクにも紐づいていません"}。`,
+			adopt,
+		].join("\n");
+	}
+	const release =
+		event.task === undefined
+			? "このエージェントにはもう送らず、再開もしないでください。追うのをやめるだけです。"
+			: `このエージェントにはもう送らず、再開もしないでください。devhub --tell task unbind ${String(event.task.id)} ${agent} で外し、そのタスクは続けるか (別のエージェントで)、待機にするか、終わっていれば task done かを決める。`;
+	return [
+		`人が${who} をあなたの管理から外しました。人が自分で進めます。${link}`,
+		`状態: ${event.status}。${task ?? "どのタスクにも紐づいていません"}。`,
+		release,
+	].join("\n");
+}
+
 /** The messages one human event goes as: one per piece of their words. */
 export function humanMessages(event: HumanInputEvent): string[] {
+	if (isHandover(event)) return [handoverMessage(event)];
 	if (event.type === "request")
 		return [
 			`${taskToken(event.task)} 人からの依頼 (この依頼からタスクを作りました。devhub --tell task edit ${String(event.task.id)} で題名を整え、task link / エージェントの割り当てで進めてください):\n${event.text}`,
@@ -601,6 +730,9 @@ export function subjectOf(event: OrchestratorEvent): string {
 		case "task.human_direct":
 		case "request":
 			return `task ${String(event.task.id)}`;
+		case "agent_managed":
+		case "agent_unmanaged":
+			return `agent ${event.agent.id}`;
 		case "task.changed":
 			return `task ${String(event.taskId)}`;
 		case "triage":
@@ -827,8 +959,9 @@ export class EventDispatcher {
 		if (this.#log.length > EVENT_LOG_SIZE)
 			this.#log.splice(0, this.#log.length - EVENT_LOG_SIZE);
 		const orchestrator = this.delivery.orchestrator();
-		// An answer waits for an orchestrator to start; the rest has nobody.
-		if (orchestrator === undefined && !isAnswer(event)) {
+		// An answer (or an agent taken back) waits for an orchestrator to
+		// start; the rest has nobody.
+		if (orchestrator === undefined && !waitsForOrchestrator(event)) {
 			entry.fate = "dropped";
 			this.delivery.log?.(
 				`[devhub] orchestrator event ${event.type} dropped: no orchestrator is assigned`,
@@ -837,6 +970,15 @@ export class EventDispatcher {
 		}
 		if (!eventAllowed(event.type, this.delivery.settings().events)) {
 			entry.fate = "filtered";
+			return entry;
+		}
+		// An agent handed over while off: the board says it when the mode
+		// goes on (`no_task`), as it does to an orchestrator that starts.
+		if (this.paused && event.type === "agent_managed") {
+			entry.fate = "dropped";
+			entry.reason = "off";
+			entry.settledAt = entry.at;
+			this.delivery.changed?.();
 			return entry;
 		}
 		if (isHumanInput(event)) {
@@ -988,6 +1130,16 @@ export class EventDispatcher {
 		for (const entry of [...this.#human]) {
 			if (this.#waits(entry.event)) continue;
 			this.#human.splice(this.#human.indexOf(entry), 1);
+			// An agent taken back, then handed over again while it waited.
+			if (
+				isHandover(entry.event) &&
+				this.delivery.relevant?.(entry.event) === false
+			) {
+				entry.fate = "dropped-stale";
+				entry.reason = "no longer needs attention";
+				entry.settledAt = this.#now();
+				continue;
+			}
 			this.#sendHuman(agentId, entry);
 			sent += 1;
 		}

@@ -222,6 +222,17 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
   \`task=9「…」 人からの依頼 (…):\`)、2 行目からは人が打った文字そのまま (引用もテンプレートもなし)。
   \`event_prompt\` は通らない。届いた回答は既読扱い (\`agent wait --any\` も未読として返さない)。
   make-progress は、メッセージがこの形で始まったら人の言葉として扱うよう書いておく。
+- **人がエージェントを渡した / 取り戻したときも、単独ですぐ届く。** 人が DevHub の画面
+  (エージェントの行のメニューの Manage with Orchestrator / Stop Managing、\`Cmd+Q Shift+M\`)
+  で既存のエージェントをオーケストレーターの管理下に移すと \`agent_managed\`、外すと
+  \`agent_unmanaged\` が 1 通のメッセージとして届く (\`event_prompt\` は通らない。saving でも待たない)。
+  1 行目は \`人がエージェント agent=a1b2c3d4 (名前, ws=web, branch=fix/login) をあなたの管理下に移しました。devhub:agent/<id>\`
+  (外したときは \`… をあなたの管理から外しました。人が自分で進めます。…\`)、2 行目に状態・人からの最後の依頼・
+  紐づくタスク、3 行目にすること。移されたら引き取る: 合う開いたタスクがあれば \`task bind\`、なければ
+  \`task new\` → \`task bind\` し、次の一手を決める。外されたら以後そのエージェントには送らず再開もせず、
+  紐づくタスクがあれば \`task unbind\` してそのタスクの扱いを決める。off のあいだ (とオーケストレーターが
+  いないとき) は、移したものは届かず次に on になったとき \`no_task\` として載る。外したものは on になるまで待つ。
+  \`agent manage\` (CLI) では届かない (オーケストレーター自身の操作だから)。
 - **それ以外は束ねて、\`[orchestrator] delivery_interval\` (既定 5m) に 1 回まで** 届く。
   1 回の配信 = 1 メッセージ (\`event_prompt\` の \`{EVENT}\`)。
 - **配信は履歴ではない。いま対応が要るものの一覧で、対象ごとに 1 行**
@@ -281,6 +292,8 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | \`task.changed\` | 待機のタスクが動けるかもしれない: リンクしたアイテム (Issue / PR) や紐づくエージェントの状態が変わった (\`subjects_changed\`) か、\`--check-at\` の時刻が来た (\`due\`、時刻 1 つにつき 1 回)。行はどのタスクかと、そのどちらかだけ | task, 理由 |
 | \`usage.threshold\` | CLI のプラン枠の使用率が \`[orchestrator] usage_thresholds\` (既定 80, 95) を上向きに超えた | cli, window, pct, resets |
 | \`triage\` | 見直しの時刻 (full で 30 分ごと、saving で 1 時間ごと)。下に開いているタスクが並び、それぞれ \`task edit T --priority\` で付け直す。「古いかも」の理由が付いたものは task done・付け直し・メモに理由、のどれかに。saving では状態の変化はいつも届き、催促は high のタスクのものだけが届き、残りは次の triage と一緒に届く | なし |
+| \`agent_managed\` | 人が DevHub の画面で既存のエージェントをオーケストレーターの管理下に移した。人の操作として単独ですぐ届く (上記)。引き取る: task bind か task new → task bind、そして次の一手 | agent, ws, branch, 状態, 依頼, task |
+| \`agent_unmanaged\` | 人がエージェントを管理から外した (人が自分で進める)。単独ですぐ届き、off のあいだは on になるまで待つ。以後送らず再開もせず、紐づくタスクは task unbind | agent, ws, task |
 | \`request\` | 人がボードの + から送った依頼。DevHub が待機のタスクにし、人の言葉としてすぐ届く (「task=N … 人からの依頼」)。題名を整え、リンクとエージェントで進める | task, 本文 |
 | \`timer.elapsed\` | \`[[orchestrator.timers]]\` か \`orchestrator timer set\` のタイマー | 名前 |
 | \`custom.*\` | \`orchestrator emit\` でスクリプトや他ツールが送るもの | 本文 |

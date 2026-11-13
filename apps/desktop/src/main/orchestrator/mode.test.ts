@@ -347,6 +347,8 @@ describe("saving: state changes and nudges", () => {
 			escalation_answered: "never_held",
 			"task.human_direct": "never_held",
 			request: "never_held",
+			agent_managed: "never_held",
+			agent_unmanaged: "never_held",
 			"needs_action task": "state_change",
 			"needs_action agent no_task": "state_change",
 			"needs_action item no_task": "nudge",

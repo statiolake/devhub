@@ -1274,6 +1274,13 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         ...(value === undefined ? {} : { value }),
       };
     }
+    case "set_agent_managed":
+      if (typeof wire.managed !== "boolean") invalid();
+      return {
+        type: "set_agent_managed",
+        agentId: tryParse(() => parseAgentId(wire.agentId)),
+        managed: wire.managed,
+      };
     case "set_workspace_managed":
       if (typeof wire.managed !== "boolean") invalid();
       return {

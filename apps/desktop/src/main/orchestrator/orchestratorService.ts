@@ -462,9 +462,61 @@ export class OrchestratorService {
 					this.ports.usageWindow?.(event.cli, event.window),
 					this.#now(),
 				);
+			// Handed over, or taken back, and still so (it waited while off).
+			case "agent_managed":
+			case "agent_unmanaged": {
+				const agent = this.ports
+					.invariant?.()
+					.agents.find((one) => one.id === event.agent.id);
+				return (
+					agent === undefined ||
+					agent.managed === (event.type === "agent_managed")
+				);
+			}
 			default:
 				return true;
 		}
+	}
+
+	/**
+	 * The person handed `agentId` over to the orchestrator from DevHub's
+	 * window (`managed`: the row menu's Manage with Orchestrator, `Cmd+Q
+	 * Shift+M`), or took it back (Stop Managing): the orchestrator is told,
+	 * as a message of its own (`agent_managed`, `agent_unmanaged`), with
+	 * what it needs to adopt the agent — its name, Workspace and `branch`,
+	 * its status, the task it is bound to, the person's last message to it —
+	 * or to let go of it. Not for `agent manage` (the orchestrator's own
+	 * word) and never about the orchestrator itself. Called once the flag
+	 * has moved.
+	 */
+	async handedOver(
+		agentId: string,
+		managed: boolean,
+		branch?: string,
+	): Promise<void> {
+		if (agentId === this.#store().orchestratorAgentId) return;
+		const agent = this.ports
+			.invariant?.()
+			.agents.find((one) => one.id === agentId);
+		const live = this.ports.agents().find((one) => one.id === agentId);
+		if (agent === undefined && live === undefined) return;
+		const task = this.#store().taskOfAgent(agentId);
+		const message = await Promise.resolve(
+			this.ports.personMessage?.(agentId),
+		).catch(() => undefined);
+		const request = message?.text?.trim();
+		const status = agent ?? live!;
+		this.events.dispatch({
+			type: managed ? "agent_managed" : "agent_unmanaged",
+			agent: { id: agentId, name: agent?.name ?? live!.name },
+			ws: agent?.ws ?? live!.workspaceLabel,
+			...(branch === undefined ? {} : { branch }),
+			status: status.stopping ? "stopping" : status.status,
+			...(task === undefined
+				? {}
+				: { task: { id: task.id, title: task.title } }),
+			...(request === undefined || request.length === 0 ? {} : { request }),
+		});
 	}
 
 	get orchestratorAgentId(): string | undefined {

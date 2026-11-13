@@ -236,7 +236,7 @@ const REPOSITORY_STATUS_CONDITION = "repository_status";
 /** The Orchestrator in saving because a plan window is over `saving_threshold`. */
 const ORCHESTRATOR_SAVING_CONDITION = "orchestrator_saving";
 /**
- * 「リンクをコピー」's notice: a condition, so it is the quiet kind and one
+ * Copy Link's notice: a condition, so it is the quiet kind and one
  * slot — copying again replaces it — taken down after `LINK_COPIED_MS`.
  */
 const LINK_COPIED_CONDITION = "link_copied";
@@ -2005,6 +2005,13 @@ export class AppController {
 				// door: a chord is another way to raise a command DevHub has.
 				this.dispatchOwn(
 					intentFromWire({ type: "mark_agent_unread", agentId }),
+				);
+			},
+			setAgentManaged: (agentId, managed) => {
+				// An Agent row menu's Manage with Orchestrator / Stop Managing:
+				// the person's act, so the orchestrator is told.
+				void this.handAgentOver(parseAgentId(agentId), managed).catch(
+					() => undefined,
 				);
 			},
 			setWorkspaceManaged: (workspaceId, managed) => {
@@ -6967,7 +6974,7 @@ export class AppController {
 	}
 
 	/**
-	 * 「リンクをコピー」 (`Cmd+Q Y`, the row menu): the `devhub:` link to a
+	 * Copy Link (`Cmd+Q Y`, the row menu): the `devhub:` link to a
 	 * place on this Mac's clipboard — canonical, by id, so it goes on naming
 	 * the same place, or as Markdown with the place's name — and a short
 	 * notice saying what was copied. The notice is a quiet one (a condition
@@ -9469,6 +9476,58 @@ export class AppController {
 	 * main says so. `dispatchOwn` deliberately does not, because DevHub raising
 	 * its own intent is not the person starting an action.
 	 */
+	/**
+	 * The person handing an Agent over to the orchestrator, or taking it back,
+	 * from the window: an Agent row's Manage with Orchestrator / Stop
+	 * Managing, `Cmd+Q Shift+M` on the selected Agent. The flag moves
+	 * (`set_agent_managed`: its Workspace goes under management with it), and
+	 * the orchestrator is told so it adopts the Agent — or lets go of it
+	 * (`OrchestratorService.handedOver`). `agent manage` is the
+	 * orchestrator's own word and tells it nothing. Never the orchestrator
+	 * itself; a press that changes nothing tells nothing.
+	 */
+	private async handAgentOver(
+		agentId: AgentId,
+		managed: boolean,
+	): Promise<IntentOutcome> {
+		if (managed && agentId === this.orchestrator?.orchestratorAgentId)
+			throw namedFailure(
+				new Error(
+					"The Orchestrator is never under its own management: it manages the others.",
+				),
+			);
+		const before = this.agentManaged(agentId);
+		const settled = await this.dispatchAwaiting({
+			type: "set_agent_managed",
+			agentId,
+			managed,
+		});
+		if (before !== undefined && before !== managed) {
+			const workspaceId = this.coordinator.model.workspaces.find((workspace) =>
+				workspace.agents.some((agent) => agent.id === agentId),
+			)?.id;
+			const branch = this.lastRepositoryStatus.workspaces.find(
+				(one) => one.workspaceId === workspaceId,
+			)?.branch;
+			void this.orchestrator
+				?.handedOver(agentId, managed, branch ?? undefined)
+				.catch((error: unknown) => {
+					console.warn(
+						`[devhub] the orchestrator could not be told about Agent ${agentId}: ${failureText(error)}`,
+					);
+				});
+		}
+		return settled;
+	}
+
+	/** Whether an open Agent is managed now; undefined when it is not open. */
+	private agentManaged(agentId: AgentId): boolean | undefined {
+		for (const workspace of this.coordinator.model.workspaces)
+			for (const agent of workspace.agents)
+				if (agent.id === agentId) return agent.managed === true;
+		return undefined;
+	}
+
 	personStartedAction(): void {
 		this.sendToDisplay(CHANNELS.actionStarted, undefined);
 	}
@@ -9480,7 +9539,10 @@ export class AppController {
 		} catch (error) {
 			throw namedFailure(error);
 		}
-		const settled = await this.dispatchAwaiting(intent);
+		const settled =
+			intent.type === "set_agent_managed"
+				? await this.handAgentOver(intent.agentId, intent.managed)
+				: await this.dispatchAwaiting(intent);
 
 		// Selecting the Editor activity is the moment its view has to exist. It is
 		// done here rather than in the model because a view is an effect on the
@@ -10658,7 +10720,7 @@ export class AppController {
 				);
 			},
 		);
-		// The row menu's 「リンクをコピー」: written and said here, as the chord's.
+		// The row menu's Copy Link: written and said here, as the chord's.
 		handle(
 			CHANNELS.copyDevhubLink,
 			(_event, link: unknown, markdown: unknown) => {

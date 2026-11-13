@@ -147,8 +147,9 @@ the Sidebar is the person's places, as before.
     `issue assign --managed`, `agent manage`, a managed session resumed
     there (`AppModel.setAgentManaged`);
   - by `workspace manage W`, or the row's **Manage with Orchestrator**
-    (right-click, or `Cmd+Q Shift+M` with the row or one of its agents
-    selected; also in the palette, `Cmd+Q :`).
+    (right-click, or `Cmd+Q Shift+M` with the row selected; also in the
+    palette, `Cmd+Q :`). With one of its agents selected the same key is
+    that agent's Manage with Orchestrator ("Managed agents").
 
   `workspace unmanage W` and **Stop Managing** (the same right-click and
   key on a managed Workspace) take it out, **and its agents with it**: a
@@ -528,8 +529,8 @@ its text with a quiet 見つかりません, never a broken navigation. External
 http(s) links open in the browser as before.
 
 **A person copies one** from the Sidebar: an Agent's or a Workspace's row
-menu has 「リンクをコピー」 (the canonical `devhub:agent/<id>`,
-`devhub:workspace/<id>`) and 「Markdown リンクをコピー」
+menu has Copy Link (the canonical `devhub:agent/<id>`,
+`devhub:workspace/<id>`) and Copy Markdown Link
 (`[<display name>](devhub:agent/<id>)`), and `Cmd+Q Y` / `Cmd+Q Shift+Y`
 (`copy_link` / `copy_markdown_link`, also in the command palette) copy the
 same for what is selected — on the Orchestrator row, the task open over the
@@ -782,6 +783,41 @@ agent itself never is. The flag is set where the agent starts:
   refuses the orchestrator).
 - What a person starts in the window — New Agent (`Cmd+Q c`), the Assign
   Issue sheet — is not managed.
+- **The person hands an existing agent over** from its row's menu,
+  **Manage with Orchestrator** (**Stop Managing** on a managed one), where
+  a Workspace's is, ahead of Copy Link; or `Cmd+Q Shift+M` with the agent
+  selected (`toggle_workspace_managed`: the selected agent, else its
+  Workspace, the small thing first as `Cmd+Q X`; in the palette as "Manage
+  the selected Agent or workspace with the Orchestrator, or stop managing
+  it"). Neither is ever offered on the orchestrator agent itself, and main
+  refuses it too. The flag moves as `agent manage` moves it — the agent's
+  Workspace goes under management with it — and the orchestrator is told
+  (below).
+
+**Handing over is a takeover, not a flag.** `agent manage` is the
+orchestrator's own word and tells it nothing; a managed agent with no task
+would only show up as `no_task` on the next batch. So the window's
+Manage with Orchestrator sends the orchestrator **`agent_managed`**, a
+message of its own, at once — the person's act, delivered like their words
+(not inside `event_prompt`, not held by saving or by a turn):
+
+    人がエージェント agent=a1b2c3d4 (API fix, ws=web, branch=fix/login) をあなたの管理下に移しました。devhub:agent/a1b2c3d4-…
+    状態: idle。人からの最後の依頼:「ログインの 500 を直して」。どのタスクにも紐づいていません。
+    引き取ってください: 中身を devhub --tell agent read a1b2c3d4 で確かめ、合う開いたタスクがあれば devhub --tell task bind <タスク> a1b2c3d4、なければ devhub --tell task new --title … --status in_progress で作って task bind a1b2c3d4 し、次の一手を決める。
+
+— its name, Workspace and branch, its link, its status, the person's last
+message to it (`agent read`'s, cut at 200 characters) and the task it is
+bound to, if any. Off, or with no orchestrator, it is dropped: the agent is
+`no_task` on the board, and said so when the mode goes on or one starts.
+
+**Stop Managing** sends **`agent_unmanaged`** the same way: the agent is the
+person's again — not to be sent to or resumed — and, when it is bound to a
+task, `task unbind T A` and a decision about the task (another agent,
+待機, or done). A task's bound agents count for `idle` whether or not they
+are managed, so this one is not dropped while off or with no orchestrator:
+it waits until one runs and the mode is on, and is dropped as stale if the
+agent was handed over again meanwhile (`OrchestratorService.handedOver`,
+`AppController.handAgentOver`).
 
 The same flag is said of Workspaces (`workspace manage W` / `workspace
 unmanage W`, the row's Manage with Orchestrator / Stop Managing): an agent
@@ -974,6 +1010,8 @@ work, with its own tools (`gh`), not by the orchestrator.
 | `usage.threshold`     | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                              | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                    |
 | `triage`              | time to rank the open tasks again and re-check them (listed under it, the maybe-stale ones with why): every 30 minutes in full, every hour in saving (see "Triage") | `[triage] — 見直し: …` and, on the lines under it, `  task=12「…」 処理中 — 古いかも: PR acme/pay#12 はマージ済み`                                             |
 | `request`             | the person sent a request from the board's + (it is a 待機 task already). Sent at once, as its own message: the person's words                                      | `task=3「請求書 CSV の文字化け」 人からの依頼 (…):` and, on the next line, what they wrote                                                                     |
+| `agent_managed`       | the person handed an existing agent to the orchestrator from the window (Manage with Orchestrator, `Cmd+Q Shift+M`). Sent at once, as its own message; dropped while off | `人がエージェント agent=a1b2c3d4 (API fix, ws=web, branch=fix/login) をあなたの管理下に移しました。devhub:agent/…` and its status, last request, task, what to do |
+| `agent_unmanaged`     | the person took it back (Stop Managing). Sent at once, as its own message; waits while off or with no orchestrator                                                 | `人がエージェント agent=a1b2c3d4 (…) をあなたの管理から外しました。人が自分で進めます。…` and `task unbind` for its task                                     |
 | `timer.elapsed`       | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                             | `[timer.elapsed] sweep`                                                                                                                                        |
 | `custom.*`            | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                       | `[custom.deploy] — staging に deploy 完了`                                                                                                                     |
 
@@ -1016,6 +1054,11 @@ and taken when its turn ends, like the person's composer. Delivering an answer i
 (`acknowledged`: `agent wait --any` no longer reports it).
 A message whose text could not be read says so and where to read it
 (`agent read A --since …`).
+
+The person's acts on an agent — `agent_managed` and `agent_unmanaged`
+("Managed agents") — go the same way: at once, as a message of their own,
+in full and saving alike. Off is the difference: an agent handed over is
+dropped (the board says `no_task`), one taken back waits, as a request does.
 
 ### Delivery: batches, the interval, pause
 
@@ -1092,7 +1135,7 @@ beside it when saving came by itself, and its card says why.
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **full**   | everything, as described above: a batch at most every `delivery_interval`, each carrying every `needs_action` subject again (what "on" was)                                                                                                                                                                      |
 | **saving** | the same, more rarely: at most every **3 ×** `delivery_interval` (`SAVING_INTERVAL_FACTOR`). **State changes** about the work always go; **nudges** go only when high, and while 2 or more tasks are in progress only about those tasks (below). The person's words, requests, `init` and `triage` go as in full |
-| **off**    | the person's answers (`escalation_answered`, `task.human_direct`), as in full; everything else is held, requests too, and GitHub is not polled. Timers are off: one that comes due (a task's `--check-at` too) is dropped, not sent on turning on                                                                |
+| **off**    | the person's answers (`escalation_answered`, `task.human_direct`), as in full; everything else is held, requests and `agent_unmanaged` too (`agent_managed` is dropped: the agent is `no_task` once on), and GitHub is not polled. Timers are off: one that comes due (a task's `--check-at` too) is dropped, not sent on turning on                                                                |
 
 - **A batch** is the pending lines and the standing `needs_action` lines,
   the message that has the orchestrator act on its agents (or itself). In
@@ -1602,7 +1645,11 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
    ordinary subagent given the relevant past decisions. The router never
    blocks, or every item's progress waits on it. DevHub delivers while those
    subagents run (only a foreground turn holds a batch). The person's words
-   arrive as their own messages and are their instructions. `DEFAULT_EVENT_PROMPT`
+   arrive as their own messages and are their instructions. So does an
+   agent the person handed over (`agent_managed`: adopt it — `task bind` to
+   a matching open task, else `task new` and `task bind`, then decide its
+   next step) or took back (`agent_unmanaged`: never send to or resume it
+   again, `task unbind` it and decide about its task). `DEFAULT_EVENT_PROMPT`
    says the same in one line.
 4. **The invariant** (see "The invariant"), as what the orchestrator
    maintains — every open task 回答待ち, 待機 or 処理中 with an agent at work —

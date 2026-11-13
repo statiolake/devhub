@@ -124,6 +124,7 @@ function host(zoomActs = true) {
 		},
 		swapSplitFocus: record("swapSplitFocus"),
 		setWorkspaceManaged: record("setWorkspaceManaged"),
+		setAgentManaged: record("setAgentManaged"),
 		cyclePaneFocus: record("cyclePaneFocus"),
 		toggleTerminal: record("toggleTerminal"),
 		terminalNeedsAgent: record("terminalNeedsAgent"),

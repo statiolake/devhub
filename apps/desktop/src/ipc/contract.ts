@@ -1766,7 +1766,7 @@ export interface SidebarBridge
 	 */
 	showContextMenu(request: ContextMenuRequestWire): Promise<string | undefined>;
 	/**
-	 * The row menu's 「リンクをコピー」 / 「Markdown リンクをコピー」: a
+	 * The row menu's Copy Link / Copy Markdown Link: a
 	 * `devhub:` link to a row (`model/devhubLink.ts`) on this Mac's clipboard,
 	 * canonical or as `[name](devhub:…)`, and a short notice saying so. Main
 	 * writes it and names the place, as `Cmd+Q Y` does for the selection.

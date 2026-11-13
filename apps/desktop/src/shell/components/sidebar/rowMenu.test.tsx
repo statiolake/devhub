@@ -150,14 +150,47 @@ const labels = (items: readonly { readonly label: string }[]) =>
 describe("what a right-click on an Agent offers", () => {
   const none = () => undefined;
 
-  it("offers Rename, Mark as Unread, Restart, Continue in Terminal and Stop on a running GUI Agent", () => {
+  it("offers Rename, Mark as Unread, Restart, Continue in Terminal, Manage with Orchestrator and Stop on a running GUI Agent", () => {
     expect(labels(agentMenuItems(agent(), none, none, none))).toEqual([
       "Rename…",
       "Mark as Unread",
       "Restart Session",
       "Continue in Terminal",
+      "Manage with Orchestrator",
       "Stop Agent",
     ]);
+  });
+
+  it("hands an Agent to the Orchestrator, and says Stop Managing on a managed one", () => {
+    const dispatched: unknown[] = [];
+    const dispatch = (intent: unknown) => {
+      dispatched.push(intent);
+    };
+    const items = agentMenuItems(agent(), dispatch, none, none);
+    items.find((item) => item.id === "manage")?.run();
+    const managed = agentMenuItems(
+      agent({ managed: true }),
+      dispatch,
+      none,
+      none,
+    );
+    expect(labels(managed)).toContain("Stop Managing");
+    expect(labels(managed)).not.toContain("Manage with Orchestrator");
+    managed.find((item) => item.id === "manage")?.run();
+    expect(dispatched).toEqual([
+      { type: "set_agent_managed", agentId: "a-1", managed: true },
+      { type: "set_agent_managed", agentId: "a-1", managed: false },
+    ]);
+  });
+
+  it("never offers Manage with Orchestrator on the Orchestrator itself", () => {
+    const items = agentMenuItems(agent(), none, none, none, undefined, "a-1");
+    expect(items.some((item) => item.id === "manage")).toBe(false);
+    expect(
+      agentMenuItems(agent(), none, none, none, undefined, "another").some(
+        (item) => item.id === "manage",
+      ),
+    ).toBe(true);
   });
 
   it("offers a terminal Claude or Codex Agent Continue in GUI, and runs it for that Agent", () => {
@@ -254,7 +287,7 @@ describe("what a right-click on an Agent offers", () => {
   });
 });
 
-describe("「リンクをコピー」", () => {
+describe("Copy Link", () => {
   const none = () => undefined;
   it("copies an Agent's link, canonical or as Markdown, before Stop", () => {
     const copied: [string, boolean][] = [];
@@ -262,8 +295,8 @@ describe("「リンクをコピー」", () => {
       copied.push([link, markdown]),
     );
     expect(labels(items).slice(-3)).toEqual([
-      "リンクをコピー",
-      "Markdown リンクをコピー",
+      "Copy Link",
+      "Copy Markdown Link",
       "Stop Agent",
     ]);
     items.find((item) => item.id === "copy-link")?.run();
@@ -289,8 +322,8 @@ describe("「リンクをコピー」", () => {
     });
     expect(labels(items)).toEqual([
       "Manage with Orchestrator",
-      "リンクをコピー",
-      "Markdown リンクをコピー",
+      "Copy Link",
+      "Copy Markdown Link",
       "Close Workspace…",
     ]);
     items.find((item) => item.id === "copy-markdown-link")?.run();
@@ -379,8 +412,9 @@ describe("the menu is main's to draw", () => {
           { id: "unread", label: "Mark as Unread" },
           { id: "restart", label: "Restart Session" },
           { id: "continue", label: "Continue in Terminal" },
-          { id: "copy-link", label: "リンクをコピー" },
-          { id: "copy-markdown-link", label: "Markdown リンクをコピー" },
+          { id: "manage", label: "Manage with Orchestrator" },
+          { id: "copy-link", label: "Copy Link" },
+          { id: "copy-markdown-link", label: "Copy Markdown Link" },
           { id: "stop", label: "Stop Agent", separatorBefore: true },
         ],
         at: { x: 12, y: 34 },

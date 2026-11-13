@@ -119,6 +119,8 @@ export type SavingKind =
 	| "escalation_answered"
 	| "task.human_direct"
 	| "request"
+	| "agent_managed"
+	| "agent_unmanaged"
 	| "needs_action task"
 	| "needs_action agent no_task"
 	| "needs_action item no_task"
@@ -162,6 +164,8 @@ export const SAVING_CLASSES: Readonly<Record<SavingKind, SavingClass>> = {
 	escalation_answered: "never_held",
 	"task.human_direct": "never_held",
 	request: "never_held",
+	agent_managed: "never_held",
+	agent_unmanaged: "never_held",
 	"needs_action task": "state_change",
 	"needs_action agent no_task": "state_change",
 	"needs_action item no_task": "nudge",
@@ -188,6 +192,8 @@ export function savingKindOf(
 		case "escalation_answered":
 		case "task.human_direct":
 		case "request":
+		case "agent_managed":
+		case "agent_unmanaged":
 		case "usage.threshold":
 			return event.type;
 		case "timer.elapsed":

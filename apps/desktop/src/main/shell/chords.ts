@@ -203,6 +203,12 @@ export type ChordEffect =
 			readonly workspaceId: string;
 			readonly managed: boolean;
 	  }
+	/** Hand the Agent to the orchestrator, or take it back. */
+	| {
+			readonly kind: "set-agent-managed";
+			readonly agentId: string;
+			readonly managed: boolean;
+	  }
 	/**
 	 * Stop this Workspace's VS Code (`Cmd+Q Shift+E`): closed as a long frozen
 	 * one is discarded, back to the placeholder Enter starts it from.
@@ -522,6 +528,17 @@ export function resolveChord(
 			return closeWorkspace(snapshot, workspace);
 
 		case "toggle_workspace_managed":
+			// The small thing if you are standing on one, as Close is: the
+			// selected Agent (`agentMenuItems`' rule: never the orchestrator),
+			// else its Workspace.
+			if (agent) {
+				if (agent.id === snapshot.orchestratorAgentId) return undefined;
+				return {
+					kind: "set-agent-managed",
+					agentId: agent.id,
+					managed: agent.managed !== true,
+				};
+			}
 			// The rule the row menu reads (`workspaceMenuItems`): Scratch and
 			// the Orchestrator row's own are rows of their own.
 			if (

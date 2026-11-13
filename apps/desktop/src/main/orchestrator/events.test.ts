@@ -50,6 +50,7 @@ function world(
 		interval?: string;
 		relevant?: (event: OrchestratorEvent) => boolean;
 		standing?: () => readonly OrchestratorEvent[];
+		orchestrator?: () => string | undefined;
 	} = {},
 ) {
 	const sent: string[] = [];
@@ -57,7 +58,7 @@ function world(
 	const state = { busy: options.busy ?? false, now: 1_000_000 };
 	const timers: { at: number; run: () => void }[] = [];
 	const dispatcher = new EventDispatcher({
-		orchestrator: () => ORCH,
+		orchestrator: options.orchestrator ?? (() => ORCH),
 		settings: () => ({
 			event_prompt: options.event_prompt ?? "handle: {EVENT}",
 			init_prompt: options.init_prompt,
@@ -601,5 +602,101 @@ describe("turning events on", () => {
 		dispatcher.pause();
 		dispatcher.flush();
 		expect(sent).toEqual([]);
+	});
+});
+
+describe("an agent the person hands over, or takes back", () => {
+	const handed: OrchestratorEvent = {
+		type: "agent_managed",
+		agent: AGENT,
+		ws: "web",
+		branch: "fix/login",
+		status: "idle",
+		request: "ログインの 500 を直して",
+	};
+	const taken: OrchestratorEvent = {
+		type: "agent_unmanaged",
+		agent: AGENT,
+		ws: "web",
+		branch: "fix/login",
+		status: "working",
+		task: TASK,
+	};
+
+	it("says who and where it is, its link, what it was doing, and to adopt it", () => {
+		const [text] = humanMessages(handed as never);
+		expect(text).toBe(
+			[
+				`人がエージェント agent=a1b2c3d4 (API fix, ws=web, branch=fix/login) をあなたの管理下に移しました。devhub:agent/${AGENT.id}`,
+				"状態: idle。人からの最後の依頼:「ログインの 500 を直して」。どのタスクにも紐づいていません。",
+				"引き取ってください: 中身を devhub --tell agent read a1b2c3d4 で確かめ、合う開いたタスクがあれば devhub --tell task bind <タスク> a1b2c3d4、なければ devhub --tell task new --title … --status in_progress で作って task bind a1b2c3d4 し、次の一手を決める。",
+			].join("\n"),
+		);
+		const [bound] = humanMessages({ ...handed, task: TASK } as never);
+		expect(bound).toContain("task=7「ログイン修正」 に紐づいています");
+		expect(bound).toContain("そのタスクのまま進めるか");
+	});
+
+	it("tells it to let go of one taken back: not to resume it, and to unbind its task", () => {
+		const [text] = humanMessages(taken as never);
+		expect(text).toContain(
+			"人がエージェント agent=a1b2c3d4 (API fix, ws=web, branch=fix/login) をあなたの管理から外しました。人が自分で進めます。",
+		);
+		expect(text).toContain(`devhub:agent/${AGENT.id}`);
+		expect(text).toContain("再開もしないでください");
+		expect(text).toContain("devhub --tell task unbind 7 a1b2c3d4");
+		expect(eventLine(taken, 0)).toBe(
+			"[agent_unmanaged] agent=a1b2c3d4 (API fix) ws=web task=7「ログイン修正」 — 人が管理から外しました",
+		);
+	});
+
+	it("goes at once as its own message, in full and in saving, never in a batch", () => {
+		const { dispatcher, sent } = world({ busy: true });
+		dispatcher.dispatch(handed);
+		expect(sent).toHaveLength(1);
+		expect(sent[0]).not.toContain("handle:");
+		dispatcher.setMode("saving");
+		dispatcher.dispatch(taken);
+		expect(sent).toHaveLength(2);
+		expect(sent[1]).toContain("管理から外しました");
+	});
+
+	it("while off: one handed over is dropped (the board's no_task says it), one taken back waits for on", () => {
+		const { dispatcher, sent } = world();
+		dispatcher.pause();
+		expect(dispatcher.dispatch(handed)).toMatchObject({
+			fate: "dropped",
+			reason: "off",
+		});
+		dispatcher.dispatch(taken);
+		expect(sent).toEqual([]);
+		dispatcher.resume();
+		expect(sent).toHaveLength(1);
+		expect(sent[0]).toContain("管理から外しました");
+	});
+
+	it("with no orchestrator: one handed over has nobody, one taken back waits for one", () => {
+		const running: { id?: string } = {};
+		const { dispatcher, sent } = world({ orchestrator: () => running.id });
+		expect(dispatcher.dispatch(handed).fate).toBe("dropped");
+		dispatcher.dispatch(taken);
+		expect(sent).toEqual([]);
+		running.id = ORCH;
+		dispatcher.flush();
+		expect(sent).toHaveLength(1);
+		expect(sent[0]).toContain("管理から外しました");
+	});
+
+	it("drops one taken back that was handed over again while it waited", () => {
+		let managed = false;
+		const { dispatcher, sent } = world({
+			relevant: (event) => event.type !== "agent_unmanaged" || !managed,
+		});
+		dispatcher.pause();
+		const entry = dispatcher.dispatch(taken);
+		managed = true;
+		dispatcher.resume();
+		expect(sent).toEqual([]);
+		expect(entry.fate).toBe("dropped-stale");
 	});
 });

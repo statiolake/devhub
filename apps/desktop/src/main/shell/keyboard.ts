@@ -138,6 +138,11 @@ export interface ChordHost {
 	markAgentUnread(agentId: string): void;
 	/** Manage with Orchestrator / Stop Managing (`set_workspace_managed`). */
 	setWorkspaceManaged(workspaceId: string, managed: boolean): void;
+	/**
+	 * The same for the selected Agent (`set_agent_managed`): the person
+	 * handing it to the orchestrator, which is told, or taking it back.
+	 */
+	setAgentManaged(agentId: string, managed: boolean): void;
 	/** Put away whichever failure the window in front is showing. */
 	dismissAlert(): void;
 	/** Open or close the notice center, with the keyboard in it. */
@@ -167,7 +172,7 @@ export interface ChordHost {
 	navigateHistory(direction: NavigationDirection): boolean;
 	/**
 	 * Put a `devhub:` link on the clipboard, canonical or as Markdown, and
-	 * say so — the row menu's 「リンクをコピー」, by key.
+	 * say so — the row menu's Copy Link, by key.
 	 */
 	copyLink(link: string, markdown: boolean): void;
 	/** Stop this Agent, asking first exactly as the row's own close does. */
@@ -337,6 +342,9 @@ function perform(
 			return;
 		case "set-workspace-managed":
 			host.setWorkspaceManaged(effect.workspaceId, effect.managed);
+			return;
+		case "set-agent-managed":
+			host.setAgentManaged(effect.agentId, effect.managed);
 			return;
 		case "reopen-closed":
 			host.reopenClosed();

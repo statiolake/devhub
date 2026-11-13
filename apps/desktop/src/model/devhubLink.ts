@@ -242,7 +242,7 @@ export function parseExternalDevhubUrl(url: string): DevhubLinkParse {
 }
 
 /**
- * The link as Markdown, `[name](devhub:…)`: what 「Markdown リンクをコピー」
+ * The link as Markdown, `[name](devhub:…)`: what Copy Markdown Link
  * puts on the clipboard, for a task's body, a note, a chat. The name is the
  * place's own (an agent's display name), with Markdown's brackets and
  * backslash escaped and its whitespace one space, so a name cannot end the
@@ -490,7 +490,7 @@ export function resolveDevhubLink(
 
 /**
  * The canonical link to a place that was found — by its id, whatever the
- * link that found it said (a prefix, a workspace's name): what 「リンクをコピー」
+ * link that found it said (a prefix, a workspace's name): what Copy Link
  * copies, so a copied link goes on naming the same thing.
  */
 export function linkToTarget(target: ResolvedLink): DevhubLink {

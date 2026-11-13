@@ -1886,13 +1886,20 @@ export function Sidebar({ snapshot }: SidebarProps) {
               continueAgent(each.id);
             },
             copyRowLink,
+            snapshot.orchestratorAgentId,
           ),
           ...more,
         ],
         at,
       );
     },
-    [continueAgent, copyRowLink, dispatchIntent, openRename],
+    [
+      continueAgent,
+      copyRowLink,
+      dispatchIntent,
+      openRename,
+      snapshot.orchestratorAgentId,
+    ],
   );
   const openWorkspaceMenu = useCallback(
     (

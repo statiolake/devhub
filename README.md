@@ -332,7 +332,12 @@ unmanage A` takes it out). Only a managed agent's state is the
 orchestrator's to hear of and keep settled (`docs/orchestrator.md`,
 "Managed agents"): it is bound to a task, and said as `no_task` when it is
 on none; an agent the person starts in the window — New Agent,
-Assign Issue — is not, and the orchestrator agent itself never is. The flag
+Assign Issue — is not, and the orchestrator agent itself never is. The
+person hands an existing one over from its row's **Manage with
+Orchestrator** (or `Cmd+Q Shift+M` on the selected agent), and the
+orchestrator is told at once to adopt it — bind it to a task, or make one —
+and **Stop Managing** tells it to let go (`agent_managed`,
+`agent_unmanaged`). The flag
 is a field of the agent, kept in `state.json` and under its CLI session in
 `session-meta.json` like its metadata, so a restart or a resume keeps it.
 `agents`, `agent status` and `sessions` say `managed`, and the Agent row

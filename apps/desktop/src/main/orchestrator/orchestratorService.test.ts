@@ -414,3 +414,67 @@ describe("the invariant", () => {
 		});
 	});
 });
+
+describe("an agent the person hands over from the window", () => {
+	it("tells the orchestrator at once who it is, where, what it was doing, and to adopt it", async () => {
+		const run = world({
+			cursor: { value: "e7", text: "ログインの 500 を直して" },
+		});
+		run.invariant.managed.add(WORKER);
+		await run.service.handedOver(WORKER, true, "fix/login");
+		expect(run.sent).toHaveLength(1);
+		expect(run.sent[0]).toContain(
+			`人がエージェント agent=a1b2c3d4 (agent a1, ws=w, branch=fix/login) をあなたの管理下に移しました。devhub:agent/${WORKER}`,
+		);
+		expect(run.sent[0]).toContain("状態: idle。");
+		expect(run.sent[0]).toContain(
+			"人からの最後の依頼:「ログインの 500 を直して」",
+		);
+		expect(run.sent[0]).toContain("どのタスクにも紐づいていません");
+		expect(run.sent[0]).toContain("task new");
+		expect(run.of("agent_managed")[0]?.fate).toBe("delivered");
+	});
+
+	it("tells it to let go of one taken back, naming the task to unbind", async () => {
+		const run = world({ managed: true });
+		const task = run.service.newTask({ title: "ログイン修正" });
+		run.service.bindTask(task.id, [WORKER]);
+		run.sent.length = 0;
+		run.invariant.managed.delete(WORKER);
+		await run.service.handedOver(WORKER, false);
+		expect(run.sent).toHaveLength(1);
+		expect(run.sent[0]).toContain("をあなたの管理から外しました");
+		expect(run.sent[0]).toContain(
+			`task=${String(task.id)}「ログイン修正」 に紐づいています`,
+		);
+		expect(run.sent[0]).toContain(
+			`devhub --tell task unbind ${String(task.id)} a1b2c3d4`,
+		);
+	});
+
+	it("says nothing about the orchestrator itself", async () => {
+		const run = world();
+		await run.service.handedOver(ORCH, true);
+		expect(run.sent).toEqual([]);
+		expect(run.of("agent_managed")).toEqual([]);
+	});
+
+	it("is not held by saving, and dropped while off (the agent is no_task once on)", async () => {
+		const run = world();
+		run.invariant.managed.add(WORKER);
+		run.service.setMode("saving");
+		run.sent.length = 0;
+		await run.service.handedOver(WORKER, true);
+		expect(
+			run.sent.filter((text) => text.includes("管理下に移しました")),
+		).toHaveLength(1);
+		run.service.setMode("off");
+		run.sent.length = 0;
+		await run.service.handedOver(WORKER, true);
+		expect(run.sent).toEqual([]);
+		expect(run.of("agent_managed").at(-1)).toMatchObject({
+			fate: "dropped",
+			reason: "off",
+		});
+	});
+});

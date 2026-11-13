@@ -823,6 +823,26 @@ describe("an Agent's terminal, across the wire", () => {
     ).toEqual({ type: "reset_agent_name", agentId: AG });
   });
 
+  it("takes an Agent row's Manage with Orchestrator / Stop Managing, and refuses a flag that is not one", () => {
+    const manage = (managed: unknown) =>
+      intentFromWire({
+        type: "set_agent_managed",
+        agentId: AG,
+        managed,
+      } as AppIntentWire);
+    expect(manage(true)).toEqual({
+      type: "set_agent_managed",
+      agentId: AG,
+      managed: true,
+    });
+    expect(manage(false)).toEqual({
+      type: "set_agent_managed",
+      agentId: AG,
+      managed: false,
+    });
+    expect(() => manage("yes")).toThrow(InvalidIntent);
+  });
+
   it("takes the divider's resize, and refuses a share it could not be", () => {
     const resize = (share: unknown) =>
       intentFromWire({

@@ -794,10 +794,46 @@ describe("the commands that act on what is selected", () => {
 });
 
 describe("Manage with Orchestrator, by the keyboard and the palette", () => {
+	it("hands the selected Agent to the Orchestrator, takes a managed one back, and never the Orchestrator itself", () => {
+		const onB1 = snapshotOf({
+			workspaces: [one, two],
+			context: { kind: "agent", agentId: "b1" },
+		});
+		expect(run("toggle_workspace_managed", onB1)).toEqual({
+			kind: "set-agent-managed",
+			agentId: "b1",
+			managed: true,
+		});
+		const managed = snapshotOf({
+			workspaces: [
+				one,
+				{
+					...two,
+					managed: true,
+					agents: two.agents.map((agent) =>
+						agent.id === "b1" ? { ...agent, managed: true as const } : agent,
+					),
+				},
+			],
+			context: { kind: "agent", agentId: "b1" },
+		});
+		expect(run("toggle_workspace_managed", managed)).toEqual({
+			kind: "set-agent-managed",
+			agentId: "b1",
+			managed: false,
+		});
+		expect(
+			run("toggle_workspace_managed", {
+				...onB1,
+				orchestratorAgentId: "b1",
+			}),
+		).toBeUndefined();
+	});
+
 	it("sets the managed flag on the selected workspace, clears it on a managed one, and does nothing on Scratch or the Orchestrator's own", () => {
 		const onTwo = snapshotOf({
 			workspaces: [one, two],
-			context: { kind: "agent", agentId: "b1" },
+			context: { kind: "workspace", workspaceId: "two" },
 		});
 		expect(run("toggle_workspace_managed", onTwo)).toEqual({
 			kind: "set-workspace-managed",
