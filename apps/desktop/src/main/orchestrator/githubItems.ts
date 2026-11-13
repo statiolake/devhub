@@ -56,15 +56,21 @@
  * state (`items`), and the invariant reads it on every poll (`polled`).
  *
  * **Pause.** While the orchestrator's events are paused the source is
- * `suspended`: it does not poll at all, and keeps what it last read. A resume
- * polls at once (the rate limit permitting), and `caughtUp()` settles when
- * that poll is read. Stopping forgets.
+ * `suspended`: it does not search, and keeps what it last read — but every
+ * `OFF_LINKED_INTERVAL_MS` (20 minutes) it reads the items the open tasks
+ * link, by URL and nothing else (`MAX_LINKED_ITEMS` a request, the next
+ * ones the next time round), so a task whose Issue closed or whose pull
+ * request merged is seen while off (`task.obsolete`). What that read finds
+ * stands over the search's last word on the same item until the next
+ * complete pass. A resume polls at once (the rate limit permitting), and
+ * `caughtUp()` settles when that poll is read. Stopping forgets.
  */
 
 import {
 	parseInterval,
 	parseProjectRef,
 } from "../../model/orchestratorSettings.js";
+import { OFF_LINKED_INTERVAL_MS } from "./mode.js";
 import type { GraphQlError } from "../shell/github.js";
 import type { EventItem } from "./events.js";
 import { issueUrlKey, type ItemFacts, type PullFacts } from "./invariant.js";
@@ -666,6 +672,13 @@ export class GitHubItemSource {
 	#nextAt: number | undefined;
 	/** The poll a resume asked for, until it is done. */
 	#catchUp: Promise<void> | undefined;
+	/**
+	 * Linked items read while suspended, by URL key: newer than the last
+	 * search, until the next complete pass.
+	 */
+	#offRead = new Map<string, ReadItem>();
+	/** Where the next read while suspended starts in the linked items. */
+	#offCursor = 0;
 
 	constructor(private readonly ports: GitHubSourcePorts) {}
 
@@ -697,6 +710,7 @@ export class GitHubItemSource {
 			this.#timer?.cancel();
 			this.#timer = undefined;
 			this.#nextAt = undefined;
+			this.#scheduleOff();
 		} else if (from === "idle") this.#schedule(0);
 		else this.#resume();
 		this.ports.changed?.();
@@ -734,6 +748,8 @@ export class GitHubItemSource {
 		this.#askedPulls = new Set();
 		this.#titles = new Map();
 		this.#pulls = new Map();
+		this.#offRead = new Map();
+		this.#offCursor = 0;
 	}
 
 	/** Back from a pause: poll now. */
@@ -881,10 +897,13 @@ export class GitHubItemSource {
 			if (projects.length === 0 && !linked.has(keyOf(item))) return;
 			out.set(item.id, { item, projects });
 		};
-		for (const item of found) add(item);
+		// What a read while off found is newer than the search's.
+		for (const item of found) add(this.#offRead.get(keyOf(item)) ?? item);
 		const searched = this.#searchedKeys();
 		for (const [key, item] of this.#linkedItems)
-			if (linked.has(key) && !searched.has(key)) add(item);
+			if (linked.has(key) && !searched.has(key))
+				add(this.#offRead.get(key) ?? item);
+		for (const [key, item] of this.#offRead) if (linked.has(key)) add(item);
 		return [...out.values()];
 	}
 
@@ -962,6 +981,89 @@ export class GitHubItemSource {
 		}
 		if (problem === undefined) this.#problemAt = undefined;
 		this.#problem = problem;
+	}
+
+	/** The next read while suspended, `OFF_LINKED_INTERVAL_MS` from now. */
+	#scheduleOff(): void {
+		this.#timer?.cancel();
+		this.#nextAt = this.#now() + OFF_LINKED_INTERVAL_MS;
+		this.#timer = this.ports.setTimer(OFF_LINKED_INTERVAL_MS, () => {
+			this.#timer = undefined;
+			void this.tickOff();
+		});
+	}
+
+	/**
+	 * While suspended: one request of the items the open tasks link, by URL
+	 * (the next `MAX_LINKED_ITEMS` of them), and nothing else — not the
+	 * search, not the Projects, not the pull requests' details. Waits out a
+	 * low rate limit; needs a first complete reading (whose viewer it
+	 * keeps to).
+	 */
+	async tickOff(): Promise<void> {
+		if (this.#mode !== "suspended") return;
+		const urls = [...this.#linked().values()];
+		const now = this.#now();
+		if (
+			this.#inFlight !== undefined ||
+			this.#viewer === undefined ||
+			urls.length === 0 ||
+			rateLimited(this.#rate, now)
+		) {
+			this.#scheduleOff();
+			return;
+		}
+		const start = this.#offCursor % urls.length;
+		const batch = [...urls.slice(start), ...urls.slice(0, start)].slice(
+			0,
+			MAX_LINKED_ITEMS,
+		);
+		this.#offCursor = start + batch.length;
+		this.#lastAt = now;
+		this.#outcome = "in_flight";
+		this.#nextAt = undefined;
+		this.ports.changed?.();
+		const reading = this.#readOff(batch);
+		this.#inFlight = reading;
+		try {
+			await reading;
+			this.#outcome = "ok";
+		} catch (error) {
+			this.#outcome = "failed";
+			this.#say(error instanceof Error ? error.message : String(error));
+		} finally {
+			this.#inFlight = undefined;
+		}
+		if (this.#mode === "suspended") this.#scheduleOff();
+		this.ports.changed?.();
+	}
+
+	async #readOff(urls: readonly string[]): Promise<void> {
+		await Promise.resolve();
+		const credentials = await this.ports.token();
+		if ("problem" in credentials) throw new Error(credentials.problem);
+		const answer = await this.ports.post(
+			githubQuery({ linked: urls }),
+			credentials.token,
+		);
+		if (this.#mode !== "suspended") return;
+		const reading = parseReading(answer, {
+			search: false,
+			boards: [],
+			linked: urls,
+		});
+		this.#say(
+			reading.problems.length === 0 ? undefined : reading.problems.join("; "),
+		);
+		this.#rate = reading.rateLimit ?? this.#rate;
+		if (this.#viewer !== undefined && !same(this.#viewer, reading.viewer))
+			return;
+		for (const [url, item] of reading.linked) {
+			const key = issueUrlKey(url);
+			this.#offRead.set(key, item);
+			if (this.#linkedItems.has(key)) this.#linkedItems.set(key, item);
+		}
+		this.ports.polled?.();
 	}
 
 	/** One request. Never two at once; none unless active. */
@@ -1068,6 +1170,8 @@ export class GitHubItemSource {
 			} else {
 				this.#complete = this.#partial;
 				this.#partial = [];
+				// The search is the latest word on everything it gave again.
+				this.#offRead = new Map();
 				this.#after = null;
 				this.#page = 0;
 				// What the extras did not ask yet: one request of them follows.

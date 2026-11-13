@@ -231,9 +231,19 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
   (外したときは \`… をあなたの管理から外しました。人が自分で進めます。…\`)、2 行目に状態・人からの最後の依頼・
   紐づくタスク、3 行目にすること。移されたら引き取る: 合う開いたタスクがあれば \`task bind\`、なければ
   \`task new\` → \`task bind\` し、次の一手を決める。外されたら以後そのエージェントには送らず再開もせず、
-  紐づくタスクがあれば \`task unbind\` してそのタスクの扱いを決める。off のあいだ (とオーケストレーターが
-  いないとき) は、移したものは届かず次に on になったとき \`no_task\` として載る。外したものは on になるまで待つ。
+  紐づくタスクがあれば \`task unbind\` してそのタスクの扱いを決める。off でも saving でもすぐ届く
+  (人の操作だから)。オーケストレーターがいないときは、移したものは届かず次の起動で \`no_task\` として載り、
+  外したものは起動を待つ。
   \`agent manage\` (CLI) では届かない (オーケストレーター自身の操作だから)。
+- **人の操作はどのモードでもすぐ届く。** エスカレーションへの回答、エージェントへの直接の指示、
+  ボードの + からの依頼、エージェントを渡した / 取り戻した — 人が画面でしたことは、full・saving・off の
+  どれでも待たずに単独で届く。
+- **もう要らないかもしれないタスクも、どのモードでも届く** (\`task.obsolete\`)。タスクがリンクした Issue が
+  クローズされた、PR がマージ / クローズされたのを DevHub が見たとき (前に開いているのを見たものだけ、
+  閉じるたびに 1 回)。full と saving では次の束に (間引かれない)、off では単独ですぐ。off のあいだも
+  DevHub は開いているタスクがリンクした Issue / PR だけを 20 分に 1 回読む (検索も Project も読まない)。
+  届いたら確かめて、終わっていれば \`task done N --note\` (開いた質問も一緒に取り下げられる)、質問だけ
+  要らなくなったなら \`escalation withdraw\`、まだ要るなら理由をメモに。
 - **それ以外は束ねて、\`[orchestrator] delivery_interval\` (既定 5m) に 1 回まで** 届く。
   1 回の配信 = 1 メッセージ (\`event_prompt\` の \`{EVENT}\`)。
 - **配信は履歴ではない。いま対応が要るものの一覧で、対象ごとに 1 行**
@@ -259,6 +269,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       [needs_action] agent=c3d4e5f6 (調査) ws=docs — no_task
       [task.changed] task=12 — subjects_changed
       [task.changed] task=15 — due
+      [task.obsolete] task=7「ログイン修正」 — もう要らないかもしれません: Issue acme/app#123 がクローズされた (リンクしたものはすべて閉じた)。…
       [timer.elapsed] sweep
       [usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました
 
@@ -293,9 +304,10 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | \`task.changed\` | 待機のタスクが動けるかもしれない: リンクしたアイテム (Issue / PR) や紐づくエージェントの状態が変わった (\`subjects_changed\`) か、\`--check-at\` の時刻が来た (\`due\`、時刻 1 つにつき 1 回)。行はどのタスクかと、そのどちらかだけ | task, 理由 |
 | \`usage.threshold\` | CLI のプラン枠の使用率が \`[orchestrator] usage_thresholds\` (既定 80, 95) を上向きに超えた | cli, window, pct, resets |
 | \`triage\` | 見直しの時刻 (full で 30 分ごと、saving で 1 時間ごと)。下に開いているタスクが並び、それぞれ \`task edit T --priority\` で付け直す。「古いかも」の理由が付いたものは task done・付け直し・メモに理由、のどれかに。saving では状態の変化はいつも届き、催促は high のタスクのものだけが届き、残りは次の triage と一緒に届く | なし |
-| \`agent_managed\` | 人が DevHub の画面で既存のエージェントをオーケストレーターの管理下に移した。人の操作として単独ですぐ届く (上記)。引き取る: task bind か task new → task bind、そして次の一手 | agent, ws, branch, 状態, 依頼, task |
-| \`agent_unmanaged\` | 人がエージェントを管理から外した (人が自分で進める)。単独ですぐ届き、off のあいだは on になるまで待つ。以後送らず再開もせず、紐づくタスクは task unbind | agent, ws, task |
-| \`request\` | 人がボードの + から送った依頼。DevHub が待機のタスクにし、人の言葉としてすぐ届く (「task=N … 人からの依頼」)。題名を整え、リンクとエージェントで進める | task, 本文 |
+| \`task.obsolete\` | 開いているタスクがリンクした Issue がクローズされた / PR がマージかクローズされた (開いているのを見たものが閉じたとき、1 回)。どのモードでも届く (off では単独ですぐ)。確かめて task done か、質問だけ withdraw か、要る理由をメモに | task, 何が閉じたか, 開いた質問 |
+| \`agent_managed\` | 人が DevHub の画面で既存のエージェントをオーケストレーターの管理下に移した。人の操作として単独ですぐ届く (上記。off でも)。引き取る: task bind か task new → task bind、そして次の一手 | agent, ws, branch, 状態, 依頼, task |
+| \`agent_unmanaged\` | 人がエージェントを管理から外した (人が自分で進める)。単独ですぐ届く (off でも。オーケストレーターがいなければ起動を待つ)。以後送らず再開もせず、紐づくタスクは task unbind | agent, ws, task |
+| \`request\` | 人がボードの + から送った依頼。DevHub が待機のタスクにし、人の言葉としてすぐ届く (「task=N … 人からの依頼」。off でも)。題名を整え、リンクとエージェントで進める | task, 本文 |
 | \`timer.elapsed\` | \`[[orchestrator.timers]]\` か \`orchestrator timer set\` のタイマー | 名前 |
 | \`custom.*\` | \`orchestrator emit\` でスクリプトや他ツールが送るもの | 本文 |
 
@@ -557,6 +569,10 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     ## task.changed (— due / — subjects_changed)
     task show で待っている条件を確かめる (review=approved になった、日付が来た、Slack の返事は自分のツールで)。
     満たされていれば task status N in_progress → 担当エージェントに再開を指示。時刻だけでは何も決めない。
+
+    ## task.obsolete (もう要らないかもしれない)
+    status task=N で確かめる。終わっていれば task done N --note "<結果>"。質問だけ要らなくなったなら
+    escalation withdraw ID --note "<理由>"。まだ要るなら理由を task edit N --memo に。
 
     ## timer.elapsed
     棚卸し: board の要対応を確認。

@@ -807,7 +807,16 @@ reading of the invariant and before each triage):
   tooltip and under the title in the task's own view; `mayBeStale` (since
   when, the reasons) on its `TaskWire`; `may be stale: …` under it in
   `devhub --tell board` and `task show`. It only marks: the task is not
-  changed, and no event is sent for it.
+  changed.
+- **Seen closing, it is said** (`task.obsolete`): when an item a task links
+  was seen open and is now closed or merged, the orchestrator is told at
+  once in every mode — off too, where the linked items are still read every
+  20 minutes — to verify, then `task done T --note` (its open questions are
+  withdrawn with it), withdraw only the question that no longer stands, or
+  write in the memo why the task is still needed. Once per item closing;
+  `allDone` when every item it links is closed now. One already closed when
+  DevHub first read it (a restart) says nothing: the mark and the triage
+  have it.
 - **Every triage re-checks.** The `triage` line is followed by one indented
   line per open task — `task=12「…」 処理中 — 古いかも: PR acme/pay#12
 はマージ済み` — and asks the orchestrator to confirm each still holds,
@@ -861,9 +870,10 @@ bound to, if any. Off, or with no orchestrator, it is dropped: the agent is
 person's again — not to be sent to or resumed — and, when it is bound to a
 task, `task unbind T A` and a decision about the task (another agent,
 待機, or done). A task's bound agents count for `idle` whether or not they
-are managed, so this one is not dropped while off or with no orchestrator:
-it waits until one runs and the mode is on, and is dropped as stale if the
-agent was handed over again meanwhile (`OrchestratorService.handedOver`,
+are managed, so this one is never dropped: it goes at once in every mode,
+off included (what the person did, `by_person`); with no orchestrator it
+waits until one runs, and is dropped as stale if the agent was handed over
+again meanwhile (`OrchestratorService.handedOver`,
 `AppController.handAgentOver`).
 
 The same flag is said of Workspaces (`workspace manage W` / `workspace
@@ -1047,20 +1057,21 @@ work, with its own tools (`gh`), not by the orchestrator.
 
 ### The event types
 
-| type                  | when                                                                                                                                                                        | example                                                                                                                                                           |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init`                | the orchestrator has just started (or restarted)                                                                                                                            | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認`                                                                                     |
-| `escalation_answered` | the person answered an escalation (its task → 処理中). Sent at once, as its own message: the person's words                                                                 | `task=7「本番DB移行」 esc=12「本番DBマイグレーション承認」 への人の回答 (選択肢「承認する」):` and, on the next line, `承認する`                                  |
-| `task.human_direct`   | the person wrote from its own composer to a managed agent, or one bound to an open task, and it went working. A burst is one; sent as its own message, with what to tidy up | `task=7「本番DB移行」 agent=a1b2c3d4 に人が直接送ったメッセージ:`, what they wrote, then `整理してください (人の判断です。…):` and its lines                      |
-| `needs_action`        | a task, a managed agent or an item of the population breaks the invariant: on every delivery while it does (every `delivery_interval`)                                      | `[needs_action] task=7「本番DB移行」 ws=web — idle`, `[needs_action] agent=ab12cd34 (API fix) ws=web — no_task`, `[needs_action] issue=acme/web#123 — no_task`    |
-| `task.changed`        | a 待機 task may be ready: what it is about changed (`subjects_changed`), or its `--check-at` came (`due`, once per wait)                                                    | `[task.changed] task=12「リリース日」 — subjects_changed`, `[task.changed] task=15「…」 — due`                                                                    |
-| `usage.threshold`     | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                                      | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                       |
-| `triage`              | time to rank the open tasks again and re-check them (listed under it, the maybe-stale ones with why): every 30 minutes in full, every hour in saving (see "Triage")         | `[triage] — 見直し: …` and, on the lines under it, `  task=12「…」 処理中 — 古いかも: PR acme/pay#12 はマージ済み`                                                |
-| `request`             | the person sent a request from the board's + (it is a 待機 task already). Sent at once, as its own message: the person's words                                              | `task=3「請求書 CSV の文字化け」 人からの依頼 (…):` and, on the next line, what they wrote                                                                        |
-| `agent_managed`       | the person handed an existing agent to the orchestrator from the window (Manage with Orchestrator, `Cmd+Q Shift+M`). Sent at once, as its own message; dropped while off    | `人がエージェント agent=a1b2c3d4 (API fix, ws=web, branch=fix/login) をあなたの管理下に移しました。devhub:agent/…` and its status, last request, task, what to do |
-| `agent_unmanaged`     | the person took it back (Stop Managing). Sent at once, as its own message; waits while off or with no orchestrator                                                          | `人がエージェント agent=a1b2c3d4 (…) をあなたの管理から外しました。人が自分で進めます。…` and `task unbind` for its task                                          |
-| `timer.elapsed`       | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                                     | `[timer.elapsed] sweep`                                                                                                                                           |
-| `custom.*`            | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                               | `[custom.deploy] — staging に deploy 完了`                                                                                                                        |
+| type                  | when                                                                                                                                                                           | example                                                                                                                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init`                | the orchestrator has just started (or restarted)                                                                                                                               | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認`                                                                                                             |
+| `escalation_answered` | the person answered an escalation (its task → 処理中). Sent at once, as its own message: the person's words                                                                    | `task=7「本番DB移行」 esc=12「本番DBマイグレーション承認」 への人の回答 (選択肢「承認する」):` and, on the next line, `承認する`                                                          |
+| `task.human_direct`   | the person wrote from its own composer to a managed agent, or one bound to an open task, and it went working. A burst is one; sent as its own message, with what to tidy up    | `task=7「本番DB移行」 agent=a1b2c3d4 に人が直接送ったメッセージ:`, what they wrote, then `整理してください (人の判断です。…):` and its lines                                              |
+| `needs_action`        | a task, a managed agent or an item of the population breaks the invariant: on every delivery while it does (every `delivery_interval`)                                         | `[needs_action] task=7「本番DB移行」 ws=web — idle`, `[needs_action] agent=ab12cd34 (API fix) ws=web — no_task`, `[needs_action] issue=acme/web#123 — no_task`                            |
+| `task.changed`        | a 待機 task may be ready: what it is about changed (`subjects_changed`), or its `--check-at` came (`due`, once per wait)                                                       | `[task.changed] task=12「リリース日」 — subjects_changed`, `[task.changed] task=15「…」 — due`                                                                                            |
+| `task.obsolete`       | an Issue an open task links closed, or a pull request it links merged or closed — seen happen (once per item closing). Never held: off included, alone                         | `[task.obsolete] task=7「ログイン修正」 — もう要らないかもしれません: Issue acme/web#123 がクローズされた (リンクしたものはすべて閉じた)。devhub --tell --json status task=7 で確かめ、…` |
+| `usage.threshold`     | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                                         | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                                               |
+| `triage`              | time to rank the open tasks again and re-check them (listed under it, the maybe-stale ones with why): every 30 minutes in full, every hour in saving (see "Triage")            | `[triage] — 見直し: …` and, on the lines under it, `  task=12「…」 処理中 — 古いかも: PR acme/pay#12 はマージ済み`                                                                        |
+| `request`             | the person sent a request from the board's + (it is a 待機 task already). Sent at once, as its own message: the person's words                                                 | `task=3「請求書 CSV の文字化け」 人からの依頼 (…):` and, on the next line, what they wrote                                                                                                |
+| `agent_managed`       | the person handed an existing agent to the orchestrator from the window (Manage with Orchestrator, `Cmd+Q Shift+M`). Sent at once, as its own message, in every mode (off too) | `人がエージェント agent=a1b2c3d4 (API fix, ws=web, branch=fix/login) をあなたの管理下に移しました。devhub:agent/…` and its status, last request, task, what to do                         |
+| `agent_unmanaged`     | the person took it back (Stop Managing). Sent at once, as its own message, in every mode; waits with no orchestrator                                                           | `人がエージェント agent=a1b2c3d4 (…) をあなたの管理から外しました。人が自分で進めます。…` and `task unbind` for its task                                                                  |
+| `timer.elapsed`       | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                                        | `[timer.elapsed] sweep`                                                                                                                                                                   |
+| `custom.*`            | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                                  | `[custom.deploy] — staging に deploy 完了`                                                                                                                                                |
 
 The `needs_action` codes: a task's `no_agent` or `idle` (`task=` names it
 by its number and title, `ws=` its first agent's Workspace); a managed
@@ -1180,11 +1191,11 @@ rebindable like every command) and `devhub --tell orchestrator mode
 full`. The Sidebar row's tooltip names the mode; the header shows `auto`
 beside it when saving came by itself, and its card says why.
 
-| mode       | what is delivered                                                                                                                                                                                                                                                                                                                    |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **full**   | everything, as described above: a batch at most every `delivery_interval`, each carrying every `needs_action` subject again (what "on" was)                                                                                                                                                                                          |
-| **saving** | the same, more rarely: at most every **3 ×** `delivery_interval` (`SAVING_INTERVAL_FACTOR`). **State changes** about the work always go; **nudges** go only when high, and while 2 or more tasks are in progress only about those tasks (below). The person's words, requests, `init` and `triage` go as in full                     |
-| **off**    | the person's answers (`escalation_answered`, `task.human_direct`), as in full; everything else is held, requests and `agent_unmanaged` too (`agent_managed` is dropped: the agent is `no_task` once on), and GitHub is not polled. Timers are off: one that comes due (a task's `--check-at` too) is dropped, not sent on turning on |
+| mode       | what is delivered                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **full**   | everything, as described above: a batch at most every `delivery_interval`, each carrying every `needs_action` subject again (what "on" was)                                                                                                                                                                                                                                                                                                                                                               |
+| **saving** | the same, more rarely: at most every **3 ×** `delivery_interval` (`SAVING_INTERVAL_FACTOR`). **State changes** about the work always go; **nudges** go only when high, and while 2 or more tasks are in progress only about those tasks (below). What the person did goes at once, alone (`by_person`); a task that may no longer be needed (`task.obsolete`), `init` and `triage` go with the next batch, never held                                                                                     |
+| **off**    | **what the person did** (`by_person`: `escalation_answered`, `task.human_direct`, `request`, `agent_managed`, `agent_unmanaged`) at once, as in full; **a task that may no longer be needed** (`task.obsolete`) at once, alone; everything else is held. GitHub is not searched; only the items the open tasks link are read, every 20 minutes (`OFF_LINKED_INTERVAL_MS`), so `task.obsolete` can fire. Timers are off: one that comes due (a task's `--check-at` too) is dropped, not sent on turning on |
 
 - **A batch** is the pending lines and the standing `needs_action` lines,
   the message that has the orchestrator act on its agents (or itself). In
@@ -1202,6 +1213,19 @@ beside it when saving came by itself, and its card says why.
 - **A task in progress** is a task whose status is **処理中** — the board's
   処理中 lane, read off the task itself, so the gate and the board cannot
   disagree.
+- **What the person did is one class, `by_person`**, never held or dropped
+  in any mode: their answer, their words to an agent directly, their
+  request from the board's +, an agent they handed over or took back —
+  every event the window's own acts cause (the person closes no task from
+  the window; a Workspace's agents are handed over one by one, as
+  `agent_managed` each). They go at once, each as a message of its own.
+  Only with no orchestrator running do they wait (an answer, an agent taken
+  back) or go to the next start's board (an agent handed over: `no_task`;
+  a request is kept on its task).
+- **A task that may no longer be needed is one class, `obsolete`**
+  (`task.obsolete`, below), never held: with the next batch in full and
+  saving, at once and alone while off. Closing a finished task costs one
+  turn; leaving it open costs every later delivery and triage.
 - **Nothing else changes.** GitHub is polled at its own interval in full and
   saving alike (it costs GitHub quota, not tokens), timers fire as set, and
   no line is dropped: held lines wait, one per subject, and go with the next
@@ -1247,30 +1271,36 @@ set`, "re-read the thread in 30 minutes"), and the time it gave a 待機
   readout, `custom.*`. **Goes only when its task is ranked high**; the rest
   waits, one line per subject, for the next triage (hourly in saving) or for
   full.
-- **Never held** — the person's words, their requests, `init` and
-  `triage`, as in full. A batch carrying `init` or `triage` takes everything
-  pending and standing with it, so the orchestrator ranks with the whole
-  picture.
+- **By the person** — their answers, their words to an agent directly,
+  their requests, an agent handed over or taken back: at once, as messages
+  of their own, in every mode (`by_person`).
+- **Obsolete** — a task that may no longer be needed (`task.obsolete`):
+  with the next batch, never held by the gate; alone at once while off.
+- **Never held** — `init` and `triage`, as in full. A batch carrying `init`
+  or `triage` takes everything pending and standing with it, so the
+  orchestrator ranks with the whole picture.
 
 Every kind of line the dispatcher handles, explicitly:
 
-| kind                              | class        | what it is                                                                                                                                                                                      |
-| --------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `escalation_answered`             | never held   | the person's answer                                                                                                                                                                             |
-| `task.human_direct`               | never held   | the person wrote to a managed agent, or one bound to an open task                                                                                                                               |
-| `request`                         | never held   | the person's request from the board's +                                                                                                                                                         |
-| `init`                            | never held   | the orchestrator started                                                                                                                                                                        |
-| `triage`                          | never held   | time to rank the open tasks; takes everything with it                                                                                                                                           |
-| `needs_action` task               | state change | an open task newly needing action, or whose state moved since its line last went: its agents stopped, one is on a prompt or errored, its linked item or pull request moved, its questions moved |
-| `needs_action` agent `no_task`    | state change | a managed agent bound to no open task, newly or with its state moved: work going on outside any task                                                                                            |
-| `needs_action` item `no_task`     | nudge        | an item of the population nobody made a task for: new work                                                                                                                                      |
-| `needs_action` said again         | nudge        | any `needs_action` subject standing as it stood when its line last went (the nag)                                                                                                               |
-| `task.changed` `subjects_changed` | state change | what a 待機 task is about moved (CI, a review, a merge, its agents)                                                                                                                             |
-| `task.changed` `due`              | on time      | the time the orchestrator gave a 待機 task (`--check-at`) came; with `subjects_changed` folded in, still on time                                                                                |
-| `timer.elapsed` from `timer set`  | on time      | a timer the orchestrator set itself (`source: "session"`): its own wake-up                                                                                                                      |
-| `timer.elapsed` from the settings | on time      | one of the person's `[[orchestrator.timers]]`: what they set the orchestrator to do on a clock (reading Slack, which affects other people)                                                      |
-| `usage.threshold`                 | nudge        | the plan's use: status                                                                                                                                                                          |
-| `custom.*`                        | nudge        | what a script says: not DevHub's to judge                                                                                                                                                       |
+| kind                               | class        | what it is                                                                                                                                                                                      |
+| ---------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `escalation_answered`              | by person    | the person's answer                                                                                                                                                                             |
+| `task.human_direct`                | by person    | the person wrote to a managed agent, or one bound to an open task                                                                                                                               |
+| `request`                          | by person    | the person's request from the board's +                                                                                                                                                         |
+| `agent_managed`, `agent_unmanaged` | by person    | the person handed an agent over, or took it back                                                                                                                                                |
+| `task.obsolete`                    | obsolete     | an item an open task links, seen open, closed or merged: the task may be done                                                                                                                   |
+| `init`                             | never held   | the orchestrator started                                                                                                                                                                        |
+| `triage`                           | never held   | time to rank the open tasks; takes everything with it                                                                                                                                           |
+| `needs_action` task                | state change | an open task newly needing action, or whose state moved since its line last went: its agents stopped, one is on a prompt or errored, its linked item or pull request moved, its questions moved |
+| `needs_action` agent `no_task`     | state change | a managed agent bound to no open task, newly or with its state moved: work going on outside any task                                                                                            |
+| `needs_action` item `no_task`      | nudge        | an item of the population nobody made a task for: new work                                                                                                                                      |
+| `needs_action` said again          | nudge        | any `needs_action` subject standing as it stood when its line last went (the nag)                                                                                                               |
+| `task.changed` `subjects_changed`  | state change | what a 待機 task is about moved (CI, a review, a merge, its agents)                                                                                                                             |
+| `task.changed` `due`               | on time      | the time the orchestrator gave a 待機 task (`--check-at`) came; with `subjects_changed` folded in, still on time                                                                                |
+| `timer.elapsed` from `timer set`   | on time      | a timer the orchestrator set itself (`source: "session"`): its own wake-up                                                                                                                      |
+| `timer.elapsed` from the settings  | on time      | one of the person's `[[orchestrator.timers]]`: what they set the orchestrator to do on a clock (reading Slack, which affects other people)                                                      |
+| `usage.threshold`                  | nudge        | the plan's use: status                                                                                                                                                                          |
+| `custom.*`                         | nudge        | what a script says: not DevHub's to judge                                                                                                                                                       |
 
 - **Said again.** A `needs_action` line is standing, not an event, so what
   is new about it is read off its state: since when its subject has needed
@@ -1303,9 +1333,19 @@ Every kind of line the dispatcher handles, explicitly:
   Slack thread at 15:00) is worth little hours late, and the person turned
   the orchestrator off. What moved about a wait's subjects
   (`subjects_changed`) is a state change, and waits like everything else.
-- **The person's answers go while off.** `escalation_answered` and
-  `task.human_direct` are delivered as in full: an answer is what the
-  work was waiting for. Their requests (the board's +) still wait for on.
+- **What the person did goes while off**, as in full (`by_person`): their
+  answers and direct words, their requests, an agent handed over or taken
+  back. The person is at the window, and acted; holding it would leave the
+  orchestrator a step behind them.
+- **A task that may no longer be needed goes while off**, alone
+  (`task.obsolete`). To see one while off, the GitHub source reads only the
+  items the open tasks link (by URL, `MAX_LINKED_ITEMS` a request, the next
+  ones the time after) every **20 minutes** (`OFF_LINKED_INTERVAL_MS`):
+  within the half hour, at one request where full makes about thirteen
+  (every 90 s). No search, no Project, no pull request details; a low rate
+  limit is waited out. What it reads stands over the last search's word on
+  the same item until the next complete pass. Agents' Workspace pull
+  requests come from the Workspace watcher as always.
 
 **The automatic switch.** While the mode is **full** and any plan window of
 the usage readout — Claude's 5-hour or weekly, Codex's when it is read —
@@ -1382,8 +1422,8 @@ gives the keyboard back to the +.
   待機 straight away. There is no second kind of item to keep in step.
 - **It is the person's words**: a `request` event, delivered at once as its
   own message (`task=3「…」 人からの依頼 (…):` and, on the next line, the
-  text as typed) — held while the mode is off (unlike an answer, which
-  goes), and never by saving's gates. One sent with no orchestrator running
+  text as typed) — in every mode, off included (what the person did,
+  `by_person`), and never by saving's gates. One sent with no orchestrator running
   waits for one, and goes once it starts, as do the ones kept from before a
   restart (a task's request without `sentAt`).
 - **The orchestrator takes it from there**: `task edit` to retitle it, `task
@@ -1630,7 +1670,7 @@ devhub --tell orchestrator start --root PATH --profile P --gui|--tui [--prompt -
 devhub --tell orchestrator status [--json]          # its agent, state, task counts, mode, GitHub polling
 devhub --tell orchestrator stop | restart           # Stop Agent / Restart Session on it
 devhub --tell orchestrator mode [full|saving|off]   # the mode, or choose one (off at every launch; see "Modes")
-devhub --tell orchestrator pause | resume          # mode off (GitHub polling suspended) / mode full (delivers at once, as one message)
+devhub --tell orchestrator pause | resume          # mode off (GitHub search suspended; linked items every 20m) / mode full (delivers at once, as one message)
 devhub --tell orchestrator events [--last N] [--json]   # recent events and what came of them
 devhub --tell orchestrator emit --type custom.NAME --text TEXT|-
 devhub --tell orchestrator timer list | set NAME INTERVAL | clear NAME   # for this session; list also shows --check-at expired while off

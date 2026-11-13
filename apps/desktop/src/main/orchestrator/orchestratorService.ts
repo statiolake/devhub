@@ -413,6 +413,11 @@ export class OrchestratorService {
 		number,
 		{ readonly since: number; readonly reasons: readonly StaleReason[] }
 	>();
+	/**
+	 * The items each open task links that DevHub has seen open, by URL key:
+	 * one seen closing (closed, merged) is a `task.obsolete`, once.
+	 */
+	readonly #seenOpen = new Map<number, Set<string>>();
 
 	constructor(private readonly ports: OrchestratorServicePorts) {
 		this.#mode = new OrchestratorModeControl(ports.mode ?? LAUNCH_MODE);
@@ -513,6 +518,10 @@ export class OrchestratorService {
 			case "task.changed": {
 				const task = this.#store().task(event.taskId);
 				return task !== undefined && this.statusOf(task) === "waiting";
+			}
+			case "task.obsolete": {
+				const task = this.#store().task(event.task.id);
+				return task !== undefined && task.done === undefined;
 			}
 			case "usage.threshold":
 				return usageThresholdRelevant(
@@ -1375,8 +1384,11 @@ export class OrchestratorService {
 			number,
 			{ readonly since: number; readonly reasons: readonly StaleReason[] }
 		>();
+		const open = new Set<number>();
 		for (const task of this.#store().tasks()) {
 			if (task.done !== undefined) continue;
+			open.add(task.id);
+			this.#watchObsolete(task, items);
 			const reasons = staleReasons(task.links, (key) => items.get(key));
 			if (reasons.length === 0) continue;
 			next.set(task.id, {
@@ -1385,6 +1397,56 @@ export class OrchestratorService {
 			});
 		}
 		this.#stale = next;
+		for (const id of [...this.#seenOpen.keys()])
+			if (!open.has(id)) this.#seenOpen.delete(id);
+	}
+
+	/**
+	 * `task` may no longer be needed: an item it links, seen open before, is
+	 * closed or merged now (`task.obsolete`, once per item closing). One
+	 * that was closed when first read says nothing here: the triage's
+	 * may-be-stale mark has it.
+	 */
+	#watchObsolete(task: Task, items: ReadonlyMap<string, StaleItem>): void {
+		const seen = this.#seenOpen.get(task.id) ?? new Set<string>();
+		this.#seenOpen.set(task.id, seen);
+		const closed: StaleItem[] = [];
+		let known = 0;
+		let stillOpen = 0;
+		const keys = new Set<string>();
+		for (const link of task.links) {
+			const key = itemLinkKey(link);
+			if (key === undefined || keys.has(key)) continue;
+			keys.add(key);
+			const item = items.get(key);
+			if (item === undefined) continue;
+			known += 1;
+			if (item.state === "open") {
+				stillOpen += 1;
+				seen.add(key);
+			} else if (seen.delete(key)) closed.push(item);
+		}
+		for (const key of [...seen]) if (!keys.has(key)) seen.delete(key);
+		if (closed.length === 0) return;
+		const escalations = this.#store()
+			.escalationsOf(task.id)
+			.filter(isOpen)
+			.map((one) => ({ id: one.id, title: one.title }));
+		this.events.dispatch({
+			type: "task.obsolete",
+			task: { id: task.id, title: task.title },
+			reasons: closed.map((item) => ({
+				kind:
+					item.kind === "issue"
+						? "issue_closed"
+						: item.state === "merged"
+							? "pr_merged"
+							: "pr_closed",
+				ref: item.ref,
+			})),
+			allDone: stillOpen === 0 && known === keys.size,
+			...(escalations.length === 0 ? {} : { escalations }),
+		});
 	}
 
 	/**

@@ -13,12 +13,12 @@
  *    its own whose text is what they typed, under one line naming the
  *    task (`humanMessage`) — never inside an event line or the
  *    `event_prompt` template, so the orchestrator reads it as the person's
- *    own input. Nothing holds them, off included (`isAnswer`); with no
- *    orchestrator running they wait for one. A request waits while off;
- *    so does an agent the person took back (`agent_unmanaged`), which also
- *    waits for an orchestrator to start. An agent handed over
- *    (`agent_managed`) goes the same way, at once in full and saving; off,
- *    or with no orchestrator, it is dropped — the board's `no_task` says it;
+ *    own input. They are what the person did (`by_person`, `mode.ts`), and
+ *    nothing holds them in any mode, off included. With no orchestrator
+ *    running the answers wait for one, and so does an agent the person
+ *    took back (`agent_unmanaged`); a request is kept by the task store
+ *    (`#releaseRequests`); an agent handed over (`agent_managed`) is
+ *    dropped — the next start's board says it (`no_task`);
  * 3. keeps the rest **pending** as action items, not a history: **one line
  *    per subject** (`subjectOf`: a task, an item, an agent, a timer,
  *    a usage window, a custom type and text). A newer statement about a
@@ -55,13 +55,15 @@
  * `triage` takes everything; the person's words are never batches. `off` is
  * the pause below.
  *
- * **Paused** (`off`) holds everything but the person's answers
- * (`escalation_answered`, `task.human_direct`: they go as in full),
- * the person's requests included, and the sources that cost something
- * (GitHub) are suspended (`paused`). The timers are off too: a
+ * **Paused** (`off`) holds everything but what the person did (above: as
+ * in full) and a task that may no longer be needed (`task.obsolete`: at
+ * once, alone, as an `onTime` line goes — `goesWhileOff`), and the sources
+ * that cost something (GitHub) are suspended (`paused`) but for a read of
+ * the items the open tasks link now and then (`OFF_LINKED_INTERVAL_MS`).
+ * The timers are off too: a
  * `timer.elapsed`, or a task's `due`, that comes while off is dropped
- * (`dropped`, reason `off`), never sent later. `resume` sends at once the
- * held requests, then everything else — pending and standing — as one
+ * (`dropped`, reason `off`), never sent later. `resume` sends at once
+ * everything held — pending and standing — as one
  * message, whatever the interval, the orchestrator's turn or the pickup
  * wait; the interval counts from there. The sources start again alongside:
  * what their catch-up finds goes with the next delivery.
@@ -84,6 +86,7 @@
 
 import {
 	SAVING_INTERVAL_FACTOR,
+	goesWhileOff,
 	onTime,
 	savingClassOf,
 	savingHolds,
@@ -193,6 +196,21 @@ export type OrchestratorEvent =
 			/** The `--check-at` it was given, for `due`. */
 			readonly checkAt?: number;
 	  }
+	/**
+	 * An open task may no longer be needed: an Issue it links closed, or a
+	 * pull request it links merged or closed — seen happen (`allDone`: every
+	 * item it links is closed or merged now). Once per item closing. Never
+	 * held: off included (`obsolete`). Dropped before it goes if the task is
+	 * done by then.
+	 */
+	| {
+			readonly type: "task.obsolete";
+			readonly task: EventTask;
+			readonly reasons: readonly ObsoleteReason[];
+			readonly allDone: boolean;
+			/** Its questions open now: withdrawn with `task done`, or alone. */
+			readonly escalations?: readonly EventEscalation[];
+	  }
 	| {
 			readonly type: "timer.elapsed";
 			readonly name: string;
@@ -277,6 +295,19 @@ export function isHandover(
 	return event.type === "agent_managed" || event.type === "agent_unmanaged";
 }
 
+/** Why a task may no longer be needed (`staleness.ts`'s reasons). */
+export interface ObsoleteReason {
+	readonly kind: "pr_merged" | "pr_closed" | "issue_closed";
+	/** `acme/app#9`. */
+	readonly ref: string;
+}
+
+const OBSOLETE_WORDS: Record<ObsoleteReason["kind"], string> = {
+	pr_merged: "PR {ref} がマージされた",
+	pr_closed: "PR {ref} がクローズされた",
+	issue_closed: "Issue {ref} がクローズされた",
+};
+
 /** An escalation, as an event names it. */
 export interface EventEscalation {
 	readonly id: number;
@@ -360,6 +391,7 @@ export const EVENT_TYPES = [
 	"task.human_direct",
 	"needs_action",
 	"task.changed",
+	"task.obsolete",
 	"timer.elapsed",
 	"usage.threshold",
 	"triage",
@@ -401,9 +433,9 @@ export function isHumanInput(
 }
 
 /**
- * The person's answer to an escalation, or their words to an agent of a
- * task waiting on them: delivered in every mode, off included — someone
- * answered, so the work they unblock goes on.
+ * The person's answer to an escalation, or their words to an agent: what
+ * waits for an orchestrator to start when there is none
+ * (`waitsForOrchestrator`).
  */
 export function isAnswer(event: OrchestratorEvent): boolean {
 	return (
@@ -596,6 +628,8 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 				head: [`task=${String(event.taskId)}`],
 				summary: event.reasons.join(", "),
 			};
+		case "task.obsolete":
+			return { head: [taskToken(event.task)], summary: obsoleteWords(event) };
 		case "timer.elapsed":
 			return { head: [event.name] };
 		case "triage":
@@ -639,6 +673,27 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 		default:
 			return { head: [], summary: excerpt(event.text, 200) };
 	}
+}
+
+/**
+ * What a `task.obsolete` line says: what closed, and what to do — verify,
+ * then close the task (or only its question), or say why it is still
+ * needed.
+ */
+export function obsoleteWords(
+	event: Extract<OrchestratorEvent, { type: "task.obsolete" }>,
+): string {
+	const id = String(event.task.id);
+	const what = event.reasons
+		.map((one) => OBSOLETE_WORDS[one.kind].replace("{ref}", one.ref))
+		.join("、");
+	const escalations = event.escalations ?? [];
+	const all = event.allDone ? " (リンクしたものはすべて閉じた)" : "";
+	const withdraw =
+		escalations.length === 0
+			? ""
+			: `、質問 ${escalations.map((one) => `esc=${String(one.id)}`).join(" ")} だけが要らなくなったなら escalation withdraw <ID> --note "<理由>"`;
+	return `もう要らないかもしれません: ${what}${all}。devhub --tell --json status task=${id} で確かめ、終わっていれば devhub --tell task done ${id} --note "<結果>" (開いた質問は一緒に取り下げられる)${withdraw}、まだ要るならその理由を task edit ${id} --memo に書く`;
 }
 
 /**
@@ -815,6 +870,9 @@ export function subjectOf(event: OrchestratorEvent): string {
 			return `agent ${event.agent.id}`;
 		case "task.changed":
 			return `task ${String(event.taskId)}`;
+		// Its own subject: a 待機 task's task.changed must not replace it.
+		case "task.obsolete":
+			return `obsolete ${String(event.task.id)}`;
 		case "triage":
 			return "triage";
 		case "needs_action":
@@ -853,6 +911,20 @@ export function merge(
 			reasons: (["due", "subjects_changed"] as const).filter(
 				(one) => older.reasons.includes(one) || newer.reasons.includes(one),
 			),
+		};
+	// The same task: every item that closed is said.
+	if (older.type === "task.obsolete" && newer.type === "task.obsolete")
+		return {
+			...newer,
+			reasons: [
+				...older.reasons.filter(
+					(one) =>
+						!newer.reasons.some(
+							(other) => other.ref === one.ref && other.kind === one.kind,
+						),
+				),
+				...newer.reasons,
+			],
 		};
 	return newer;
 }
@@ -1052,18 +1124,9 @@ export class EventDispatcher {
 			entry.fate = "filtered";
 			return entry;
 		}
-		// An agent handed over while off: the board says it when the mode
-		// goes on (`no_task`), as it does to an orchestrator that starts.
-		if (this.paused && event.type === "agent_managed") {
-			entry.fate = "dropped";
-			entry.reason = "off";
-			entry.settledAt = entry.at;
-			this.delivery.changed?.();
-			return entry;
-		}
+		// What the person did: at once, in every mode (`by_person`).
 		if (isHumanInput(event)) {
-			if (orchestrator === undefined || this.#waits(event))
-				this.#human.push(entry);
+			if (orchestrator === undefined) this.#human.push(entry);
 			else this.#sendHuman(orchestrator, entry);
 			this.delivery.changed?.();
 			return entry;
@@ -1097,7 +1160,12 @@ export class EventDispatcher {
 			line.entry = entry;
 		}
 		// The orchestrator's own wake-up: at its time, alone, in any mode on.
-		if (!this.paused && onTime(entry.event)) {
+		// While off, a task that may no longer be needed goes alone too.
+		if (
+			this.paused
+				? goesWhileOff(entry.event) === "at_once"
+				: onTime(entry.event)
+		) {
 			this.#sendOnTime(orchestrator, subject);
 			this.delivery.changed?.();
 			return entry;
@@ -1134,11 +1202,6 @@ export class EventDispatcher {
 		entry.fate = "delivered";
 		entry.settledAt = now;
 		this.delivery.delivered?.([entry.event]);
-	}
-
-	/** Whether the person's words wait now: a request, while off. */
-	#waits(event: OrchestratorEvent): boolean {
-		return this.paused && !isAnswer(event);
 	}
 
 	/** The person's words, now, as messages of their own. */
@@ -1208,7 +1271,6 @@ export class EventDispatcher {
 		if (agentId === undefined) return 0;
 		let sent = 0;
 		for (const entry of [...this.#human]) {
-			if (this.#waits(entry.event)) continue;
 			this.#human.splice(this.#human.indexOf(entry), 1);
 			// An agent taken back, then handed over again while it waited.
 			if (

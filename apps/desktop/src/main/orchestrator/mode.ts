@@ -13,18 +13,23 @@
  *   progress; a nudge (a subject said again with nothing new, an item nobody
  *   started, the usage readout, `custom.*`) goes only when its subject is
  *   ranked high, and while `SAVING_BUSY_TASKS` or more tasks are in progress
- *   only when it is about one of them (`savingHolds`). The person's words,
- *   requests, `init` and `triage` are never held, and an explicit timer —
+ *   only when it is about one of them (`savingHolds`). What the person did
+ *   (`by_person`), a task that may no longer be needed (`obsolete`), `init`
+ *   and `triage` are never held, and an explicit timer —
  *   `[[orchestrator.timers]]`, `orchestrator timer set` — or a 待機 task's `--check-at`
  *   goes at its time, alone, as in full (`onTime`).
- * - **off** holds everything else, the person's requests too, and GitHub
- *   is not polled: what the Events switch's off was. Two exceptions:
- *   the person's answers to escalations (`escalation_answered`,
- *   `task.human_direct`) are delivered as in full — someone answered,
- *   and the work waits on it; and the timers are off — a timer
+ * - **off** holds everything else, and GitHub is not polled but for the
+ *   items the open tasks link, every `OFF_LINKED_INTERVAL` (`githubItems.ts`).
+ *   Two classes go through (`goesWhileOff`): **what the person did** in the
+ *   window (`by_person`: their answers, their direct words to an agent,
+ *   their requests, an agent handed over or taken back) at once, as in
+ *   full — the person is right there, and acted; and **a task that may no
+ *   longer be needed** (`obsolete`: its linked Issue closed, its pull
+ *   request merged or closed) at once, alone — closing it costs nothing
+ *   and leaving it open costs every later turn. The timers are off: a timer
  *   (`[[orchestrator.timers]]`, `timer set`) or a task's `--check-at` that comes
  *   due while off is dropped, not sent when the mode turns on
- *   (`events.ts`: `isAnswer`, `offDrops`).
+ *   (`events.ts`: `offDrops`).
  *
  * **Off at every launch.** Nothing of the mode is written anywhere: a DevHub
  * that starts is off until the person turns it on (or starts an
@@ -67,6 +72,15 @@ export function isOrchestratorMode(value: unknown): value is OrchestratorMode {
 export const LAUNCH_MODE: OrchestratorMode = "off";
 
 /**
+ * While off, how often the items the open tasks link are read (and nothing
+ * else of GitHub): often enough that a closed Issue or a merged pull request
+ * reaches the orchestrator (`task.obsolete`) within the half hour, rarely
+ * enough to cost nothing — one request (`MAX_LINKED_ITEMS` a request) every
+ * 20 minutes, about a hundredth of what full polls.
+ */
+export const OFF_LINKED_INTERVAL_MS = 20 * 60_000;
+
+/**
  * Saving's interval, as a multiple of `delivery_interval`: 5m becomes 15m.
  * Each delivery is one orchestrator turn that reads the batch and hands each
  * line to a subagent, and the nag carries an unresolved subject on every one,
@@ -96,9 +110,17 @@ export const SAVING_BUSY_TASKS = 2;
  *   interval or for triage (`onTime`). What it wakes the orchestrator for
  *   (reading Slack, a thread, someone else's work) has consequences
  *   outside. Off drops it instead: the timers are off with the mode;
- * - `never_held` — the person's words, their requests, a start (`init`) and
- *   a `triage`: they go as in full. A batch carrying `init` or `triage`
- *   takes everything pending and standing with it;
+ * - `by_person` — caused by the person's own act in the window: their
+ *   answer, their words to an agent directly, their request, an agent they
+ *   handed over or took back. Sent at once, as a message of its own, in
+ *   **every** mode — never batched, held or dropped (with no orchestrator,
+ *   it waits for one: `waitsForOrchestrator`);
+ * - `obsolete` — a task that may no longer be needed (`task.obsolete`: what
+ *   it links closed or merged). Never held: with the next batch in full and
+ *   saving, at once and alone while off;
+ * - `never_held` — a start (`init`) and a `triage`: they go as in full. A
+ *   batch carrying `init` or `triage` takes everything pending and standing
+ *   with it;
  * - `state_change` — something happened to work in progress, or to work
  *   waiting on the orchestrator: it goes with the next batch, at saving's
  *   interval, whatever the subject's priority and the tasks in progress;
@@ -107,7 +129,13 @@ export const SAVING_BUSY_TASKS = 2;
  *   it is about one of them); otherwise it waits, one line per subject, for
  *   the next triage or for full.
  */
-export type SavingClass = "never_held" | "on_time" | "state_change" | "nudge";
+export type SavingClass =
+	| "by_person"
+	| "obsolete"
+	| "never_held"
+	| "on_time"
+	| "state_change"
+	| "nudge";
 
 /**
  * Every kind of line the dispatcher handles, finer than the event's type
@@ -127,6 +155,7 @@ export type SavingKind =
 	| "needs_action said again"
 	| "task.changed subjects_changed"
 	| "task.changed due"
+	| "task.obsolete"
 	| "timer.elapsed timer set"
 	| "timer.elapsed settings"
 	| "usage.threshold"
@@ -150,6 +179,10 @@ export type SavingKind =
  *   review, a merge, its agents): work waiting on the orchestrator.
  *   `task.changed due`: the time the orchestrator gave it to look again
  *   (`task status --check-at`) came — its own wake-up, on time.
+ * - `task.obsolete`: an open task whose linked Issue closed or pull request
+ *   merged or closed, seen happen: it may be done (`obsolete`).
+ * - `escalation_answered`, `task.human_direct`, `request`, `agent_managed`,
+ *   `agent_unmanaged`: the person's own acts (`by_person`).
  * - `timer.elapsed timer set`: a timer the orchestrator set itself
  *   (`orchestrator timer set`, `source: "session"`): its own wake-up ("look
  *   at Slack at 15:00", "re-read the thread in 30 minutes"), on time.
@@ -161,11 +194,12 @@ export type SavingKind =
 export const SAVING_CLASSES: Readonly<Record<SavingKind, SavingClass>> = {
 	init: "never_held",
 	triage: "never_held",
-	escalation_answered: "never_held",
-	"task.human_direct": "never_held",
-	request: "never_held",
-	agent_managed: "never_held",
-	agent_unmanaged: "never_held",
+	escalation_answered: "by_person",
+	"task.human_direct": "by_person",
+	request: "by_person",
+	agent_managed: "by_person",
+	agent_unmanaged: "by_person",
+	"task.obsolete": "obsolete",
 	"needs_action task": "state_change",
 	"needs_action agent no_task": "state_change",
 	"needs_action item no_task": "nudge",
@@ -195,6 +229,7 @@ export function savingKindOf(
 		case "agent_managed":
 		case "agent_unmanaged":
 		case "usage.threshold":
+		case "task.obsolete":
 			return event.type;
 		case "timer.elapsed":
 			return event.source === "session"
@@ -229,6 +264,27 @@ export function onTime(event: OrchestratorEvent): boolean {
 	return savingClassOf(event) === "on_time";
 }
 
+/** Caused by the person's own act: at once, in every mode (`by_person`). */
+export function byPerson(event: OrchestratorEvent): boolean {
+	return savingClassOf(event) === "by_person";
+}
+
+/**
+ * What goes while off, and how: `at_once` — the person's acts and a task
+ * that may no longer be needed, each as a message of its own; `dropped` —
+ * the timers, which are off with the mode; `held` — everything else, until
+ * the mode turns on. A `task.changed` carrying `due` is the timers' (its
+ * `due` is dropped, its `subjects_changed` held: `offDrops`).
+ */
+export function goesWhileOff(
+	event: OrchestratorEvent,
+): "at_once" | "held" | "dropped" {
+	const kind = savingClassOf(event);
+	if (kind === "by_person" || kind === "obsolete") return "at_once";
+	if (kind === "on_time") return "dropped";
+	return "held";
+}
+
 /** Why saving holds a line now: not high, or the hands are full. */
 export type SavingHold = "not_high" | "busy";
 
@@ -236,8 +292,9 @@ export type SavingHold = "not_high" | "busy";
  * Whether saving holds a line now, and why; undefined: it goes (with the
  * next batch, at saving's interval).
  *
- * - `never_held`, `on_time` and `state_change` lines are never held (an
- *   `on_time` one does not wait for a batch at all: `onTime`).
+ * - `by_person`, `obsolete`, `never_held`, `on_time` and `state_change`
+ *   lines are never held (a `by_person` or `on_time` one does not wait for
+ *   a batch at all: `isHumanInput`, `onTime`).
  * - A `nudge` is held when its subject is not ranked `high`, and — while
  *   `tasks` is `SAVING_BUSY_TASKS` or more — when it is about work that is
  *   not in progress (starting or pushing other work).

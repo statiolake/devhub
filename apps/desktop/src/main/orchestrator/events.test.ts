@@ -281,7 +281,7 @@ describe("the person's words", () => {
 		expect(dispatcher.held()).toHaveLength(1);
 	});
 
-	it("go while off, each alone, as in full; a request is held, and goes first on resume", async () => {
+	it("go while off, each alone, as in full — a request too; the rest waits for resume", async () => {
 		const { dispatcher, sent } = world();
 		dispatcher.pause();
 		dispatcher.dispatch(needsActionIssue());
@@ -302,10 +302,10 @@ describe("the person's words", () => {
 		expect(sent).toEqual([
 			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n一つ目",
 			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n二つ目",
+			expect.stringMatching(/^task=4「依頼」 人からの依頼 .*\n依頼$/u),
 		]);
 		await dispatcher.resume();
-		expect(sent.slice(2)).toEqual([
-			expect.stringMatching(/^task=4「依頼」 人からの依頼 .*\n依頼$/u),
+		expect(sent.slice(3)).toEqual([
 			expect.stringContaining("[needs_action] issue=acme/app#123"),
 		]);
 	});
@@ -556,36 +556,44 @@ describe("the preview", () => {
 		expect(dispatcher.preview()).toEqual({ human: [], events: [], more: 0 });
 	});
 
-	it("while paused: the person's held requests each alone, then the batch, as resume sends them", () => {
+	it("while paused: the person's acts went already; the batch waits, as resume sends it", () => {
 		const { dispatcher, sent } = world({
 			standing: () => [needsActionIssue()],
 		});
 		dispatcher.pause();
 		dispatcher.dispatch(answer("一つ目"));
-		expect(sent).toEqual([
-			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n一つ目",
-		]);
-		sent.length = 0;
 		dispatcher.dispatch({
 			type: "request",
 			task: { id: 1, title: "依頼" },
 			text: "一つ目",
 		});
-		dispatcher.dispatch({
-			type: "request",
-			task: { id: 2, title: "依頼" },
-			text: "二つ目",
-		});
+		expect(sent).toEqual([
+			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n一つ目",
+			expect.stringMatching(/^task=1「依頼」 .*\n一つ目$/u),
+		]);
+		sent.length = 0;
 		dispatcher.dispatch({ type: "custom.x", text: "y" });
 		const preview = dispatcher.preview();
 		expect(preview.when).toEqual({ kind: "paused" });
-		expect(preview.human).toEqual([
-			expect.stringMatching(/^task=1「依頼」 .*\n一つ目$/u),
-			expect.stringMatching(/^task=2「依頼」 .*\n二つ目$/u),
-		]);
+		expect(preview.human).toEqual([]);
 		expect(sent).toEqual([]);
 		dispatcher.resume();
-		expect(sent).toEqual([...preview.human, preview.batch]);
+		expect(sent).toEqual([preview.batch]);
+	});
+
+	it("with no orchestrator: the person's answers each alone first, then the batch, once one runs", () => {
+		const running: { id?: string } = {};
+		const { dispatcher, sent } = world({ orchestrator: () => running.id });
+		dispatcher.dispatch(answer("一つ目"));
+		dispatcher.dispatch(answer("二つ目"));
+		expect(dispatcher.preview().when).toEqual({ kind: "nobody" });
+		expect(dispatcher.preview().human).toHaveLength(2);
+		running.id = ORCH;
+		dispatcher.flush();
+		expect(sent).toEqual([
+			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n一つ目",
+			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n二つ目",
+		]);
 	});
 
 	it("is composed by the delivery's own composer, cut at the cap", () => {
@@ -711,18 +719,14 @@ describe("an agent the person hands over, or takes back", () => {
 		expect(sent[1]).toContain("管理から外しました");
 	});
 
-	it("while off: one handed over is dropped (the board's no_task says it), one taken back waits for on", () => {
-		const { dispatcher, sent } = world();
+	it("while off: both go at once, as in full (what the person did)", () => {
+		const { dispatcher, sent } = world({ busy: true });
 		dispatcher.pause();
-		expect(dispatcher.dispatch(handed)).toMatchObject({
-			fate: "dropped",
-			reason: "off",
-		});
-		dispatcher.dispatch(taken);
-		expect(sent).toEqual([]);
-		dispatcher.resume();
-		expect(sent).toHaveLength(1);
-		expect(sent[0]).toContain("管理から外しました");
+		expect(dispatcher.dispatch(handed).fate).toBe("delivered");
+		expect(dispatcher.dispatch(taken).fate).toBe("delivered");
+		expect(sent).toHaveLength(2);
+		expect(sent[0]).toContain("管理下に移しました");
+		expect(sent[1]).toContain("管理から外しました");
 	});
 
 	it("with no orchestrator: one handed over has nobody, one taken back waits for one", () => {
@@ -737,15 +741,17 @@ describe("an agent the person hands over, or takes back", () => {
 		expect(sent[0]).toContain("管理から外しました");
 	});
 
-	it("drops one taken back that was handed over again while it waited", () => {
+	it("drops one taken back that was handed over again while it waited for an orchestrator", () => {
 		let managed = false;
+		const running: { id?: string } = {};
 		const { dispatcher, sent } = world({
+			orchestrator: () => running.id,
 			relevant: (event) => event.type !== "agent_unmanaged" || !managed,
 		});
-		dispatcher.pause();
 		const entry = dispatcher.dispatch(taken);
 		managed = true;
-		dispatcher.resume();
+		running.id = ORCH;
+		dispatcher.flush();
 		expect(sent).toEqual([]);
 		expect(entry.fate).toBe("dropped-stale");
 	});

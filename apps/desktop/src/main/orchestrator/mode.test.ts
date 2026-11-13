@@ -20,11 +20,14 @@ import {
 	SAVING_BUSY_TASKS,
 	SAVING_CLASSES,
 	SAVING_INTERVAL_FACTOR,
+	byPerson,
+	goesWhileOff,
 	savingClassOf,
 	savingHolds,
 	savingKindOf,
 	savingNotice,
 	usageOver,
+	type SavingKind,
 	type UsageOver,
 } from "./mode.js";
 import { OrchestratorService } from "./orchestratorService.js";
@@ -339,16 +342,173 @@ function taskLine(id: number): OrchestratorEvent {
 	};
 }
 
+/** One event of every kind the dispatcher handles (but `said again`). */
+const EVERY_KIND: Record<
+	Exclude<SavingKind, "needs_action said again">,
+	OrchestratorEvent
+> = {
+	init: { type: "init" },
+	triage: { type: "triage" },
+	escalation_answered: {
+		type: "escalation_answered",
+		task: { id: 1, title: "t" },
+		escalationId: 1,
+		title: "q",
+		agents: [],
+		answers: [{ text: "はい" }],
+	},
+	"task.human_direct": {
+		type: "task.human_direct",
+		agent: { id: "w", name: "worker" },
+		messages: [{ text: "止めて" }],
+	},
+	request: { type: "request", task: { id: 2, title: "依頼" }, text: "調べて" },
+	agent_managed: {
+		type: "agent_managed",
+		agent: { id: "w2", name: "x" },
+		ws: "web",
+		status: "idle",
+	},
+	agent_unmanaged: {
+		type: "agent_unmanaged",
+		agent: { id: "w3", name: "y" },
+		ws: "web",
+		status: "idle",
+	},
+	"needs_action task": taskLine(3),
+	"needs_action agent no_task": agentLine("a"),
+	"needs_action item no_task": needsAction(4),
+	"task.changed subjects_changed": {
+		type: "task.changed",
+		taskId: 5,
+		reasons: ["subjects_changed"],
+	},
+	"task.changed due": { type: "task.changed", taskId: 6, reasons: ["due"] },
+	"task.obsolete": {
+		type: "task.obsolete",
+		task: { id: 7, title: "移行" },
+		reasons: [{ kind: "issue_closed", ref: "acme/app#7" }],
+		allDone: true,
+	},
+	"timer.elapsed timer set": {
+		type: "timer.elapsed",
+		name: "slack",
+		interval: "30m",
+		source: "session",
+	},
+	"timer.elapsed settings": {
+		type: "timer.elapsed",
+		name: "sweep",
+		interval: "30m",
+	},
+	"usage.threshold": {
+		type: "usage.threshold",
+		cli: "claude",
+		window: "5-hour",
+		threshold: 80,
+		usedPercent: 82,
+	},
+	"custom.*": { type: "custom.x", text: "y" },
+};
+
+/**
+ * What becomes of one event in `mode`, on a dispatcher of its own with
+ * nothing high and two tasks in progress: sent at once as its own message,
+ * with the next batch, held, or dropped.
+ */
+function fateIn(
+	mode: "full" | "saving" | "off",
+	event: OrchestratorEvent,
+): "at_once" | "batch" | "held" | "dropped" {
+	const state = { now: NOW };
+	const timers: { at: number; run: () => void }[] = [];
+	const events = new EventDispatcher({
+		mode,
+		orchestrator: () => "orch",
+		settings: () => ({
+			event_prompt: "{EVENT}",
+			init_prompt: undefined,
+			events: ["*"],
+			delivery_interval: "5m",
+		}),
+		deliver: () => undefined,
+		high: () => false,
+		inProgress: () => SAVING_BUSY_TASKS,
+		now: () => state.now,
+		setTimer: (ms, run) => {
+			const timer = { at: state.now + ms, run };
+			timers.push(timer);
+			return {
+				cancel: () => {
+					timers.splice(timers.indexOf(timer), 1);
+				},
+			};
+		},
+	});
+	const entry = events.dispatch(event);
+	if (entry.fate === "delivered") return "at_once";
+	if (entry.fate === "dropped") return "dropped";
+	state.now += BATCH_WINDOW_MS;
+	for (const timer of timers.filter((one) => one.at <= state.now)) {
+		timers.splice(timers.indexOf(timer), 1);
+		timer.run();
+	}
+	// Narrowed above; the timers move it.
+	return (entry.fate as string) === "delivered" ? "batch" : "held";
+}
+
+describe("every class in every mode", () => {
+	it("goes, waits or is dropped as the modes table says", () => {
+		const table = Object.fromEntries(
+			Object.entries(EVERY_KIND).map(([kind, event]) => [
+				kind,
+				(["full", "saving", "off"] as const).map((mode) => fateIn(mode, event)),
+			]),
+		);
+		expect(table).toEqual({
+			// What the person did: at once, alone, in every mode.
+			escalation_answered: ["at_once", "at_once", "at_once"],
+			"task.human_direct": ["at_once", "at_once", "at_once"],
+			request: ["at_once", "at_once", "at_once"],
+			agent_managed: ["at_once", "at_once", "at_once"],
+			agent_unmanaged: ["at_once", "at_once", "at_once"],
+			// May no longer be needed: never held; alone while off.
+			"task.obsolete": ["batch", "batch", "at_once"],
+			init: ["batch", "batch", "held"],
+			triage: ["batch", "batch", "held"],
+			"needs_action task": ["batch", "batch", "held"],
+			"needs_action agent no_task": ["batch", "batch", "held"],
+			"task.changed subjects_changed": ["batch", "batch", "held"],
+			"needs_action item no_task": ["batch", "held", "held"],
+			"usage.threshold": ["batch", "held", "held"],
+			"custom.*": ["batch", "held", "held"],
+			// The timers: on time; off with the mode.
+			"task.changed due": ["at_once", "at_once", "dropped"],
+			"timer.elapsed timer set": ["at_once", "at_once", "dropped"],
+			"timer.elapsed settings": ["at_once", "at_once", "dropped"],
+		});
+		for (const [kind, event] of Object.entries(EVERY_KIND))
+			expect(savingKindOf(event)).toBe(kind);
+		expect(goesWhileOff(EVERY_KIND.request)).toBe("at_once");
+		expect(goesWhileOff(EVERY_KIND["task.obsolete"])).toBe("at_once");
+		expect(goesWhileOff(EVERY_KIND["custom.*"])).toBe("held");
+		expect(goesWhileOff(EVERY_KIND["timer.elapsed settings"])).toBe("dropped");
+		expect(byPerson(EVERY_KIND.agent_managed)).toBe(true);
+		expect(byPerson(EVERY_KIND.init)).toBe(false);
+	});
+});
+
 describe("saving: state changes and nudges", () => {
 	it("classifies every kind of line, explicitly", () => {
 		expect(SAVING_CLASSES).toEqual({
 			init: "never_held",
 			triage: "never_held",
-			escalation_answered: "never_held",
-			"task.human_direct": "never_held",
-			request: "never_held",
-			agent_managed: "never_held",
-			agent_unmanaged: "never_held",
+			escalation_answered: "by_person",
+			"task.human_direct": "by_person",
+			request: "by_person",
+			agent_managed: "by_person",
+			agent_unmanaged: "by_person",
+			"task.obsolete": "obsolete",
 			"needs_action task": "state_change",
 			"needs_action agent no_task": "state_change",
 			"needs_action item no_task": "nudge",
@@ -712,7 +872,7 @@ describe("off: the timers are off, the person's answers go", () => {
 		]);
 	});
 
-	it("delivers the person's answers while off, as in full; a request waits for on", () => {
+	it("delivers what the person did while off, as in full — a request too; the rest waits for on", () => {
 		const run = dispatcher("off", { n: 0 });
 		run.events.dispatch({
 			type: "escalation_answered",
@@ -737,13 +897,10 @@ describe("off: the timers are off, the person's answers go", () => {
 		expect(run.sent).toEqual([
 			"task=9「仕事」 esc=1「t」 への人の回答:\nはい",
 			expect.stringContaining("こちらで進めて"),
+			expect.stringContaining("task=3「依頼」 人からの依頼"),
 		]);
-		expect(run.events.held().map((one) => one.type)).toEqual([
-			"request",
-			"custom.x",
-		]);
+		expect(run.events.held().map((one) => one.type)).toEqual(["custom.x"]);
 		run.events.setMode("full");
-		expect(run.sent[2]).toContain("task=3「依頼」 人からの依頼");
 		expect(run.sent[3]).toContain("[custom.x]");
 	});
 

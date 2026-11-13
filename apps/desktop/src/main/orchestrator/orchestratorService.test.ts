@@ -563,6 +563,45 @@ describe("escalation resolve: a question the person settled directly", () => {
 	});
 });
 
+describe("a task that may no longer be needed (task.obsolete)", () => {
+	it("is told once when an Issue it links, seen open, closes — at once while off — and tells it to verify and close", () => {
+		const run = world({ items: [issue()] });
+		const task = run.service.newTask({ title: "API整理", links: [ISSUE_URL] });
+		run.service.raise({ taskId: task.id, title: "q", markdown: BODY });
+		run.service.setMode("off");
+		run.later(1_000);
+		run.sent.length = 0;
+		expect(run.of("task.obsolete")).toEqual([]);
+		run.invariant.items = [issue({ state: "closed" })];
+		run.later(1_000);
+		run.later(1_000);
+		expect(run.of("task.obsolete").map((entry) => entry.event)).toEqual([
+			{
+				type: "task.obsolete",
+				task: { id: task.id, title: "API整理" },
+				reasons: [{ kind: "issue_closed", ref: "acme/app#123" }],
+				allDone: true,
+				escalations: [{ id: 1, title: "q" }],
+			},
+		]);
+		expect(run.sent).toHaveLength(1);
+		expect(run.sent[0]).toMatch(
+			/^\[task\.obsolete\] task=1「API整理」 — もう要らないかもしれません: Issue acme\/app#123 がクローズされた \(リンクしたものはすべて閉じた\)。/u,
+		);
+		expect(run.sent[0]).toContain('devhub --tell task done 1 --note "<結果>"');
+		expect(run.sent[0]).toContain("escalation withdraw <ID>");
+		expect(run.sent[0]).toContain("task edit 1 --memo");
+	});
+
+	it("is not told for an item closed when it was first read: the triage marks it", () => {
+		const run = world({ items: [issue({ state: "closed" })] });
+		run.service.newTask({ title: "API整理", links: [ISSUE_URL] });
+		run.later(1_000);
+		run.later(1_000);
+		expect(run.of("task.obsolete")).toEqual([]);
+	});
+});
+
 describe("待機 with a time to look again", () => {
 	it("says task.changed due once when --check-at passes", () => {
 		const run = world();
@@ -688,7 +727,7 @@ describe("an agent the person hands over from the window", () => {
 		expect(run.of("agent_managed")).toEqual([]);
 	});
 
-	it("is not held by saving, and dropped while off (the agent is no_task once on)", async () => {
+	it("is not held by saving, nor while off: the person did it", async () => {
 		const run = world();
 		run.invariant.managed.add(WORKER);
 		run.service.setMode("saving");
@@ -700,10 +739,11 @@ describe("an agent the person hands over from the window", () => {
 		run.service.setMode("off");
 		run.sent.length = 0;
 		await run.service.handedOver(WORKER, true);
-		expect(run.sent).toEqual([]);
+		expect(
+			run.sent.filter((text) => text.includes("管理下に移しました")),
+		).toHaveLength(1);
 		expect(run.of("agent_managed").at(-1)).toMatchObject({
-			fate: "dropped",
-			reason: "off",
+			fate: "delivered",
 		});
 	});
 });

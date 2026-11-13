@@ -366,12 +366,9 @@ describe("the person's requests", () => {
 		]);
 	});
 
-	it("waits as 送信待ち while off, and goes when turned on", () => {
+	it("goes at once while off too: the person asked", () => {
 		const { run, sent } = service("off");
 		run.request("ログを調べる");
-		expect(sent).toHaveLength(0);
-		expect(run.wire().waiting[0]?.request?.sentAt).toBeUndefined();
-		run.setMode("full");
 		expect(sent.some((text) => text.includes("ログを調べる"))).toBe(true);
 		expect(run.wire().waiting[0]?.request?.sentAt).toBe(5_000);
 	});

@@ -5007,7 +5007,7 @@ describe("the Orchestrator row from the command line", () => {
 		);
 	});
 
-	it("pauses events and delivers the held ones on resume: a request alone, the rest as one; an answer goes while paused", async () => {
+	it("pauses events and delivers the held ones on resume as one; an answer and a request go while paused", async () => {
 		const { service, ports } = orchestrated();
 		ports.delivered = [];
 		await viaSocket(service, ["orchestrator", "pause"], undefined);
@@ -5019,19 +5019,22 @@ describe("the Orchestrator row from the command line", () => {
 		]);
 		ports.delivered = [];
 		ports.service.request("b");
+		expect(ports.delivered.map(([, text]) => text)).toEqual([
+			expect.stringMatching(/^task=2「b」 人からの依頼 .*\nb$/u),
+		]);
+		ports.delivered = [];
 		ports.service.emit("custom.deploy", "staging");
 		ports.service.emit("custom.build", "done");
 		expect(ports.delivered).toEqual([]);
-		expect(ports.service.wire()).toMatchObject({ paused: true, held: 3 });
+		expect(ports.service.wire()).toMatchObject({ paused: true, held: 2 });
 		const resumed = await viaSocket(
 			service,
 			["orchestrator", "resume"],
 			undefined,
 		);
 		// The answer set task 1 処理中 with no agent: its needs_action rides along.
-		expect(resumed.data).toMatchObject({ delivered: 4 });
+		expect(resumed.data).toMatchObject({ delivered: 3 });
 		expect(ports.delivered.map(([, text]) => text)).toEqual([
-			expect.stringMatching(/^task=2「b」 人からの依頼 .*\nb$/u),
 			expect.stringMatching(
 				/\[custom\.deploy\][^]*\[custom\.build\][^]*\[needs_action\] task=1「仕事」 — no_agent/u,
 			),

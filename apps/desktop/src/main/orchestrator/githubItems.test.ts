@@ -1,3 +1,4 @@
+import { OFF_LINKED_INTERVAL_MS } from "./mode.js";
 import { describe, expect, it } from "vitest";
 import {
 	GitHubItemSource,
@@ -551,6 +552,48 @@ describe("the GitHub items", () => {
 		await run.source.caughtUp();
 		expect(run.asked).toHaveLength(2);
 		expect(run.source.items()).toHaveLength(1);
+	});
+});
+
+describe("while off (suspended)", () => {
+	it("reads only the items the open tasks link, every 20 minutes, and a closing one is seen", async () => {
+		const issue = url(1, "issues");
+		const github: GitHub = {
+			assigned: [{ kind: "Issue", id: "I1", number: 1 }],
+			byUrl: { [issue]: { kind: "Issue", id: "I1", number: 1 } },
+		};
+		const run = world(github, { linked: [issue] });
+		await run.next();
+		expect(run.source.items()?.map((one) => one.state)).toEqual(["open"]);
+		const before = run.asked.length;
+		run.source.follow(true, true);
+		expect(run.pending?.ms).toBe(OFF_LINKED_INTERVAL_MS);
+		// Nothing is asked before its time; then one request, by URL only.
+		await run.source.tick();
+		expect(run.asked).toHaveLength(before);
+		github.byUrl = {
+			[issue]: { kind: "Issue", id: "I1", number: 1, state: "CLOSED" },
+		};
+		run.clock.now += OFF_LINKED_INTERVAL_MS;
+		await run.source.tickOff();
+		expect(run.asked).toHaveLength(before + 1);
+		const asked = run.asked.at(-1)!;
+		expect(asked.variables).toEqual({ u0: issue });
+		expect(asked.query).not.toContain("search(");
+		expect(asked.query).not.toContain("pulls:");
+		expect(run.source.items()?.map((one) => one.state)).toEqual(["closed"]);
+		expect(run.pending?.ms).toBe(OFF_LINKED_INTERVAL_MS);
+		expect(run.source.state().mode).toBe("suspended");
+	});
+
+	it("asks nothing while off when no open task links an item", async () => {
+		const run = world({ assigned: [] });
+		await run.next();
+		const before = run.asked.length;
+		run.source.follow(true, true);
+		await run.source.tickOff();
+		expect(run.asked).toHaveLength(before);
+		expect(run.pending?.ms).toBe(OFF_LINKED_INTERVAL_MS);
 	});
 });
 
