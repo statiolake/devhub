@@ -93,8 +93,13 @@ function ask(socket, request, timeoutMs = 20_000) {
   });
 }
 
-export async function startApp(paths, { port, size = [1400, 900], logPath }) {
+export async function startApp(
+  paths,
+  { port, size = [1400, 900], logPath, neovimDelayMs },
+) {
   const env = environment(paths);
+  // Every round trip to Neovim this much longer (src/main/neovimHost/delayProxy.ts).
+  if (neovimDelayMs) env.DEVHUB_NEOVIM_DELAY_MS = String(neovimDelayMs);
   const userData = userDataDir(env);
   mkdirSync(userData, { recursive: true });
   const args = [

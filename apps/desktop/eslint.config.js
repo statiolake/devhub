@@ -52,7 +52,7 @@ export default tseslint.config(
     languageOptions: { globals: { ...globals.node } },
   },
   {
-    files: ["test/stability/recorder.js"],
+    files: ["test/stability/recorder.js", "test/stability/motionRecorder.js"],
     languageOptions: { sourceType: "script", globals: { ...globals.browser } },
   },
   {

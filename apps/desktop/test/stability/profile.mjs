@@ -99,6 +99,16 @@ function sampleWorkspace(dir, name) {
     );
   }
   write(join(dir, "docs", "guide.md"), "# Guide\n\nalpha beta gamma delta\n");
+  // A long file to scroll (scenariosMotion.mjs): numbered, and varied enough
+  // that a row drawn at the wrong place shows.
+  write(
+    join(dir, "src", "long.ts"),
+    Array.from(
+      { length: 1500 },
+      (_, i) =>
+        `export const line${i} = value(${i}) + ${"x".repeat(i % 37)}; // row ${i}`,
+    ).join("\n") + "\n",
+  );
 }
 
 export function makeProfile(root, pluginDirs) {

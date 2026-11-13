@@ -24,8 +24,52 @@ import { capture, motionAt } from "./capture.mjs";
 import { connect, targets } from "./cdp.mjs";
 import { fetchPlugins } from "./fetchPlugins.mjs";
 import { check } from "./invariants.mjs";
+import { checkMotion } from "./motionInvariants.mjs";
+import { decodePng, regionDigest } from "./pixels.mjs";
 import { press as pressKey, type as typeText } from "./keys.mjs";
 import { checkRegions } from "./pixels.mjs";
+import { readFileSync } from "node:fs";
+
+const motionSource = readFileSync(
+  new URL("./motionRecorder.js", import.meta.url),
+  "utf8",
+)
+  .trim()
+  .replace(/;$/, "");
+
+// Carets and the cursor do not take part in the picture compared: they blink.
+const NO_CARETS = `(() => { let s = document.getElementById("__stability_nocaret"); if (!s) { s = document.createElement("style"); s.id = "__stability_nocaret"; s.textContent = ".nvim-cursor, .nvim-cursor-ink, .nvim-view-frame-caret, .nvim-cmdline-caret { visibility: hidden !important }"; document.head.append(s); } })()`;
+const CARETS = `document.getElementById("__stability_nocaret")?.remove()`;
+
+/**
+ * Settled after motion, the picture is what a fresh full redraw draws:
+ * Neovim's whole screen sent again (:redraw!) and painted anew. A
+ * difference is something the motion left behind (a stale row, a ghost, a
+ * band painted at an old offset). selector: the region compared.
+ */
+async function freshRedraw(ctx, client, selector) {
+  await client.eval(NO_CARETS);
+  try {
+    await ctx.settle("pane", 300);
+    const shot = async () => {
+      const r = await client.send("Page.captureScreenshot", { format: "png" });
+      return decodePng(Buffer.from(r.data, "base64"));
+    };
+    const rect = await client.eval(
+      `(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return null; const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height].map(Math.round); })()`,
+    );
+    if (!rect) return undefined;
+    const before = regionDigest(await shot(), rect);
+    ctx.nvimExpr("execute('redraw!')");
+    await ctx.settle("pane", 400);
+    const after = regionDigest(await shot(), rect);
+    return before === after
+      ? undefined
+      : `the settled picture of ${selector} differs from a fresh full redraw (${before} vs ${after})`;
+  } finally {
+    await client.eval(CARETS);
+  }
+}
 import { appDir, makeProfile, writeSettings } from "./profile.mjs";
 import { runPointer } from "./pointer.mjs";
 import { SCENARIOS, editorAtRest } from "./scenarios.mjs";
@@ -54,6 +98,7 @@ function parseArgs(argv) {
     else if (arg === "--only") args.only = argv[++i].split(",");
     else if (arg === "--keep") args.keep = true;
     else if (arg === "--hold") args.hold = true;
+    else if (arg === "--neovim-delay") args.neovimDelay = Number(argv[++i]);
     else if (arg === "--port") args.port = Number(argv[++i]);
     else throw new Error(`unknown argument ${arg}`);
   }
@@ -75,6 +120,7 @@ async function main() {
   const root = mkdtempSync(join(tmpdir(), "devhub-stability-"));
   const paths = makeProfile(root, plugins);
   const app = await startApp(paths, {
+    neovimDelayMs: args.neovimDelay,
     port: args.port,
     logPath: join(artifacts, "app.log"),
   });
@@ -224,6 +270,14 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
     const wanted = regionsFor(step, entry.page, index === 0);
     regions.push({ wanted, before: await resolveRegions(client, wanted) });
   }
+  // A step in motion: every frame's text, anchors and scroll ports too
+  // (motionRecorder.js), on its first page.
+  const motionClient = step.motion ? sessions[0].client : undefined;
+  if (motionClient) {
+    await motionClient.eval(
+      `(${motionSource})(${JSON.stringify(step.motion)})`,
+    );
+  }
   let recorded;
   try {
     recorded = await capture(sessions, () => step.act(ctx), {
@@ -238,6 +292,16 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
   let frameCount = 0;
   let shotCount = 0;
   const failedPages = [];
+  let motionSamples;
+  if (motionClient) {
+    motionSamples = await motionClient.eval("window.__motion.take()");
+    for (const v of checkMotion(motionSamples, step.motion.spec ?? {}))
+      problems.push(`${pages[0].page}: [${v.rule}] ${v.message}`);
+    if (step.motion.fresh) {
+      const problem = await freshRedraw(ctx, motionClient, step.motion.fresh);
+      if (problem) problems.push(`${pages[0].page}: [stale] ${problem}`);
+    }
+  }
   for (const [index, entry] of pages.entries()) {
     const page = recorded[index];
     frameCount += page.frames.length;
@@ -295,6 +359,32 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
         shot.png,
       );
     });
+  }
+  if (motionSamples && problems.length > 0) {
+    const dir = join(artifacts, scenario.name, `${step.name}-${rate}x`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "motion.json"),
+      JSON.stringify(motionSamples, null, 1),
+    );
+    if (failedPages.length === 0) {
+      // The pictures too, when only the motion rules failed.
+      const page = recorded[0];
+      writeFileSync(
+        join(dir, "frames.json"),
+        JSON.stringify(page.frames, null, 1),
+      );
+      page.shots.forEach((shot, i) => {
+        writeFileSync(
+          join(
+            dir,
+            `shot-${String(i).padStart(3, "0")}-${Math.round(shot.t - page.actionAt)}ms.png`,
+          ),
+          shot.png,
+        );
+      });
+    }
+    writeFileSync(join(dir, "violations.txt"), `${problems.join("\n")}\n`);
   }
   // A known fault (step.known: [{ match, why, owner }]) is reported, every
   // time it shows, but does not fail the run; only the problems it matches
@@ -426,6 +516,35 @@ function makeContext(app, paths, pages) {
     },
     async hoverSelector(page, selector) {
       return ctx.hoverText(page, selector, undefined);
+    },
+    /** The tmux session of the Workspace `alpha` (the one the scenarios work in). */
+    alphaSession() {
+      const sock = socket();
+      const out = app.tmux(
+        "list-panes",
+        "-a",
+        "-F",
+        "#{session_name} #{@devhub-nvim}",
+      );
+      const line = out.split("\n").find((l) => l.includes(sock));
+      if (!line) throw new Error("no session with the devhub-nvim window");
+      return line.split(" ")[0];
+    },
+    /** `notches` wheel ticks of `delta` px over `selector`, `gapMs` apart (a burst, slow or fast). */
+    async wheel(page, selector, notches, delta, gapMs) {
+      const at = await ctx.centre(page, selector, undefined);
+      if (!at) throw new Error(`${page}: no ${selector} to wheel over`);
+      const client = await ctx.page(page);
+      for (let i = 0; i < notches; i++) {
+        await client.send("Input.dispatchMouseEvent", {
+          type: "mouseWheel",
+          x: at[0],
+          y: at[1],
+          deltaX: 0,
+          deltaY: delta,
+        });
+        if (gapMs > 0) await sleep(gapMs);
+      }
     },
     async clickAt(page, x, y) {
       const client = await ctx.page(page);
