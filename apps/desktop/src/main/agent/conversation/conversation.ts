@@ -368,10 +368,14 @@ export class AgentConversation {
 	/**
 	 * Follow the journal again after the link was lost, from where it stopped.
 	 * The round calls it once per round; a conversation that is not lost is
-	 * left alone.
+	 * left alone, and so is one whose host files are gone: nothing makes them
+	 * again for a running host, so following again would find them gone
+	 * again, and only clear what the pane says about it for a moment each
+	 * round (`stateMissing` in `hostLink.ts`).
 	 */
 	reattach(): void {
 		if (this.#lost === undefined || this.#cancel.isCancelled) return;
+		if (this.#lost.code === "state_missing") return;
 		this.#lost = undefined;
 		this.#following = this.#follow();
 	}

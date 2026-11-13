@@ -35,7 +35,10 @@ import {
 } from "../agent/conversation/hostCommand.js";
 import { HostLink, HostLinkFailure } from "../agent/conversation/hostLink.js";
 import type { ProtocolAdapter } from "../agent/conversation/protocolAdapter.js";
-import { ConversationRefused } from "../agent/conversation/failures.js";
+import {
+	ConversationRefused,
+	ConversationStopped,
+} from "../agent/conversation/failures.js";
 import { McpSignInRun } from "../agent/conversation/mcpSignIn.js";
 import type { AgentRecordStore } from "../agent/conversation/agentRecords.js";
 import type { CacheKeepSettings } from "../agent/conversation/cacheKeeper.js";
@@ -259,6 +262,19 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 	 * just closed.
 	 */
 	const endings = new Map<AgentId, Promise<void>>();
+	/**
+	 * The GUI Agents whose ending is over: followed no more, and their host
+	 * files removed by DevHub. Their ending was their one, so a later round
+	 * that still finds the row — a Workspace close that has stopped its Agents
+	 * and is still at its terminals or its worktree (or failed there), or a
+	 * round that comes between a Stop's return and its row going — ends
+	 * nothing again. It used to: outside `endings`' window, and with the Stop
+	 * no longer counted, it read the ending of the files DevHub had just
+	 * removed and said "there is no host state at …" app-wide. Kept for the
+	 * life of this DevHub: an Agent id is never minted twice, and a row the
+	 * model puts back (a close's rollback) is the same ended Agent.
+	 */
+	const ended = new Set<AgentId>();
 	/** Each GUI Agent's MCP sign-in, running or run last. */
 	const signIns = new Map<AgentId, McpSignInRun>();
 
@@ -521,6 +537,14 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					`${agent.displayName} is a terminal Agent, so it has no conversation`,
 				);
 			}
+			// Its conversation went with its ending, and its host files with
+			// it: a new one would follow files that are gone, and nothing
+			// would end it again.
+			if (ended.has(agentId) || endings.has(agentId)) {
+				throw new ConversationStopped(
+					`${agent.displayName} has ended, so there is no conversation to show.`,
+				);
+			}
 			const machine = machineOfAgent(agentId);
 			const workspace = options.model().workspaceForAgent(agentId);
 			if (machine === undefined || workspace === undefined) {
@@ -540,7 +564,11 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 	 * there is nowhere else to say it. A failure to read the ending, or to
 	 * remove the files, is said the same way and does not hold the exit up: the
 	 * Agent is gone either way, and a row kept for a directory would be a row
-	 * for nothing.
+	 * for nothing. Files already gone are not such a failure: there is no
+	 * ending to read and nothing new to say (`endOnce`).
+	 *
+	 * Once per Agent: a second asker waits for the ending under way
+	 * (`endings`), and one after it is over finds it over (`ended`).
 	 */
 	const endConversation = (
 		machine: RuntimeId,
@@ -548,11 +576,18 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		name: string,
 		kind: string,
 	): Promise<void> => {
+		if (ended.has(agentId)) return Promise.resolve();
 		const under = endings.get(agentId);
 		if (under !== undefined) return under;
-		const ending = endOnce(machine, agentId, name, kind).finally(() => {
-			endings.delete(agentId);
-		});
+		// Over only once it got to the end: one that failed on the way (a
+		// machine that did not answer the read) is tried again next time.
+		const ending = endOnce(machine, agentId, name, kind)
+			.then(() => {
+				ended.add(agentId);
+			})
+			.finally(() => {
+				endings.delete(agentId);
+			});
 		endings.set(agentId, ending);
 		return ending;
 	};
@@ -576,9 +611,22 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				if (sentence !== undefined) options.report(sentence);
 			} catch (failure: unknown) {
 				if (!(failure instanceof HostLinkFailure)) throw failure;
-				options.report(
-					`DevHub could not read how “${name}” ended: ${failure.message}`,
-				);
+				// No files to read is no ending to tell, and not news: DevHub
+				// removes them as an ending's last step, so files gone with the
+				// session are, all but always, an ending that was over before —
+				// a DevHub that quit between its Stop removing them and the Stop
+				// being written down. Files that went under a running Agent (a
+				// host that cleaned them, a path that moved) were said on its
+				// pane while it ran (`stateMissing` in `hostLink.ts`).
+				if (failure.code === "state_missing") {
+					console.info(
+						`[devhub] the host files of GUI Agent ${agentId} were already gone when it ended: ${failure.message}`,
+					);
+				} else {
+					options.report(
+						`DevHub could not read how “${name}” ended: ${failure.message}`,
+					);
+				}
 			}
 		}
 		try {

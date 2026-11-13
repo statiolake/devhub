@@ -168,6 +168,26 @@ function streamSaid(buffer: Buffer): string {
 	return said[said.length - 1] ?? lastLine(buffer);
 }
 
+/**
+ * What a conversation says on its Agent's pane when the host's files are not
+ * where DevHub made them, while its session is still there.
+ *
+ * DevHub removes them only once the Agent's session is gone, so this is never
+ * DevHub's own doing: the host removed them (a clean of the home), or the path
+ * DevHub works out moved under the Agent (its profile tag, or the home the
+ * machine reports). They do not come back, so the conversation can neither
+ * be read nor written again, and it says so once, with what is left to do.
+ * Japanese, as the person reads it; the host's own sentence goes to the log.
+ */
+function stateMissing(directory: string, where: string, said: string): string {
+	if (said.length > 0) {
+		console.warn(
+			`[devhub] the host files of a GUI Agent are gone: ${said}${where}`,
+		);
+	}
+	return `この Agent のホストの状態 ${directory}${where} が見つかりません。DevHub が消したのではなく、Agent の実行中にホスト側で削除されたか (ホームの掃除など)、DevHub のプロファイルかホームの場所が変わったためです。この会話はもう読むことも送ることもできません。「Continue in terminal」でセッションを端末で続けるか、Agent を停止して、そのセッションを新しい Agent で再開してください。`;
+}
+
 function describe(failure: unknown): string {
 	return failureText(failure);
 }
@@ -402,7 +422,15 @@ export class HostLink {
 			throw new HostLinkFailure("host_gone", said, undefined);
 		}
 		if (result.code === WRITE_EXIT.stateMissing) {
-			throw new HostLinkFailure("state_missing", said, undefined);
+			throw new HostLinkFailure(
+				"state_missing",
+				stateMissing(
+					this.#directory,
+					this.#runtime.where,
+					lastLine(result.stderr),
+				),
+				undefined,
+			);
 		}
 		throw new HostLinkFailure(
 			"write_failed",
@@ -436,7 +464,11 @@ export class HostLink {
 		if (result.code === WRITE_EXIT.stateMissing) {
 			throw new HostLinkFailure(
 				"state_missing",
-				`${lastLine(result.stderr)}${this.#runtime.where}`,
+				stateMissing(
+					this.#directory,
+					this.#runtime.where,
+					lastLine(result.stderr),
+				),
 				undefined,
 			);
 		}
@@ -580,7 +612,7 @@ export class HostLink {
 			case STREAM_EXIT.stateMissing:
 				return new HostLinkFailure(
 					"state_missing",
-					`${said}${this.#runtime.where}`,
+					stateMissing(this.#directory, this.#runtime.where, said),
 					offset,
 				);
 			default: {

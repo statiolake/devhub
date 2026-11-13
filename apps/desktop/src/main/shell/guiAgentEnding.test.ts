@@ -30,6 +30,8 @@ import {
 import {
 	ENDING_SCRIPT,
 	SENT_LOG_SCRIPT,
+	STREAM_EXIT,
+	WRITE_EXIT,
 } from "../agent/conversation/hostScript.js";
 import {
 	memoryRecords,
@@ -67,7 +69,19 @@ function answered(stdout: string): ExecResult {
 	};
 }
 
-function wired() {
+/**
+ * Where the host's files are when the wiring starts: there, or gone — removed
+ * by a DevHub that quit before its Stop was written down, cleaned off the
+ * host, or never at the path this DevHub computes (a profile tag or a home
+ * that moved).
+ */
+interface WiredOptions {
+	readonly files?: "there" | "gone";
+	/** The journal stream is held open, as a live host's is, until the files go or it is let go of. */
+	readonly following?: boolean;
+}
+
+function wired(options: WiredOptions = {}) {
 	const model = new AppModel(
 		new Workspace(
 			WORKSPACE,
@@ -91,7 +105,9 @@ function wired() {
 	const kill = held();
 	/** The conversation's first read of its host answers once this is released. */
 	const firstRead = held();
-	let removed = false;
+	let removed = options.files === "gone";
+	/** Streams that are following now, ended when the files go. */
+	const streams = new Set<(code: number) => void>();
 	const removals: string[] = [];
 	const reports: string[] = [];
 
@@ -131,6 +147,16 @@ function wired() {
 			const script = request.argv[2];
 			if (script === SENT_LOG_SCRIPT) {
 				await firstRead.promise;
+				if (removed) {
+					return {
+						code: WRITE_EXIT.stateMissing,
+						signal: null,
+						stdout: Buffer.alloc(0),
+						stderr: Buffer.from(
+							`there is no host state at ${String(request.argv[4])}\n`,
+						),
+					};
+				}
 				return answered("");
 			}
 			// The host files gone are what `ENDING_SCRIPT` says "missing" for;
@@ -139,15 +165,47 @@ function wired() {
 				return answered(removed ? "missing\n" : "vanished\n");
 			return answered("");
 		},
-		spawnStream: (): ByteStream => ({
-			stdout: (async function* () {})(),
-			ended: Promise.resolve({
-				code: 0,
-				signal: null,
-				stderr: Buffer.alloc(0),
-			}),
-			kill: () => {},
-		}),
+		spawnStream: (): ByteStream => {
+			if (options.following !== true || removed) {
+				return {
+					stdout: (async function* () {})(),
+					ended: Promise.resolve({
+						code: removed ? STREAM_EXIT.stateMissing : 0,
+						signal: null,
+						stderr: Buffer.from(
+							removed
+								? "devhub-agent-stream: there is no host state at the directory\n"
+								: "",
+						),
+					}),
+					kill: () => {},
+				};
+			}
+			let end: (code: number | null) => void = () => {};
+			const ended = new Promise<number | null>((done) => (end = done));
+			const stop = (code: number) => end(code);
+			streams.add(stop);
+			return {
+				// Open until the stream ends, as a live `tail -f`'s is.
+				stdout: (async function* (): AsyncGenerator<Buffer> {
+					await ended;
+					yield* [];
+				})(),
+				ended: ended.then((code) => {
+					streams.delete(stop);
+					return {
+						code,
+						signal: code === null ? "SIGTERM" : null,
+						stderr: Buffer.from(
+							code === STREAM_EXIT.stateMissing
+								? "devhub-agent-stream: the journal of the directory cannot be read\n"
+								: "",
+						),
+					};
+				}),
+				kill: () => end(null),
+			};
+		},
 		removeTree: (path: string) => {
 			removed = true;
 			removals.push(path);
@@ -155,7 +213,7 @@ function wired() {
 		},
 	} as unknown as Runtime;
 
-	wireAgents({
+	const wiring = wireAgents({
 		runtimeFor: () => Promise.resolve(tmux),
 		model: () => model,
 		machineOf: () => "local",
@@ -170,12 +228,18 @@ function wired() {
 	if (!adapter) throw new Error("the Agent adapter was not registered");
 	return {
 		adapter,
+		wiring,
 		kill,
 		firstRead,
 		removals,
 		reports,
 		vanish: () => {
 			alive = false;
+		},
+		/** Somebody on the host removes the files under the running Agent. */
+		clean: () => {
+			removed = true;
+			for (const stop of [...streams]) stop(STREAM_EXIT.stateMissing);
 		},
 	};
 }
@@ -238,5 +302,131 @@ describe("closing a GUI Agent", () => {
 			"The session of “Codex 1” was ended outside DevHub",
 		]);
 		expect(removals).toHaveLength(1);
+	});
+});
+
+/**
+ * An Agent DevHub has ended stays ended: its host files are gone because
+ * DevHub removed them, and a round that still finds its row — a Workspace
+ * close that has stopped its Agents and is still closing its terminals or
+ * removing its worktree, or a close that failed at a later step — is not
+ * news. It used to end the Agent a second time, outside the first ending's
+ * window, read the ending of the files the first one had removed, and say
+ * "there is no host state at …" app-wide.
+ */
+describe("an Agent DevHub has ended", () => {
+	it("says nothing when a round finds the row of an Agent a Workspace close stopped", async () => {
+		const { adapter, kill, firstRead, removals, reports } = wired();
+		kill.release();
+		firstRead.release();
+		await adapter.reconcile("local");
+
+		// The close's Agents step: done, and the row is still there until the
+		// whole close is.
+		await adapter.closeWorkspaceAgents(WORKSPACE);
+		expect((await adapter.reconcile("local")).exited).toEqual([AGENT]);
+
+		expect(reports).toEqual([]);
+		expect(removals).toHaveLength(1);
+	});
+
+	it("says nothing when a round comes between a Stop's return and its row going", async () => {
+		const { adapter, kill, firstRead, removals, reports } = wired();
+		kill.release();
+		firstRead.release();
+		await adapter.reconcile("local");
+
+		expect(await adapter.stop(AGENT)).toEqual({ kind: "stopped" });
+		await adapter.reconcile("local");
+		// And a Stop retried after it is the same ending, not another.
+		expect(await adapter.stop(AGENT)).toEqual({ kind: "stopped" });
+
+		expect(reports).toEqual([]);
+		expect(removals).toHaveLength(1);
+	});
+
+	it("opens no conversation again once it has ended", async () => {
+		const { adapter, wiring, kill, firstRead } = wired();
+		kill.release();
+		firstRead.release();
+		await adapter.reconcile("local");
+		await adapter.stop(AGENT);
+
+		// A page that attaches while the row is still there is told it ended,
+		// rather than given a new conversation on files that are gone.
+		await expect(wiring.conversations.of(AGENT)).rejects.toThrow(/ended/u);
+		expect(wiring.conversations.registry.get(AGENT)).toBeUndefined();
+	});
+});
+
+/**
+ * Host files that are not there, and DevHub did not just remove: a DevHub that
+ * quit between its Stop removing them and the Stop being written down (the row
+ * comes back with the next DevHub), a host that cleaned them, or a path that
+ * moved under the Agent (a profile tag, or a home, that changed).
+ */
+describe("an Agent whose host files are gone", () => {
+	it("says nothing when it ends after a restart of DevHub", async () => {
+		const { adapter, firstRead, removals, reports, vanish } = wired({
+			files: "gone",
+		});
+		firstRead.release();
+		vanish();
+
+		expect((await adapter.reconcile("local")).exited).toEqual([AGENT]);
+
+		expect(reports).toEqual([]);
+		expect(removals).toHaveLength(1);
+	});
+
+	it("says so once, on its own pane, when they are not there to attach to", async () => {
+		const { adapter, firstRead, reports, vanish } = wired({
+			files: "gone",
+		});
+		firstRead.release();
+		await adapter.reconcile("local");
+		await settle();
+
+		// Every round after says the same, rather than trying again and
+		// clearing it for a moment each time.
+		for (let round = 0; round < 3; round += 1) {
+			const [observation] = (await adapter.reconcile("local")).observations;
+			expect(observation?.failure?.code).toBe("conversation_host_lost");
+			expect(observation?.failure?.detail).toMatch(
+				/ホストの状態.*見つかりません/u,
+			);
+			expect(observation?.failure?.detail).toContain(
+				`${HOME}/.devhub/agents-0123456789ab/${AGENT}`,
+			);
+			await settle();
+		}
+		expect(reports).toEqual([]);
+
+		// And its ending is not said again, app-wide.
+		vanish();
+		expect((await adapter.reconcile("local")).exited).toEqual([AGENT]);
+		expect(reports).toEqual([]);
+	});
+
+	it("says so once, on its own pane, when the host cleans them while it runs", async () => {
+		const { adapter, firstRead, reports, vanish, clean } = wired({
+			following: true,
+		});
+		firstRead.release();
+		await adapter.reconcile("local");
+		await settle();
+		expect(
+			(await adapter.reconcile("local")).observations[0]?.failure,
+		).toBeUndefined();
+
+		clean();
+		await settle();
+		const [observation] = (await adapter.reconcile("local")).observations;
+		expect(observation?.failure?.code).toBe("conversation_host_lost");
+		expect(observation?.failure?.detail).toMatch(/見つかりません/u);
+
+		vanish();
+		expect((await adapter.reconcile("local")).exited).toEqual([AGENT]);
+		expect(reports).toEqual([]);
 	});
 });
