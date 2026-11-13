@@ -750,6 +750,32 @@ export class NeovimEditor {
     return this.claimAsks.regathering();
   }
 
+  /**
+   * Run `apply` (the page putting on a new theme) in the commit of the
+   * paint of the flush in which Neovim's default colours change — Neovim
+   * recolouring for the same theme — so the page and the editor change in
+   * one frame. At most `capMs` later: a Neovim in a colorscheme of the
+   * person's own does not recolour. Several wait in order.
+   */
+  withRecolour(apply: () => void, capMs: number): void {
+    window.clearTimeout(this.recolourTimer);
+    this.recolours.push(apply);
+    this.recolourTimer = window.setTimeout(() => {
+      const waiting = this.recolours.splice(0);
+      this.recoloured = false;
+      if (waiting.length > 0)
+        this.commit(() => {
+          for (const fn of waiting) fn();
+        });
+    }, capMs);
+  }
+
+  /** What waits for Neovim to recolour (`withRecolour`), in order. */
+  private readonly recolours: (() => void)[] = [];
+  private recolourTimer = 0;
+  /** The defaults changed since `withRecolour`, and their flush has not come. */
+  private recoloured = false;
+
   /** A footer that waits for the flush it was made for (`setStatusline`). */
   private statuslineAtFlush: Statusline | undefined;
 
@@ -759,7 +785,23 @@ export class NeovimEditor {
     // drawn again over what it then shows, where it does not show Visual.
     const banded = this.banded.size > 0;
     if (banded) this.unband();
+    const defaults = this.state.defaults;
     applyRedraw(this.state, batches, this.pending);
+    if (
+      this.state.defaults !== defaults &&
+      (this.state.defaults.background !== defaults.background ||
+        this.state.defaults.foreground !== defaults.foreground)
+    ) {
+      // A colorscheme changed: its grounds are asked at once, and the
+      // paint waits for them (`themeWaiting`).
+      this.askThemeNow();
+      if (this.recolours.length > 0) this.recoloured = true;
+    }
+    if (this.pending.flushed && this.recoloured) {
+      window.clearTimeout(this.recolourTimer);
+      this.atPaint.push(...this.recolours.splice(0));
+      this.recoloured = false;
+    }
     if (this.visualBand !== undefined || banded) this.drawBand();
     // A framed view whose windows this flush changed is asked about again
     // now, before the plugin's own placements that follow the flush come
@@ -862,6 +904,9 @@ export class NeovimEditor {
       };
       return;
     }
+    // A colorscheme's grounds not known yet: the cells in the new colours
+    // and the grounds round them in the old were a frame of neither.
+    if (this.themeWaiting) return;
     // What waited for this flush (`withNextFlush`), in the same commit.
     for (const fn of this.atPaint.splice(0)) fn();
     if (this.labelsPaint !== undefined) {
@@ -1103,6 +1148,47 @@ export class NeovimEditor {
       });
     }
   }
+
+  /** A colorscheme's grounds are asked for, and the paint waits for them. */
+  private themeWaiting = false;
+
+  /**
+   * Ask the paint theme now, not in 120 ms (`askTheme`), and hold the
+   * paint until it answers: Neovim recoloured (its default colours
+   * changed), and the windows' grounds, the separators and the floats'
+   * frames are the theme's. At most SETTLE_WAIT_MS.
+   */
+  private askThemeNow(): void {
+    const request = this.port.request?.bind(this.port);
+    if (!request) return;
+    this.themeWaiting = true;
+    const asked = ++this.themeAsks;
+    const done = (theme: PaintTheme | undefined) => {
+      if (this.disposed || asked !== this.themeAsks || !this.themeWaiting)
+        return;
+      this.themeWaiting = false;
+      if (theme !== undefined) this.painter.setTheme(theme);
+      // Everything again, in the new colours and on the new grounds.
+      if (this.frame !== 0) cancelAnimationFrame(this.frame);
+      this.frame = 0;
+      this.commit(() => {
+        this.paint(true);
+      });
+    };
+    window.setTimeout(() => {
+      done(undefined);
+    }, SETTLE_WAIT_MS);
+    request("nvim_exec_lua", [THEME_LUA, [THEME_GROUPS]]).then(
+      (answer) => {
+        done(themeOf(answer));
+      },
+      () => {
+        done(undefined);
+      },
+    );
+  }
+
+  private themeAsks = 0;
 
   private askTheme(): void {
     const request = this.port.request?.bind(this.port);

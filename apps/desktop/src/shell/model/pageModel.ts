@@ -20,6 +20,7 @@
  * which is the god-interface coming back by another door.
  */
 
+import { gatePalette } from "../appearance";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentProfiles,
@@ -234,10 +235,28 @@ export function useAppearance(
   useEffect(() => {
     let active = true;
     lastSequence.current = -1;
+    // The terminal colours on screen, and the latest asked for.
+    let shown: string | undefined;
+    let latest: AppAppearance | undefined;
     const apply = (next: AppAppearance) => {
       if (!active || next.sequence < lastSequence.current) return;
       lastSequence.current = next.sequence;
-      setAppearance(next);
+      latest = next;
+      // New terminal colours go on when the page's palette would: with the
+      // Neovims drawn on it recolouring, on a terminal's page
+      // (`gatePalette`), not before them. Compared with what is on screen,
+      // so a second push with the same new colours waits too.
+      const colours = JSON.stringify(next.terminalTheme ?? null);
+      if (shown === undefined || colours === shown) {
+        shown = colours;
+        setAppearance(next);
+        return;
+      }
+      gatePalette(() => {
+        if (!active || latest === undefined) return;
+        shown = JSON.stringify(latest.terminalTheme ?? null);
+        setAppearance(latest);
+      });
     };
     const dispose = bridge.onAppearance(apply);
     void bridge.getAppearance().then(apply, raiseFailure);

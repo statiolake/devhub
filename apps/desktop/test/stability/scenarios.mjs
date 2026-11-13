@@ -121,6 +121,7 @@ ${fused ? "open(8, 45, ' Second ')" : ""}
 // A theme landed: the page's palette variables are not what they were.
 const THEME_MARK =
   "window.__stabilityPalette = document.documentElement.style.cssText";
+const IDLE_SIDEBAR = `!document.querySelector('[data-status="working"], [data-status="background"]')`;
 const THEME_CHANGED =
   "document.documentElement.style.cssText !== window.__stabilityPalette";
 
@@ -576,14 +577,12 @@ export const SCENARIOS = [
     steps: [
       {
         name: "to-light",
-        known: [
-          {
-            match: /^pane: \[(picture\] region editor|intermediate\] grid#)/,
-            owner: "devhub",
-            why: "the page's palette lands before Neovim's recolour (Neovim gets the theme through its own connection and redraws after): the chrome is light round a dark editor for a few frames",
-          },
-        ],
-        prep: (ctx) => ctx.evalIn("pane", THEME_MARK),
+        prep: async (ctx) => {
+          // The Sidebar at rest: no Workspace still marked working, whose
+          // ring stopping would be a change of its own in the step.
+          await ctx.waitIn("sidebar", IDLE_SIDEBAR, 30_000);
+          await ctx.evalIn("pane", THEME_MARK);
+        },
         act: (ctx) => ctx.setAppearance("light"),
         waitFor: THEME_CHANGED,
         pages: [
@@ -613,14 +612,12 @@ export const SCENARIOS = [
       },
       {
         name: "to-dark",
-        known: [
-          {
-            match: /^pane: \[(picture\] region editor|intermediate\] grid#)/,
-            owner: "devhub",
-            why: "the page's palette lands before Neovim's recolour (Neovim gets the theme through its own connection and redraws after): the chrome is light round a dark editor for a few frames",
-          },
-        ],
-        prep: (ctx) => ctx.evalIn("pane", THEME_MARK),
+        prep: async (ctx) => {
+          // The Sidebar at rest: no Workspace still marked working, whose
+          // ring stopping would be a change of its own in the step.
+          await ctx.waitIn("sidebar", IDLE_SIDEBAR, 30_000);
+          await ctx.evalIn("pane", THEME_MARK);
+        },
         act: (ctx) => ctx.setAppearance("dark"),
         waitFor: THEME_CHANGED,
         pages: [

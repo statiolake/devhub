@@ -54,6 +54,7 @@ import { Footers } from "./FooterViews";
 import { applyStatuslineEvent, NO_STATUSLINE } from "./statusline";
 import { decorOf } from "./decor";
 import { NeovimEditor, SETTLE_WAIT_MS } from "./editor";
+import { setPaletteGate } from "../appearance";
 import { terminalCellFont } from "./cellFont";
 import { cmdlineMenuPlace, cmdlineUiPos, popupmenuPlace } from "./place";
 import {
@@ -289,6 +290,8 @@ export function NeovimSurface({
       settingsRef.current,
     );
     editorRef.current = editor;
+    recolouring.add(editor);
+    setPaletteGate(paletteWithNeovims);
     // What React draws from a paint is committed with it, in its frame.
     editor.setCommit((paint) => {
       flushSync(paint);
@@ -603,6 +606,7 @@ export function NeovimSurface({
       offWindows();
       offSend();
       offEvent();
+      recolouring.delete(editor);
       editor.dispose();
       editorRef.current = null;
       if (debug.neovimEditors?.[workspaceId] === editor)
@@ -1370,6 +1374,35 @@ function countLabel(count: string): string {
  * only the search echo is shown, in the box over the status line, for a
  * few seconds (Neovim draws nothing there either).
  */
+/** The Neovims drawn on this page, which a new theme waits for. */
+const recolouring = new Set<NeovimEditor>();
+
+/**
+ * How long a new theme waits for the Neovims to recolour at most: a Neovim
+ * in a colorscheme of the person's own never does.
+ */
+const RECOLOUR_CAP_MS = 400;
+
+/**
+ * The page's palette goes on with its Neovims' new colours, in the commit
+ * of the paint of the last of them to recolour (`withRecolour`), so the
+ * chrome and the editors change in one frame.
+ */
+function paletteWithNeovims(apply: () => void): void {
+  const editors = [...recolouring];
+  if (editors.length === 0) {
+    apply();
+    return;
+  }
+  let left = editors.length;
+  for (const editor of editors) {
+    editor.withRecolour(() => {
+      left -= 1;
+      if (left === 0) apply();
+    }, RECOLOUR_CAP_MS);
+  }
+}
+
 /**
  * How long a popup closed on the command line waits for Neovim's flush at
  * most (`withNextFlush`): one is all but certain to follow, as the command

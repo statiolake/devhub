@@ -63,8 +63,32 @@ export function applyPalette(
  */
 export function installPalette(document: Document): () => void {
   return pageBridge<PageBridge>("current").onTheme((palette) => {
-    applyPalette(document.documentElement, palette);
+    const apply = () => {
+      applyPalette(document.documentElement, palette);
+    };
+    gatePalette(apply);
   });
+}
+
+/** Put a change of colours on now, or when the page's gate says (`setPaletteGate`). */
+export function gatePalette(apply: () => void): void {
+  if (paletteGate) paletteGate(apply);
+  else apply();
+}
+
+/**
+ * When a new palette is put on, if not at once: a page that draws Neovims
+ * (a terminal's, `NeovimApp`) puts it on in the frame its Neovims are
+ * drawn in the theme's colours. A theme reaches a Neovim on its own
+ * connection and Neovim recolours a moment later; put on at once, the
+ * chrome was light round a dark editor for a few frames.
+ */
+export type PaletteGate = (apply: () => void) => void;
+
+let paletteGate: PaletteGate | undefined;
+
+export function setPaletteGate(gate: PaletteGate | undefined): void {
+  paletteGate = gate;
 }
 
 /**
