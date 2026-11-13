@@ -8,12 +8,15 @@
 // answer within two frames of the CPU rate (34 ms at 1x); what waits for
 // Neovim (its wheel from rest) is reported.
 //
-// run.mjs runs it as the scenario `pointer` (`--only pointer`), at each rate.
+// run.mjs runs it as the scenario `pointer` (`--only pointer`), at each rate;
+// POINTER_ONLY (names, by a comma) and POINTER_TRIALS narrow it. The wheel
+// goes first: what a completion leaves behind (blink's, the buffer's undo)
+// slows Neovim's next scroll by a frame, whatever the page.
 // With DEVHUB_NEOVIM_DELAY_MS set, the app reaches Neovim over a slow link
 // (`delayProxy.ts`): every answer that is at once must still be.
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const TRIALS = 3;
+const TRIALS = Number(process.env.POINTER_TRIALS ?? 3);
 
 const PROBE = `(() => {
   window.__probe?.stop?.();
@@ -214,6 +217,11 @@ return vim.json.encode(out)`);
 
   const results = [];
   const run = async (name, kind, fn) => {
+    if (
+      process.env.POINTER_ONLY &&
+      !process.env.POINTER_ONLY.split(",").some((n) => name.includes(n))
+    )
+      return;
     const ms = [];
     const notes = new Set();
     const started = Date.now();
@@ -261,6 +269,27 @@ return vim.json.encode(out)`);
   };
 
   try {
+    await run("wheel in Neovim", "report", async () => {
+      esc();
+      const w = editWins()[0];
+      lua(
+        `vim.api.nvim_win_call(${String(w.id)}, function() vim.cmd('normal! 200Gzt') end) return 1`,
+      );
+      await sleep(300 * rate);
+      const p = px(w.row + 10, w.col + w.textoff + 3);
+      // The pointer there first, settled: the wheel alone is timed, not the
+      // pointer leaving a border's resize arrows for the text.
+      await mouse("mouseMoved", p.x, p.y);
+      await sleep(300 * rate);
+      const base = await ev(
+        `__probe.strip(${String(p.x)},${String(p.y)},${String(p.y + 60)})`,
+      );
+      return measure(
+        "wheel",
+        `P.strip(${String(p.x)},${String(p.y)},${String(p.y + 60)}) !== ${JSON.stringify(base)}`,
+        () => wheel(p.x, p.y, 40),
+      );
+    });
     await run("click caret", "at-once", async (i) => {
       esc();
       const w = editWins()[1];
@@ -470,23 +499,6 @@ return vim.json.encode(out)`);
             ).join(", ")}`
           : undefined,
       };
-    });
-    await run("wheel in Neovim", "report", async () => {
-      esc();
-      const w = editWins()[0];
-      lua(
-        `vim.api.nvim_win_call(${String(w.id)}, function() vim.cmd('normal! 200Gzt') end) return 1`,
-      );
-      await sleep(300 * rate);
-      const p = px(w.row + 10, w.col + w.textoff + 3);
-      const base = await ev(
-        `__probe.strip(${String(p.x)},${String(p.y)},${String(p.y + 60)})`,
-      );
-      return measure(
-        "wheel",
-        `P.strip(${String(p.x)},${String(p.y)},${String(p.y + 60)}) !== ${JSON.stringify(base)}`,
-        () => wheel(p.x, p.y, 40),
-      );
     });
   } finally {
     await client.send("Emulation.setCPUThrottlingRate", { rate: 1 });
