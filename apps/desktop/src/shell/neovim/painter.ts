@@ -44,10 +44,10 @@ import {
 import { placeDecor, wordsOf, type Decor } from "./decor";
 import {
   floatClusters,
-  claimedShape,
+  cellClip,
+  type CellClips,
   cutClip,
   frameCuts,
-  hugClip,
   insideLines,
   scrollbarLine,
   withRightLine,
@@ -572,6 +572,21 @@ function makeMotionGroup(): MotionGroup {
  */
 export type OverPart = "shadow" | "riders" | "cursor" | "covers";
 
+/**
+ * The shape of a grid's clip for `part`, at `origin` (where the clip is):
+ * the cursor's cut as the grid's cells are (`cellClip`); the rest only by
+ * the clip's own box.
+ */
+export function overClip(
+  part: OverPart,
+  box: GridBox,
+  clips: CellClips | undefined,
+  origin: { readonly x: number; readonly y: number },
+): string {
+  if (part !== "cursor" || clips === undefined) return "";
+  return cellClip(box, clips, origin);
+}
+
 /** A grid's clip for one `OverPart`, and the element its content goes in. */
 interface OverClip {
   readonly clip: HTMLDivElement;
@@ -670,6 +685,8 @@ export class GridPainter {
   /** Each grid's clips for what the page lays over it, by grid and part. */
   private readonly overs = new Map<string, OverClip>();
   private lastBoxes: readonly GridBox[] = [];
+  /** What cut the grids' cells at the last paint (`cellClip`). */
+  private cellClips: CellClips | undefined;
 
   /** Window `win`'s box as last painted, while it is on screen. */
   paintedBox(win: number): GridBox | undefined {
@@ -1175,6 +1192,10 @@ export class GridPainter {
     clip.style.height = `${String((bottom - top) * ch)}px`;
     inner.style.left = `${String(-x)}px`;
     inner.style.top = `${String(-y)}px`;
+    // The cursor (and the click's caret, which is it) is cut where the
+    // grid's text is: by the same shape, from the same source (`cellClip`),
+    // so in a corner cell it never covers the frame's line or its arc.
+    clip.style.clipPath = overClip(entry.part, box, this.cellClips, { x, y });
   }
 
   /** Levels nothing is drawn in any more. */
@@ -1224,6 +1245,15 @@ export class GridPainter {
     const hugs = new Map<number, FrameShape>();
     const scrollbars = floatScrollbars(state, shown);
     this.placeClusters(state, shown, cuts, shapes, hugs, scrollbars);
+    const clips: CellClips = {
+      boxes: shown,
+      cuts,
+      shapes,
+      hugs,
+      cell: this.metrics,
+      radius: this.floatRadius(),
+    };
+    this.cellClips = clips;
     const footers = this.footersOn ? this.layoutFooters(state, shown) : [];
     this.placePanes(state, shown);
     let grid1Painted = false;
@@ -1278,36 +1308,16 @@ export class GridPainter {
       // in the middle of its cell, the gutter left to the menu's ground,
       // as an overlay scrollbar.
       const part = scrollbars.get(box.grid);
-      const cut = cuts.get(box.grid);
-      const hug = hugs.get(box.grid);
-      // A framed view's window: cut at its page's rounded frame.
-      const claimed = claimedShape(
-        box,
-        shown,
-        this.metrics,
-        this.floatRadius(),
-      );
+      // Cut as its frame cuts its cells (`cellClip`), as the cursor is.
       canvas.style.clipPath =
         part === "thumb"
           ? this.thumbClip()
           : part === "gutter"
             ? "inset(50%)"
-            : cut !== undefined
-              ? cutClip(box, cut, shapes, this.metrics, {
-                  x: (box.col + crop.left) * this.metrics.width,
-                  y: (box.row + crop.top) * this.metrics.height,
-                })
-              : hug !== undefined
-                ? hugClip(hug, {
-                    x: (box.col + crop.left) * this.metrics.width,
-                    y: (box.row + crop.top) * this.metrics.height,
-                  })
-                : claimed !== undefined
-                  ? hugClip(claimed, {
-                      x: (box.col + crop.left) * this.metrics.width - bleed.l,
-                      y: (box.row + crop.top) * this.metrics.height - bleed.t,
-                    })
-                  : "";
+            : cellClip(box, clips, {
+                x: (box.col + crop.left) * this.metrics.width - bleed.l,
+                y: (box.row + crop.top) * this.metrics.height - bleed.t,
+              });
       // A blank blended float (a picker's or a dialog's backdrop) is one
       // tint over everything: a layer of its colour, no bitmap to paint.
       const backdrop = box.float ? this.backdropOf(state, box) : undefined;

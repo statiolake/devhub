@@ -126,7 +126,7 @@ two shots to see the frame that should not have been:
 | `tree` | nvim-tree open (a split: its pane motion declared), a folder expanded, `<C-d>` under the sticky header, collapsed, closed |
 | `blink-insert` | blink-ui's insert menu opening, the selection moving, closing |
 | `cmdline` | `:` opening, a character typed (blink-ui's command-line menu), Tab, Escape |
-| `float` | a float with a rounded border and a title (B′), closed; two floats whose borders are fused, closed |
+| `float` | a float with a rounded border and a title (B′), closed; two floats whose borders are fused, closed; the cursor parked in each corner cell of a borderless float (`check`: the cell's outer strips, where the frame's line is, as without the cursor), closed |
 | `open-file` | `devhub <file>` into the `devhub-nvim` window, twice |
 | `workspace-switch` | the other Workspace selected in the Sidebar, and back |
 | `sidebar-collapse` | the Sidebar to its rail and back (Sidebar, window page and editor recorded) |

@@ -333,7 +333,11 @@ one layer model and pane motion.
   DevHub adds no padding of its own: a float without a border (or a side
   without one) has its line along its cells' outer edge, inside them, its
   text and a full-width selection band reaching the line, its canvas cut
-  inside the line so the corners are round (`hugClip`). Nothing of a frame
+  inside the line so the corners are round (`hugClip`). The cursor in its
+  cells is cut by the same shape, from the same source (`cellClip`: a
+  float's frame, a framed view's, the framed floats over a picker's box),
+  so in a corner cell the line and its arc stay whole; a window in a split
+  is cut by nothing but its text area. Nothing of a frame
   is outside its float's cells, so a float is never moved off where Neovim
   put it: not off the cursor's row, not in from the editor's edge (a
   cmdline menu at column 0 has its line on the column's first pixels).

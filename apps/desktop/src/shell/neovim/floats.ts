@@ -631,6 +631,46 @@ export function claimedShape(
   };
 }
 
+/** What cuts the grids' cells, as worked out once per paint (`cellClip`). */
+export interface CellClips {
+  readonly boxes: readonly GridBox[];
+  /** The boxes under framed floats, with those floats (`frameCuts`). */
+  readonly cuts: ReadonlyMap<number, readonly GridBox[]>;
+  /** Each framed float's shape inside its line (`framePieces`). */
+  readonly shapes: ReadonlyMap<number, FrameShape>;
+  /** Each float whose frame hugs its cells, inside its line (`insideLines`). */
+  readonly hugs: ReadonlyMap<number, FrameShape>;
+  readonly cell: { readonly width: number; readonly height: number };
+  /** The floats' corner (`--float-radius`). */
+  readonly radius: number;
+}
+
+/**
+ * The shape a grid's cells are cut to, as a CSS `clip-path` in the
+ * coordinates of an element at `origin` (CSS pixels): a box under framed
+ * floats cut by them (`cutClip`), a float whose frame hugs its cells cut
+ * inside its line (`hugClip`), a framed view's window cut at the page's
+ * frame (`claimedShape`) — or nothing, a window in a split: no frame cuts
+ * it, a neighbour's least of all. The one source for everything drawn in
+ * the cells: the grid's canvas and what lies on its cells apart from it
+ * (the cursor, the click's caret), each at its own origin, so a cursor in
+ * a corner cell is cut where the text is and the frame's line stays whole.
+ */
+export function cellClip(
+  box: GridBox,
+  clips: CellClips,
+  origin: { readonly x: number; readonly y: number },
+): string {
+  const cut = clips.cuts.get(box.grid);
+  if (cut !== undefined)
+    return cutClip(box, cut, clips.shapes, clips.cell, origin);
+  const hug = clips.hugs.get(box.grid);
+  if (hug !== undefined) return hugClip(hug, origin);
+  const claimed = claimedShape(box, clips.boxes, clips.cell, clips.radius);
+  if (claimed !== undefined) return hugClip(claimed, origin);
+  return "";
+}
+
 /**
  * Where the right edge of a framed menu with a scrollbar beside it is, in
  * cells of grid 1, or `undefined` when it has none. blink.cmp and nvim-cmp

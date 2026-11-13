@@ -11,9 +11,13 @@
 //   live                      every frame is a new state (a resize): only
 //                             the per-frame rules (single, contain) hold
 //   waitFor                   a page expression to hold before settling
+//   check(ctx)                the settled page's own problems (a list), after
+//                             the recording's rules
 //
 // `ctx` (run.mjs) has the app, the pages, keys, clicks, the managed
 // Neovim's RPC and the Workspaces' paths.
+
+import { decodePng, regionDigest } from "./pixels.mjs";
 
 // What a Neovim surface draws, by role (pane.html). Rows and items are capped:
 // the first rows say where a list is, and every row is read every frame.
@@ -117,6 +121,67 @@ end
 open(8, 20, ' First ')
 ${fused ? "open(8, 45, ' Second ')" : ""}
 `;
+
+/** A borderless float, entered, the cursor a block in its last cell. */
+const CORNER_FLOAT_LUA = `
+vim.o.guicursor = 'n-v-c:block'
+local buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'alpha  gamma', 'beta   delta', 'gamma  alpha', 'delta  beta!' })
+local win = vim.api.nvim_open_win(buf, true, {
+  relative = 'editor', row = 8, col = 20, width = 12, height = 4,
+  border = 'none', style = 'minimal',
+})
+vim.api.nvim_win_set_cursor(win, { 4, 11 })
+`;
+
+/**
+ * The cursor parked in each corner cell of the float `CORNER_FLOAT_LUA`
+ * opened: the cell's outer pixel strips along the float's edges (the frame's
+ * line, and the open half pixel outside its arc) are the same as with the
+ * cursor in the float's middle. A cursor laid square over the cells covered
+ * them, the line and its arc gone under the block.
+ */
+async function cursorCornerCheck(ctx) {
+  const client = await ctx.page("pane");
+  const picture = async () => {
+    await ctx.settle("pane");
+    const shot = await client.send("Page.captureScreenshot", {
+      format: "png",
+    });
+    return decodePng(Buffer.from(shot.data, "base64"));
+  };
+  const cursorRect = () =>
+    client.eval(`(() => {
+      const b = document.querySelector('.nvim-cursor').getBoundingClientRect();
+      return [b.x, b.y, b.width, b.height];
+    })()`);
+  const corners = [
+    { name: "bottom-right", at: "{ 4, 11 }", v: "bottom", h: "right" },
+    { name: "top-left", at: "{ 1, 0 }", v: "top", h: "left" },
+    { name: "top-right", at: "{ 1, 11 }", v: "top", h: "right" },
+    { name: "bottom-left", at: "{ 4, 0 }", v: "bottom", h: "left" },
+  ];
+  const problems = [];
+  const park = (at) => ctx.lua(`vim.api.nvim_win_set_cursor(0, ${at})`);
+  for (const corner of corners) {
+    park(corner.at);
+    const with_ = await picture();
+    const [x, y, w, h] = (await cursorRect()).map(Math.round);
+    const strips = [
+      corner.v === "top" ? [x, y, w, 1] : [x, y + h - 1, w, 1],
+      corner.h === "left" ? [x, y, 1, h] : [x + w - 1, y, 1, h],
+    ];
+    park("{ 2, 5 }");
+    const without = await picture();
+    for (const strip of strips) {
+      if (regionDigest(with_, strip) !== regionDigest(without, strip))
+        problems.push(
+          `[cursor-clip] the cursor in the float's ${corner.name} cell covers its frame at ${JSON.stringify(strip)}`,
+        );
+    }
+  }
+  return problems;
+}
 
 // A theme landed: the page's palette variables are not what they were.
 const THEME_MARK =
@@ -343,6 +408,20 @@ export const SCENARIOS = [
       },
       {
         name: "close-fused",
+        act: (ctx) => editorAtRestQuick(ctx),
+        spec: {},
+      },
+      {
+        name: "cursor-corner",
+        // A borderless float's frame hugs its cells: its line is in the
+        // corner cells' outer pixels. The cursor there is cut as the text
+        // is, so the line looks as it does without the cursor.
+        act: (ctx) => ctx.lua(CORNER_FLOAT_LUA),
+        check: cursorCornerCheck,
+        spec: {},
+      },
+      {
+        name: "close-corner",
         act: (ctx) => editorAtRestQuick(ctx),
         spec: {},
       },

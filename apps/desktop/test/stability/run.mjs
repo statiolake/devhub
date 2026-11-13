@@ -386,6 +386,15 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
     }
     writeFileSync(join(dir, "violations.txt"), `${problems.join("\n")}\n`);
   }
+  // What the step checks of the settled page itself (`check(ctx)`: a list
+  // of problems), after the recording's rules.
+  if (step.check) {
+    try {
+      for (const problem of await step.check(ctx)) problems.push(problem);
+    } catch (error) {
+      problems.push(`the step's check failed: ${error.message}`);
+    }
+  }
   // A known fault (step.known: [{ match, why, owner }]) is reported, every
   // time it shows, but does not fail the run; only the problems it matches
   // are excused, never the rest of the step. owner "outside": its cause is

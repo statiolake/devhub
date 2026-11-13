@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
+  type CellClips,
+  cellClip,
   claimedShape,
   floatClusters,
+  frameCuts,
   framePieces,
   hugClip,
   insideLines,
@@ -11,6 +14,7 @@ import {
   withRightLine,
 } from "./floats";
 import { frameGeometry } from "./frame";
+import { overClip } from "./painter";
 import { claimFloats, type GridBox } from "./redraw";
 
 const float = (
@@ -267,5 +271,179 @@ describe("a framed view's windows, cut at its frame (`claimedShape`)", () => {
     expect(radiusOf(".nvim-view-frame-edge")).toBe(
       radiusOf(".nvim-view-frame"),
     );
+  });
+});
+
+describe("the cursor in a corner cell, cut as its window's cells (`cellClip`)", () => {
+  // The cursor was laid in a square clip of the text area over the canvas,
+  // which the frame cut: in a corner cell of a borderless float, a framed
+  // view's window or a picker's box, the block covered the frame's line
+  // and its arc. Its clip is now the canvas's, from the same source.
+  const cell = { width: 8, height: 16 };
+  const none = { top: 0, right: 0, bottom: 0, left: 0 };
+  const clipsOf = (
+    boxes: readonly GridBox[],
+    extra: Partial<CellClips> = {},
+  ): CellClips => ({
+    boxes,
+    cuts: frameCuts(boxes),
+    shapes: new Map(),
+    hugs: new Map(),
+    cell,
+    radius: 4,
+    ...extra,
+  });
+  // Where the painter puts the canvas and the cursor's clip: the text area.
+  const at = (box: GridBox) => ({
+    x: box.col * cell.width,
+    y: box.row * cell.height,
+  });
+  const cursorClip = (box: GridBox, clips: CellClips) =>
+    overClip("cursor", box, clips, at(box));
+  const windowClip = (box: GridBox, clips: CellClips) =>
+    cellClip(box, clips, at(box));
+
+  it("is a borderless float's, inside its line, round at every corner", () => {
+    const box = float(4, 2, 10, 20, 6);
+    const g = frameGeometry(none, box, cell, 2, 4);
+    const [piece] = framePieces(
+      [{ grid: 4, rect: box, geometry: g, ruled: false }],
+      2,
+    );
+    if (!piece) throw new Error("no piece");
+    const clips = clipsOf([box], {
+      shapes: new Map([[4, piece]]),
+      hugs: new Map([[4, insideLines(piece, g.widths)]]),
+    });
+    const clip = cursorClip(box, clips);
+    expect(clip).toBe(windowClip(box, clips));
+    expect(clip.match(/A/g)).toHaveLength(4);
+    // Its corner cell's own corner is outside: the path starts past the arc.
+    expect(clip.startsWith('path("M0 0')).toBe(false);
+  });
+
+  it("is a framed view's window's, cut at the page's rounded frame", () => {
+    const root = float(2, 1, 7, 54, 25, { win: 1001, z: 50 });
+    const preview = float(3, 3, 37, 24, 21, { win: 1003, z: 51 });
+    const boxes = claimFloats(
+      [root, preview],
+      new Map([
+        [1001, 1001],
+        [1003, 1001],
+      ]),
+    );
+    const clips = clipsOf(boxes);
+    for (const box of boxes) {
+      const clip = cursorClip(box, clips);
+      expect(clip).toBe(windowClip(box, clips));
+      expect(clip.match(/A4 4 0 0 1/g)).toHaveLength(4);
+    }
+  });
+
+  it("is a picker's box's, cut by the framed floats over it", () => {
+    const frame = {
+      margins: { top: 1, right: 1, bottom: 1, left: 1 },
+      sides: {},
+      corners: {},
+      labels: [],
+    };
+    const root = float(2, 1, 7, 54, 25, { z: 50 });
+    const list = float(3, 1, 7, 30, 25, { z: 51, frame });
+    const preview = float(5, 1, 37, 24, 25, { z: 51, frame });
+    const boxes = [root, list, preview];
+    const shape = {
+      x: 60,
+      y: 20,
+      w: 224,
+      h: 384,
+      radii: { tl: 3, tr: 3, br: 3, bl: 3 },
+    };
+    const clips = clipsOf(boxes, { shapes: new Map([[3, shape]]) });
+    expect(clips.cuts.has(2)).toBe(true);
+    const clip = cursorClip(root, clips);
+    expect(clip).toBe(windowClip(root, clips));
+    expect(clip).toMatch(/A3 3 0 0 1/);
+  });
+
+  it("is a bordered float's (rounded, titled, fused): its text area, whole", () => {
+    // The line runs through the border's cells, half a cell out: nothing
+    // of the text area is past it, so nothing cuts the text or the cursor.
+    const frame = {
+      margins: { top: 1, right: 1, bottom: 1, left: 1 },
+      sides: {},
+      corners: {},
+      labels: [],
+    };
+    const a = float(4, 8, 20, 26, 6, { frame });
+    const b = float(5, 8, 45, 26, 6, { frame });
+    const clips = clipsOf([a, b]);
+    for (const box of [a, b]) {
+      expect(cursorClip(box, clips)).toBe(windowClip(box, clips));
+      expect(cursorClip(box, clips)).toBe("");
+    }
+  });
+
+  it("is never a neighbour's frame's in a split", () => {
+    const left: GridBox = {
+      grid: 2,
+      row: 0,
+      col: 0,
+      width: 40,
+      height: 30,
+      z: 1,
+      float: false,
+      win: 1000,
+    };
+    const right: GridBox = {
+      grid: 3,
+      row: 0,
+      col: 41,
+      width: 40,
+      height: 30,
+      z: 1,
+      float: false,
+      win: 1001,
+    };
+    const over = float(4, 0, 30, 20, 6);
+    const clips = clipsOf([left, right, over], {
+      hugs: new Map([
+        [
+          4,
+          {
+            x: 240,
+            y: 0,
+            w: 160,
+            h: 96,
+            radii: { tl: 4, tr: 4, br: 4, bl: 4 },
+          },
+        ],
+      ]),
+    });
+    for (const box of [left, right]) {
+      expect(cursorClip(box, clips)).toBe("");
+      expect(windowClip(box, clips)).toBe("");
+    }
+  });
+
+  it("leaves what rides the text and what covers it to their own clips", () => {
+    const box = float(4, 2, 10, 20, 6);
+    const clips = clipsOf([box], {
+      hugs: new Map([
+        [
+          4,
+          {
+            x: 80,
+            y: 32,
+            w: 160,
+            h: 96,
+            radii: { tl: 4, tr: 4, br: 4, bl: 4 },
+          },
+        ],
+      ]),
+    });
+    expect(cursorClip(box, clips)).not.toBe("");
+    expect(overClip("riders", box, clips, at(box))).toBe("");
+    expect(overClip("covers", box, clips, at(box))).toBe("");
+    expect(overClip("cursor", box, undefined, at(box))).toBe("");
   });
 });
