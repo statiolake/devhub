@@ -46,6 +46,16 @@ export default tseslint.config(
     languageOptions: { globals: { ...globals.node } },
   },
   {
+    // The visual-stability suite: a Node driver (test/stability/*.mjs), and
+    // the recorder it injects into the app's pages, which runs in a browser.
+    files: ["test/stability/**/*.mjs"],
+    languageOptions: { globals: { ...globals.node } },
+  },
+  {
+    files: ["test/stability/recorder.js"],
+    languageOptions: { sourceType: "script", globals: { ...globals.browser } },
+  },
+  {
     // `.cjs` is CommonJS by extension, so `module` and `require` are globals
     // rather than undefined names.
     files: ["**/*.cjs"],

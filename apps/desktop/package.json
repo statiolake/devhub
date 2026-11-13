@@ -19,8 +19,8 @@
     "lint": "eslint .",
     "test": "pnpm run build:devhub-cli && pnpm run build:binaries && vitest run && pnpm run test:pty",
     "test:pty": "test/terminal/run-under-electron.sh",
-    "fmt": "prettier --write src scripts index.html toasts.html picker.html sidebar.html agents.html pane.html tooltip.html settings.html task-manager.html package.json vite.config.ts eslint.config.js",
-    "fmt:check": "prettier --check src scripts index.html toasts.html picker.html sidebar.html agents.html pane.html tooltip.html settings.html task-manager.html package.json vite.config.ts eslint.config.js",
+    "fmt": "prettier --write src scripts test/stability index.html toasts.html picker.html sidebar.html agents.html pane.html tooltip.html settings.html task-manager.html package.json vite.config.ts eslint.config.js",
+    "fmt:check": "prettier --check src scripts test/stability index.html toasts.html picker.html sidebar.html agents.html pane.html tooltip.html settings.html task-manager.html package.json vite.config.ts eslint.config.js",
     "build:preload": "node scripts/build-preloads.mjs"
   },
   "dependencies": {

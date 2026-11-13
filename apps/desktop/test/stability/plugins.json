@@ -1,0 +1,45 @@
+{
+  "//": "The Neovim plugins the stability harness's profile loads, each pinned to a commit. fetchPlugins.mjs clones them into ~/.cache/devhub/stability-plugins/<name>-<commit>. Bump a commit here, nowhere else.",
+  "plugins": [
+    {
+      "name": "devhub.nvim",
+      "url": "https://github.com/statiolake/devhub.nvim",
+      "commit": "4df8ed1c14501177d35ed6addad6cd3026b6b581"
+    },
+    {
+      "name": "vscode-2026-theme.nvim",
+      "url": "https://github.com/statiolake/vscode-2026-theme.nvim",
+      "commit": "87c0a978fd116e6650795099f73fab084fd6f245"
+    },
+    {
+      "name": "snacks.nvim",
+      "url": "https://github.com/folke/snacks.nvim",
+      "commit": "882c996cf28183f4d63640de0b4c02ec886d01f2"
+    },
+    {
+      "name": "snacks-ui.devhub",
+      "url": "https://github.com/statiolake/snacks-ui.devhub",
+      "commit": "4486c199c80eb99e32f8b795b3e0c0e416c51a17"
+    },
+    {
+      "name": "blink.cmp",
+      "url": "https://github.com/saghen/blink.cmp",
+      "commit": "78336bc89ee5365633bcf754d93df01678b5c08f"
+    },
+    {
+      "name": "blink-ui.devhub",
+      "url": "https://github.com/statiolake/blink-ui.devhub",
+      "commit": "6df04529933bcd423b3412bc44acdad59ba4681b"
+    },
+    {
+      "name": "nvim-tree.lua",
+      "url": "https://github.com/nvim-tree/nvim-tree.lua",
+      "commit": "7e1da84aaffb413e1fa47b3895e5caa12501142d"
+    },
+    {
+      "name": "nvim-tree-ui.devhub",
+      "url": "https://github.com/statiolake/nvim-tree-ui.devhub",
+      "commit": "9e9116f37a0e4607c4b77706efeb5130b0de1ba0"
+    }
+  ]
+}

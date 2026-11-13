@@ -33,6 +33,11 @@
 #               against dist/DevHub.app when one is built; on Linux against
 #               the packaged layout (package-nightly.py --layout-only) under
 #               xvfb-run, which also loads its node-pty and its wasm.  test-app
+#   stability   the visual-stability suite (apps/desktop/test/stability,
+#               docs/visual-stability.md): the app from this checkout under
+#               xvfb-run, each scenario recorded frame by frame at 6x and 1x
+#               CPU throttling and checked for intermediate forms. Fetches
+#               its pinned Neovim plugins on first use.             test-stability
 #
 # Under root, the test stages run as the unprivileged user `devhub-test`
 # (created by `provision`): tests that make a directory unwritable and expect a
@@ -46,7 +51,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 OS="$(uname -s)"
-ALL_STAGES=(provision fmt lint typecheck vitest pty scripts cli app)
+ALL_STAGES=(provision fmt lint typecheck vitest pty scripts cli app stability)
 
 STOP=0
 NO_PROVISION=0
@@ -247,7 +252,7 @@ run_stage() {
 # git). Not tmux: the tests and the app run DevHub's own (out/tmux).
 # Debian/Ubuntu package names; only installed when missing.
 LINUX_PACKAGES=(
-	xvfb xauth openssh-client lsof git curl ca-certificates build-essential python3
+	xvfb xauth xdotool fonts-dejavu-core openssh-client lsof git curl ca-certificates build-essential python3
 	libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libxtst6 libxkbfile1 libsecret-1-0
 	libdrm2 libxdamage1 libxrandr2 libxcomposite1 libatk-bridge2.0-0t64 libcups2t64 libkrb5-3
 )
@@ -345,6 +350,15 @@ stage_app() {
 	fi
 }
 
+# The visual-stability suite: the app from this checkout (built here), as the
+# invoking user like `app` (Electron's sandbox needs a real user or root's
+# --no-sandbox). Its artifacts on a failure: .spike/stability.
+stage_stability() {
+	local build="$LOG_DIR/stability-build.log"
+	pnpm --filter @devhub/desktop build >"$build" 2>&1 || { tail -40 "$build"; return 1; }
+	DEVHUB_STABILITY_ARTIFACTS="$REPO_ROOT/.spike/stability" apps/desktop/test/stability/run.sh
+}
+
 summarize() {
 	local total=$((SECONDS - STARTED_ALL)) line
 	printf '\n\033[1m==> summary\033[0m  (%dm%02ds; logs in %s)\n' $((total / 60)) $((total % 60)) "${LOG_DIR#"$REPO_ROOT"/}"
@@ -364,6 +378,7 @@ for stage in "${STAGES[@]}"; do
 		scripts) run_stage scripts stage_scripts ;;
 		cli) run_stage cli stage_cli ;;
 		app) run_stage app stage_app ;;
+		stability) run_stage stability stage_stability ;;
 	esac
 done
 summarize

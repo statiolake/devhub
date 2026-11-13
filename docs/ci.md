@@ -37,7 +37,8 @@ the tests that start it.
 Linux included, stage by stage — `Test: app` as a smoke test of the packaged
 layout (`package-nightly.py --layout-only`) under `xvfb-run`, since the bundle
 is macOS-only — so CI is the final check rather than the place a change is
-iterated on. The script's header lists the stages and the job each stands for.
+iterated on. The script's header lists the stages and the job each stands for;
+its `stability` stage is the nightly's visual-stability job.
 
 - `concurrency` cancels a branch's older run as soon as a newer commit lands.
 - `Test: app` is the home of app-level tests. macOS runners have a GUI
@@ -48,6 +49,7 @@ iterated on. The script's header lists the stages and the job each stands for.
 
 ```
 Decide ──> Build: DevHub.app ──> Test: packaged app ──> Publish: nightly release
+       └─> Test: visual stability (Linux)
 ```
 
 and, on a `tools-<toolsVersion>` tag (`tools.yml`):
@@ -66,6 +68,14 @@ Check the tag ──> Build: tools darwin-arm64, linux-x64, linux-arm64 ──> 
   released, and tests it: today the smoke test.
 - **Publish: nightly release** replaces the rolling `nightly` prerelease, only
   after the tests pass.
+- **Test: visual stability (Linux)** (ubuntu-latest) builds the desktop app
+  and runs the visual-stability suite (`apps/desktop/test/stability`,
+  [`visual-stability.md`](visual-stability.md)) under Xvfb: every scenario
+  recorded frame by frame at 6x and 1x CPU throttling and checked for
+  intermediate forms. What it recorded is uploaded as `visual-stability`.
+  It is nightly rather than per push — about three minutes of recording on
+  top of the build, and a few steps fail now and then on a timing it has
+  caught (its doc lists them) — and it does not hold the release back.
 - **Tools** (`.github/workflows/tools.yml`) is a workflow of its own. It runs
   when a tag `tools-<toolsVersion>` is pushed, and builds DevHub's tools
   release (`scripts/build_tools.py`: tmux and bash) on macos-15, ubuntu-latest

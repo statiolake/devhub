@@ -34,7 +34,12 @@ under DevHub's own Electron, the script tests and the app smoke test (under
 stage installs what the tests need (system packages, the test user, tmux,
 `pnpm install`, npm's Electron, the desktop build) and is quick once done.
 Name stages to run only those (`scripts/test-local.sh --no-provision vitest
-pty`; `--help` lists them). Under root the test stages run as an
+pty`; `--help` lists them). The `stability` stage is the visual-stability
+suite ([docs/visual-stability.md](docs/visual-stability.md)): the app under
+Xvfb, each scenario recorded frame by frame and checked for anything drawn
+in an intermediate form; run it after a change to how something is drawn
+(`apps/desktop/test/stability/run.sh --only picker` for one scenario), and
+add the scenario a visual fix is for. Under root the test stages run as an
 unprivileged `devhub-test` user, so tests that rely on a permission being
 refused behave as on CI. Iterate with it; push and let CI be the final check.
 
