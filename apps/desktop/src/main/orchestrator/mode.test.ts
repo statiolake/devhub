@@ -895,9 +895,9 @@ describe("off: the timers are off, the person's answers go", () => {
 		});
 		run.events.dispatch({ type: "custom.x", text: "y" });
 		expect(run.sent).toEqual([
-			"task=9「仕事」 esc=1「t」 への人の回答:\nはい",
+			"esc=1 「はい」",
 			expect.stringContaining("こちらで進めて"),
-			expect.stringContaining("task=3「依頼」 人からの依頼"),
+			expect.stringContaining("task=3 人からの依頼"),
 		]);
 		expect(run.events.held().map((one) => one.type)).toEqual(["custom.x"]);
 		run.events.setMode("full");
@@ -932,7 +932,7 @@ describe("off: the timers are off, the person's answers go", () => {
 		expect(sent).toEqual([]);
 		who.id = "orch";
 		events.flush();
-		expect(sent).toEqual(["task=9「仕事」 esc=1「t」 への人の回答:\nはい"]);
+		expect(sent).toEqual(["esc=1 「はい」"]);
 		expect(entry.fate).toBe("delivered");
 	});
 });

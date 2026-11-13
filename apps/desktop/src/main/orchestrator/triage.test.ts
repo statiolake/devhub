@@ -101,9 +101,7 @@ describe("saving's priority gate", () => {
 			text: "CSV を直して",
 		});
 		expect(run.sent).toEqual([
-			expect.stringMatching(
-				/^task=3「CSV を直して」 人からの依頼 .*\nCSV を直して$/su,
-			),
+			expect.stringMatching(/^task=3 人からの依頼 .*\nCSV を直して$/su),
 		]);
 	});
 
@@ -350,7 +348,7 @@ describe("the person's requests", () => {
 			"請求書 CSV の文字化けを直す\n\n取引先から報告あり",
 		);
 		expect(sent).toEqual([
-			`task=${String(made.id)}「請求書 CSV の文字化けを直す」 人からの依頼 (この依頼からタスクを作りました。devhub --tell task edit ${String(made.id)} で題名を整え、task link / エージェントの割り当てで進めてください):\n請求書 CSV の文字化けを直す\n\n取引先から報告あり`,
+			`task=${String(made.id)} 人からの依頼 (この依頼からタスクを作りました。devhub --tell task edit ${String(made.id)} で題名を整え、task link / エージェントの割り当てで進めてください):\n請求書 CSV の文字化けを直す\n\n取引先から報告あり`,
 		]);
 		expect(run.wire().waiting).toEqual([
 			expect.objectContaining({

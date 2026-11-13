@@ -1106,14 +1106,14 @@ work, with its own tools (`gh`), not by the orchestrator.
 | type                  | when                                                                                                                                                                           | example                                                                                                                                                                                   |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init`                | the orchestrator has just started (or restarted)                                                                                                                               | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認`                                                                                                             |
-| `escalation_answered` | the person answered an escalation (its task → 処理中). Sent at once, as its own message: the person's words                                                                    | `task=7「本番DB移行」 esc=12「本番DBマイグレーション承認」 への人の回答 (選択肢「承認する」):` and, on the next line, `承認する`                                                          |
-| `task.human_direct`   | the person wrote from its own composer to a managed agent, or one bound to an open task, and it went working. A burst is one; sent as its own message, with what to tidy up    | `task=7「本番DB移行」 agent=a1b2c3d4 に人が直接送ったメッセージ:`, what they wrote, then `整理してください (人の判断です。…):` and its lines                                              |
+| `escalation_answered` | the person answered an escalation (its task → 処理中). Sent at once, as its own message: the person's words                                                                    | `esc=12 「承認する」`: the id and the words, nothing else (the task and the question: `escalation show 12`)                                                                               |
+| `task.human_direct`   | the person wrote from its own composer to a managed agent, or one bound to an open task, and it went working. A burst is one; sent as its own message, with what to tidy up    | `task=7 agent=a1b2c3d4 に人が直接送ったメッセージ:`, what they wrote, then `整理してください (人の判断です。…):` and its lines                                                            |
 | `needs_action`        | a task, a managed agent or an item of the population breaks the invariant: on every delivery while it does (every `delivery_interval`)                                         | `[needs_action] task=7「本番DB移行」 ws=web — idle`, `[needs_action] agent=ab12cd34 (API fix) ws=web — no_task`, `[needs_action] issue=acme/web#123 — no_task`                            |
 | `task.changed`        | a 待機 task may be ready: what it is about changed (`subjects_changed`), or its `--check-at` came (`due`, once per wait)                                                       | `[task.changed] task=12「リリース日」 — subjects_changed`, `[task.changed] task=15「…」 — due`                                                                                            |
 | `task.obsolete`       | an Issue an open task links closed, or a pull request it links merged or closed — seen happen (once per item closing). Never held: off included, alone                         | `[task.obsolete] task=7「ログイン修正」 — もう要らないかもしれません: Issue acme/web#123 がクローズされた (リンクしたものはすべて閉じた)。devhub --tell --json status task=7 で確かめ、…` |
 | `usage.threshold`     | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                                         | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                                               |
 | `triage`              | time to rank the open tasks again and re-check them (listed under it, the maybe-stale ones with why): every 30 minutes in full, every hour in saving (see "Triage")            | `[triage] — 見直し: …` and, on the lines under it, `  task=12「…」 処理中 — 古いかも: PR acme/pay#12 はマージ済み`                                                                        |
-| `request`             | the person sent a request from the board's + (it is a 待機 task already). Sent at once, as its own message: the person's words                                                 | `task=3「請求書 CSV の文字化け」 人からの依頼 (…):` and, on the next line, what they wrote                                                                                                |
+| `request`             | the person sent a request from the board's + (it is a 待機 task already). Sent at once, as its own message: the person's words                                                 | `task=3 人からの依頼 (…):` and, on the next line, what they wrote                                                                                                                         |
 | `agent_managed`       | the person handed an existing agent to the orchestrator from the window (Manage with Orchestrator, `Cmd+Q Shift+M`). Sent at once, as its own message, in every mode (off too) | `人がエージェント agent=a1b2c3d4 (API fix, ws=web, branch=fix/login) をあなたの管理下に移しました。devhub:agent/…` and its status, last request, task, what to do                         |
 | `agent_unmanaged`     | the person took it back (Stop Managing). Sent at once, as its own message, in every mode; waits with no orchestrator                                                           | `人がエージェント agent=a1b2c3d4 (…) をあなたの管理から外しました。人が自分で進めます。…` and `task unbind` for its task                                                                  |
 | `timer.elapsed`       | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                                        | `[timer.elapsed] sweep`                                                                                                                                                                   |
@@ -1143,14 +1143,29 @@ is.
 
 ### The person's words
 
-`escalation_answered` and `task.human_direct` carry what the person
-wrote, and are delivered **at once and as their own message** — not batched,
-not inside an event line, not inside `event_prompt` — whose first line names
-the task and the escalation (or the agent) and whose rest is the person's text exactly as
-typed, unquoted and uncut. The orchestrator reads it as the person's own
-input: an auto-mode approval classifier treats text quoted inside a prompt
-template conservatively and may refuse the external writes the person just
-asked for. Several answers are several messages; a burst of direct
+`escalation_answered`, `task.human_direct` and `request` carry what the
+person wrote, and are delivered **at once and as their own message** — not
+batched, not inside an event line, not inside `event_prompt` — which starts
+with the ids naming where it comes from and holds the person's text exactly
+as typed, uncut, with no DevHub prose or template around it. The
+orchestrator reads it as the person's own input: an auto-mode approval
+classifier treats text quoted inside a prompt template conservatively and
+may refuse the external writes the person just asked for.
+
+The source is named by id only, never by title, to keep the message short.
+An answer is one line, the escalation and the words in 「」 —
+`esc=12 「承認する」` (a multi-line answer keeps its lines inside the
+brackets). A quick reply picked is its own text, so it is not named again;
+only words that are not the option's text exactly name it first
+(`esc=12 選択肢「承認する」 「…」`), so the option and the words cannot be
+confused. The task, the question and its agents are not in it:
+`escalation show 12` has them, and the charter says to read them there. A
+direct message names the task and the agent (`task=7 agent=a1b2c3d4 に人が直接送ったメッセージ:`;
+the agent is the one that already has the words, and the tidy-up's commands
+name the task), its words from the next line. Its tidy-up keeps the open
+questions' titles (`esc=12「…」`): whether the words answer one is judged
+from them. A request names its task (`task=3 人からの依頼 (…):`) — its title
+is the request's first line, which follows anyway. Several answers are several messages; a burst of direct
 messages to one agent is one message, every text in order, and after the
 words, past a blank line, the tidy-up it asks for (`整理してください …`). Nothing holds them, off
 included: someone answered, and the work they unblock goes on. With no
@@ -1467,7 +1482,7 @@ gives the keyboard back to the +.
   first line and which keeps the words as typed (`request`), on the board in
   待機 straight away. There is no second kind of item to keep in step.
 - **It is the person's words**: a `request` event, delivered at once as its
-  own message (`task=3「…」 人からの依頼 (…):` and, on the next line, the
+  own message (`task=3 人からの依頼 (…):` and, on the next line, the
   text as typed) — in every mode, off included (what the person did,
   `by_person`), and never by saving's gates. One sent with no orchestrator running
   waits for one, and goes once it starts, as do the ones kept from before a

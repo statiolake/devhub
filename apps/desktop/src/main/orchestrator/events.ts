@@ -10,8 +10,8 @@
  * 1. drops what the `[orchestrator] events` patterns filter out;
  * 2. sends **the person's words** (`escalation_answered`,
  *    `task.human_direct`, `request`: `isHumanInput`) at once, each as a message of
- *    its own whose text is what they typed, under one line naming the
- *    task (`humanMessage`) — never inside an event line or the
+ *    its own whose text is what they typed, after the ids naming where it
+ *    comes from (`humanMessage`: `esc=12 「…」`) — never inside an event line or the
  *    `event_prompt` template, so the orchestrator reads it as the person's
  *    own input. They are what the person did (`by_person`, `mode.ts`), and
  *    nothing holds them in any mode, off included. With no orchestrator
@@ -708,9 +708,12 @@ export function obsoleteWords(
 }
 
 /**
- * The message the person's words go as: one line naming the task (and the
- * escalation, or the agent), then their text exactly as typed — unquoted,
- * unwrapped, no template around it.
+ * The message the person's words go as. An answer is only the escalation
+ * and their text, exactly as typed and uncut, in 「」: `esc=12 「承認する」`
+ * — no task, no titles, no prose around it (the orchestrator reads the rest
+ * with `escalation show`). A quick reply picked is its own text; only an
+ * answer whose text is not the option picked names it first
+ * (`esc=12 選択肢「承認する」 「…」`). A direct message is `directMessage`.
  */
 export function humanMessage(
 	event: Extract<
@@ -720,31 +723,31 @@ export function humanMessage(
 	piece: HumanWords | undefined,
 ): string {
 	if (event.type === "escalation_answered") {
-		const task = taskToken(event.task);
-		const esc = `esc=${String(event.escalationId)}${title(event.title)}`;
+		const id = String(event.escalationId);
+		if (piece === undefined)
+			return `esc=${id} に人が回答しました (devhub --tell escalation show ${id} で読む)`;
 		const option =
-			piece?.option === undefined
+			piece.option === undefined || piece.option === piece.text.trim()
 				? ""
-				: ` (選択肢「${excerpt(piece.option, 80)}」)`;
-		return piece === undefined
-			? `${task} ${esc} に人が回答しました (devhub --tell escalation show ${String(event.escalationId)} で読む)`
-			: `${task} ${esc} への人の回答${option}:\n${piece.text}`;
+				: ` 選択肢「${piece.option}」`;
+		return `esc=${id}${option} 「${piece.text}」`;
 	}
 	return directMessage(event);
 }
 
 /**
  * The message a `task.human_direct` goes as: one line naming the task (if
- * any) and the agent, the person's words exactly as typed — several, in
+ * any) and the agent by id, no titles, the person's words exactly as typed — several, in
  * the order sent, each under its number — and, after a blank line, what the
  * orchestrator tidies up (`directTidyLines`).
  */
 export function directMessage(event: HumanDirectEvent): string {
 	const agent = shortId(event.agent.id);
+	// The ids only: the tidy-up below names the task's commands by id.
 	const where =
 		event.task === undefined
 			? `agent=${agent}`
-			: `${taskToken(event.task)} agent=${agent}`;
+			: `task=${String(event.task.id)} agent=${agent}`;
 	const messages = event.messages ?? [];
 	const words =
 		messages.length === 0
@@ -845,7 +848,7 @@ export function humanMessages(event: HumanInputEvent): string[] {
 	if (isHandover(event)) return [handoverMessage(event)];
 	if (event.type === "request")
 		return [
-			`${taskToken(event.task)} 人からの依頼 (この依頼からタスクを作りました。devhub --tell task edit ${String(event.task.id)} で題名を整え、task link / エージェントの割り当てで進めてください):\n${event.text}`,
+			`task=${String(event.task.id)} 人からの依頼 (この依頼からタスクを作りました。devhub --tell task edit ${String(event.task.id)} で題名を整え、task link / エージェントの割り当てで進めてください):\n${event.text}`,
 		];
 	// A burst of direct messages is one message: the words, then the tidy-up.
 	if (event.type === "task.human_direct") return [directMessage(event)];

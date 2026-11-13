@@ -192,7 +192,7 @@ describe("an event's line", () => {
 });
 
 describe("the person's words", () => {
-	it("go as their own message: one naming line, then the text as typed", () => {
+	it("go as their own message: the ids naming where from, then the text as typed", () => {
 		const text = "承認する\n\n> 引用も [type] もそのまま\n```\nfence\n```";
 		expect(
 			humanMessages({
@@ -203,9 +203,7 @@ describe("the person's words", () => {
 				agents: [AGENT],
 				answers: [{ text, option: "承認する" }],
 			}),
-		).toEqual([
-			`task=7「ログイン修正」 esc=12「本番DB」 への人の回答 (選択肢「承認する」):\n${text}`,
-		]);
+		).toEqual([`esc=12 選択肢「承認する」 「${text}」`]);
 		expect(
 			humanMessages({
 				type: "task.human_direct",
@@ -216,7 +214,7 @@ describe("the person's words", () => {
 			}),
 		).toEqual([
 			[
-				"task=7「ログイン修正」 agent=a1b2c3d4 に人が直接送ったメッセージ:",
+				"task=7 agent=a1b2c3d4 に人が直接送ったメッセージ:",
 				"月曜の朝に流して",
 				"",
 				"整理してください (人の判断です。agent=a1b2c3d4 には届いているので、同じ指示を送り直さない):",
@@ -224,6 +222,27 @@ describe("the person's words", () => {
 				"- タスクを指示に合わせる: メモの次にすること、状態 (task status 7 …)、方針が変わったなら題名 (task edit 7 --title) とリンク",
 				"- 同じタスクのほかのエージェントはいません",
 			].join("\n"),
+		]);
+	});
+
+	it("an answer is the escalation and the words: an option picked is its own text", () => {
+		const answer = (answers?: { text: string; option?: string }[]) =>
+			humanMessages({
+				type: "escalation_answered",
+				task: TASK,
+				escalationId: 12,
+				title: "本番DBマイグレーション承認",
+				agents: [AGENT],
+				...(answers === undefined ? {} : { answers }),
+			});
+		expect(answer([{ text: "承認する", option: "承認する" }])).toEqual([
+			"esc=12 「承認する」",
+		]);
+		expect(answer([{ text: "月曜の朝に\n流して" }])).toEqual([
+			"esc=12 「月曜の朝に\n流して」",
+		]);
+		expect(answer()).toEqual([
+			"esc=12 に人が回答しました (devhub --tell escalation show 12 で読む)",
 		]);
 	});
 
@@ -238,7 +257,7 @@ describe("the person's words", () => {
 			others: [{ id: "e5f6a7b8-0000-4000-8000-000000000000", name: "UI" }],
 		});
 		expect(message!.split("\n")).toEqual([
-			"task=7「ログイン修正」 agent=a1b2c3d4 に人が直接送ったメッセージ (2 通、送った順):",
+			"task=7 agent=a1b2c3d4 に人が直接送ったメッセージ (2 通、送った順):",
 			"[1]",
 			"staging だけで",
 			"[2]",
@@ -280,9 +299,7 @@ describe("the person's words", () => {
 			agents: [],
 			answers: [{ text: "はい" }],
 		});
-		expect(sent).toEqual([
-			"task=7「ログイン修正」 esc=3「t」 への人の回答:\nはい",
-		]);
+		expect(sent).toEqual(["esc=3 「はい」"]);
 		expect(delivered.map((one) => one.type)).toEqual(["escalation_answered"]);
 		expect(dispatcher.held()).toHaveLength(1);
 	});
@@ -306,9 +323,9 @@ describe("the person's words", () => {
 			text: "依頼",
 		});
 		expect(sent).toEqual([
-			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n一つ目",
-			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n二つ目",
-			expect.stringMatching(/^task=4「依頼」 人からの依頼 .*\n依頼$/u),
+			"esc=3 「一つ目」",
+			"esc=3 「二つ目」",
+			expect.stringMatching(/^task=4 人からの依頼 .*\n依頼$/u),
 		]);
 		await dispatcher.resume();
 		expect(sent.slice(3)).toEqual([
@@ -574,8 +591,8 @@ describe("the preview", () => {
 			text: "一つ目",
 		});
 		expect(sent).toEqual([
-			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n一つ目",
-			expect.stringMatching(/^task=1「依頼」 .*\n一つ目$/u),
+			"esc=3 「一つ目」",
+			expect.stringMatching(/^task=1 人からの依頼 .*\n一つ目$/u),
 		]);
 		sent.length = 0;
 		dispatcher.dispatch({ type: "custom.x", text: "y" });
@@ -596,10 +613,7 @@ describe("the preview", () => {
 		expect(dispatcher.preview().human).toHaveLength(2);
 		running.id = ORCH;
 		dispatcher.flush();
-		expect(sent).toEqual([
-			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n一つ目",
-			"task=7「ログイン修正」 esc=3「t」 への人の回答:\n二つ目",
-		]);
+		expect(sent).toEqual(["esc=3 「一つ目」", "esc=3 「二つ目」"]);
 	});
 
 	it("is composed by the delivery's own composer, cut at the cap", () => {

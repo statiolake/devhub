@@ -104,10 +104,7 @@ describe("the mode control's card", () => {
       paused: true,
       held: 1,
       nextDelivery: {
-        human: [
-          "esc=1「t」 への人の回答:\nはい",
-          "esc=2「u」 への人の回答:\nいいえ",
-        ],
+        human: ["esc=1 「はい」", "esc=2 「いいえ」"],
         lines: 0,
         more: 0,
         when: { kind: "paused" },

@@ -332,9 +332,7 @@ describe("the person's words", () => {
 			markdown: BODY,
 		});
 		run.service.answer(one.id, "月曜に");
-		expect(run.sent).toEqual([
-			"task=1「移行」 esc=1「本番DB」 への人の回答:\n月曜に",
-		]);
+		expect(run.sent).toEqual(["esc=1 「月曜に」"]);
 		expect(run.read).toEqual([[ORCH, one.id]]);
 	});
 
@@ -348,7 +346,7 @@ describe("the person's words", () => {
 			markdown: BODY,
 		});
 		run.service.answer(one.id, "はい");
-		expect(run.sent).toEqual(["task=1「移行」 esc=1「q」 への人の回答:\nはい"]);
+		expect(run.sent).toEqual(["esc=1 「はい」"]);
 	});
 
 	it("to an agent of a task with an open question, from its own composer, are told; the question stays open", async () => {
@@ -367,7 +365,7 @@ describe("the person's words", () => {
 		await tick();
 		expect(run.sent).toHaveLength(1);
 		expect(run.sent[0]).toMatch(
-			/^task=1「移行」 agent=a1b2c3d4 に人が直接送ったメッセージ:\nやっぱり staging だけで\n\n整理してください/u,
+			/^task=1 agent=a1b2c3d4 に人が直接送ったメッセージ:\nやっぱり staging だけで\n\n整理してください/u,
 		);
 		expect(run.sent[0]).toContain("devhub --tell escalation resolve 1 --note");
 		expect(run.service.escalation(one.id)?.answer).toBeUndefined();

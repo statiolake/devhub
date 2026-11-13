@@ -5026,13 +5026,11 @@ describe("the Orchestrator row from the command line", () => {
 		ports.service.newTask({ title: "仕事" });
 		ports.service.raise({ taskId: 1, title: "one", markdown: "x" });
 		ports.service.answer(1, "a");
-		expect(ports.delivered.map(([, text]) => text)).toEqual([
-			"task=1「仕事」 esc=1「one」 への人の回答:\na",
-		]);
+		expect(ports.delivered.map(([, text]) => text)).toEqual(["esc=1 「a」"]);
 		ports.delivered = [];
 		ports.service.request("b");
 		expect(ports.delivered.map(([, text]) => text)).toEqual([
-			expect.stringMatching(/^task=2「b」 人からの依頼 .*\nb$/u),
+			expect.stringMatching(/^task=2 人からの依頼 .*\nb$/u),
 		]);
 		ports.delivered = [];
 		ports.service.emit("custom.deploy", "staging");
