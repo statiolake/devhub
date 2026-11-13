@@ -257,5 +257,62 @@ describe.skipIf(TMUX === undefined || NVIM === undefined)(
         neovims.dispose();
       }
     }, 30_000);
+
+    it("opens the file in a Neovim, whatever the last one was doing as the jump came", async () => {
+      // `:q`, `:qa!` over an unsaved buffer, a crash, the window killed:
+      // each followed at once by the next jump, as in the app.
+      const { tmux, session } = server();
+      const root = makeScratchDir("managed-nvim-race");
+      const socketDirectory = makeSocketDir("managed-nvim-race");
+      directories.push(root, socketDirectory);
+      writeFileSync(join(root, "a.txt"), "one\n");
+      writeFileSync(join(root, "b.txt"), "two\n");
+      const neovims = new ManagedNeovims({
+        panes: barePanes(tmux, session),
+        nvim: () => Promise.resolve(NVIM as string),
+        socketDirectory,
+        startTimeoutMs: 10_000,
+      });
+      const target = {
+        machine: "local" as const,
+        workspaceId: "6f1c2d3e-4a5b-4c6d-8e7f-001122334466",
+        root,
+      };
+      const socket = neovims.socketPath(target.workspaceId);
+      const nvim = (args: readonly string[]) =>
+        execFileSync(NVIM as string, ["--server", socket, ...args], {
+          encoding: "utf8",
+          timeout: 5_000,
+        }).trim();
+      const ends: readonly (() => void)[] = [
+        () => nvim(["--remote-send", "<Esc>:q!<CR>"]),
+        () => nvim(["--remote-send", "<Esc>:enew<CR>ix<Esc>:qa!<CR>"]),
+        () => process.kill(Number(nvim(["--remote-expr", "getpid()"])), "SIGKILL"),
+        () => {
+          tmux(["kill-window", "-t", neovims.paneOf(target.workspaceId) as string]);
+        },
+      ];
+      try {
+        await neovims.open(target, { path: join(root, "a.txt") });
+        for (let round = 0; round < 12; round += 1) {
+          ends[round % ends.length]!();
+          const file = join(root, round % 2 === 0 ? "b.txt" : "a.txt");
+          await neovims.open(target, { path: file });
+          const pane = neovims.paneOf(target.workspaceId) as string;
+          // The Neovim it went to is the one alive in the shown window,
+          // naming the socket, and it has the file.
+          expect(
+            panes(tmux).find((row) => row.paneId === pane)?.windowActive,
+          ).toBe(true);
+          expect(
+            tmux(["display-message", "-p", "-t", pane, "#{@devhub-nvim}"]).trim(),
+          ).toBe(socket);
+          expect(nvim(["--remote-expr", "expand('%:p')"])).toBe(file);
+          expect(nvim(["--remote-expr", "$TMUX_PANE"])).toBe(pane);
+        }
+      } finally {
+        neovims.dispose();
+      }
+    }, 60_000);
   },
 );

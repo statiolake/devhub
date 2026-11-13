@@ -20,7 +20,11 @@ import {
 	type NeovimFiles,
 	type PaneState,
 } from "./managedNeovim.js";
-import type { NeovimRpc } from "./neovimRpc.js";
+import {
+	NeovimRequestTimeout,
+	type NeovimRpc,
+	type RequestOptions,
+} from "./neovimRpc.js";
 import {
 	publishedThemeOf,
 	type PublishedTheme,
@@ -41,16 +45,36 @@ const SOCKET = `${DIRECTORY}/${neovimSocketName(WORKSPACE.workspaceId)}`;
 
 /** A Neovim's end of the connection, recording what it was asked. */
 class FakeServer implements NeovimRpc {
-	readonly calls: { method: string; params: readonly unknown[] }[] = [];
+	readonly calls: {
+		method: string;
+		params: readonly unknown[];
+		timeoutMs: number | undefined;
+	}[] = [];
 	closed = false;
 	blocking = 0;
+	/**
+	 * What Neovim does with a request before it answers: `exit` (`:q` was
+	 * typed as it came), `hang` (its config still running, past the wait).
+	 */
+	before: ((method: string) => "exit" | "hang" | undefined) | undefined;
 	private readonly listeners: (() => void)[] = [];
 
 	constructor(readonly pane: string | undefined) {}
 
-	request(method: string, params: readonly unknown[]): Promise<unknown> {
+	request(
+		method: string,
+		params: readonly unknown[],
+		options: RequestOptions = {},
+	): Promise<unknown> {
 		if (this.closed) return Promise.reject(new Error("closed"));
-		this.calls.push({ method, params });
+		this.calls.push({ method, params, timeoutMs: options.timeoutMs });
+		const fate = this.before?.(method);
+		if (fate === "exit") {
+			this.exit();
+			return Promise.reject(new Error("the connection to Neovim closed"));
+		}
+		if (fate === "hang")
+			return Promise.reject(new NeovimRequestTimeout(method));
 		if (method === "nvim_get_mode") {
 			const blocking = this.blocking > 0;
 			if (blocking) this.blocking -= 1;
@@ -105,6 +129,9 @@ function world() {
 	const shown: string[] = [];
 	let next = 1;
 	let failStart = false;
+	let stateOverride:
+		| ((paneId: string) => Promise<PaneState> | undefined)
+		| undefined;
 	let nvim: string | undefined = "/opt/homebrew/bin/nvim";
 
 	const editorPanes: EditorPanes = {
@@ -130,7 +157,8 @@ function world() {
 			shown.push(`${paneId} ${socketPath}`);
 			return Promise.resolve();
 		},
-		state: (_target, paneId) => Promise.resolve(panes.get(paneId) ?? "gone"),
+		state: (_target, paneId) =>
+			stateOverride?.(paneId) ?? Promise.resolve(panes.get(paneId) ?? "gone"),
 		kill: (_target, paneId) => {
 			log.push(`kill ${paneId}`);
 			panes.delete(paneId);
@@ -187,6 +215,14 @@ function world() {
 		},
 		noNvim: () => {
 			nvim = undefined;
+		},
+		/** tmux's answer about a pane, given by the test (`undefined`: the usual). */
+		stateOf: (
+			override:
+				| ((paneId: string) => Promise<PaneState> | undefined)
+				| undefined,
+		) => {
+			stateOverride = override;
 		},
 	};
 }
@@ -492,5 +528,141 @@ describe("the theme", () => {
 		server.exit();
 		await neovims.publishTheme(theme("Y"));
 		expect(failures).toEqual([WORKSPACE.workspaceId]);
+	});
+});
+
+describe("a jump that meets the Neovim's end", () => {
+	/** `:q` typed as the jump came: the pane and its socket go with it. */
+	function quitsOnRequest(w: ReturnType<typeof world>, pane: string): void {
+		const server = w.server()!;
+		server.before = () => {
+			w.panes.delete(pane);
+			w.listening.delete(SOCKET);
+			w.files.delete(SOCKET);
+			return "exit";
+		};
+	}
+
+	it("starts a new Neovim when the one it found ends under it, and opens the file there", async () => {
+		const w = world();
+		const neovims = w.make();
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		quitsOnRequest(w, "%1");
+		const result = await neovims.open(WORKSPACE, { path: "/src/widget/b.ts" });
+		expect(result).toEqual({ started: true });
+		expect(neovims.paneOf(WORKSPACE.workspaceId)).toBe("%2");
+		expect(w.server()?.opens()).toEqual([
+			["/src/widget/b.ts", null, null, null],
+		]);
+		expect(w.shown.at(-1)).toBe(`%2 ${SOCKET}`);
+	});
+
+	it("says so, and starts no third, when the new one ends at once too", async () => {
+		const w = world();
+		const neovims = w.make();
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		quitsOnRequest(w, "%1");
+		// Every Neovim from here on ends at its first request.
+		const listening = w.listening;
+		const set = listening.set.bind(listening);
+		listening.set = (socket, server) => {
+			server.before = () => {
+				w.panes.delete(server.pane!);
+				return "exit";
+			};
+			return set(socket, server);
+		};
+		await expect(
+			neovims.open(WORKSPACE, { path: "/src/widget/b.ts" }),
+		).rejects.toThrow(/closed/);
+		expect(w.log.filter((line) => line.startsWith("open"))).toHaveLength(2);
+	});
+
+	it("never unlinks the socket of the Neovim started after it, however late its end is heard", async () => {
+		const w = world();
+		const neovims = w.make();
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		// tmux is slow to say what became of the old pane.
+		let answer: (state: PaneState) => void = () => undefined;
+		w.stateOf((paneId) =>
+			paneId === "%1"
+				? new Promise<PaneState>((resolve) => {
+						answer = resolve;
+					})
+				: undefined,
+		);
+		w.panes.delete("%1");
+		w.listening.get(SOCKET)?.exit();
+		w.listening.delete(SOCKET);
+		const jump = neovims.open(WORKSPACE, { path: "/src/widget/b.ts" });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		answer("gone");
+		w.stateOf(undefined);
+		expect(await jump).toEqual({ started: true });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(w.files.has(SOCKET)).toBe(true);
+		expect(w.server()?.pane).toBe("%2");
+	});
+
+	it("kills the pane remain-on-exit kept once its Neovim's end is heard", async () => {
+		const w = world();
+		const neovims = w.make();
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		w.panes.set("%1", "dead");
+		w.server()?.exit();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(w.log).toContain("kill %1");
+		expect(w.files.has(SOCKET)).toBe(false);
+	});
+});
+
+describe("a jump's window", () => {
+	it("is shown before the file is asked of Neovim, so whatever holds it up is in front", async () => {
+		const w = world();
+		const neovims = w.make();
+		const seen: string[][] = [];
+		const listening = w.listening;
+		const set = listening.set.bind(listening);
+		listening.set = (socket, server) => {
+			server.before = (method) => {
+				if (method === "nvim_exec_lua") seen.push([...w.shown]);
+				return undefined;
+			};
+			return set(socket, server);
+		};
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		expect(seen.at(-1)).toEqual([`%1 ${SOCKET}`]);
+	});
+
+	it("waits on a Neovim started for it while its config runs, and on a running one only as long as any request", async () => {
+		const w = world();
+		const neovims = w.make({ startupWaitMs: 45_000 });
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		await neovims.open(WORKSPACE, { path: "/src/widget/b.ts" });
+		const opens = w
+			.server()!
+			.calls.filter((call) => call.params[0] === OPEN_FILE_LUA);
+		expect(opens.map((call) => call.timeoutMs)).toEqual([45_000, undefined]);
+	});
+
+	it("says, when Neovim does not answer, that its window shows why — and it is shown", async () => {
+		const w = world();
+		const neovims = w.make();
+		const listening = w.listening;
+		const set = listening.set.bind(listening);
+		listening.set = (socket, server) => {
+			server.before = (method) =>
+				method === "nvim_get_mode" ? "hang" : undefined;
+			return set(socket, server);
+		};
+		await expect(
+			neovims.open(WORKSPACE, { path: "/src/widget/a.ts" }),
+		).rejects.toThrow(/not finished starting.*window/);
+		expect(w.shown).toEqual([`%1 ${SOCKET}`]);
+		await neovims
+			.open(WORKSPACE, { path: "/src/widget/b.ts" })
+			.catch((error: unknown) => {
+				expect(String(error)).toMatch(/busy.*waiting/);
+			});
 	});
 });

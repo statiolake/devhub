@@ -43,7 +43,11 @@ import { createHash } from "node:crypto";
 import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkspaceTerminalTarget } from "../terminal/ports.js";
-import { NeovimClient, type NeovimRpc } from "./neovimRpc.js";
+import {
+	NeovimClient,
+	NeovimRequestTimeout,
+	type NeovimRpc,
+} from "./neovimRpc.js";
 import { NVIM_STATE_VARIABLE, followRestartSh } from "./neovimRestart.js";
 import {
 	themeEnvironment,
@@ -140,6 +144,12 @@ export interface ManagedNeovimOptions {
 	) => Promise<NeovimSockets>;
 	/** How long a new Neovim has to open its socket. */
 	readonly startTimeoutMs?: number;
+	/**
+	 * How long a Neovim started for a jump has to answer it: its config runs
+	 * before it answers anything, and lazy.nvim installing or building
+	 * plugins takes its time. Its window is shown meanwhile.
+	 */
+	readonly startupWaitMs?: number;
 	/** How often the socket is tried while it starts. */
 	readonly pollMs?: number;
 	/** Told when a server's connection ends, for the log. */
@@ -363,6 +373,7 @@ export class ManagedNeovims {
 	private readonly files: NeovimFiles;
 	private readonly connect: (socketPath: string) => Promise<NeovimRpc>;
 	private readonly startTimeoutMs: number;
+	private readonly startupWaitMs: number;
 	private readonly pollMs: number;
 	private nextSerial = 1;
 
@@ -372,6 +383,7 @@ export class ManagedNeovims {
 		this.connect =
 			options.connect ?? ((socketPath) => NeovimClient.connect(socketPath));
 		this.startTimeoutMs = options.startTimeoutMs ?? 5_000;
+		this.startupWaitMs = options.startupWaitMs ?? 60_000;
 		this.pollMs = options.pollMs ?? 50;
 	}
 
@@ -414,33 +426,79 @@ export class ManagedNeovims {
 	 * Open a file in the Workspace's managed Neovim, starting one if there is
 	 * none alive, and show its window. Answers whether a new Neovim was
 	 * started.
+	 *
+	 * Its window is shown first, then the file is opened in it: whatever
+	 * keeps Neovim from answering — its config still running, a prompt (a
+	 * swap file's) — is in front of the person, never behind a jump that
+	 * seems to have done nothing. A server that ends while the jump is at it
+	 * (`:q` typed as the jump came, a crash) says so by its connection
+	 * closing, and the jump starts again from what is true then: a new
+	 * Neovim.
 	 */
 	open(
 		target: WorkspaceTerminalTarget,
 		file: NeovimOpen,
 	): Promise<{ readonly started: boolean }> {
 		return this.serially(target.workspaceId, async () => {
-			const { record, started } = await this.server(target);
-			if (file.waitMarkerPath !== undefined) {
-				record.waitMarkers.add(file.waitMarkerPath);
+			for (let again = false; ; again = true) {
+				const { record, started } = await this.server(target);
+				try {
+					await this.openIn(target, record, file, started);
+					return { started };
+				} catch (error) {
+					// Only its end, and only once: a Neovim that ends as soon
+					// as it is started is said, not started for ever.
+					if (again || (await this.isAlive(target, record).catch(() => true)))
+						throw error;
+					// It ended under the jump: its close is handled as any is
+					// (`connectionClosed`), and the jump starts again.
+					record.client.close();
+				}
 			}
-			await this.leaveBlockingPrompt(record.client);
-			await record.client.request("nvim_exec_lua", [
-				OPEN_FILE_LUA,
-				[
-					file.path,
-					file.line ?? null,
-					file.column ?? null,
-					file.waitMarkerPath ?? null,
-				],
-			]);
-			// One adopted whose pane could not be named is still opened in,
-			// and only not brought to the front.
-			if (record.paneId !== undefined) {
-				await this.panes.show(target, record.paneId, record.socketPath);
-			}
-			return { started };
 		});
+	}
+
+	private async openIn(
+		target: WorkspaceTerminalTarget,
+		record: ServerRecord,
+		file: NeovimOpen,
+		started: boolean,
+	): Promise<void> {
+		// One adopted whose pane could not be named is still opened in, and
+		// only not brought to the front.
+		if (record.paneId !== undefined) {
+			await this.panes.show(target, record.paneId, record.socketPath);
+		}
+		if (file.waitMarkerPath !== undefined) {
+			record.waitMarkers.add(file.waitMarkerPath);
+		}
+		// A Neovim started now answers once its config has run.
+		const timeoutMs = started ? this.startupWaitMs : undefined;
+		try {
+			await this.leaveBlockingPrompt(record.client, timeoutMs);
+			await record.client.request(
+				"nvim_exec_lua",
+				[
+					OPEN_FILE_LUA,
+					[
+						file.path,
+						file.line ?? null,
+						file.column ?? null,
+						file.waitMarkerPath ?? null,
+					],
+				],
+				{ timeoutMs },
+			);
+		} catch (error) {
+			if (!(error instanceof NeovimRequestTimeout) || record.client.closed)
+				throw error;
+			throw new Error(
+				started
+					? `Neovim has not finished starting after ${String(this.startupWaitMs / 1_000)} seconds. Its window shows where it is; ${file.path} opens there once it is done.`
+					: `Neovim is busy and did not open ${file.path}: something in its window is waiting (a prompt, say). The file opens once it is answered.`,
+				{ cause: error },
+			);
+		}
 	}
 
 	/**
@@ -516,7 +574,9 @@ export class ManagedNeovims {
 	): Promise<boolean> {
 		if (record.client.closed) return false;
 		if (record.paneId === undefined) return true;
-		return (await this.panes.state(target, record.paneId)) === "alive";
+		const state = await this.panes.state(target, record.paneId);
+		// The connection is asked again: it may have closed meanwhile.
+		return state === "alive" && !record.client.closed;
 	}
 
 	/**
@@ -647,7 +707,11 @@ export class ManagedNeovims {
 			// again rather than asking a closed one.
 			if (this.records.get(workspaceId) !== record) return;
 			this.records.delete(workspaceId);
-			void this.connectionClosed(workspaceId, record);
+			// In the jumps' queue: a jump asked meanwhile finds it gone, and
+			// what it cleans up is never a newer server's.
+			void this.serially(workspaceId, () =>
+				this.connectionClosed(workspaceId, record),
+			).catch(() => undefined);
 		});
 		return record;
 	}
@@ -670,6 +734,13 @@ export class ManagedNeovims {
 				.state(record.target, record.paneId)
 				.catch(() => "alive" as const);
 			if (state === "alive") return;
+			// Kept by `remain-on-exit`: a dead `devhub-nvim` window would sit
+			// in the person's window list for ever, beside the next one.
+			if (state === "dead") {
+				await this.panes
+					.kill(record.target, record.paneId)
+					.catch(() => undefined);
+			}
 		}
 		await this.cleanUp(record);
 		this.options.onExit?.(workspaceId);
@@ -687,10 +758,19 @@ export class ManagedNeovims {
 		await this.cleanUp(record);
 	}
 
-	/** Its socket and every wait marker it held: nothing waits on a dead editor. */
+	/**
+	 * Its socket and every wait marker it held: nothing waits on a dead
+	 * editor. The socket's path is the Workspace's, not the server's: once a
+	 * newer server is known it is that one's, and it is left to it.
+	 */
 	private async cleanUp(record: ServerRecord): Promise<void> {
+		const workspaceId = record.target.workspaceId;
+		const newer = this.records.get(workspaceId);
+		const socketIsItsOwn = newer === undefined || newer === record;
 		await Promise.all([
-			record.files.remove(record.socketPath).catch(() => undefined),
+			socketIsItsOwn
+				? record.files.remove(record.socketPath).catch(() => undefined)
+				: undefined,
 			...[...record.waitMarkers].map((marker) =>
 				this.files.remove(marker).catch(() => undefined),
 			),
@@ -703,11 +783,14 @@ export class ManagedNeovims {
 	 * `confirm()`); one `<Esc>` dismisses it so the open is not stuck behind
 	 * it. Checked a few times, because `nvim_input` is only queued.
 	 */
-	private async leaveBlockingPrompt(client: NeovimRpc): Promise<void> {
+	private async leaveBlockingPrompt(
+		client: NeovimRpc,
+		timeoutMs: number | undefined,
+	): Promise<void> {
 		for (let attempt = 0; attempt < 3; attempt += 1) {
-			const mode = (await client.request("nvim_get_mode", [])) as
-				| { readonly blocking?: boolean }
-				| undefined;
+			const mode = (await client.request("nvim_get_mode", [], {
+				timeoutMs,
+			})) as { readonly blocking?: boolean } | undefined;
 			if (mode?.blocking !== true) return;
 			await client.request("nvim_input", ["<Esc>"]);
 			await delay(this.pollMs);

@@ -25,7 +25,11 @@ import { decode, encode, MsgpackIncomplete } from "./msgpack.js";
 
 /** What a caller needs from a connection to a Neovim server. */
 export interface NeovimRpc {
-	request(method: string, params: readonly unknown[]): Promise<unknown>;
+	request(
+		method: string,
+		params: readonly unknown[],
+		options?: RequestOptions,
+	): Promise<unknown>;
 	/** Run once the connection has ended, or now if it already has. */
 	onClose(listener: () => void): void;
 	readonly closed: boolean;
@@ -46,6 +50,23 @@ export type RequestHandler = (
 	method: string,
 	params: readonly unknown[],
 ) => Promise<unknown>;
+
+export interface RequestOptions {
+	/** Instead of the connection's own (`NEOVIM_REQUEST_TIMEOUT_MS`). */
+	readonly timeoutMs?: number;
+}
+
+/**
+ * A request Neovim did not answer in time. It was sent, and the connection
+ * is open: Neovim may still run it, once it is free (done starting, a
+ * prompt answered).
+ */
+export class NeovimRequestTimeout extends Error {
+	constructor(readonly method: string) {
+		super(`Neovim did not answer ${method} in time`);
+		this.name = "NeovimRequestTimeout";
+	}
+}
 
 /** Neovim answered a request with an error (`[type, message]`). */
 export class NeovimRpcError extends Error {
@@ -130,7 +151,11 @@ export class NeovimClient implements NeovimRpc {
 		return this.ended;
 	}
 
-	request(method: string, params: readonly unknown[]): Promise<unknown> {
+	request(
+		method: string,
+		params: readonly unknown[],
+		options: RequestOptions = {},
+	): Promise<unknown> {
 		if (this.ended) {
 			return Promise.reject(
 				new Error(`the connection to Neovim is closed (${method})`),
@@ -141,8 +166,8 @@ export class NeovimClient implements NeovimRpc {
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pending.delete(id);
-				reject(new Error(`Neovim did not answer ${method} in time`));
-			}, this.timeoutMs);
+				reject(new NeovimRequestTimeout(method));
+			}, options.timeoutMs ?? this.timeoutMs);
 			this.pending.set(id, { method, resolve, reject, timer });
 			this.socket.write(encode([0, id, method, [...params]]));
 		});
