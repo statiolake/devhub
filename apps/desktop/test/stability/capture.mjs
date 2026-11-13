@@ -64,8 +64,18 @@ export async function capture(
 ) {
   const live = [];
   try {
-    for (const { client, watch } of sessions)
-      live.push(await begin(client, watch, rate, screencast));
+    // A page held off the window for its new size (`data-devhub-staged`,
+    // preload/bridge.ts) draws frames nobody sees: not a form shown.
+    for (const { client, watch } of sessions) {
+      const seen = {
+        ...watch,
+        motionMarkers: [
+          ...(watch.motionMarkers ?? []),
+          "html[data-devhub-staged]",
+        ],
+      };
+      live.push(await begin(client, seen, rate, screencast));
+    }
     // The pages at rest before the action: the recorders' first frames, and
     // the loops held.
     await sleep(250 + 50 * rate);

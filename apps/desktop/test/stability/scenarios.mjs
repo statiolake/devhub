@@ -412,7 +412,7 @@ export const SCENARIOS = [
           {
             match: /^pane: \[intermediate\] (grid|pane|footer|clip)#/,
             owner: "devhub",
-            why: "the editor is laid out at the new width before Neovim has answered the resize: at 6x one frame shows the last grid with its edge filled to the new width, then Neovim's grid at the new size",
+            why: "at 6x the pane's view is put in place by main's 200 ms cap (LAYOUT_SETTLE_TIMEOUT_MS) before the throttled page has redrawn at its new size: the old grid is seen at the new place for a frame (at 1x the view waits for Neovim's redraw and holds)",
           },
         ],
         prep: (ctx) =>
@@ -444,7 +444,7 @@ export const SCENARIOS = [
           {
             match: /^pane: \[intermediate\] (grid|pane|footer|clip)#/,
             owner: "devhub",
-            why: "the editor is laid out at the new width before Neovim has answered the resize: at 6x one frame shows the last grid at the new width, then Neovim's grid at the new size",
+            why: "at 6x the pane's view is put in place by main's 200 ms cap (LAYOUT_SETTLE_TIMEOUT_MS) before the throttled page has redrawn at its new size: the old grid is seen at the new place for a frame (at 1x the view waits for Neovim's redraw and holds)",
           },
         ],
         prep: (ctx) =>

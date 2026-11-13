@@ -158,6 +158,13 @@ const HOST_RESTART_REATTACH_MS = 250;
 const COMMIT_WAIT_MS = 100;
 
 /**
+ * How long a surface resize waits for tmux's layout at the new size and the
+ * Neovims' redraw at it, at most (`resizing`): as long as a view waits off
+ * the window for its page (`LAYOUT_SETTLE_TIMEOUT_MS`).
+ */
+const RESIZE_WAIT_MS = 200;
+
+/**
  * How long a Neovim main says is gone is kept on a pane tmux still shows:
  * its UI can end before tmux's word that its pane closed is here (`exec
  * nvim`, then `:q`: by some 20 ms), and that close moves with the Neovim's
@@ -427,6 +434,28 @@ export function ControlTerminalSurface({
         }
       | undefined;
     let commit: Shown | undefined;
+    /**
+     * The size this surface asked tmux for while Neovims are drawn in its
+     * panes: tmux's layout at that size is held, as a split's is, until
+     * they have redrawn at their new sizes, so a pane never shows a Neovim
+     * laid out at a size it has not drawn (the grid stretched to the new
+     * edge, then Neovim's). Until then the page says it is drawing
+     * (`data-devhub-drawing`): a view held off the window for its new size
+     * is put in place once that is drawn (`answerSettleLayout`).
+     */
+    let resizing:
+      | {
+          readonly cols: number;
+          readonly rows: number;
+          readonly timer: ReturnType<typeof setTimeout>;
+        }
+      | undefined;
+    const resized = () => {
+      if (resizing !== undefined) clearTimeout(resizing.timer);
+      resizing = undefined;
+      const host = hostRef.current;
+      if (host) delete host.dataset["devhubDrawing"];
+    };
     let motion:
       | {
           readonly transition: Transition<number>;
@@ -1611,6 +1640,24 @@ export function ControlTerminalSurface({
       }
       if (
         message.kind === "layout" &&
+        resizing !== undefined &&
+        message.cols === resizing.cols &&
+        message.rows === resizing.rows &&
+        view.panes.length > 0
+      ) {
+        // The surface's new size: held for the Neovims in its panes, with
+        // no motion (a surface resize is drawn at once).
+        gate = {
+          messages: [message],
+          before: shownNow(message.panes),
+          timer: setTimeout(release, COMMIT_WAIT_MS),
+        };
+        askNeovims(gate.messages);
+        if (gateOpen()) release();
+        return;
+      }
+      if (
+        message.kind === "layout" &&
         view.panes.length > 0 &&
         message.cols === view.cols &&
         message.rows === view.rows &&
@@ -1694,6 +1741,14 @@ export function ControlTerminalSurface({
       clearTimeout(held.timer);
       for (const message of held.messages) apply(message);
       commit = held.before;
+      const layout = held.messages.find((m) => m.kind === "layout");
+      if (
+        resizing !== undefined &&
+        layout?.kind === "layout" &&
+        layout.cols === resizing.cols &&
+        layout.rows === resizing.rows
+      )
+        resized();
     };
 
     const detach = async (r: TerminalReceipt) => {
@@ -2725,6 +2780,16 @@ export function ControlTerminalSurface({
       const next = measure();
       if (next.cols === size.cols && next.rows === size.rows) return;
       size = next;
+      if ((live.current.neovims?.list().length ?? 0) > 0) {
+        resized();
+        resizing = {
+          cols: next.cols,
+          rows: next.rows,
+          // tmux not answering, or answering another size: drawn as it is.
+          timer: setTimeout(resized, RESIZE_WAIT_MS),
+        };
+        host.dataset["devhubDrawing"] = "";
+      }
       send({ kind: "resize", cols: next.cols, rows: next.rows });
     };
     const observer = new ResizeObserver(refit);

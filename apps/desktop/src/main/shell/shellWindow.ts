@@ -39,6 +39,7 @@ import {
 import type { TitleBarMode } from "../../model/config.js";
 import {
 	CHANNELS,
+	LAYOUT_SETTLE_TIMEOUT_MS,
 	type TerminalNeovimKeyWire,
 	type TerminalNeovimsWire,
 	type SidebarAreaWire,
@@ -75,12 +76,8 @@ export interface TerminalNeovimHooks {
 	neovims(terminalId: string): TerminalOverlays;
 }
 
-/**
- * How long a content view waits for its page to draw at its new size before
- * it is put in its place anyway: a page that is busy, or not there, is not
- * waited on for longer than a glance (`ShellWindow.staged`).
- */
-const SETTLE_TIMEOUT_MS = 200;
+/** How long a staged view waits for its page (`LAYOUT_SETTLE_TIMEOUT_MS`). */
+const SETTLE_TIMEOUT_MS = LAYOUT_SETTLE_TIMEOUT_MS;
 
 const NO_TERMINAL_NEOVIMS: TerminalNeovimHooks = {
 	keyboardOverlay: () => undefined,

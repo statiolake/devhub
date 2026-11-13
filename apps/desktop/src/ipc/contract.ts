@@ -1043,6 +1043,14 @@ export interface WorkbenchAreaWire {
  * to clip its anchor to it: a row scrolled half out of the column has half a
  * rectangle, and a tooltip pointing at the invisible half points at nothing.
  */
+/**
+ * How long a content view waits off the window for its page to draw at its
+ * new size before main puts it in its place anyway (`ShellWindow.staged`):
+ * a page that is busy, or not there, is not waited on for longer than a
+ * glance. The page knows it too, so it knows when it is on screen again.
+ */
+export const LAYOUT_SETTLE_TIMEOUT_MS = 200;
+
 /** What `settleLayout` asks: answer `token` once drawn at this size. */
 export interface SettleLayoutWire {
 	readonly token: number;

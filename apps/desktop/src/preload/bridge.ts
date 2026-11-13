@@ -21,6 +21,7 @@
 import { ipcRenderer } from "electron";
 import {
 	CHANNELS,
+	LAYOUT_SETTLE_TIMEOUT_MS,
 	type AgentActionWire,
 	type AgentActionsBridge,
 	type AgentProfilesBridge,
@@ -104,28 +105,51 @@ export function onCurrent<T>(
  * so no page can forget it. Not a member of any bridge — nothing in a page
  * asks or answers it.
  *
- * Drawn is: the viewport has the size asked for, and two more frames have
- * begun since — the one laid out at that size has been handed to the
- * compositor by then, so the view moved into place shows it, and not the
- * picture from before. A page that never reaches the size (it was resized
- * again) says nothing, and main stops waiting by itself.
+ * Drawn is: the viewport has the size asked for, nothing on the page says
+ * it is still drawing at it (`[data-devhub-drawing]`: a terminal holding its
+ * new layout until the Neovims in its panes have redrawn at their new
+ * size), and two more frames have begun since — the one laid out at that
+ * size has been handed to the compositor by then, so the view moved into
+ * place shows it, and not the picture from before. A page that never
+ * reaches the size (it was resized again) says nothing, and main stops
+ * waiting by itself (`LAYOUT_SETTLE_TIMEOUT_MS`).
+ *
+ * While it waits off the window the page is marked `data-devhub-staged`:
+ * nothing it draws then is seen (the visual-stability suite leaves those
+ * frames out).
  */
 function answerSettleLayout(): void {
 	on<SettleLayoutWire>(CHANNELS.settleLayout, (ask) => {
 		const started = performance.now();
+		const root = document.documentElement;
+		root.dataset["devhubStaged"] = String(ask.token);
+		const unstage = () => {
+			if (root.dataset["devhubStaged"] === String(ask.token))
+				delete root.dataset["devhubStaged"];
+		};
+		// Main puts the view in its place by then, answered or not.
+		setTimeout(unstage, LAYOUT_SETTLE_TIMEOUT_MS);
+		const waiting = () =>
+			performance.now() - started < LAYOUT_SETTLE_TIMEOUT_MS;
 		const settled = (frames: number) => {
 			if (frames === 0) {
 				ipcRenderer.send(CHANNELS.layoutSettled, ask.token);
+				unstage();
 				return;
 			}
 			requestAnimationFrame(() => settled(frames - 1));
+		};
+		const drawn = () => {
+			if (document.querySelector("[data-devhub-drawing]") && waiting())
+				requestAnimationFrame(drawn);
+			else settled(2);
 		};
 		const sized = () => {
 			if (
 				window.innerWidth === ask.width &&
 				window.innerHeight === ask.height
 			) {
-				settled(2);
+				drawn();
 			} else if (performance.now() - started < 1000) {
 				requestAnimationFrame(sized);
 			}
