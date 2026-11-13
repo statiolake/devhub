@@ -588,6 +588,7 @@ import {
 } from "../editor/terminalNeovimWiring.js";
 import { neovimOpenOf } from "../editor/neovimOpen.js";
 import {
+	TERMINAL_CHANNELS,
 	terminalIdOfSurface,
 	workspaceTerminalPageId,
 } from "../../ipc/terminal.js";
@@ -7733,14 +7734,37 @@ export class AppController {
 	): Promise<void> {
 		const editors = this.neovimEditors;
 		if (!editors) throw new Error("DevHub's Neovim editor is not running yet.");
-		await editors.open(
-			this.neovimTarget(workspace.id),
-			neovimOpenOf(target, position, waitMarkerPath),
-		);
-		// Its `devhub-nvim` window is the one the terminal shows now: the keys
-		// go to the Neovim drawn over it, whoever had them.
-		this.terminalNeovims?.reclaim(workspaceTerminalPageId(workspace.id));
+		try {
+			await editors.open(
+				this.neovimTarget(workspace.id),
+				neovimOpenOf(target, position, waitMarkerPath),
+			);
+		} finally {
+			// Its `devhub-nvim` window is the one the terminal shows now: the
+			// keys go to the Neovim drawn over it, whoever had them. So too
+			// when the file could not be opened in it (Neovim still starting,
+			// or at a prompt): the window was shown, and what is drawn there
+			// is what says why.
+			const terminalId = workspaceTerminalPageId(workspace.id);
+			this.terminalNeovims?.reclaim(terminalId);
+			this.reattachTerminal(terminalId);
+		}
 		shellWindow().focusSurface();
+	}
+
+	/**
+	 * A file was opened into this terminal: a surface there that has no
+	 * client — its session ended twice in a row, an SSH connection dropped
+	 * under it, an attach refused — attaches again, as its Retry would
+	 * (`TERMINAL_CHANNELS.revived`). The Neovim the open went to is drawn by
+	 * that surface; left "not connected", the jump would show nothing.
+	 */
+	private reattachTerminal(terminalId: string): void {
+		for (const page of electron.webContents.getAllWebContents()) {
+			if (page.isDestroyed()) continue;
+			if (terminalIdOfPaneUrl(page.getURL()) !== terminalId) continue;
+			page.send(TERMINAL_CHANNELS.revived);
+		}
 	}
 
 	/**

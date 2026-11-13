@@ -81,6 +81,30 @@ Two kinds of Neovim, drawn the same way:
   itself draws nothing (the Neovim is headless). tmux keeps it across a
   DevHub restart and an SSH connection dropping, and the next DevHub adopts
   it by its socket, a digest of the Workspace id.
+
+  An open always ends with a Neovim drawn, or says why not:
+  - The window is shown first, then the file is asked of Neovim, so what
+    holds Neovim up — its config still running (a Neovim started for the
+    open is waited for up to a minute), a swap file's question — is on
+    screen. A Neovim that does not answer is said in the CLI, with that.
+  - A Neovim that ends while the open is at it (`:q` typed as `devhub
+    <file>` came, a crash, its window killed) says so by its connection
+    closing; the open starts a new one and goes there. The old one's
+    cleanup runs in the opens' queue and never unlinks the socket of the
+    Neovim started after it.
+  - The socket path is the Workspace's, so it is only a name: an overlay's
+    UI attach first checks that the Neovim on it has the overlay's pane as
+    its `$TMUX_PANE` (`PANE_CHECK_LUA`, in the attach's one request). An
+    attach for a pane that has gone is refused by the Neovim started after
+    it, instead of attaching a second, ghost UI to it.
+  - The terminal's session made twice at once (the page making its ended
+    session again, or `devhub <folder>` then `devhub <file>`, while the open
+    makes it for its window) is one session: the create that loses finds the
+    session with its identity and goes on (`ensureSyncOnSocket`).
+  - The terminal's page is told to attach again after every open
+    (`TERMINAL_CHANNELS.revived`): a surface left "not connected" (an SSH
+    drop, a session that ended twice quickly) draws the Neovim the open
+    went to, as its Retry would.
 - **A `nvim` run in a pane**, by DevHub's shim (Neovim in a terminal):
   DevHub's Neovim, with the person's config, as that pane's foreground
   program.

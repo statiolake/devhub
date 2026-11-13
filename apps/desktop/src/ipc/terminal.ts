@@ -196,7 +196,10 @@ export const TERMINAL_CHANNELS = {
 	restarted: "devhub:terminal:restarted",
 	/**
 	 * Main → every page: the terminals were restarted (`restart`). A surface
-	 * that could not attach (`pty_unavailable`) attaches again.
+	 * that could not attach (`pty_unavailable`) attaches again. Also sent to
+	 * one terminal's page when a file is opened into its Workspace: a surface
+	 * there with no client attaches again, so the Neovim the file went to is
+	 * drawn.
 	 */
 	revived: "devhub:terminal:revived",
 } as const;
