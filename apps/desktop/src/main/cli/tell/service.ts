@@ -27,6 +27,11 @@ import type {
 } from "../../../ipc/contract.js";
 import type { UsageReport } from "../../shell/usageLimits.js";
 import { usageJson, usageText } from "./usage.js";
+import { tokensJson, tokensText } from "./tokens.js";
+import type {
+	TokenQueryWire,
+	TokenReportWire,
+} from "../../../ipc/tokenUsage.js";
 import { ORCHESTRATOR_CANNOT_CLOSE } from "./windowActs.js";
 import { ISSUE_LINK_KEY, itemLinkKey } from "../../orchestrator/invariant.js";
 import {
@@ -544,6 +549,11 @@ export interface TellPorts {
 	 * last seen (`usageLimits.ts`). Reads nothing from a CLI.
 	 */
 	usage(): UsageReport;
+	/**
+	 * Who used how many tokens (`main/tokenUsage/`), after a reading of the
+	 * transcripts — SSH hosts' included, read now.
+	 */
+	tokens?(query: TokenQueryWire): Promise<TokenReportWire>;
 	/** An Agent's own terminal, read live. */
 	agentTerminal(agentId: string): Promise<TellTerminal>;
 	/**
@@ -1302,6 +1312,8 @@ export class TellService {
 					data: usageJson(report, now),
 				};
 			}
+			case "usage-tokens":
+				return this.tokens(command);
 			case "board":
 				return this.board();
 			case "status":
@@ -1529,6 +1541,30 @@ export class TellService {
 		);
 		if (bound.length === 1) return bound[0]!.agentId;
 		return this.agent(name).id;
+	}
+
+	/** `usage --by …`: the token report, as a table or the whole of it. */
+	private async tokens(
+		command: Extract<TellCommand, { verb: "usage-tokens" }>,
+	): Promise<TellAnswer> {
+		if (this.ports.tokens === undefined)
+			throw new Error("this DevHub does not read token usage.");
+		const now = this.clock.now();
+		const { since } = command;
+		const query: TokenQueryWire =
+			"range" in since
+				? { range: since.range, by: command.by }
+				: {
+						range: "custom",
+						by: command.by,
+						from: "agoMs" in since ? now - since.agoMs : since.at,
+						...(command.until === undefined ? {} : { to: command.until }),
+					};
+		const report = await this.ports.tokens(query);
+		return {
+			message: tokensText(report, command.cache, now),
+			data: tokensJson(report, command.cache),
+		};
 	}
 
 	private board(): TellAnswer {

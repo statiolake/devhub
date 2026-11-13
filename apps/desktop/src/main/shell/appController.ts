@@ -8991,6 +8991,8 @@ export class AppController {
 					),
 			sessionAgent: (session) => this.agentRunningSession(session),
 			usage: () => this.usageLimits.report(),
+			tokens: (query) =>
+				this.tokenReport(query, { remote: "now", deadlineMs: 20_000 }),
 			notify: (text) => {
 				const { Notification } = electron;
 				if (!Notification.isSupported())

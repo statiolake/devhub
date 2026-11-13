@@ -24,6 +24,12 @@ import {
 	parseMetaPair,
 } from "../../../model/agentMeta.js";
 import { modelProblem } from "../../../model/agentModel.js";
+import {
+	TOKEN_GROUPINGS,
+	type TokenGrouping,
+	type TokenView,
+} from "../../../ipc/tokenUsage.js";
+import { parseSince, parseUntil, type TokenSince } from "./tokens.js";
 
 export type AgentWaitUntil = "idle" | "waiting" | "any";
 
@@ -331,6 +337,18 @@ export type TellCommand =
 	 * own. `--json` after the verb, as well as before it.
 	 */
 	| { readonly verb: "usage"; readonly json?: true }
+	/**
+	 * Who used how many tokens (`tokens.ts`): `usage` with `--by`, `--since`,
+	 * `--until`, `--cache` or `--tokens`.
+	 */
+	| {
+			readonly verb: "usage-tokens";
+			readonly by: TokenGrouping;
+			readonly since: TokenSince;
+			readonly until?: number;
+			readonly cache: TokenView;
+			readonly json?: true;
+	  }
 	| { readonly verb: "run"; readonly command: string }
 	| { readonly verb: "focus"; readonly target: string }
 	/**
@@ -800,6 +818,19 @@ app
                                    them itself: the latest known, with its
                                    age (--json: a stable schema, nulls for
                                    what is not known)
+  usage --by agent|task|workspace|role|model [--since <when>]
+        [--until <when>] [--cache raw|weighted]
+                                   who used how many tokens, from the
+                                   agents' transcripts (subagents within
+                                   their agent; every request once): input,
+                                   cache read, cache write, output, total
+                                   (raw), or input weighted by price, hit
+                                   rate and the cost estimated at API list
+                                   price, which a plan is not billed
+                                   (weighted). --since: window (Claude's
+                                   5-hour window, the default), today, week
+                                   (its weekly window), 7d, 90m/12h/3d, or a
+                                   date[Thh:mm]. --json: the whole report
   commands                         list the command palette's commands
   run <command-id>                 run one of them, exactly as the palette
                                    does - only those that move nothing in
@@ -1387,13 +1418,48 @@ function parseVerb(args: readonly string[]): TellCommand {
 		}
 		case "usage": {
 			const flags = readFlags(args.slice(1), {
-				values: [],
-				switches: ["--json"],
+				values: ["--by", "--since", "--until", "--cache"],
+				switches: ["--json", "--tokens"],
 			});
 			positionals(flags, []);
-			return flags.switches.has("--json")
-				? { verb: "usage", json: true }
-				: { verb: "usage" };
+			const json = flags.switches.has("--json") ? { json: true as const } : {};
+			if (flags.values.size === 0 && !flags.switches.has("--tokens"))
+				return { verb: "usage", ...json };
+			const by = one(flags, "--by") ?? "agent";
+			if (!(TOKEN_GROUPINGS as readonly string[]).includes(by))
+				throw new Refusal(
+					`--by takes ${TOKEN_GROUPINGS.join(", ")}; not ${by}.`,
+				);
+			const cache = one(flags, "--cache") ?? "raw";
+			if (cache !== "raw" && cache !== "weighted")
+				throw new Refusal(`--cache takes raw or weighted; not ${cache}.`);
+			const sinceText = one(flags, "--since");
+			const since =
+				sinceText === undefined
+					? { range: "window5h" as const }
+					: parseSince(sinceText);
+			if (since === undefined)
+				throw new Refusal(
+					`--since takes window, today, week, 7d, a duration (90m, 12h, 3d) or a date (2026-11-12, 2026-11-12T09:00); not ${sinceText ?? ""}.`,
+				);
+			const untilText = one(flags, "--until");
+			const until = untilText === undefined ? undefined : parseUntil(untilText);
+			if (untilText !== undefined && until === undefined)
+				throw new Refusal(
+					`--until takes a date and time (2026-11-12T18:00); not ${untilText}.`,
+				);
+			if (until !== undefined && "range" in since)
+				throw new Refusal(
+					"--until goes with a --since that is a duration or a date.",
+				);
+			return {
+				verb: "usage-tokens",
+				by: by as TokenGrouping,
+				since,
+				...(until === undefined ? {} : { until }),
+				cache,
+				...json,
+			};
 		}
 		case "escalation":
 			return parseEscalation(sub, rest);

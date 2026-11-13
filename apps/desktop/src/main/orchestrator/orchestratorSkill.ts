@@ -484,6 +484,8 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     devhub --tell notify "A が権限確認で止まっています"
     devhub --tell usage
     devhub --tell --json usage
+    devhub --tell usage --by task                     # 今の 5 時間枠で、どのタスクがトークンをどれだけ使ったか
+    devhub --tell usage --by agent --since today --cache weighted
 
 \`orchestrator timer set / clear\` はこのセッションだけ有効 (既定は
 \`[[orchestrator.timers]]\`)。\`emit\` は既定のフィルタと畳み込みをそのまま通る。

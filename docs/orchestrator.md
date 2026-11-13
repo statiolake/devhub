@@ -1740,6 +1740,8 @@ devhub --tell orchestrator events [--last N] [--json]   # recent events and what
 devhub --tell orchestrator emit --type custom.NAME --text TEXT|-
 devhub --tell orchestrator timer list | set NAME INTERVAL | clear NAME   # for this session; list also shows --check-at expired while off
 devhub --tell usage [--json]                        # each CLI's plan windows (%, reset), as the Sidebar has them, with their age
+devhub --tell usage --by agent|task|workspace|role|model [--since window|today|week|7d|12h|DATE] [--cache raw|weighted] [--json]
+                                                    # who used how many tokens (the Task Manager's Tokens tab, docs/task-manager.md)
 devhub --tell focus orchestrator                    # the only one that changes the screen
 ```
 

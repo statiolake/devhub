@@ -461,6 +461,7 @@ workspace's editor terminals can be brought — never an agent's pane.
     devhub --tell focus A             # select an agent (or a workspace W) in DevHub
     devhub --tell notify "Agent X finished the migration"
     devhub --tell usage               # each CLI's plan limits (5-hour, 7-day %, resets), as the Sidebar shows them
+    devhub --tell usage --by agent    # who used how many tokens in the current 5-hour window (--since today|week|7d|12h, --cache weighted)
 
 If a command fails, its message says why; fix the arguments rather than
 retrying the same thing.

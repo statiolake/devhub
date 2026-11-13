@@ -251,6 +251,7 @@ devhub --tell agent resume SESSION [--workspace W | --folder PATH] [--profile P]
 devhub --tell commands | run <command-id>             # the command palette
 devhub --tell focus A|W | notify TEXT
 devhub --tell usage [--json]                          # each CLI's plan limits as the Sidebar shows them: per window % and reset, or no plan limits; last read and why not since (never reads itself)
+devhub --tell usage --by agent|task|workspace|role|model [--since window|today|week|7d|12h|DATE] [--until DATE] [--cache raw|weighted] [--json]   # who used how many tokens, from the transcripts: raw, or weighted by list price with the hit rate and an estimated cost
 devhub --tell orchestrator events [--last N] [--json]  # the orchestrator's recent events, one line each: delivered, pending, filtered, coalesced, dropped-stale
 devhub --tell orchestrator emit --type custom.NAME --text TEXT|-   # a custom event, through the same filter and coalescing
 devhub --tell orchestrator timer list | set NAME INTERVAL | clear NAME   # its timers (timer.elapsed), changed for this session

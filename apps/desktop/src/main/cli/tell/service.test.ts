@@ -41,6 +41,11 @@ import {
 } from "./service.js";
 import { TaskStore } from "../../orchestrator/taskStore.js";
 import type { UsageReport } from "../../shell/usageLimits.js";
+import type {
+	TokenQueryWire,
+	TokenReportWire,
+} from "../../../ipc/tokenUsage.js";
+import { fixtureReport } from "./tokensTestKit.js";
 import {
 	OrchestratorService,
 	escalationWire,
@@ -544,6 +549,13 @@ class FakePorts implements TellPorts {
 	usage(): UsageReport {
 		this.calls.push("usage");
 		return this.usageReport;
+	}
+	/** What `usage --by` asked for, and answers with. */
+	tokenQueries: TokenQueryWire[] = [];
+	tokenReport: TokenReportWire = fixtureReport();
+	tokens(query: TokenQueryWire): Promise<TokenReportWire> {
+		this.tokenQueries.push(query);
+		return Promise.resolve(this.tokenReport);
 	}
 	/** Each Agent's terminal session, by Agent id, with its tmux panes. */
 	terminals = new Map<string, TellTerminalPane[]>();
@@ -5411,6 +5423,28 @@ describe("devhub --tell usage", () => {
 				{ cli: "codex", plan: "no_plan_limits", windows: [], problem: null },
 			],
 		});
+	});
+});
+
+describe("devhub --tell usage --by", () => {
+	it("asks for the range it names, and answers the table and the report", async () => {
+		const { ports, service, advance } = setup();
+		advance(10 * 3_600_000);
+		const answer = await viaSocket(
+			service,
+			["usage", "--by", "model", "--since", "3h", "--cache", "weighted"],
+			coordinator,
+		);
+		expect(ports.tokenQueries).toEqual([
+			{ range: "custom", by: "model", from: 7 * 3_600_000 },
+		]);
+		expect(answer.message).toMatch(/est\. cost/u);
+		expect(answer.data).toMatchObject({ schema: 1, cache: "weighted" });
+		await viaSocket(service, ["usage", "--by", "task"], coordinator);
+		expect(ports.tokenQueries[1]).toEqual({ range: "window5h", by: "task" });
+		// The limits are still what `usage` alone says.
+		await viaSocket(service, ["usage"], coordinator);
+		expect(ports.tokenQueries).toHaveLength(2);
 	});
 });
 
