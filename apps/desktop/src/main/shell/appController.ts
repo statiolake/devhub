@@ -631,6 +631,13 @@ import {
 } from "./taskManagerWindow.js";
 import { takeTaskReading } from "./taskManagerReading.js";
 import {
+	startTokenUsage,
+	type TokenUsage,
+} from "../tokenUsage/tokenUsageWiring.js";
+import type { TokenReportContext } from "../tokenUsage/tokenUsageService.js";
+import type { SessionOwner } from "../../model/tokenReport.js";
+import type { TokenQueryWire, TokenReportWire } from "../../ipc/tokenUsage.js";
+import {
 	modelKindProblem,
 	modelOf,
 	withModel,
@@ -853,6 +860,8 @@ export class AppController {
 		TerminalLauncherStatus
 	>();
 	private agentWiring: AgentWiring | undefined;
+	/** Who used how many tokens (`main/tokenUsage/`); from `startRuntimes`. */
+	private tokenUsage: TokenUsage | undefined;
 	/**
 	 * Where the GUI Agents' conversations run (`agentEngine/`): a utility
 	 * process. `DEVHUB_CONVERSATIONS_IN_MAIN=1` runs them in main instead.
@@ -1338,6 +1347,7 @@ export class AppController {
 		const skill = this.writeAgentSkill(userDataPath);
 		const orchestratorSkill = this.writeOrchestratorSkill(userDataPath);
 		this.startOrchestratorService(userDataPath);
+		this.tokenUsage = this.startTokenUsage(userDataPath);
 		const engine =
 			process.env["DEVHUB_CONVERSATIONS_IN_MAIN"] === "1"
 				? undefined
@@ -4183,6 +4193,7 @@ export class AppController {
 		this.repositoryStatus.stop();
 		this.githubItems.stop();
 		this.usageReaders?.stop();
+		await this.tokenUsage?.save().catch(() => undefined);
 		// Quitting detaches clients and leaves every session — an Agent's as
 		// much as a terminal's. That is the point of putting them on the same
 		// runtime: coming back finds the same work still running.
@@ -4261,6 +4272,157 @@ export class AppController {
 	stopAgentFromTaskManager(agentId: string): void {
 		this.bringToFront();
 		this.requestCloseAgent(agentId);
+	}
+
+	/**
+	 * Who used how many tokens (`main/tokenUsage/`): the Task Manager's
+	 * Tokens tab, and `devhub --tell usage --by …`.
+	 */
+	tokenReport(
+		query: TokenQueryWire,
+		options?: { readonly remote?: "due" | "now"; readonly deadlineMs?: number },
+	): Promise<TokenReportWire> {
+		const usage = this.tokenUsage;
+		if (usage === undefined)
+			return Promise.reject(
+				new Error("token usage is read once DevHub has started"),
+			);
+		return usage.report(query, options);
+	}
+
+	private startTokenUsage(userDataPath: string): TokenUsage {
+		const labels = () => this.workspaceLabels();
+		const roleOf = (agentId: string, managed: boolean): SessionOwner["role"] =>
+			agentId === this.orchestrator?.orchestratorAgentId
+				? "orchestrator"
+				: managed
+					? "worker"
+					: "unmanaged";
+		return startTokenUsage({
+			userDataPath,
+			profiles: () => this.config.agentProfiles,
+			machines: () => {
+				const machines = new Map<string, Runtime>([
+					[
+						"local",
+						runtimeFor(workspaceLocation({ kind: "local", path: homedir() })),
+					],
+				]);
+				for (const workspace of this.coordinator.model.workspaces) {
+					const id = runtimeIdFor(workspace.location);
+					if (machines.has(id)) continue;
+					try {
+						machines.set(id, runtimeFor(workspace.location));
+					} catch {
+						// Its runtime is not up yet: read at a later reading.
+					}
+				}
+				return [...machines].map(([id, runtime]) => ({ id, runtime }));
+			},
+			agents: () => {
+				const named = labels();
+				return this.coordinator.model.workspaces.flatMap((workspace) =>
+					workspace.agents.flatMap((agent) => {
+						const cli = agent.profile.kind;
+						if (cli !== "claude" && cli !== "codex") return [];
+						return [
+							{
+								id: agent.id,
+								cli,
+								owner: {
+									agentId: agent.id,
+									name: agent.displayName,
+									profile: agent.profile.displayName,
+									machine: runtimeIdFor(workspace.location),
+									workspaceId: workspace.id,
+									workspaceLabel:
+										named.get(workspace.id) ?? basename(workspace.root),
+									role: roleOf(agent.id, agent.managed),
+								} satisfies SessionOwner,
+							},
+						];
+					}),
+				);
+			},
+			sessionOf: (agentId) => this.sessionAtClose(parseAgentId(agentId)),
+			context: () => this.tokenReportContext(),
+		});
+	}
+
+	/** Each Workspace's name, as the Sidebar says it. */
+	private workspaceLabels(): ReadonlyMap<string, string> {
+		return new Map(
+			this.snapshot().workspaces.map(
+				(workspace) => [workspace.id, workspace.label] as const,
+			),
+		);
+	}
+
+	/** What a token report needs of the app besides the index. */
+	private tokenReportContext(): TokenReportContext {
+		const tasks = this.orchestrator?.tasks() ?? [];
+		const orchestratorId = this.orchestrator?.orchestratorAgentId;
+		const named = this.workspaceLabels();
+		const claude = this.usageLimits
+			.report()
+			.clis.find((one) => one.cli === "claude");
+		const resetOf = (minutes: number, name: string) =>
+			claude?.windows?.find(
+				(window) =>
+					window.durationMinutes === minutes || window.window === name,
+			)?.resetsAt;
+		const fiveHour = resetOf(300, "5-hour");
+		const week = resetOf(7 * 24 * 60, "7-day");
+		return {
+			tasks: tasks.map((task) => ({
+				id: task.id,
+				title: task.title,
+				...(task.done === undefined ? {} : { done: true }),
+				agents: task.agents.map((entry) => ({
+					agentId: entry.agentId,
+					sessions: entry.sessions,
+					boundAt: entry.boundAt,
+					...(entry.stoppedAt === undefined
+						? {}
+						: { stoppedAt: entry.stoppedAt }),
+				})),
+			})),
+			workspaces: this.coordinator.model.workspaces.map((workspace) => ({
+				id: workspace.id,
+				label: named.get(workspace.id) ?? basename(workspace.root),
+				machine: runtimeIdFor(workspace.location),
+				root: workspace.root,
+			})),
+			windows: {
+				...(fiveHour === undefined ? {} : { fiveHourResetsAt: fiveHour }),
+				...(week === undefined ? {} : { weekResetsAt: week }),
+			},
+			// A session no Agent was seen running: a task's binding recorded
+			// it, or DevHub wrote its Agent's metadata down.
+			ownerOf: (machine, cli, session) => {
+				for (const task of tasks)
+					for (const entry of task.agents)
+						if (
+							entry.sessions.includes(session) &&
+							(entry.machine ?? "local") === machine
+						)
+							return {
+								agentId: entry.agentId,
+								name: entry.name,
+								machine,
+								role:
+									entry.agentId === orchestratorId ? "orchestrator" : "worker",
+							};
+				if (cli !== "claude" && cli !== "codex") return undefined;
+				const record = this.sessionMeta.index.of(cli, session);
+				if (record?.name === undefined) return undefined;
+				return {
+					name: record.name,
+					machine,
+					role: record.managed === true ? "worker" : "unmanaged",
+				};
+			},
+		};
 	}
 
 	/** The Task Manager's Reveal: select it, and bring the window forward. */
