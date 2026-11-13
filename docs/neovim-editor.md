@@ -786,8 +786,12 @@ when it does not — and after 600 ms with no answer the guess is taken back.
   the band before Neovim's answer and Neovim's after it are one picture.
   Under the same rules as the caret, and not across a full row whose next
   row has no line number (it may wrap).
-- **A list's row** (a view, a framed list) is focused at once when
-  pressed, and lit faintly under the pointer.
+- **A list's row** (a view, a framed list, a popup list's clickable row:
+  blink-ui's menu) is focused at once when pressed, and lit faintly under
+  the pointer. A popup node's `on_click(line, clicks)` is told a double
+  click's second press. A view draws only the rows in sight and a screen
+  either side (`viewWindow.ts`), so a long tree costs no hit test or
+  render per row.
 - **A window border** (and a tmux pane boundary) is lit under the pointer
   and, dragged, its band follows the pointer at once.
 - **Moves go one a frame** (`PerFrame`): a drag's cells and a boundary's
@@ -805,11 +809,12 @@ row beyond the window to show until Neovim draws it), a band that shrinks
 (Neovim's wider one stays until it answers), a double or triple click's
 word or line, the statusline and the
 current window's look after a focus click, and anything a plugin does on a
-click. `test/pointer/latency.mjs` measures each case in the real app
-under Xvfb, at a CPU throttle (`--throttle`) and over a slow link
-(`--delay`: the Neovim host reaches every Neovim through a socket that
-holds each chunk, `DEVHUB_NEOVIM_DELAY_MS`), and fails when what should be
-at once is not.
+click. The visual-stability suite's `pointer` scenario
+(`test/stability/pointer.mjs`, `docs/visual-stability.md`) times each case
+in the real app under Xvfb, at each CPU rate, and over a slow link with
+`DEVHUB_NEOVIM_DELAY_MS` (the Neovim host reaches every Neovim through a
+socket that holds each chunk), and fails when what should be at once is
+not.
 
 ### Floating surfaces
 

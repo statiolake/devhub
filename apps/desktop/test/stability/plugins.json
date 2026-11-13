@@ -29,7 +29,7 @@
     {
       "name": "blink-ui.devhub",
       "url": "https://github.com/statiolake/blink-ui.devhub",
-      "commit": "6df04529933bcd423b3412bc44acdad59ba4681b"
+      "commit": "8a3391c1c244e4e6d01611597e279d210b694561"
     },
     {
       "name": "nvim-tree.lua",

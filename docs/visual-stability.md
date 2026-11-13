@@ -133,8 +133,14 @@ two shots to see the frame that should not have been:
 | `orchestrator` | the Orchestrator's board coming up, and back (the board only: its tabs are being replaced) |
 | `conversation` | a message sent, a streamed answer received |
 | `theme` | dark to light and back (the editor and the Sidebar recorded) |
+| `pointer` | not recorded but timed (`pointer.mjs`): the pointer's answers, from the input event to the first frame that shows them — a click's caret, a click into another window, a tree row's focus and hover, a window border and a pane boundary dragged, a terminal selection and Visual's band dragged, a completion row clicked, the pointer's shapes; each within two frames of the rate (34 ms at 1x), Neovim's wheel from rest reported (`docs/neovim-editor.md`, "The pointer") |
 
 ## Where it runs
+
+`DEVHUB_NEOVIM_DELAY_MS=150 apps/desktop/test/stability/run.sh --only pointer`
+holds the pointer's answers over a slow link: the Neovim host reaches
+Neovim through a socket that holds each chunk half that long each way
+(`delayProxy.ts`), and what is at once must still be.
 
 `scripts/test-local.sh stability` (it builds first) and the nightly's
 `Test: visual stability (Linux)` (`docs/ci.md`). Not per push: it records

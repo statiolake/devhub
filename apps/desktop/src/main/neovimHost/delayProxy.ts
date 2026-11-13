@@ -4,7 +4,7 @@
  * pointer"): with `DEVHUB_NEOVIM_DELAY_MS` set, the host reaches every Neovim
  * through a local socket that holds each chunk half that long each way, so a
  * round trip costs what an SSH link of that latency would. Never set in a
- * normal run; `scripts/mouse-latency.mjs` sets it.
+ * normal run; the stability suite's `pointer` scenario is run with it.
  */
 
 import { connect, createServer, type Socket } from "node:net";

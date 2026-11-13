@@ -92,7 +92,7 @@ const neovim = {
 };
 
 /** The editor at rest: one window on core0.ts, Normal mode, nothing open over it. */
-async function editorAtRest(ctx) {
+export async function editorAtRest(ctx) {
   await ctx.focus("pane");
   ctx.nvimSend("<C-\\><C-n><Esc>");
   ctx.nvimExpr(

@@ -27,7 +27,8 @@ import { check } from "./invariants.mjs";
 import { press as pressKey, type as typeText } from "./keys.mjs";
 import { checkRegions } from "./pixels.mjs";
 import { appDir, makeProfile, writeSettings } from "./profile.mjs";
-import { SCENARIOS } from "./scenarios.mjs";
+import { runPointer } from "./pointer.mjs";
+import { SCENARIOS, editorAtRest } from "./scenarios.mjs";
 
 // Pages by name. `pane` is the terminal page of the Workspace on screen (each
 // Workspace has its own; the others are hidden).
@@ -127,6 +128,25 @@ async function main() {
         console.log(
           `     ${scenario.name} at ${rate}x: ${((Date.now() - scenarioStarted) / 1000).toFixed(1)} s`,
         );
+      }
+    }
+    // The pointer's answers, timed (`pointer.mjs`): a scenario of its own.
+    if (!args.only || args.only.includes("pointer")) {
+      for (const rate of args.rates) {
+        await editorAtRest(ctx);
+        for (const result of await runPointer(ctx, rate)) {
+          results.push(result);
+          const mark = !result.ok
+            ? "FAIL"
+            : result.known?.length
+              ? "KNOWN"
+              : "ok  ";
+          console.log(
+            `${mark} pointer/${result.step} at ${String(rate)}x  (answer ${result.answer === null ? "none" : `${String(result.answer)} ms`})`,
+          );
+          for (const problem of [...result.problems, ...(result.known ?? [])])
+            console.log(`     ${problem}`);
+        }
       }
     }
   } finally {
