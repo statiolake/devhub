@@ -4,6 +4,7 @@ import {
   fieldRuns,
   frameParts,
   frameRowHeight,
+  framePage,
   frameRows,
   wheelRows,
 } from "./FramedView";
@@ -13,6 +14,24 @@ describe("framed view rows", () => {
     expect(frameRowHeight(18)).toBe(24);
     expect(frameRows(17 * 18 - 8, 24)).toBe(12);
     expect(frameRows(10, 24)).toBe(1);
+  });
+
+  it("draw the page that fits from the first frame, before the plugin's page has that size", () => {
+    // Seen in the stability suite (picker/open): snacks' first page is its
+    // window's height in cells, 42 items where 30 rows fit; drawn whole, a
+    // half row showed at the foot until the plugin's page of 30 came.
+    const items = Array.from({ length: 42 }, (_, i) => ({ line: i + 1 }));
+    expect(framePage(items, 30, 1).map((i) => i.line)).toEqual(
+      items.slice(0, 30).map((i) => i.line),
+    );
+    // The cursor stays in sight: the page ends at it when it is further down.
+    expect(framePage(items, 30, 40).map((i) => i.line)).toEqual(
+      items.slice(10, 40).map((i) => i.line),
+    );
+    // At rest the plugin sends what fits, and every item is drawn.
+    expect(framePage(items.slice(0, 30), 30, 1)).toHaveLength(30);
+    // Not measured yet: everything.
+    expect(framePage(items, 0, 1)).toHaveLength(42);
   });
 
   it("scroll at least a row per wheel notch, either way", () => {

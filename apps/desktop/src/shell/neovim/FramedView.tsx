@@ -46,6 +46,25 @@ export function frameRows(listHeight: number, rowHeight: number): number {
   return Math.max(1, Math.floor(listHeight / rowHeight));
 }
 
+/**
+ * The items a list of `fit` rows draws: all of them once the plugin has its
+ * page at that size (it renders `fit` items after `_view_rows`), and until
+ * then the page it will send — `fit` items from the top, or ending at the
+ * cursor's when that is further down. A picker opens with its window's
+ * height in cells as its page, more rows than fit; drawn whole, the first
+ * frame showed a half row at the foot that the plugin's next page took away.
+ */
+export function framePage<T extends { readonly line: number }>(
+  items: readonly T[],
+  fit: number,
+  cursor: number | undefined,
+): readonly T[] {
+  if (fit < 1 || items.length <= fit) return items;
+  const at = items.findIndex((item) => item.line === cursor);
+  const start = at >= fit ? at - fit + 1 : 0;
+  return items.slice(start, start + fit);
+}
+
 /** The wheel's pixels as rows to scroll, at least one per notch. */
 export function wheelRows(deltaY: number, rowHeight: number): number {
   if (deltaY === 0) return 0;
@@ -529,6 +548,10 @@ function FrameList({
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const reported = useRef(0);
+  // How many rows fit, as measured: what is drawn (`framePage`) from the
+  // first frame, before the plugin's page has that size. Set in a layout
+  // effect, so the render it causes is in the same frame.
+  const [fit, setFit] = useState(0);
   const rowHeight = frameRowHeight(host.cell.height);
   // A row pressed is selected at once, before Neovim's cursor gets there
   // (`provisional.ts`), as long as Neovim's is still where it was.
@@ -553,6 +576,9 @@ function FrameList({
     pressed !== undefined && pressed.base === actual ? pressed.line : actual;
 
   // How many rows fit, told once per change; and the selected row in sight.
+  // After every render, as the list's size and its rows may have changed;
+  // `setFit` only when the measure changed, so it settles at once.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
@@ -562,6 +588,7 @@ function FrameList({
       (parseFloat(pad.paddingTop) || 0) -
       (parseFloat(pad.paddingBottom) || 0);
     const rows = frameRows(inner, rowHeight);
+    if (rows !== fit) setFit(rows);
     if (rows !== reported.current) {
       reported.current = rows;
       host.lua("_view_rows", [view.id, rows]);
@@ -593,7 +620,7 @@ function FrameList({
         if (rows !== 0) host.lua("_view_scroll", [view.id, rows]);
       }}
     >
-      {view.items.map((item) =>
+      {framePage(view.items, fit, cursor).map((item) =>
         // A blank line the view draws nothing for is no row (a page the
         // plugin did not fill).
         item.node === undefined && item.text === "" ? null : (
