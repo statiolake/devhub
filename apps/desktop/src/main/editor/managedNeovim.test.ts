@@ -557,6 +557,32 @@ describe("a jump that meets the Neovim's end", () => {
 		expect(w.shown.at(-1)).toBe(`%2 ${SOCKET}`);
 	});
 
+	it("looks again when the one it then finds on the socket is on its way out too", async () => {
+		const w = world();
+		const neovims = w.make();
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		// Its connection closes at the jump, while the exiting Neovim still
+		// listens: the jump adopts it from its socket, and it goes then.
+		const exiting = new FakeServer("%1");
+		exiting.before = (method) => {
+			if (method !== "nvim_get_mode") return undefined;
+			w.panes.delete("%1");
+			w.listening.delete(SOCKET);
+			w.files.delete(SOCKET);
+			return "exit";
+		};
+		w.server()!.before = () => {
+			w.listening.set(SOCKET, exiting);
+			return "exit";
+		};
+		const result = await neovims.open(WORKSPACE, { path: "/src/widget/b.ts" });
+		expect(result).toEqual({ started: true });
+		expect(neovims.paneOf(WORKSPACE.workspaceId)).toBe("%2");
+		expect(w.server()?.opens()).toEqual([
+			["/src/widget/b.ts", null, null, null],
+		]);
+	});
+
 	it("says so, and starts no third, when the new one ends at once too", async () => {
 		const w = world();
 		const neovims = w.make();
@@ -574,7 +600,7 @@ describe("a jump that meets the Neovim's end", () => {
 		};
 		await expect(
 			neovims.open(WORKSPACE, { path: "/src/widget/b.ts" }),
-		).rejects.toThrow(/closed/);
+		).rejects.toThrow(/exited as soon as it had started/);
 		expect(w.log.filter((line) => line.startsWith("open"))).toHaveLength(2);
 	});
 

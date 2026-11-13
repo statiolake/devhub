@@ -247,6 +247,9 @@ end
 
 const PANE_LUA = "return vim.env.TMUX_PANE";
 
+/** How many Neovims a jump finds ending under it before it says so. */
+const MAX_ENDED_PER_JUMP = 3;
+
 /**
  * What the keeper pane runs: DevHub's Neovim (`Runtime.neovimProgram`),
  * headless on the socket, with the person's own config. `DEVHUB_NEOVIM_GUI=1` is there from the first line of
@@ -440,16 +443,25 @@ export class ManagedNeovims {
 		file: NeovimOpen,
 	): Promise<{ readonly started: boolean }> {
 		return this.serially(target.workspaceId, async () => {
-			for (let again = false; ; again = true) {
+			for (let ended = 0; ; ended += 1) {
 				const { record, started } = await this.server(target);
 				try {
 					await this.openIn(target, record, file, started);
 					return { started };
 				} catch (error) {
-					// Only its end, and only once: a Neovim that ends as soon
-					// as it is started is said, not started for ever.
-					if (again || (await this.isAlive(target, record).catch(() => true)))
-						throw error;
+					// Only its end. A Neovim started for this jump that ends
+					// is said, not started for ever; one found running may be
+					// on its way out (`:q` typed as the jump came: adopted
+					// from its socket while it still listens), and the next
+					// one is looked for — a few times at most.
+					const alive = await this.isAlive(target, record).catch(() => true);
+					if (started && !alive) {
+						throw new Error(
+							"Neovim exited as soon as it had started. Run DevHub's nvim in a terminal to see why — a configuration error is the usual reason.",
+							{ cause: error },
+						);
+					}
+					if (started || ended >= MAX_ENDED_PER_JUMP || alive) throw error;
 					// It ended under the jump: its close is handled as any is
 					// (`connectionClosed`), and the jump starts again.
 					record.client.close();
