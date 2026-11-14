@@ -830,6 +830,58 @@ in the real app under Xvfb, at each CPU rate, and over a slow link with
 socket that holds each chunk), and fails when what should be at once is
 not.
 
+### Go to definition with the pointer
+
+VS Code's Cmd-hover and Cmd-click, with Option (Alt) by default:
+`[editor] definition_modifier = "alt" | "cmd" | "ctrl" | "off"` (Settings,
+Terminal, Editor: "Go to definition").
+
+- **Held over a symbol that has a definition**, it is drawn as a link:
+  underlined, in the theme's link colour (`@markup.link`'s ink, else
+  `Underlined`'s, asked with the other theme colours, `chrome.ts`), and the
+  pointer is a hand. The link is the page's own drawing over exactly the
+  symbol's cells — the same highlight overrides as Visual's band in a drag,
+  given back before each redraw is taken in and drawn again after it while
+  its cells still show what they did — so it costs the buffer nothing and is
+  gone in the frame the modifier goes up, the pointer leaves the symbol, the
+  wheel turns or a redraw rewrites its cells (`definitionLink.ts`,
+  `NeovimEditor.drawLink`).
+- **Whether it has one is Neovim's**: while the modifier is held, and only
+  then, the page asks devhub.nvim's `devhub.definition` about the window cell
+  under the pointer, one ask a frame at most (`PerFrame`), and not again over
+  the same word. Lua maps the cell to the buffer with `screenpos()` (wrap,
+  closed folds, inline virtual text and horizontal scrolling as Neovim lays
+  them out; a concealed character is checked against what the screen shows),
+  takes the `iskeyword` word there and sends `textDocument/definition` to
+  every client of the buffer that has it (`vim.lsp.buf_request_all`). One
+  request at a time: the next word, or the modifier going up, cancels the one
+  in flight. Answers are kept by `changedtick` and word, so going back and
+  forth over a line asks each word once. A cached answer comes back with the
+  ask; a new one comes as the GUI event `definition_link`. Over SSH that is a
+  round trip, only while the modifier is held.
+- **A click with the modifier on the link** — or on a symbol whose answer is
+  still coming — is the jump, and not a click: the press never reaches
+  Neovim, so no cursor move or Visual drag comes first. Lua puts the cursor on
+  the symbol and runs `vim.lsp.buf.definition()`, so the jump is the one typed
+  there: the jumplist (`<C-o>` comes back to the symbol), the tag stack, the
+  quickfix list for several results, another file in the same window. A
+  symbol whose answer then says "none" is left alone.
+- **Everywhere else the click is Neovim's**, unchanged: no LSP client with
+  definitions, not a word, a word known to have no definition, Visual or
+  Operator-pending mode, the command line, grid 1, a GUI's element. With Alt
+  that is Neovim's own `<A-LeftMouse>` (a blockwise Visual start under the
+  default `mousemodel`), and any mapping of it.
+- Nothing is mouse-only: `<C-]>` (with the LSP's `tagfunc`) and your own
+  mappings of `vim.lsp.buf.definition()` stay as they are.
+- Without devhub.nvim (or with `vim.g.devhub_definition_links = false`) there
+  is no module to ask, and every click is Neovim's.
+
+The `pointer` scenario of the visual-stability suite times it against a fake
+server (`fixture/fake-lsp.mjs`): the link after Alt goes down and after a
+move with Alt held (reported), the hand over it, the link gone in the frame
+Alt goes up, and an Alt-click that lands on the definition in Normal mode
+with `<C-o>` back.
+
 ### Floating surfaces
 
 A float someone else opens (the snacks picker, blink's menu, which-key,

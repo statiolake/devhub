@@ -1745,6 +1745,33 @@ export function TerminalSection({
           />
         </Row>
       </Group>
+
+      <Group
+        heading="Editor"
+        note="The Neovim editor DevHub draws over a Workspace's terminal."
+      >
+        <Row
+          label="Go to definition"
+          help="Held over a symbol that has a definition (an LSP client of the buffer has one), the key draws it as a link; a click with it goes to the definition, as vim.lsp.buf.definition() does. Everywhere else the click is Neovim's. Default Option."
+        >
+          <Popup
+            label="Go to definition"
+            value={config.editor.definitionModifier}
+            options={[
+              ["alt", "Option-click"],
+              ["cmd", "Command-click"],
+              ["ctrl", "Control-click"],
+              ["off", "Off"],
+            ]}
+            onChange={(choice) => {
+              update({
+                ...config,
+                editor: { ...config.editor, definitionModifier: choice },
+              });
+            }}
+          />
+        </Row>
+      </Group>
     </Form>
   );
 }

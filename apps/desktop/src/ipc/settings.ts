@@ -178,6 +178,13 @@ export interface SettingsConfigWire {
 		readonly macOptionIsMeta: boolean | "left";
 	};
 	/**
+	 * `[editor]`: `definitionModifier` is `"alt"`, `"cmd"`, `"ctrl"` or
+	 * `"off"`. See `DefinitionModifier` in `model/definitionModifier.ts`.
+	 */
+	readonly editor: {
+		readonly definitionModifier: "alt" | "cmd" | "ctrl" | "off";
+	};
+	/**
 	 * `[voice]`: whether voice input is on, and which model it reads. The
 	 * page does not turn it on by saving this: that asks first and may
 	 * download (`VoiceSetupApi.enable`), so a save carries it as it is.
@@ -396,6 +403,7 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_appearance"
 	| "invalid_theme"
 	| "invalid_mac_option_is_meta"
+	| "invalid_definition_modifier"
 	| "invalid_voice_model"
 	| "invalid_keybinding"
 	| "unknown_command"

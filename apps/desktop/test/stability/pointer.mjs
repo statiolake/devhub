@@ -216,6 +216,8 @@ return vim.json.encode(out)`);
   };
 
   const results = [];
+  // `at-once`: within two frames; `report`: timed only; `checked`: timed,
+  // and what it notes is a failure.
   const run = async (name, kind, fn) => {
     if (
       process.env.POINTER_ONLY &&
@@ -240,7 +242,9 @@ return vim.json.encode(out)`);
       await sleep(300);
     }
     const m = median(ms);
-    const late = kind === "at-once" && (m === undefined || m > atOnce);
+    const late =
+      (kind === "at-once" && (m === undefined || m > atOnce)) ||
+      (kind === "checked" && m === undefined);
     const problems = [
       ...notes,
       ...(late
@@ -260,7 +264,7 @@ return vim.json.encode(out)`);
       answer: m === undefined ? null : Math.round(m * 10) / 10,
       problems: kind === "report" ? [] : problems,
       known:
-        kind === "report"
+        kind !== "at-once"
           ? [
               `reported, waits for Neovim: ${m === undefined ? "no answer" : `${m.toFixed(1)} ms`}`,
             ]
@@ -500,6 +504,20 @@ return vim.json.encode(out)`);
           : undefined,
       };
     });
+    await definitionCases({
+      ctx,
+      client,
+      run,
+      measure,
+      mouse,
+      ev,
+      lua,
+      json,
+      esc,
+      editWins,
+      px,
+      rate,
+    });
   } finally {
     await client.send("Emulation.setCPUThrottlingRate", { rate: 1 });
     ctx.nvimSend("<C-\\><C-n><Esc>");
@@ -512,4 +530,185 @@ return vim.json.encode(out)`);
     await sleep(500);
   }
   return results;
+}
+
+/** A small Lua file whose words the fake server defines (`fake-lsp.mjs`). */
+const DEF_SAMPLE = `local function greet(name)
+  return 'hello ' .. name
+end
+
+local message = greet('world')
+print(message)
+`;
+
+/**
+ * Go to definition with the pointer (docs/neovim-editor.md, "Go to
+ * definition with the pointer"): Alt held over `greet` draws it as a link
+ * once Neovim has answered (reported: a round trip and an LSP request), the
+ * link goes in the frame Alt goes up (at once, one frame), and Alt-click
+ * jumps — Neovim's cursor on the definition, no Visual, `<C-o>` back.
+ */
+async function definitionCases(t) {
+  const {
+    ctx,
+    client,
+    run,
+    measure,
+    mouse,
+    ev,
+    lua,
+    json,
+    esc,
+    editWins,
+    px,
+    rate,
+  } = t;
+  const { writeFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const file = `${ctx.paths.root}/pointer-def.lua`;
+  writeFileSync(file, DEF_SAMPLE);
+  const server = fileURLToPath(
+    new URL("./fixture/fake-lsp.mjs", import.meta.url),
+  );
+  esc();
+  lua(`vim.cmd('silent! NvimTreeClose | silent! only') return 1`);
+  await new Promise((r) => setTimeout(r, 300 * rate));
+  const w = editWins()[0];
+  lua(`vim.api.nvim_set_current_win(${String(w.id)})
+vim.cmd('edit! ' .. vim.fn.fnameescape(${JSON.stringify(file)}))
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+vim.lsp.start { name = 'fake-def', cmd = { ${JSON.stringify(process.execPath)}, ${JSON.stringify(server)} }, root_dir = ${JSON.stringify(ctx.paths.root)} }
+return 1`);
+  for (let k = 0; k < 50; k += 1) {
+    if (
+      lua(
+        `return #vim.lsp.get_clients { bufnr = 0, method = 'textDocument/definition' }`,
+      ) === "1" &&
+      lua(`return package.loaded['devhub.definition'] and 1 or 0`) === "1"
+    )
+      break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  await new Promise((r) => setTimeout(r, 300 * rate));
+  const key = (type) =>
+    client.send("Input.dispatchKeyEvent", {
+      type,
+      key: "Alt",
+      code: "AltLeft",
+      windowsVirtualKeyCode: 18,
+      modifiers: type === "keyUp" ? 0 : 1,
+    });
+  const alt = (type, x, y, o = {}) =>
+    client.send("Input.dispatchMouseEvent", {
+      type,
+      x,
+      y,
+      modifiers: 1,
+      button: type === "mouseMoved" ? "none" : "left",
+      buttons: type === "mousePressed" ? 1 : 0,
+      clickCount: type === "mouseMoved" ? 0 : 1,
+      ...o,
+    });
+  // `greet` on line 5, bytes 17-21.
+  const cell = (col) => px(w.row + 4, w.col + w.textoff + col);
+  const p = cell(18);
+  const strip = `P.strip(${String(p.x)},${String(p.y - 8)},${String(p.y + 9)})`;
+  const plain = async () => {
+    await key("keyUp");
+    await mouse("mouseMoved", p.x, p.y);
+    await new Promise((r) => setTimeout(r, 300 * rate));
+    return ev(`__probe.${strip.slice(2)}`);
+  };
+  let base = await plain();
+  await run("definition link on Alt", "checked", async () => {
+    base = await plain();
+    lua(`require('devhub.definition').clear() return 1`);
+    const r = await measure(
+      "keydown",
+      `${strip} !== ${JSON.stringify(base)}`,
+      () => key("rawKeyDown"),
+    );
+    return r;
+  });
+  await run("definition link, pointer moved", "report", async (i) => {
+    base = await plain();
+    lua(`require('devhub.definition').clear() return 1`);
+    const from = cell(2);
+    await key("rawKeyDown");
+    await alt("mouseMoved", from.x, from.y);
+    await new Promise((r) => setTimeout(r, 200 * rate));
+    return measure("mousemove", `${strip} !== ${JSON.stringify(base)}`, () =>
+      alt("mouseMoved", p.x + i, p.y),
+    );
+  });
+  await run("definition link, hand", "at-once", async () => {
+    await key("rawKeyDown");
+    await alt("mouseMoved", p.x, p.y);
+    await new Promise((r) => setTimeout(r, 300 * rate));
+    const shape = await ev(`__probe.cursorAt(${String(p.x)},${String(p.y)})`);
+    return {
+      ms: 0,
+      note:
+        shape === "pointer"
+          ? undefined
+          : `the pointer is ${String(shape)} over the link`,
+    };
+  });
+  await run("definition link gone on release", "at-once", async () => {
+    base = await plain();
+    await key("rawKeyDown");
+    await alt("mouseMoved", p.x, p.y);
+    await new Promise((r) => setTimeout(r, 300 * rate));
+    const drawn = await ev(`__probe.${strip.slice(2)}`);
+    if (drawn === base)
+      return { ms: undefined, note: "no link drawn to take away" };
+    const r = await measure(
+      "keyup",
+      `${strip} === ${JSON.stringify(base)}`,
+      () => key("keyUp"),
+    );
+    return {
+      ...r,
+      note:
+        r.frames > 1
+          ? `gone ${String(r.frames)} frames after the release, not in its own`
+          : undefined,
+    };
+  });
+  await run("definition Alt-click", "checked", async () => {
+    await mouse("mouseMoved", p.x, p.y);
+    lua(`vim.api.nvim_win_set_cursor(0, { 6, 0 }) return 1`);
+    await key("rawKeyDown");
+    await alt("mouseMoved", p.x, p.y);
+    await new Promise((r) => setTimeout(r, 300 * rate));
+    const t0 = Date.now();
+    await alt("mousePressed", p.x, p.y);
+    await alt("mouseReleased", p.x, p.y);
+    await key("keyUp");
+    let state;
+    for (let k = 0; k < 60; k += 1) {
+      state = json(
+        `return vim.json.encode { pos = vim.api.nvim_win_get_cursor(0), mode = vim.api.nvim_get_mode().mode }`,
+      );
+      if (state.pos[0] === 1) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const ms = Date.now() - t0;
+    const at = state.pos;
+    lua(`vim.cmd('normal! \\15') return 1`);
+    const back = json(`return vim.json.encode(vim.api.nvim_win_get_cursor(0))`);
+    const notes = [];
+    if (at[0] !== 1 || at[1] !== 15)
+      notes.push(
+        `the cursor is at ${JSON.stringify(at)}, not greet's definition [1,15]`,
+      );
+    if (state.mode !== "n") notes.push(`mode ${state.mode} after the click`);
+    if (back[0] !== 5)
+      notes.push(
+        `<C-o> went to ${JSON.stringify(back)}, not the clicked line 5`,
+      );
+    return { ms, note: notes.length ? notes.join("; ") : undefined };
+  });
+  await key("keyUp");
+  esc();
 }

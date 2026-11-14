@@ -51,6 +51,7 @@ export function testConfig(
       timers: [],
     },
     terminal: { macOptionIsMeta: false },
+    editor: { definitionModifier: "alt" },
     voice: { enabled: false, model: "small" },
     agents: {
       defaultPresentation: "tui",

@@ -275,6 +275,7 @@ export function NeovimSurface({
     () => ({
       font: terminalCellFont(appearance),
       macOptionIsMeta: appearance?.terminalMacOptionIsMeta ?? false,
+      definitionModifier: appearance?.editorDefinitionModifier ?? "alt",
     }),
     [appearance],
   );
@@ -521,6 +522,12 @@ export function NeovimSurface({
             ]);
             editor.focus();
           });
+        return;
+      }
+      if (event.kind === "definition_link") {
+        // Whether the symbol under the pointer, with the modifier held, is a
+        // link to its definition (`definitionLink.ts`).
+        editor.definitionLink(event.payload);
         return;
       }
       if (event.kind === "menu") {

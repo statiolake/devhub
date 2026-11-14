@@ -813,6 +813,47 @@ describe("parsing", () => {
     });
   });
 
+  describe("editor.definition_modifier", () => {
+    it("is Alt unless the file says otherwise, and not written as Alt", () => {
+      expect(defaultConfig().editor.definitionModifier).toBe("alt");
+      expect(parseConfig(MINIMAL).editor.definitionModifier).toBe("alt");
+      expect(configToToml(parseConfig(MINIMAL))).not.toContain("[editor]");
+    });
+
+    it("reads, keeps and writes back cmd, ctrl and off", () => {
+      for (const value of ["cmd", "ctrl", "off"] as const) {
+        const config = parseConfig(
+          `version = 1\n[editor]\ndefinition_modifier = "${value}"\n`,
+        );
+        expect(config.editor.definitionModifier).toBe(value);
+        expect(configToToml(config)).toContain(
+          `definition_modifier = "${value}"`,
+        );
+        expect(
+          parseConfig(configToToml(config)).editor.definitionModifier,
+        ).toBe(value);
+      }
+    });
+
+    it("refuses anything else, naming the key", () => {
+      const text = 'version = 1\n[editor]\ndefinition_modifier = "option"\n';
+      expect(codeOf(() => parseConfig(text))).toBe(
+        "invalid_definition_modifier",
+      );
+      expect(pathOf(() => parseConfig(text))).toBe(
+        "editor.definition_modifier",
+      );
+      expect(
+        codeOf(() =>
+          parseConfig("version = 1\n[editor]\ndefinition_modifier = 1\n"),
+        ),
+      ).toBe("invalid_type");
+      expect(
+        codeOf(() => parseConfig("version = 1\n[editor]\nmodifier = 1\n")),
+      ).toBe("unknown_key");
+    });
+  });
+
   describe("[voice]", () => {
     it("is off, with small, unless the file says otherwise", () => {
       expect(defaultConfig().voice).toEqual({ enabled: false, model: "small" });

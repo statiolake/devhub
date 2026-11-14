@@ -78,6 +78,21 @@ import { clickMode, predictClick, type Cell as GridCell } from "./clickCaret";
 import { dragBand } from "./dragBand";
 import { PerFrame } from "./perFrame";
 import { Provisional, PROVISIONAL_TTL_MS } from "./provisional";
+import {
+  DefinitionLinks,
+  LINK_CANCEL_LUA,
+  LINK_HOVER_LUA,
+  LINK_JUMP_LUA,
+  isModifierKey,
+  linkAttr,
+  linkCells,
+  modifierHeld,
+  type LinkCell,
+} from "./definitionLink";
+import {
+  DEFAULT_DEFINITION_MODIFIER,
+  type DefinitionModifier,
+} from "../../model/definitionModifier";
 import { MetaComposition, OptionKeys } from "../surfaces/optionKey";
 import { BaseKeys, layoutMapSource } from "../surfaces/baseKeys";
 import type { MacOptionIsMeta } from "../../model/macOption";
@@ -125,6 +140,8 @@ export interface EditorSettings {
    */
   readonly font: FontSpec;
   readonly macOptionIsMeta: MacOptionIsMeta;
+  /** `[editor] definition_modifier` (`definitionLink.ts`); default Alt. */
+  readonly definitionModifier?: DefinitionModifier;
 }
 
 /** How long the cursor's blink takes to fade out or in. */
@@ -134,6 +151,13 @@ const BLINK_FADE_MS = 120;
  * cell's own id plus this, out of the range Neovim gives out.
  */
 const BAND_HL = 0x40000000;
+/**
+ * The same for a symbol drawn as a link to its definition (`drawLink`):
+ * each cell's own id plus this.
+ */
+const LINK_HL = 0x20000000;
+/** The link's ink when the theme gives none (VS Code's). */
+const LINK_FALLBACK = 0x3794ff;
 
 /** A cursor's glide from cell to cell (`glideCursor`). */
 const CURSOR_GLIDE_MS = 70;
@@ -233,6 +257,20 @@ export class NeovimEditor {
   /** The cells the band is drawn over, by grid: Neovim's highlight there. */
   private readonly banded = new Map<number, Map<number, number>>();
   private bandTimer = 0;
+  /**
+   * The pointer's go to definition (`definitionLink.ts`): the symbol under
+   * it drawn as a link while the modifier is held.
+   */
+  private readonly links: DefinitionLinks;
+  /** The cells the link is drawn over, by grid: Neovim's highlight there. */
+  private readonly linked = new Map<number, Map<number, number>>();
+  /** What the link's cells showed when it was drawn, by grid and cell. */
+  private linkText = new Map<number, string>();
+  /** The pointer's shape but for a link: a border's, or the I-beam. */
+  private shapeBelow = "";
+  private stopWatchingModifier: () => void = () => {};
+  /** A redraw is being taken in (`redraw`). */
+  private redrawing = false;
   /** When the pointer last moved the caret: a move it makes does not glide. */
   private pointerMoved = -Infinity;
   /** A Meta dead key's composition, dropped (`surfaces/optionKey.ts`). */
@@ -310,7 +348,37 @@ export class NeovimEditor {
     this.windowMotion = new WindowMotion(this.painter, this.gridLayer);
     this.gridLayer.style.font = fontOf(this.painter.fontSpec());
     this.input.style.font = this.gridLayer.style.font;
+    this.links = new DefinitionLinks({
+      hover: (seq, at) => {
+        const request = this.port.request?.bind(this.port);
+        const win = this.state.gridWins.get(at.grid);
+        if (!request || win === undefined) return undefined;
+        return request("nvim_exec_lua", [
+          LINK_HOVER_LUA,
+          [seq, win, at.row, at.col],
+        ]);
+      },
+      jump: (at) => {
+        const win = this.state.gridWins.get(at.grid);
+        if (win === undefined) return;
+        this.port.call("nvim_exec_lua", [LINK_JUMP_LUA, [win, at.row, at.col]]);
+      },
+      cancel: () => {
+        this.port.call("nvim_exec_lua", [LINK_CANCEL_LUA, []]);
+      },
+      changed: () => {
+        this.placePointerShape();
+        // Taken by a redraw: its own paint draws what it leaves.
+        if (this.redrawing) return;
+        // At once, in this event's frame: the link comes and goes with the
+        // modifier and the pointer, never a frame behind them.
+        this.unlink();
+        this.drawLink();
+        this.paint();
+      },
+    });
     this.bindInput();
+    this.watchModifier();
     this.observer = new ResizeObserver(() => {
       this.resize();
     });
@@ -812,6 +880,8 @@ export class NeovimEditor {
     // Neovim's cells under the band are Neovim's again while its redraw is
     // taken in (a scroll moves them, a line rewrites them); the band is
     // drawn again over what it then shows, where it does not show Visual.
+    const linked = this.linked.size > 0;
+    if (linked) this.unlink();
     const banded = this.banded.size > 0;
     if (banded) this.unband();
     const defaults = this.state.defaults;
@@ -832,6 +902,16 @@ export class NeovimEditor {
       this.recoloured = false;
     }
     if (this.visualBand !== undefined || banded) this.drawBand();
+    // The link stands while its cells show what they showed; a redraw that
+    // rewrote or moved them takes it (it is asked again).
+    if (linked) {
+      if (this.linkStands()) this.drawLink();
+      else {
+        this.redrawing = true;
+        this.links.invalidate();
+        this.redrawing = false;
+      }
+    }
     if (this.pending.flushed && this.atFlush.length > 0) {
       window.clearTimeout(this.atFlushTimer);
       this.atPaint.push(...this.atFlush.splice(0));
@@ -876,6 +956,7 @@ export class NeovimEditor {
     this.stopWatchingDpr();
     this.stopWatchingFonts();
     this.stopWatchingViewFocus();
+    this.stopWatchingModifier();
     window.clearTimeout(this.themeTimer);
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
     if (this.scrollTick !== 0) cancelAnimationFrame(this.scrollTick);
@@ -1528,12 +1609,129 @@ export class NeovimEditor {
     if (!sash && this.sashDragged) return;
     this.sashOn = sash;
     this.placeSashBand(sash, undefined);
-    const cursor = sash
+    this.shapeBelow = sash
       ? sash.dir === "col"
         ? "col-resize"
         : "row-resize"
       : "";
-    pointerShape(this.gridLayer, cursor);
+    this.placePointerShape();
+  }
+
+  /** The hand over a link, else what is below it (`placeSash`). */
+  private placePointerShape(): void {
+    pointerShape(
+      this.gridLayer,
+      this.links.overLink ? "pointer" : this.shapeBelow,
+    );
+  }
+
+  /** The modifier as the person holds it, as `definitionLink.ts` reads it. */
+  private definitionModifier(): DefinitionModifier {
+    return this.settings.definitionModifier ?? DEFAULT_DEFINITION_MODIFIER;
+  }
+
+  /**
+   * The modifier's own key, wherever the keys are (the terminal, a field,
+   * another pane): it goes down and up with the pointer still. The window
+   * losing focus lets it go, as its keyup never comes.
+   */
+  private watchModifier(): void {
+    const key = (event: KeyboardEvent) => {
+      if (this.disposed) return;
+      const modifier = this.definitionModifier();
+      if (isModifierKey(event.key, modifier)) {
+        this.links.modifier(
+          event.type === "keydown" && modifierHeld(event, modifier),
+        );
+      } else if (event.type === "keydown") {
+        // A chord with it (Alt+x): a key, not a hover.
+        this.links.modifier(false);
+      }
+    };
+    const blur = () => {
+      this.links.modifier(false);
+    };
+    window.addEventListener("keydown", key, true);
+    window.addEventListener("keyup", key, true);
+    window.addEventListener("blur", blur);
+    this.stopWatchingModifier = () => {
+      window.removeEventListener("keydown", key, true);
+      window.removeEventListener("keyup", key, true);
+      window.removeEventListener("blur", blur);
+    };
+  }
+
+  /** A window's cell for the link: not grid 1, not a GUI's. */
+  private linkCell(at: MouseTarget | undefined): LinkCell | undefined {
+    if (at === undefined || at.grid === 1) return undefined;
+    if (!this.state.gridWins.has(at.grid)) return undefined;
+    if (this.state.cmdline.length > 0 || !this.state.mouse) return undefined;
+    return at;
+  }
+
+  /** Neovim's answer about the link, as the `definition_link` event. */
+  definitionLink(payload: unknown): void {
+    this.links.answer(payload);
+  }
+
+  /** The link's cells given back to Neovim's highlights. */
+  private unlink(): void {
+    for (const [id, cells] of this.linked) {
+      const grid = this.state.grids.get(id);
+      if (grid === undefined) continue;
+      for (const [cell, hl] of cells) {
+        if (grid.hls[cell] !== LINK_HL + hl) continue;
+        grid.hls[cell] = hl;
+        grid.dirty.add(Math.floor(cell / grid.width));
+      }
+      this.pending.grids.add(id);
+    }
+    this.linked.clear();
+  }
+
+  /** Whether the link's cells still show what they did when it was drawn. */
+  private linkStands(): boolean {
+    const link = this.links.link;
+    if (link === undefined) return false;
+    const grid = this.state.grids.get(link.grid);
+    if (grid === undefined) return false;
+    for (const [cell, text] of this.linkText) {
+      if (grid.chars[cell] !== text) return false;
+    }
+    return true;
+  }
+
+  /**
+   * The link over its cells: each cell's own colours with the link's ink
+   * and an underline in it, as Neovim would draw `@markup.link` there.
+   */
+  private drawLink(): void {
+    const link = this.links.link;
+    if (link === undefined) {
+      this.linkText = new Map();
+      return;
+    }
+    const grid = this.state.grids.get(link.grid);
+    if (grid === undefined) return;
+    const ink = this.painter.paintTheme().link ?? LINK_FALLBACK;
+    const cells = new Map<number, number>();
+    const text = new Map<number, string>();
+    for (const cell of linkCells(grid.width, grid.height, link.spans)) {
+      const own = grid.hls[cell] ?? 0;
+      if (!this.state.hl.has(LINK_HL + own))
+        this.state.hl.set(
+          LINK_HL + own,
+          linkAttr(this.state.hl.get(own) ?? {}, ink),
+        );
+      cells.set(cell, own);
+      text.set(cell, grid.chars[cell] ?? "");
+      grid.hls[cell] = LINK_HL + own;
+      grid.dirty.add(Math.floor(cell / grid.width));
+    }
+    this.linkText = text;
+    if (cells.size === 0) return;
+    this.linked.set(link.grid, cells);
+    this.pending.grids.add(link.grid);
   }
 
   /**
@@ -2153,6 +2351,17 @@ export class NeovimEditor {
       const button = mouseButton(event.button);
       if (!button || !this.state.mouse) return;
       const at = target(event);
+      // The modifier's click on a link (or a symbol whose answer is coming)
+      // is the jump, not a click: Neovim never sees this press.
+      const linkAt = this.linkCell(at);
+      if (
+        button === "left" &&
+        event.detail <= 1 &&
+        linkAt !== undefined &&
+        this.links.click(linkAt, modifierHeld(event, this.definitionModifier()))
+      ) {
+        return;
+      }
       this.dragging = { button, target: at };
       // The border under the press, not the last one hovered: a press need
       // not come after a move (a wheel turned, the window raised).
@@ -2185,9 +2394,19 @@ export class NeovimEditor {
     });
     layer.addEventListener("mousemove", (event) => {
       const at = ownedByGui(event) ? undefined : target(event);
-      if (!this.dragging) this.placeSash(at);
+      if (!this.dragging) {
+        this.links.pointerAt(
+          this.linkCell(at),
+          modifierHeld(event, this.definitionModifier()),
+        );
+        this.placeSash(at);
+      }
     });
-    layer.addEventListener("mouseleave", () => {
+    layer.addEventListener("mouseleave", (event) => {
+      this.links.pointerAt(
+        undefined,
+        modifierHeld(event, this.definitionModifier()),
+      );
       if (!this.sashDragged) this.placeSash(undefined);
     });
     // A drag's moves, one a frame at most (`PerFrame`): a fast hand over a
@@ -2263,6 +2482,8 @@ export class NeovimEditor {
         if (ownedByGui(event)) return;
         event.preventDefault();
         const at = target(event);
+        // The text moves under the pointer: the link is asked again.
+        if (this.links.link !== undefined) this.links.invalidate();
         // A window's vertical scrolling follows the trackpad in pixels
         // (`smoothScroll.ts`); with a modifier, sideways or anywhere else
         // the wheel is Neovim's, in line steps.

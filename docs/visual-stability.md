@@ -133,7 +133,7 @@ two shots to see the frame that should not have been:
 | `orchestrator` | the Orchestrator's board coming up, and back (the board only: its tabs are being replaced) |
 | `conversation` | a message sent, a streamed answer received |
 | `theme` | dark to light and back (the editor and the Sidebar recorded) |
-| `pointer` | not recorded but timed (`pointer.mjs`): the pointer's answers, from the input event to the first frame that shows them — a click's caret, a click into another window, a tree row's focus and hover, a window border and a pane boundary dragged, a terminal selection and Visual's band dragged, a completion row clicked, the pointer's shapes; each within two frames of the rate (34 ms at 1x), Neovim's wheel from rest reported (`docs/neovim-editor.md`, "The pointer") |
+| `pointer` | not recorded but timed (`pointer.mjs`): the pointer's answers, from the input event to the first frame that shows them — a click's caret, a click into another window, a tree row's focus and hover, a window border and a pane boundary dragged, a terminal selection and Visual's band dragged, a completion row clicked, the pointer's shapes; each within two frames of the rate (34 ms at 1x), Neovim's wheel from rest reported (`docs/neovim-editor.md`, "The pointer"); go to definition against a fake language server (`fixture/fake-lsp.mjs`): the link after Alt goes down and after a move with it held (timed), the hand over it, the link gone in the frame Alt goes up, an Alt-click on the definition in Normal mode with `<C-o>` back (`docs/neovim-editor.md`, "Go to definition with the pointer") |
 
 ## Where it runs
 
