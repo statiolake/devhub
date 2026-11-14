@@ -78,6 +78,7 @@ async function freshRedraw(ctx, client, selector) {
 }
 import { appDir, makeProfile, writeSettings } from "./profile.mjs";
 import { runPointer } from "./pointer.mjs";
+import { describe as describeStartup, runStartup } from "./startup.mjs";
 import { SCENARIOS, editorAtRest } from "./scenarios.mjs";
 import { MOTION_SCENARIOS } from "./scenariosMotion.mjs";
 
@@ -208,6 +209,18 @@ async function main() {
     for (const client of pages.values()) client.close();
     app.stop();
     if (!args.keep) rmSync(root, { recursive: true, force: true });
+  }
+  // How long each first frame takes (`startup.mjs`): a scenario of its own,
+  // on DevHubs of its own, after this one has gone.
+  if (!args.only || args.only.includes("startup")) {
+    for (const result of await runStartup({
+      rates: args.rates,
+      artifacts,
+      plugins,
+    })) {
+      results.push(result);
+      console.log(describeStartup(result));
+    }
   }
   const failed = results.filter((r) => !r.ok);
   const knownCount = results.filter((r) => r.ok && r.known?.length).length;

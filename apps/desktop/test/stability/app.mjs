@@ -93,11 +93,26 @@ function ask(socket, request, timeoutMs = 20_000) {
   });
 }
 
+/**
+ * Options beyond the port and the log: `neovimDelayMs`, every round trip
+ * to Neovim that much longer; `scale`, the device scale factor; `env`,
+ * variables added to the app's environment; `wrap`, ([file, args]) =>
+ * [file, args], what actually runs (the startup scenario runs the app
+ * inside a CPU-limited cgroup).
+ */
 export async function startApp(
   paths,
-  { port, size = [1400, 900], logPath, neovimDelayMs, scale = 1 },
+  {
+    port,
+    size = [1400, 900],
+    logPath,
+    neovimDelayMs,
+    scale = 1,
+    env: extraEnv = {},
+    wrap,
+  },
 ) {
-  const env = environment(paths);
+  const env = { ...environment(paths), ...extraEnv };
   // Every round trip to Neovim this much longer (src/main/neovimHost/delayProxy.ts).
   if (neovimDelayMs) env.DEVHUB_NEOVIM_DELAY_MS = String(neovimDelayMs);
   const userData = userDataDir(env);
@@ -115,7 +130,8 @@ export async function startApp(
   ];
   if (process.getuid?.() === 0) args.push("--no-sandbox");
   const log = openSync(logPath, "w");
-  const child = spawn(electron(), args, {
+  const [file, argv] = wrap ? wrap([electron(), args]) : [electron(), args];
+  const child = spawn(file, argv, {
     env,
     cwd: paths.home,
     stdio: ["ignore", log, log],

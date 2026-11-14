@@ -39,6 +39,7 @@
  * tested with fakes and the tmux half against a real server separately.
  */
 
+import { startupTrace } from "../diagnostics/startupTrace.js";
 import { createHash } from "node:crypto";
 import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -812,7 +813,9 @@ export class ManagedNeovims {
 		await sockets.files.ensurePrivateDirectory(sockets.directory);
 		await sockets.files.remove(socketPath);
 		const stderrPath = neovimStderrPath(socketPath);
+		startupTrace("managed-nvim:spawn");
 		const paneId = await this.panes.open(target, neovimArgv(nvim, socketPath));
+		startupTrace("managed-nvim:window-opened");
 		// A window that said the last start failed goes once this one is up.
 		const failed = this.failurePanes.get(target.workspaceId);
 		if (failed !== undefined) {
@@ -825,6 +828,7 @@ export class ManagedNeovims {
 				try {
 					const localPath = await sockets.reach(socketPath);
 					const client = await this.connect(localPath);
+					startupTrace("managed-nvim:connected");
 					return this.remember(target.workspaceId, {
 						target,
 						socketPath,

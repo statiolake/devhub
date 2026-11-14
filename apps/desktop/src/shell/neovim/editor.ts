@@ -9,6 +9,7 @@
  * through `subscribe`.
  */
 
+import { startupMark } from "../startupMarks";
 import {
   applyRedraw,
   claimFloats,
@@ -177,7 +178,17 @@ export const AMBIENT_Z = 100 + 45;
  */
 export const SASH_Z = 99;
 
+let editorSerial = 0;
+
 export class NeovimEditor {
+  /** This editor's stages as `performance` marks (`startupMarks.ts`). */
+  private readonly stage = (() => {
+    const serial = ++editorSerial;
+    return (name: string) => {
+      startupMark(`nvim:${String(serial)}:${name}`);
+    };
+  })();
+
   readonly state: NeovimUiState = initialUiState(themeColors());
   private pending: RedrawChanges = emptyChanges();
   private frame = 0;
@@ -505,6 +516,7 @@ export class NeovimEditor {
   }
 
   attached(size: { cols: number; rows: number }): void {
+    this.stage("attached");
     this.size = size;
     // The view may have been laid out while the attach was in flight.
     this.resize();
@@ -885,7 +897,9 @@ export class NeovimEditor {
     const banded = this.banded.size > 0;
     if (banded) this.unband();
     const defaults = this.state.defaults;
+    this.stage("first-redraw");
     applyRedraw(this.state, batches, this.pending);
+    if (this.pending.flushed) this.stage("first-flush");
     if (
       this.state.defaults !== defaults &&
       (this.state.defaults.background !== defaults.background ||
@@ -994,6 +1008,7 @@ export class NeovimEditor {
 
   private paint(forceAll = false): void {
     if (this.disposed) return;
+    this.stage("paint-asked");
     if (this.hold.defer(forceAll)) return;
     // What Lua placed, taken in now (`setPlacements`): the page's frames
     // commit with this paint, and claim again with a paint in this task.
@@ -1015,6 +1030,7 @@ export class NeovimEditor {
     // are known, its final frame from its first frame (`LabelAsks`).
     const labels = this.askFloatLabels(laid);
     if (claims || labels) {
+      this.stage(claims ? "waits-claims" : "waits-labels");
       this.labelsPaint = {
         force: forceAll || this.labelsPaint?.force === true,
       };
@@ -1022,7 +1038,10 @@ export class NeovimEditor {
     }
     // A colorscheme's grounds not known yet: the cells in the new colours
     // and the grounds round them in the old were a frame of neither.
-    if (this.themeWaiting) return;
+    if (this.themeWaiting) {
+      this.stage("waits-theme");
+      return;
+    }
     // What waited for this flush (`withNextFlush`), in the same commit.
     for (const fn of this.atPaint.splice(0)) fn();
     if (this.labelsPaint !== undefined) {
@@ -1061,6 +1080,7 @@ export class NeovimEditor {
         this.painter.paint(this.state, changes, this.boxes, forceAll);
       },
     });
+    if (this.boxes.length > 0) this.stage("first-paint");
     this.askFloatAnchors();
     this.placeCursor(changes.scrolled.has(this.state.cursor.grid));
     this.scrollFrame();

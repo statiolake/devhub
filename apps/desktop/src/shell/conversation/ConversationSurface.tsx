@@ -33,6 +33,7 @@
  * the chords after it never reach here — main takes them first.
  */
 
+import { startupMark } from "../startupMarks";
 import {
   useCallback,
   useEffect,
@@ -206,7 +207,10 @@ export function ConversationSurface({
     arrivals,
   });
   useLayoutEffect(() => {
-    if (!hidden) perfProbe("conversation-committed", transcript);
+    if (!hidden) {
+      perfProbe("conversation-committed", transcript);
+      startupMark("conversation:first-commit");
+    }
   }, [hidden, transcript]);
   useNoReplayOnShow(surface, hidden, maximized?.id);
 

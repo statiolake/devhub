@@ -24,6 +24,7 @@
  * surfaces to attach to again.
  */
 
+import { startupTrace } from "../diagnostics/startupTrace.js";
 import { join } from "node:path";
 import {
 	TERMINAL_CHANNELS,
@@ -174,6 +175,7 @@ export class PtyHostClient implements HostedPtys {
 
 	#hostNow(): PtyHostProcess {
 		if (this.#host !== undefined) return this.#host;
+		startupTrace("pty-host:launch");
 		const started = this.#options.launch();
 		this.#generation += 1;
 		started.onMessage((message) => {

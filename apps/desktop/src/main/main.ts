@@ -32,6 +32,7 @@ import "./shimEntry.js";
 
 import minimist from "minimist";
 import { electron } from "./electron.js";
+import { startupTrace } from "./diagnostics/startupTrace.js";
 import { migrateUserDataDirectory } from "./userDataMigration.js";
 import { installMainLog, mainLogPath } from "./diagnostics/mainLog.js";
 import { startEventLoopLagMonitor } from "./diagnostics/eventLoopLag.js";
@@ -51,6 +52,7 @@ import { shellWindowIfCreated } from "./shell/shellWindow.js";
 import { activeProfile } from "../model/profile.js";
 
 const { app, protocol, Menu } = electron;
+startupTrace("main:start");
 
 const args = minimist(process.argv.slice(1), {
 	string: ["user-data-dir"],
@@ -127,6 +129,7 @@ if (!app.requestSingleInstanceLock()) {
 	});
 
 	app.once("ready", () => {
+		startupTrace("main:ready");
 		void onReady().catch((error: unknown) => {
 			console.error("[devhub] startup failed:", error);
 			app.exit(1);

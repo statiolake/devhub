@@ -10,6 +10,7 @@
  * `PaneApp`.
  */
 
+import { startupMark } from "../startupMarks";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { installMonoFont, installPalette } from "../appearance";
@@ -24,6 +25,8 @@ import "../styles/tokens.css";
 import "../styles/shell.css";
 import "../styles/macos.css";
 import "./panePage.css";
+
+startupMark("page:script");
 
 const container = document.getElementById("root");
 if (!container) {

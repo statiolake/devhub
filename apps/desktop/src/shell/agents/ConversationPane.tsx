@@ -9,6 +9,7 @@
  * that fails goes to the page's root like every other failure on the page.
  */
 
+import { startupMark } from "../startupMarks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppAppearance } from "../../ipc/appShell";
 import type {
@@ -337,6 +338,7 @@ function useConversation(
         current.fold.apply(event);
         current.revision = revision;
         perfProbe("conversation-event", agentId);
+        startupMark("conversation:first-event");
       } catch (error: unknown) {
         // What is drawn stops where it was still true.
         broken = true;

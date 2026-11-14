@@ -41,6 +41,7 @@
  * terminal or another Neovim.
  */
 
+import { startupMark } from "../startupMarks";
 import {
   useCallback,
   useEffect,
@@ -641,6 +642,7 @@ export function NeovimSurface({
     const attach = () => {
       if (cancelled) return;
       const size = editor.fit();
+      startupMark(`nvim-attach:${workspaceId}`);
       void bridge.neovim
         .attach({ workspaceId, cols: size.cols, rows: size.rows })
         .then((result) => {

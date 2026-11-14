@@ -34,6 +34,7 @@
  * motion moves it (docs/rendering-layers.md, docs/pane-motion.md).
  */
 
+import { startupMark } from "../startupMarks";
 import { useCallback, useMemo } from "react";
 import { devhub } from "./client";
 import {
@@ -79,7 +80,9 @@ export function PaneApp({ terminalId }: { readonly terminalId: string }) {
       }),
     [bridge, terminalId],
   );
+  if (appearance !== undefined) startupMark("pane:appearance");
   if (state.status !== "ready") return null;
+  startupMark("pane:projection");
   const workspaceId = workspaceOfTerminalPage(terminalId);
   const workspace =
     workspaceId === undefined

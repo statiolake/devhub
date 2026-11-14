@@ -15,6 +15,7 @@
  * waits on them. See `docs/neovim-editor.md`.
  */
 
+import { startupTrace } from "../diagnostics/startupTrace.js";
 import { MsgpackExt, decode } from "./msgpack.js";
 import { DECOR_LUA } from "./neovimDecor.js";
 import { MESSAGES_LUA } from "./neovimMessages.js";
@@ -1360,6 +1361,8 @@ export class NeovimUi {
 		pane: string | undefined,
 	): Promise<NeovimUiAttach> {
 		this.sink = sink;
+		this.tracedRedraw = false;
+		startupTrace("nvim-ui:attach");
 		// Both answered at once, even while Neovim is starting (fast calls):
 		// one round trip, not two (over SSH, each one to the host).
 		const [info, firstMode] = (await Promise.all([
@@ -1373,6 +1376,7 @@ export class NeovimUi {
 			{ readonly blocking?: boolean } | undefined,
 		];
 		const channel = info[0];
+		startupTrace("nvim-ui:api-info");
 		// A Neovim at a prompt (hit-enter, more, confirm) answers nothing but
 		// fast calls until it is dismissed, and nothing is attached to see it.
 		for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1452,7 +1456,9 @@ export class NeovimUi {
 		// Every call answered: the attach in it happened.
 		if (setup?.length === calls.length) {
 			this.attached = true;
+			startupTrace("nvim-ui:first-attach-done");
 			await this.afterAttach();
+			startupTrace("nvim-ui:after-attach");
 			return { version };
 		}
 		// A Neovim that had a multigrid UI before (DevHub restarted, the page
@@ -1584,12 +1590,18 @@ export class NeovimUi {
 		]);
 	}
 
+	private tracedRedraw = false;
+
 	private notified(method: string, params: readonly unknown[]): void {
 		const sink = this.sink;
 		if (sink === undefined) return;
 		switch (method) {
 			case "redraw":
 				if (this.priming) return;
+				if (!this.tracedRedraw) {
+					this.tracedRedraw = true;
+					startupTrace("nvim-ui:first-redraw");
+				}
 				sink.redraw(withPlainHandles(params));
 				return;
 			case "devhub_clipboard_set":

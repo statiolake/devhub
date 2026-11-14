@@ -12,6 +12,7 @@
  * makes the terminal survive a window close, a workspace switch, and a restart.
  */
 
+import { startupTrace } from "../diagnostics/startupTrace.js";
 import {
 	TerminalFailure,
 	type TerminalAttachReceipt,
@@ -130,6 +131,7 @@ export class TerminalSurfaces {
 		request: AttachSurfaceRequest,
 		cancel = new CancellationToken(),
 	): Promise<TerminalAttachReceipt> {
+		startupTrace(`terminal:attach ${request.surfaceKey}`);
 		const permit = this.attachments.beginAttach(
 			request.target,
 			request.surfaceKey,
@@ -147,6 +149,7 @@ export class TerminalSurfaces {
 					operation,
 					deadline,
 				);
+				startupTrace(`terminal:sessions-listed ${request.surfaceKey}`);
 				const identity = runtime.targetIdentity(request.target, sessions);
 				const exact = sessions.find(
 					(session) =>
@@ -158,7 +161,7 @@ export class TerminalSurfaces {
 				// whose full marker triple was just read back.
 				if (!exact) throw new TerminalFailure("session_unavailable");
 				operation.check();
-				return await this.attachments.attach(permit, {
+				const receipt = await this.attachments.attach(permit, {
 					surfaceKey: request.surfaceKey,
 					viewLabel: request.viewLabel,
 					target: request.target,
@@ -172,11 +175,15 @@ export class TerminalSurfaces {
 					environment: runtime.tmuxEnv(),
 					size: request.size,
 				});
+				startupTrace(`terminal:client-started ${request.surfaceKey}`);
+				return receipt;
 			} finally {
 				release();
 			}
 		} catch (failure: unknown) {
-			throw terminalFailureFromPort(failure);
+			const refused = terminalFailureFromPort(failure);
+			startupTrace(`terminal:refused ${request.surfaceKey} ${refused.code}`);
+			throw refused;
 		} finally {
 			permit.release();
 		}

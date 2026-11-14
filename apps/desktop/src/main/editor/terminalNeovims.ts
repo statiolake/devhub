@@ -42,6 +42,7 @@
  * every page.
  */
 
+import { startupTrace } from "../diagnostics/startupTrace.js";
 import type { RuntimeId } from "../runtime/runtime.js";
 import type { WorkspaceTerminalTarget } from "../terminal/ports.js";
 
@@ -555,6 +556,7 @@ export class TerminalNeovims {
 		paneId: string,
 		socket: string,
 	): string | undefined {
+		startupTrace(`overlay:pane-socket ${paneId}`);
 		const watch = this.watches.get(terminalId);
 		const control = watch?.control;
 		if (watch === undefined || control === undefined || this.disposed)
@@ -849,11 +851,13 @@ export class TerminalNeovims {
 		this.readings += 1;
 		const started = this.readings;
 		let sockets: ReadonlyMap<string, string> | undefined;
+		startupTrace("overlay:confirm");
 		try {
 			sockets = await this.options.ports.read(watch.terminal, this.enabled);
 		} catch {
 			sockets = undefined;
 		}
+		startupTrace("overlay:confirmed");
 		const control = watch.control;
 		if (sockets === undefined || control === undefined || this.disposed) return;
 		control.confirmed = new Map(
@@ -907,6 +911,7 @@ export class TerminalNeovims {
 				attached: false,
 			};
 			this.serial += 1;
+			startupTrace(`overlay:new ${overlay.key}`);
 			watch.overlays.set(pane.paneId, overlay);
 			this.byKey.set(overlay.key, overlay);
 			changed = true;

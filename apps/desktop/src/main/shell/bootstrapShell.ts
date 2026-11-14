@@ -5,6 +5,7 @@
  * on `ready`.
  */
 
+import { startupTrace } from "../diagnostics/startupTrace.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { APP_ROOT } from "./appRoot.js";
@@ -63,7 +64,9 @@ export async function bootstrapShell(userDataPath: string): Promise<void> {
 	// they name, and everything after asks the same object
 	// (`runningSettings.ts`). A file DevHub cannot use is the defaults here
 	// and one notice once there is a page to show it on.
+	startupTrace("main:bootstrap");
 	const settings = await RunningSettings.open(activeProfile(), homedir());
+	startupTrace("main:settings");
 	const titleBar = titleBarModeOf(settings.config);
 
 	// The colour theme comes first, before the page is servable and before the
@@ -131,7 +134,9 @@ export async function bootstrapShell(userDataPath: string): Promise<void> {
 	// The GPU process going, and waking up: every page repaints. The pages'
 	// own renderers are watched where each page is made (`supervisePage`).
 	installRendererRecovery(isQuitting);
+	startupTrace("main:window-created");
 	const controller = await createAppController(userDataPath, settings);
+	startupTrace("main:controller");
 	// From here main has somewhere to put a failure nobody caught. Installed as
 	// early as there is a controller to publish through, because everything
 	// after this line is a thing that can fail.
@@ -152,6 +157,7 @@ export async function bootstrapShell(userDataPath: string): Promise<void> {
 		);
 	}
 	await controller.startRuntimes(userDataPath);
+	startupTrace("main:runtimes");
 	// After the runtimes, and this order is load-bearing.
 	//
 	// Registering this listener *publishes the current answer* — that is what
@@ -168,6 +174,7 @@ export async function bootstrapShell(userDataPath: string): Promise<void> {
 		controller.windowFocusChanged(focused);
 	});
 	openShellPage();
+	startupTrace("main:pages-opened");
 
 	// The desktop's door, opened at the same moment and onto the same room.
 	// `open-file` has been collecting paths since before `ready` (see
@@ -197,6 +204,7 @@ export async function bootstrapShell(userDataPath: string): Promise<void> {
 		tell: (command, origin, machine, as) =>
 			controller.tellFromCli(command, origin, machine, as),
 	});
+	startupTrace("main:control-socket");
 
 	// macOS: the dock icon brings the shell back after its window was hidden.
 	// DevHub is the app, not the window, and the window it comes back to is the

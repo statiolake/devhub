@@ -14,6 +14,7 @@
  * happens to be current.
  */
 
+import { startupTrace } from "../diagnostics/startupTrace.js";
 import { APP_ROOT } from "./appRoot.js";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
@@ -1214,9 +1215,11 @@ export class AppController {
 		// the terminals and agents launched with it would not find their tools
 		// either. One environment, one resolution: what
 		// DevHub can find and what a shell inside it can find cannot disagree.
+		startupTrace("main:login-env-wait");
 		this.loginEnvironment = await resolveLoginEnvironment({
 			enabled: config.general.import_login_environment,
 		});
+		startupTrace("main:login-env");
 		// It lands in DevHub's own process, which is what makes "one
 		// environment" true of VS Code's side as well: the workbench windows,
 		// the extension host and the `git` an extension runs are children of
@@ -1579,11 +1582,14 @@ export class AppController {
 		// Before the sweep, not after: a machine that answers is one this run
 		// owns sessions on, and a crash between the sweep and the first save
 		// must not be what makes DevHub forget where they are.
+		startupTrace("main:wired");
 		await this.saveState();
 		this.stopHearingReconnections = onRuntimeConnected((machine) => {
 			this.sessionSweeper?.machineCameBack(machine);
 		});
+		startupTrace("main:sweep-start");
 		await this.sessionSweeper.sweepAll();
+		startupTrace("main:swept");
 		this.agentReconcilers.follow(this.agentHosts());
 		this.terminalActivity.follow(this.terminalHosts());
 		this.repositoryStatus.start();

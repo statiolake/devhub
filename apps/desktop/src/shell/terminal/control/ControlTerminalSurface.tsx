@@ -1,3 +1,4 @@
+import { startupMark } from "../../startupMarks";
 import { useEffect, useMemo, useRef, useState } from "react";
 import "../../neovim/neovim.css";
 import "../terminal.css";
@@ -796,6 +797,7 @@ export function ControlTerminalSurface({
         );
       }
       painter.paint(view.state, merged, boxes, merged.layout);
+      if (view.panes.length > 0) startupMark(`terminal:first-paint`);
       shownBoxes = boxes;
       if (painter.scrolling) requestScrollTick();
       // tmux's panes as panes with a boundary between them, as the Neovim
@@ -1585,6 +1587,7 @@ export function ControlTerminalSurface({
     const onMessage = (attachSerial: number) => (value: unknown) => {
       if (disposed || attachSerial !== serial) return;
       const message = value as ControlToPage;
+      startupMark(`terminal:first-message`);
       if (message.kind === "notice") {
         say(message.text);
         return;
@@ -1774,6 +1777,7 @@ export function ControlTerminalSurface({
       if (previous !== undefined) void detach(previous);
       setConnection("connecting");
       size = measure();
+      startupMark("terminal:attach");
       try {
         const answer = await boundClient.attach(
           {
@@ -1792,6 +1796,7 @@ export function ControlTerminalSurface({
           return;
         }
         receipt = answer;
+        startupMark("terminal:attached");
         staleRetries = 0;
         connectedAt = Date.now();
         setConnection("connected");

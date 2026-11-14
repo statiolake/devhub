@@ -18,6 +18,7 @@
  * calls in is `appController.ts`'s.
  */
 
+import { startupTrace } from "../diagnostics/startupTrace.js";
 import type { WorkspaceTerminalTarget } from "../terminal/ports.js";
 import type { ManagedNeovims, NeovimOpen } from "./managedNeovim.js";
 import type { NeovimClipboard } from "./neovimUi.js";
@@ -181,6 +182,7 @@ export class NeovimEditors {
 	 */
 	preattach(page: NeovimPage, request: NeovimAttachRequest): void {
 		const key = request.workspaceId;
+		startupTrace(`editors:preattach ${key}`);
 		// An attach running (the page's own, say) or done is the one there is.
 		if (
 			!isOverlayKey(key) ||
@@ -205,6 +207,7 @@ export class NeovimEditors {
 		if (!isOverlayKey(request.workspaceId)) {
 			return { ok: false, message: "That Neovim is not DevHub's to draw." };
 		}
+		startupTrace(`editors:attach ${request.workspaceId}`);
 		const early = this.early.get(request.workspaceId);
 		if (early !== undefined && early.page === page) {
 			const reply = await early.reply;
