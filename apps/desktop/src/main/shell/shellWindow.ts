@@ -15,6 +15,7 @@
  * resize a round trip through a renderer. The page is now *given* the hole.
  */
 
+import { afterFirstTerminal } from "./launchMilestones.js";
 import { join } from "node:path";
 import { electron } from "../electron.js";
 import { sendLinksToTheBrowser } from "./externalLinks.js";
@@ -143,6 +144,12 @@ export type ContentFocus =
 	| { readonly kind: "editor" }
 	| { readonly kind: "agents" }
 	| { readonly kind: "terminal"; readonly terminalId: string };
+
+/**
+ * The longest the pages nothing on screen needs at launch wait for the ones
+ * it does (`ShellWindow.openPage`).
+ */
+const LATER_PAGES_MS = 2_000;
 
 export class ShellWindow {
 	readonly window: Electron.BrowserWindow;
@@ -493,15 +500,67 @@ export class ShellWindow {
 			throw new Error("the App Shell page has already been opened");
 		}
 		this.pageOpened = true;
+		// What the window shows first runs first: its own page, the sidebar,
+		// the terminals and whichever content view the layout shows. Every
+		// page starting at once had each of ten renderers loading and parsing
+		// on the same cores, and the terminal the person is waiting for
+		// painted last of all (about 0.6 s of a launch's 2.5 s, more on a slow
+		// machine). The rest — the layers, which draw nothing until they are
+		// asked to, and a content view not on screen — run once the first
+		// terminal has its client (or, with none on screen, once those have
+		// loaded), or after `LATER_PAGES_MS` at most. Each of them takes what
+		// it is to draw when its page has loaded (`did-finish-load`), as it
+		// did when they all loaded together.
+		const shown = new Set(
+			windowLayout(this.layoutInput())
+				.filter((child) => child.visible)
+				.map((child) => child.identity.kind),
+		);
+		const first: {
+			openPage(): void;
+			contents(): Electron.WebContents | undefined;
+		}[] = [
+			this.sidebar,
+			...this.terminalViews.values(),
+			...this.editorTerminals.values(),
+		];
+		const later: { openPage(): void }[] = [
+			this.toasts,
+			this.tooltip,
+			this.picker,
+		];
+		(shown.has("agents") ? first : later).push(this.agents);
+		(shown.has("conversations") ? first : later).push(this.conversations);
 		void this.window.loadURL(this.pageUrl);
-		this.sidebar.openPage();
-		this.agents.openPage();
-		this.conversations.openPage();
-		this.toasts.openPage();
-		this.tooltip.openPage();
-		this.picker.openPage();
-		for (const view of this.terminalViews.values()) view.openPage();
-		for (const view of this.editorTerminals.values()) view.openPage();
+		for (const view of first) view.openPage();
+		let opened = false;
+		const openLater = () => {
+			if (opened || this.window.isDestroyed()) return;
+			opened = true;
+			for (const view of later) view.openPage();
+		};
+		if (this.terminalViews.size + this.editorTerminals.size > 0) {
+			// A terminal on screen: they wait for it to have its client, the
+			// attach being the busiest part of a launch (tmux, the pty host).
+			afterFirstTerminal(openLater, LATER_PAGES_MS);
+		} else {
+			const timer = setTimeout(openLater, LATER_PAGES_MS);
+			const loading = [
+				this.window.webContents,
+				...first.map((view) => view.contents()),
+			].filter(
+				(contents): contents is Electron.WebContents => contents !== undefined,
+			);
+			let waiting = loading.length;
+			for (const contents of loading) {
+				contents.once("did-finish-load", () => {
+					waiting -= 1;
+					if (waiting > 0) return;
+					clearTimeout(timer);
+					openLater();
+				});
+			}
+		}
 		// A sheet is modal: any other contents of this window taking the
 		// keyboard while one stands — a renderer focusing itself, which no
 		// gate in main sees — gives it straight back. See

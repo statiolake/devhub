@@ -333,7 +333,7 @@ describe("a jump while that Neovim is alive", () => {
 		expect(w.server()?.opens()[1]).toEqual(["/src/widget/b.ts", 3, null, null]);
 	});
 
-	it("dismisses a blocking prompt before asking it to open anything", async () => {
+	it("dismisses a blocking prompt, the open waiting behind it", async () => {
 		const w = world();
 		const neovims = w.make();
 		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
@@ -344,7 +344,10 @@ describe("a jump while that Neovim is alive", () => {
 		const input = methods.lastIndexOf("nvim_input");
 		expect(input).toBeGreaterThan(-1);
 		expect(server.calls[input]?.params).toEqual(["<Esc>"]);
-		expect(methods.lastIndexOf("nvim_exec_lua")).toBeGreaterThan(input);
+		// Sent with the mode's question, not after its answer: a Neovim at a
+		// prompt answers only fast calls, so it runs the open once the
+		// `<Esc>` has let it out (one round trip fewer).
+		expect(server.opens()[1]).toEqual(["/src/widget/b.ts", null, null, null]);
 	});
 });
 

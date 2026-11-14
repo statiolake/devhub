@@ -584,7 +584,8 @@ describe("the pages in the shell window", () => {
 	 * the window runs at construction, and every one of them runs at
 	 * `openPage`, together.
 	 */
-	it("runs none of them before openPage, and all of them at it", () => {
+	it("runs none of them before openPage, what is on screen at it, and the rest after", () => {
+		vi.useFakeTimers();
 		loaded.length = 0;
 		const shell = new ShellWindow(
 			"preload.js",
@@ -594,6 +595,14 @@ describe("the pages in the shell window", () => {
 		);
 		expect(loaded).toEqual([]);
 		shell.openPage();
+		// The window's own page and the sidebar first; the layers (and a
+		// content view not on screen) once those have loaded, or 2 s after.
+		expect(loaded).toContain("devhub-app://shell/index.html");
+		expect(loaded).toContain("devhub-app://shell/sidebar.html");
+		expect(loaded).not.toContain("devhub-app://shell/toasts.html");
+		expect(loaded).not.toContain("devhub-app://shell/picker.html");
+		vi.advanceTimersByTime(2_000);
+		vi.useRealTimers();
 		expect([...loaded].sort()).toEqual(
 			[
 				"devhub-app://shell/agents.html",

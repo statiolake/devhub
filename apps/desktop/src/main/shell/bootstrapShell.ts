@@ -7,6 +7,7 @@
 
 import { startupTrace } from "../diagnostics/startupTrace.js";
 import { homedir } from "node:os";
+import { resolveLoginEnvironment } from "./loginEnvironment.js";
 import { join } from "node:path";
 import { APP_ROOT } from "./appRoot.js";
 import { createAppController } from "./appController.js";
@@ -67,6 +68,13 @@ export async function bootstrapShell(userDataPath: string): Promise<void> {
 	startupTrace("main:bootstrap");
 	const settings = await RunningSettings.open(activeProfile(), homedir());
 	startupTrace("main:settings");
+	// The login shell's environment (`loginEnvironment.ts`) is asked now: a
+	// person's shell start-up can take a good part of a second, and it runs
+	// while the window and the controller are made. Nothing before
+	// `startRuntimes` reads it; that is where it is adopted.
+	const loginEnvironment = resolveLoginEnvironment({
+		enabled: settings.config.general.import_login_environment,
+	});
 	const titleBar = titleBarModeOf(settings.config);
 
 	// The colour theme comes first, before the page is servable and before the
@@ -156,7 +164,7 @@ export async function bootstrapShell(userDataPath: string): Promise<void> {
 			withDetail(errorWireAt("color_theme_unavailable"), problem),
 		);
 	}
-	await controller.startRuntimes(userDataPath);
+	await controller.startRuntimes(userDataPath, loginEnvironment);
 	startupTrace("main:runtimes");
 	// After the runtimes, and this order is load-bearing.
 	//

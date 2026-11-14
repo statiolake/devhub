@@ -138,12 +138,18 @@ listener on a channel nobody was ever going to write to: spellable, silent, and
 indistinguishable from a bug in the modal layer. Now it is unspellable
 anywhere else, and confirmed so on a running instance.
 
-**Every page in the window runs at one moment, after the runtimes.** The
-window and its child views are built early — the controller is built around
-the window, and it paints while startup goes on — but no page is loaded until
-`ShellWindow.openPage`, which `bootstrapShell` calls once `startRuntimes` has
-registered what the pages will ask for, and which runs the window's own page
-and every child's together. A page asks the moment it mounts: the Agents page
+**Every page in the window runs after the runtimes, what is on screen
+first.** The window and its child views are built early — the controller is
+built around the window, and it paints while startup goes on — but no page is
+loaded until `ShellWindow.openPage`, which `bootstrapShell` calls once
+`startRuntimes` has registered what the pages will ask for. It runs the
+window's own page, the sidebar, the terminals' pages and the content view the
+layout shows at once, and the rest — the toasts, the tooltip, the picker and a
+content view not on screen — once those have loaded, or 1.5 s after at most:
+ten renderers loading on the same cores had the terminal the person waits for
+paint last. Each of the later ones is told what it draws when its page has
+loaded, as it was when they all loaded together. A page asks the moment it
+mounts: the Agents page
 attaches every running Agent's terminal, and an attach that arrives before the
 terminal handlers exist is refused by Electron ("No handler registered for
 'devhub:terminal:attach'"), which the pane draws as "The terminal session is

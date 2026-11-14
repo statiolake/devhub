@@ -58,7 +58,7 @@ export class LayerView {
 
 	/**
 	 * Run the page. Not at construction: the window owns when its pages run,
-	 * and runs them all at once, when everything they ask for exists — see
+	 * once everything they ask for exists, what it shows first — see
 	 * `ShellWindow.openPage`.
 	 */
 	openPage(): void {

@@ -438,6 +438,9 @@ function isRefused(error: unknown): boolean {
 	return code === "ECONNREFUSED" || code === "ENOENT" || code === "ENOTSOCK";
 }
 
+/** How often a local Neovim's socket is looked for while it starts. */
+const LOCAL_SOCKET_POLL_MS = 5;
+
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -624,8 +627,11 @@ export class ManagedNeovims {
 				? Math.max(1, record.startingUntil - Date.now())
 				: undefined;
 		try {
-			await this.leaveBlockingPrompt(record.client, timeoutMs);
-			await record.client.request(
+			// The open is sent with the mode's question, not after its answer:
+			// `nvim_get_mode` is answered at once even at a prompt, and the open
+			// is queued behind the prompt until the `<Esc>` that leaves it. One
+			// round trip, which over SSH is one to the host.
+			const opened = record.client.request(
 				"nvim_exec_lua",
 				[
 					OPEN_FILE_LUA,
@@ -638,6 +644,10 @@ export class ManagedNeovims {
 				],
 				{ timeoutMs },
 			);
+			// Its failure is the open's to say, below, after the prompt's.
+			opened.catch(() => undefined);
+			await this.leaveBlockingPrompt(record.client, timeoutMs);
+			await opened;
 		} catch (error) {
 			if (!(error instanceof NeovimRequestTimeout) || record.client.closed)
 				throw error;
@@ -823,6 +833,15 @@ export class ManagedNeovims {
 			await this.panes.kill(target, failed).catch(() => undefined);
 		}
 		const deadline = Date.now() + this.startTimeoutMs;
+		// Neovim listens within a few ms of starting, before its config: a
+		// local socket is looked for every `LOCAL_SOCKET_POLL_MS`, and the
+		// pane (a tmux command) asked after only every `pollMs`. A host's is
+		// a command on the host each time, so it waits `pollMs` between.
+		const socketPollMs =
+			target.machine === "local"
+				? Math.min(this.pollMs, LOCAL_SOCKET_POLL_MS)
+				: this.pollMs;
+		let paneCheckAt = Date.now() + this.pollMs;
 		for (;;) {
 			if (await sockets.files.exists(socketPath)) {
 				try {
@@ -845,6 +864,11 @@ export class ManagedNeovims {
 					if (!isRefused(error)) throw error;
 				}
 			}
+			if (Date.now() < paneCheckAt && Date.now() < deadline) {
+				await delay(socketPollMs);
+				continue;
+			}
+			paneCheckAt = Date.now() + this.pollMs;
 			if ((await this.panes.state(target, paneId)) !== "alive") {
 				throw new NeovimStartFailure(
 					`Neovim (${nvim}) exited before it opened its socket. Run it in a terminal to see why — a configuration error is the usual reason.`,
@@ -861,7 +885,7 @@ export class ManagedNeovims {
 					stderrPath,
 				);
 			}
-			await delay(this.pollMs);
+			await delay(socketPollMs);
 		}
 	}
 

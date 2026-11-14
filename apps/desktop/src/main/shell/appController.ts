@@ -15,6 +15,7 @@
  */
 
 import { startupTrace } from "../diagnostics/startupTrace.js";
+import { afterFirstTerminal } from "./launchMilestones.js";
 import { APP_ROOT } from "./appRoot.js";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
@@ -776,6 +777,9 @@ interface PendingRequest {
 	readonly timer: ReturnType<typeof setTimeout>;
 }
 
+/** The longest the startup sweep waits for the first terminal (`launchMilestones.ts`). */
+const SWEEP_WAIT_MS = 3_000;
+
 export class AppController {
 	private readonly coordinator: AppCoordinator;
 	private cursor = 0;
@@ -1184,7 +1188,15 @@ export class AppController {
 	 * because an Agent *is* a tmux session — there is one socket, one marker
 	 * protocol and one client for both.
 	 */
-	async startRuntimes(userDataPath: string): Promise<void> {
+	/**
+	 * `loginEnvironment`: the login shell already asked (`bootstrapShell`
+	 * starts it as soon as the settings are read, so the shell's start-up
+	 * runs while the controller is built); asked here when not given.
+	 */
+	async startRuntimes(
+		userDataPath: string,
+		loginEnvironment?: Promise<LoginEnvironment>,
+	): Promise<void> {
 		this.userDataPath = userDataPath;
 		const config = this.config;
 		// On a state file that has never existed, the configured socket *is* the
@@ -1216,9 +1228,10 @@ export class AppController {
 		// either. One environment, one resolution: what
 		// DevHub can find and what a shell inside it can find cannot disagree.
 		startupTrace("main:login-env-wait");
-		this.loginEnvironment = await resolveLoginEnvironment({
-			enabled: config.general.import_login_environment,
-		});
+		this.loginEnvironment = await (loginEnvironment ??
+			resolveLoginEnvironment({
+				enabled: config.general.import_login_environment,
+			}));
 		startupTrace("main:login-env");
 		// It lands in DevHub's own process, which is what makes "one
 		// environment" true of VS Code's side as well: the workbench windows,
@@ -1234,6 +1247,9 @@ export class AppController {
 		// built (`terminalRuntimes.ts`) — and the Settings window asks its own
 		// for this Mac, which is what that window is about.
 		this.ptyHost = new PtyHostClient({ launch: electronPtyHostLauncher });
+		// Started now, while the pages load: every launch with a Workspace
+		// open attaches a terminal through it first thing.
+		this.ptyHost.warm();
 		this.terminalsWiring = wireTerminals({
 			ptyHost: this.ptyHost,
 			settings: this.settings,
@@ -1587,9 +1603,24 @@ export class AppController {
 		this.stopHearingReconnections = onRuntimeConnected((machine) => {
 			this.sessionSweeper?.machineCameBack(machine);
 		});
-		startupTrace("main:sweep-start");
-		await this.sessionSweeper.sweepAll();
-		startupTrace("main:swept");
+		// The sweep is on nobody's way to a window, and the pages wait for
+		// `startRuntimes`: it runs on while they load. It only closes what
+		// nothing accounts for, so a terminal attaching meanwhile (to its
+		// Workspace's session) is never what it closes; and on a launch that
+		// remembers an SSH host it asks that host too, which is a connection.
+		// It asks the same tmux server the first terminal does, so it waits
+		// for that terminal's attach (`launchMilestones.ts`).
+		const sweeper = this.sessionSweeper;
+		afterFirstTerminal(() => {
+			void sweeper.sweepAll().then(
+				() => {
+					startupTrace("main:swept");
+				},
+				(error: unknown) => {
+					console.error("[devhub] sweep: failed at startup", error);
+				},
+			);
+		}, SWEEP_WAIT_MS);
 		this.agentReconcilers.follow(this.agentHosts());
 		this.terminalActivity.follow(this.terminalHosts());
 		this.repositoryStatus.start();

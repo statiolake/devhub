@@ -150,6 +150,16 @@ export class PtyHostClient implements HostedPtys {
 		return !this.#disposed && !this.#gaveUp;
 	}
 
+	/**
+	 * Start the host now, ahead of the first attach: at launch it starts
+	 * while the window's pages load, instead of after the first terminal
+	 * has asked for its client (about 100 ms, more on a busy machine, on
+	 * the way to the first terminal drawn).
+	 */
+	warm(): void {
+		if (this.available) this.#hostNow();
+	}
+
 	get generation(): number {
 		return this.#generation;
 	}
