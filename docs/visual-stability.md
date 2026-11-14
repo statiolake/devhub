@@ -233,6 +233,7 @@ DevHub's own, diagnosed and open:
 | `scroll-burst` | rows of the old view over the command line (`<C-u>`) and above the window (`<C-d>`), repeated `<C-d>`/`<C-u>` | the ghost is kept in its window's scroll port, never left beside it in the level |
 | `scroll-burst` (coherent) | the grid scrolled with the rows below it blank (the ghost's old lines through them), one with only its line number | a redraw is taken in at its flush: what comes after a flush waits for its own |
 | `scroll/wheel-fast-*` | the display going back up to 7 px to a line at rest | at rest the display goes on to the next line the way it was going (`restLines`) |
+| `scroll/wheel-fast-down` (1x, now and then) | the display going back 12 px at rest over a wrapped line | the settling request says which way the display was going: Neovim never lands behind it |
 | `scroll-changing/append-while-wheeling` (1x) | the display jumping 1500 px when the file grew while the wheel turned | a repaint of every grid keeps the canvas, and the smooth scroll under way |
 | `scroll-changing/diagnostics-mid-scroll` (1x) | a band of background at the top of the window for a frame | a glide cut by Neovim's scroll stays within what the canvas and the ghost cover |
 | `terminal-copy-mode/jump-to-bottom` (6x) | copy mode's rows without its badge for a frame | the badge goes with the live rows' picture |
