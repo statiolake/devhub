@@ -143,11 +143,10 @@ export class TerminalSurfaces {
 			const runtime = await this.runtimeFor(request.target.machine);
 			const release = await runtime.acquireOperation(operation);
 			try {
-				const deadline = OperationDeadline.in(runtime.timeoutMs);
-				await runtime.ensureUnlocked(request.target, operation);
-				const sessions = await runtime.listSessionsUnlocked(
+				// The list `ensure` read back after its last change to the server.
+				const sessions = await runtime.ensureUnlocked(
+					request.target,
 					operation,
-					deadline,
 				);
 				startupTrace(`terminal:sessions-listed ${request.surfaceKey}`);
 				const identity = runtime.targetIdentity(request.target, sessions);
@@ -156,9 +155,8 @@ export class TerminalSurfaces {
 						session.name === identity.sessionName &&
 						sessionMatches(session, identity),
 				);
-				// `ensure` only guarantees the session existed a moment ago. The
-				// client is never pointed at a name; it is pointed at a session
-				// whose full marker triple was just read back.
+				// The client is never pointed at a name; it is pointed at a
+				// session whose full marker triple was just read back.
 				if (!exact) throw new TerminalFailure("session_unavailable");
 				operation.check();
 				const receipt = await this.attachments.attach(permit, {

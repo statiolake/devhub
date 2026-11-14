@@ -661,7 +661,11 @@ describe.skipIf(TMUX === undefined)(
         );
         const name = `ws-${workspaceDigest(root).slice(0, 20)}`;
         expect(sessions.filter((one) => one.name === name)).toHaveLength(1);
-        await test.runtime.closeWorkspace({ machine: "local", workspaceId, root });
+        await test.runtime.closeWorkspace({
+          machine: "local",
+          workspaceId,
+          root,
+        });
       }
     });
 
@@ -920,19 +924,18 @@ describe.skipIf(TMUX === undefined)(
       for (const target of targets) await test.runtime.ensure(target);
 
       // Nine marked sessions exist. Attaching to one that is already there
-      // takes a fixed five commands whatever the count is, because each of the
-      // inventories it reads is a single client. Reading the markers a field
-      // at a time cost `4N` per inventory instead: the same attach measured 78
-      // processes here, and grew by eight with every workspace the viewer had
-      // open.
-      //
-      // The fifth is the one that reads which config the server is running.
-      // It is a constant and it is per attach, not per reconcile round — the
-      // round below is still one client — and it buys the rule that a config
-      // written after the server started is a config the server runs.
+      // takes a fixed two commands whatever the count is: one client reads
+      // the marker, the config the server runs, its pid and the listing; one
+      // states the session's options and reads the listing back, which is
+      // the listing the attach's client is pointed by. Reading the markers a
+      // field at a time cost `4N` per inventory instead: the same attach
+      // measured 78 processes here, and grew by eight with every workspace
+      // the viewer had open. It was five, and a listing more in the attach,
+      // while each of those was a client of its own — over SSH, a round trip
+      // to the host each — and the theme was stated on every one.
       const attachStart = test.tmuxRuns();
       await test.runtime.ensure(targets[0]);
-      expect(test.tmuxRuns() - attachStart).toBe(5);
+      expect(test.tmuxRuns() - attachStart).toBe(2);
 
       // An inspection reads the inventory — marker and listing in one client —
       // and then both of its listings, the windows and the panes sharing one

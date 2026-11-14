@@ -191,8 +191,18 @@ const SESSION_FORMAT = SESSION_FIELDS.join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
  * as the listing that follows it in the same client.
  */
 const MARKER_FORMAT =
-	[MARKER_RECORD, `#{${PROTOCOL_OPTION}}`]
-		.concat(Array.from({ length: SESSION_FIELDS.length - 2 }, () => ""))
+	[
+		MARKER_RECORD,
+		`#{${PROTOCOL_OPTION}}`,
+		// Two more server facts ride along, so an attach reads all it decides
+		// on in one client: the user config the server last sourced
+		// (`applyUserConfig`), and which server this is — a server's pid is
+		// what a fact stated to it once (the theme, a session's options) is
+		// remembered by.
+		`#{${CONFIG_DIGEST_OPTION}}`,
+		"#{pid}",
+	]
+		.concat(Array.from({ length: SESSION_FIELDS.length - 4 }, () => ""))
 		.join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
 /**
  * The record that says the listing finished, in a round that reads screens.
@@ -434,6 +444,10 @@ export interface Inventory {
 	readonly marker: MarkerState;
 	/** Empty unless the marker is `owned`; nothing else may be acted on. */
 	readonly sessions: readonly SessionInfo[];
+	/** An owned server's: the config digest it records ("" for none). */
+	readonly configDigest?: string;
+	/** An owned server's: its pid, which tells this server from a later one. */
+	readonly serverPid?: string;
 }
 
 /** One Agent's visible screen and the title its program set. */
@@ -1701,7 +1715,13 @@ export class TmuxTerminalRuntime {
 	private neovimShimWritten: Promise<boolean> | undefined;
 	private neovimShimReady = false;
 	/** One in-flight bring-up per socket, shared by concurrent callers. */
-	private readonly serverBootstraps = new Map<SocketName, Promise<void>>();
+	private readonly serverBootstraps = new Map<SocketName, Promise<Inventory>>();
+	/**
+	 * The server (by socket) this DevHub has stated its theme to, by pid: a
+	 * server keeps what it was told for its life, so a bring-up states it to
+	 * each server once, and `publishThemeEnvironment` again on a change.
+	 */
+	private readonly themeStatedTo = new Map<SocketName, string>();
 	private readonly serverVersion: string | undefined;
 	/**
 	 * The socket whose running server answered `serverVersion`.
@@ -1975,7 +1995,7 @@ export class TmuxTerminalRuntime {
 		target: TerminalTarget,
 		cancel: CancellationToken,
 	): Promise<void> {
-		return this.ensureSyncOnSocket(socket, target, cancel);
+		await this.ensureSyncOnSocket(socket, target, cancel);
 	}
 
 	/**
@@ -2003,8 +2023,8 @@ export class TmuxTerminalRuntime {
 	async ensureUnlocked(
 		target: TerminalTarget,
 		cancel: CancellationToken,
-	): Promise<void> {
-		await this.ensureSyncOnSocket(this.socket(), target, cancel);
+	): Promise<readonly SessionInfo[]> {
+		return this.ensureSyncOnSocket(this.socket(), target, cancel);
 	}
 
 	/** The session list on the effective socket, for a caller holding a permit. */
@@ -2092,7 +2112,10 @@ export class TmuxTerminalRuntime {
 	}
 
 	/**
-	 * After this returns, the target's exact marked session exists.
+	 * After this returns, the target's exact marked session exists, and the
+	 * session list it answers is the server's as read after the last thing
+	 * this did to it — so an attach points its client at a session read back
+	 * by the same queue, not one listed before it was configured.
 	 *
 	 * A terminal is a *place*: if it is not there it is created, because that
 	 * is what asking for a workspace's terminal means. An Agent is a *process*:
@@ -2104,13 +2127,15 @@ export class TmuxTerminalRuntime {
 		socket: SocketName,
 		target: TerminalTarget,
 		cancel: CancellationToken,
-	): Promise<void> {
+	): Promise<readonly SessionInfo[]> {
 		// Before any session is made: its panes' PATH is stated as it is.
 		await this.ensureNeovimShim();
 		const deadline = OperationDeadline.in(this.timeoutMs);
 		await this.ensureVersion(socket, cancel, deadline);
-		await this.ensureServer(socket, cancel, deadline);
-		const sessions = await this.listSessions(socket, cancel, deadline);
+		// The bring-up's own read of the server is the listing this goes on:
+		// one client, not a second `list-sessions` after it.
+		const server = await this.ensureServer(socket, cancel, deadline);
+		const sessions = server.sessions;
 		const identity = this.targetIdentity(target, sessions);
 		const existing = sessions.find(
 			(session) => session.name === identity.sessionName,
@@ -2119,17 +2144,24 @@ export class TmuxTerminalRuntime {
 			if (!sessionMatches(existing, identity)) throw portFailure("conflict");
 			// The session is proven DevHub's, so its options are DevHub's to
 			// state. Re-stating them here is what migrates a session created by
-			// an older build, and it runs on the same path every open takes.
-			await this.applySessionOptions(socket, identity, cancel, deadline);
-			return;
+			// an older build, and it runs on the same path every open takes —
+			// with the listing read back in the same client.
+			const readBack = await this.applySessionOptions(
+				socket,
+				identity,
+				cancel,
+				deadline,
+			);
+			return readBack ?? sessions;
 		}
 		// A process, not a place: an Agent or a pane terminal that is not there
 		// has ended, and recreating it would be an empty shell wearing its name.
 		if (target.kind === "agent" || target.kind === "terminal") {
 			throw portFailure("conflict");
 		}
+		let made: SessionInfo[];
 		try {
-			await this.createSession(
+			made = await this.createSession(
 				socket,
 				{
 					name: identity.sessionName,
@@ -2147,11 +2179,15 @@ export class TmuxTerminalRuntime {
 			// it — and the other made it first: the session is there, with
 			// exactly this identity, which is all this asked for.
 			const after = await this.listSessions(socket, cancel, deadline);
-			const made = after.find(
+			const other = after.find(
 				(session) => session.name === identity.sessionName,
 			);
-			if (made === undefined || !sessionMatches(made, identity)) throw failure;
+			if (other === undefined || !sessionMatches(other, identity)) {
+				throw failure;
+			}
+			return after;
 		}
+		return made;
 	}
 
 	// --- Agents ------------------------------------------------------------
@@ -3569,49 +3605,70 @@ export class TmuxTerminalRuntime {
 		socket: SocketName,
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
-	): Promise<void> {
+	): Promise<Inventory> {
 		const inFlight = this.serverBootstraps.get(socket);
 		if (inFlight) {
 			await inFlight;
-			return;
+			// Its listing was read for another caller, which may since have
+			// made a session: this one reads its own.
+			return this.inventory(socket, cancel, deadline);
 		}
 		const attempt = this.bringServerUp(socket, cancel, deadline).finally(() => {
 			this.serverBootstraps.delete(socket);
 		});
 		this.serverBootstraps.set(socket, attempt);
-		await attempt;
+		return attempt;
 	}
 
+	/**
+	 * The server up, configured and Scratch there, answering what it read of
+	 * the server — marker, config digest, pid and session list in one client
+	 * (`inventory`) — as of after the last thing it did.
+	 */
 	private async bringServerUp(
 		socket: SocketName,
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
-	): Promise<void> {
+	): Promise<Inventory> {
 		// Asked of the machine here and not when the adapter was built, so that
 		// the config this bring-up applies is the one on disk now. For a host
 		// this is also the copy going across, which is why it is one call and
 		// not a path plus a separate delivery.
 		const config = await this.host.userTmuxConfig(this.userTmuxConfigSource);
-		const marker = await this.markerState(socket, cancel, deadline);
-		if (marker === "wrong") throw portFailure("conflict");
-		if (marker === "absent") {
+		let server = await this.inventory(socket, cancel, deadline);
+		if (server.marker === "wrong") throw portFailure("conflict");
+		if (server.marker === "absent") {
 			await this.bootstrapAbsentServer(socket, config, cancel, deadline);
+			server = await this.inventory(socket, cancel, deadline);
+			if (server.marker !== "owned") throw portFailure("conflict");
 		}
 		// Before Scratch and before any session this bring-up goes on to make:
 		// a session created under the wrong config is a pane whose shell, keys
 		// and status line are not the ones the person asked for.
-		await this.applyUserConfig(socket, config, cancel, deadline);
+		await this.applyUserConfig(
+			socket,
+			config,
+			server.configDigest ?? "",
+			cancel,
+			deadline,
+		);
 		// A server started by an earlier DevHub was started with that DevHub's
-		// theme; this one's is stated before any pane it goes on to make.
-		await this.stateThemeEnvironment(socket, cancel, deadline);
+		// theme; this one's is stated before any pane it goes on to make —
+		// once per server, which keeps it for its life.
+		const pid = server.serverPid ?? "";
+		if (pid === "" || this.themeStatedTo.get(socket) !== pid) {
+			await this.stateThemeEnvironment(socket, cancel, deadline);
+			if (pid !== "") this.themeStatedTo.set(socket, pid);
+		}
 		// Scratch is the *app's* terminal, not a folder's, and the app runs on
 		// one machine. A host's tmux got one too, because this ran on every
 		// machine's adapter — a session nothing on that host will ever attach
 		// to, in a directory chosen here, left behind for the life of the
 		// server. Only workspace and Agent sessions belong on a host.
 		if (this.machine === "local") {
-			await this.ensureScratch(socket, cancel, deadline);
+			server = await this.ensureScratch(socket, server, cancel, deadline);
 		}
+		return server;
 	}
 
 	/**
@@ -3624,12 +3681,13 @@ export class TmuxTerminalRuntime {
 	 */
 	private async ensureScratch(
 		socket: SocketName,
+		server: Inventory,
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
-	): Promise<void> {
+	): Promise<Inventory> {
 		const home = this.contextHome;
 		const identity = this.targetIdentity(SCRATCH_TARGET, []);
-		const { marker, sessions } = await this.inventory(socket, cancel, deadline);
+		const { marker, sessions } = server;
 		const scratch = sessions.find(
 			(session) => session.name === SCRATCH_SESSION,
 		);
@@ -3637,7 +3695,7 @@ export class TmuxTerminalRuntime {
 			if (marker !== "owned" || !sessionMatches(scratch, identity)) {
 				throw portFailure("conflict");
 			}
-			return;
+			return server;
 		}
 		await this.createSession(
 			socket,
@@ -3662,6 +3720,7 @@ export class TmuxTerminalRuntime {
 		) {
 			throw portFailure("conflict");
 		}
+		return readBack;
 	}
 
 	async markerState(
@@ -3819,13 +3878,17 @@ export class TmuxTerminalRuntime {
 		throw portFailure("conflict");
 	}
 
-	/** State a marked session's own options on a session already proven owned. */
+	/**
+	 * State a marked session's own options on a session already proven owned,
+	 * answering the session list read back after them (nothing to state:
+	 * `undefined`).
+	 */
 	private async applySessionOptions(
 		socket: SocketName,
 		identity: TargetIdentity,
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
-	): Promise<void> {
+	): Promise<SessionInfo[] | undefined> {
 		const options = sessionOptions(identity.context);
 		const environment = this.paneEnvironmentForExistingSession();
 		const commands = [
@@ -3844,11 +3907,13 @@ export class TmuxTerminalRuntime {
 				value,
 			]),
 		];
-		if (commands.length === 0) return;
-		const args = commands.flatMap((command, index) => [
-			...(index === 0 ? [] : [";"]),
-			...command,
-		]);
+		if (commands.length === 0) return undefined;
+		// The listing is read back in the same client, after the options:
+		// what the attach that follows points its client at.
+		const args = [...commands, ["list-sessions", "-F", SESSION_FORMAT]].flatMap(
+			(command, index) => [...(index === 0 ? [] : [";"]), ...command],
+		);
+		activityCounters.record(COUNTER.tmuxListSessions);
 		const output = await this.runTmux(
 			socket,
 			args,
@@ -3857,6 +3922,7 @@ export class TmuxTerminalRuntime {
 			deadline,
 		);
 		if (!output.success) throw output.refusal();
+		return sessionsFrom(parseRecords(output.stdout, SESSION_FIELDS.length));
 	}
 
 	/**
@@ -4235,12 +4301,13 @@ export class TmuxTerminalRuntime {
 		}
 	}
 
+	/** Answers the session list, read back in the same client as the create. */
 	private async createSession(
 		socket: SocketName,
 		spec: SessionSpec,
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
-	): Promise<void> {
+	): Promise<SessionInfo[]> {
 		if ((await this.host.stat(spec.root)) !== "directory") {
 			throw portFailure("root_missing");
 		}
@@ -4340,6 +4407,11 @@ export class TmuxTerminalRuntime {
 				option,
 				value,
 			]),
+			// Read back by the same client: no separate listing after it.
+			";",
+			"list-sessions",
+			"-F",
+			SESSION_FORMAT,
 		];
 		// The last read before creating a session. The earlier check protects
 		// path validation; this one keeps a server that changed marker state
@@ -4359,9 +4431,15 @@ export class TmuxTerminalRuntime {
 			// kill could destroy a concurrent or unknown resource.
 			throw portFailure("conflict");
 		}
+		activityCounters.record(COUNTER.tmuxListSessions);
+		const sessions = sessionsFrom(
+			parseRecords(output.stdout, SESSION_FIELDS.length),
+		);
 		if (this.machine !== "local" && spec.name !== SCRATCH_SESSION) {
 			await this.retireRemoteAnchor(socket, cancel, deadline);
+			return sessions.filter((session) => session.name !== SCRATCH_SESSION);
 		}
+		return sessions;
 	}
 
 	/**
@@ -4540,13 +4618,14 @@ export class TmuxTerminalRuntime {
 		}
 		const marker: MarkerState = first[1] === PROTOCOL_VALUE ? "owned" : "wrong";
 		if (marker !== "owned") return { marker, sessions: [] };
+		const server = { configDigest: first[2] ?? "", serverPid: first[3] ?? "" };
 		if (!output.success) {
 			// The server was DevHub's and went away between the two commands,
 			// which is the same answer an absent server gives: nothing is on it.
-			if (output.noServer) return { marker, sessions: [] };
+			if (output.noServer) return { marker, sessions: [], ...server };
 			throw output.refusal();
 		}
-		return { marker, sessions: sessionsFrom(records.slice(1)) };
+		return { marker, sessions: sessionsFrom(records.slice(1)), ...server };
 	}
 
 	/**
@@ -4636,22 +4715,14 @@ export class TmuxTerminalRuntime {
 	private async applyUserConfig(
 		socket: SocketName,
 		config: UserTmuxConfig,
-		cancel: CancellationToken,
-		deadline: OperationDeadline,
-	): Promise<void> {
-		const recorded = await this.runTmux(
-			socket,
-			["show-options", "-gqv", CONFIG_DIGEST_OPTION],
-			this.contextHome,
-			cancel,
-			deadline,
-		);
-		if (!recorded.success) throw recorded.refusal();
+		// The digest the server records, as the bring-up's inventory read it.
 		// Empty is a server that has never been told, which is every server a
 		// DevHub without this rule created — not a digest, and never equal to
 		// one.
-		const applied =
-			recorded.stdout.byteLength === 0 ? "" : parseOptionValue(recorded.stdout);
+		applied: string,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<void> {
 		if (applied === config.digest) return;
 		// Nothing to source when there is none — and the digest is still
 		// recorded, so a config that was there and is gone is recorded as gone
