@@ -53,7 +53,10 @@ end
 local function links_of(line)
   local out, taken = {}, {}
   for from, href in line:gmatch("()%b[]%(%s*<?([^%s%)>]+)") do
-    table.insert(out, { col = from, href = href })
+    -- ![alt](src) is a picture, not a link
+    if from == 1 or line:sub(from - 1, from - 1) ~= "!" then
+      table.insert(out, { col = from, href = href })
+    end
     taken[href] = true
   end
   for from, href in line:gmatch("()<(%a[%w+.-]*:[^%s>]+)>") do

@@ -158,6 +158,16 @@ describe.skipIf(NVIM === undefined)("gui.document in a real Neovim", () => {
 		);
 		expect(last("document_scroll")).toMatchObject({ id, by: "line", n: 3 });
 
+		// A picture is not a link; [text](href), <url> and bare URLs are.
+		expect(
+			await lua(
+				"return require('devhub_gui')._document_links_of('![a](p.png) [b](c.md) <https://x.y> and https://z.w')",
+			),
+		).toEqual([
+			{ col: 13, href: "c.md" },
+			{ col: 23, href: "https://x.y" },
+			{ col: 41, href: "https://z.w" },
+		]);
 		// <Tab> moves to the first link in sight, <CR> follows it.
 		await lua("require('devhub_gui')._document_view(...)", [id, 1, 20]);
 		await ui.request("nvim_input", ["<Tab>"]);
