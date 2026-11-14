@@ -55,6 +55,12 @@ export interface Run {
   readonly dim?: boolean | undefined;
   readonly strike?: boolean | undefined;
   readonly underline?: boolean | undefined;
+  /**
+   * A mark over the text (a search's match): drawn in its group's colours,
+   * its ground a rounded chip — bold and underlined when the group has no
+   * ground.
+   */
+  readonly mark?: boolean | undefined;
 }
 
 export interface StackNode extends Common {
@@ -348,6 +354,7 @@ function run(value: unknown): Run | undefined {
     dim: bool(r, "dim"),
     strike: bool(r, "strike"),
     underline: bool(r, "underline"),
+    mark: bool(r, "mark"),
   };
 }
 

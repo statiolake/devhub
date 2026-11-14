@@ -61,6 +61,13 @@ export interface ViewContent {
   readonly rowHeight?: number | undefined;
   /** It has a menu (`on_context_menu`): a right-click on an item puts it up. */
   readonly menu?: true | undefined;
+  /** A row above the items that is not one (a list's title), unframed. */
+  readonly header?: ComponentNode | undefined;
+  /**
+   * Each heading held at the top while the items under it (to the next
+   * heading) scroll, pushed up by the next (`pinnedHeading`).
+   */
+  readonly stickyHeadings?: true | undefined;
 }
 
 export interface InlineContent {
@@ -313,6 +320,7 @@ function viewContent(id: number, p: Rec): ViewContent {
     })
     .sort((a, b) => a.line - b.line);
   const frame = viewFrame(p["frame"]);
+  const header = parseNode(p["header"]);
   const indent = num(p, "indent");
   const rowHeight = num(p, "row_height");
   return {
@@ -328,6 +336,8 @@ function viewContent(id: number, p: Rec): ViewContent {
     keys: keyList(p["keys"]),
     ...(frame ? { frame } : {}),
     ...(p["menu"] === true ? { menu: true as const } : {}),
+    ...(header ? { header } : {}),
+    ...(p["sticky_headings"] === true ? { stickyHeadings: true as const } : {}),
   };
 }
 

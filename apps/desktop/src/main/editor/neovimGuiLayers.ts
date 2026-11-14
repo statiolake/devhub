@@ -237,9 +237,18 @@ local function render_view(view)
     frame = { title = part(f.title), status = part(f.status), preview_title = part(f.preview_title),
       actions = part(f.actions), placeholder = f.placeholder, editor = view.editor or nil }
   end
+  -- A row above the items that is not one (a list's title): a component, or
+  -- a function answering one, asked again at every draw.
+  local header = view.header
+  if type(header) == "function" then
+    local ok, value = pcall(header)
+    header = ok and value or nil
+  end
+  header = (not view.frame and header ~= nil) and serialize(header, actions, hls, 0) or nil
   M._actions["view:" .. view.id] = actions
   event("view", { id = view.id, items = items, hl = hl_table(hls), keys = keys_list(view.keys), frame = frame,
-    indent = view.indent, row_height = view.row_height, menu = view.on_context_menu ~= nil or nil })
+    indent = view.indent, row_height = view.row_height, menu = view.on_context_menu ~= nil or nil,
+    header = header, sticky_headings = view.sticky_headings or nil })
 end
 
 local render_pending = {}
@@ -287,6 +296,10 @@ end
 --- { node, depth } (DevHub indents it and draws the guides down the rows;
 --- sticky = true holds an item at the top); row_height = each item's least
 --- height. Visual mode in the window draws its lines selected.
+--- header = component | fn() -> component: a row above the items that is not
+--- one (a list's title; fn asked again at every draw). sticky_headings = true:
+--- each item's heading is held at the top while the items under it, to the
+--- next heading, scroll (a file's name over its matches).
 --- frame = { win, query = { win, placeholder? }, preview = { win, title? },
 --- title?, status? }: the view is drawn in a frame over the float win instead
 --- of over its window (a hidden window showing buf, whose cursor line is the
@@ -303,7 +316,9 @@ function M.view(opts)
     on_context_menu = type(opts.on_context_menu) == "function" and opts.on_context_menu or nil,
     on_scroll = opts.on_scroll, on_rows = opts.on_rows,
     indent = type(opts.indent) == "number" and opts.indent > 0 and opts.indent or nil,
-    row_height = type(opts.row_height) == "number" and opts.row_height > 0 and opts.row_height or nil }
+    row_height = type(opts.row_height) == "number" and opts.row_height > 0 and opts.row_height or nil,
+    header = (type(opts.header) == "table" or type(opts.header) == "function") and opts.header or nil,
+    sticky_headings = opts.sticky_headings == true or nil }
   if type(opts.frame) == "table" then
     local f = opts.frame
     local frame_win = win_of(f.win)

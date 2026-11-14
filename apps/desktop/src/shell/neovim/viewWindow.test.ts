@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { drawnRows, viewLayout, viewPieces } from "./viewWindow";
+import { drawnRows, pinnedHeading, viewLayout, viewPieces } from "./viewWindow";
 
 const keys = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
 
@@ -53,5 +53,46 @@ describe("a view's rows as far as they are drawn", () => {
       4,
     );
     expect(total).toBe(layout.bottom);
+  });
+});
+
+describe("a view's headings held at the top", () => {
+  // Rows of 20 from 0; headings on rows 0, 5 and 12, each 24 tall.
+  const layout = viewLayout(keys(20), new Map(), 20, 0);
+  const headings = [0, 5, 12];
+  const height = () => 24;
+
+  it("holds none while the top is a group's own heading", () => {
+    expect(pinnedHeading(layout, headings, height, 0)).toBeUndefined();
+    // the second group's heading exactly at the top
+    expect(pinnedHeading(layout, headings, height, 100)).toBeUndefined();
+  });
+
+  it("holds the heading of the group the top is in, once it scrolled out", () => {
+    expect(pinnedHeading(layout, headings, height, 30)).toEqual({
+      index: 0,
+      offset: 0,
+    });
+    expect(pinnedHeading(layout, headings, height, 160)).toEqual({
+      index: 5,
+      offset: 0,
+    });
+    // past the last heading, to the end
+    expect(pinnedHeading(layout, headings, height, 300)).toEqual({
+      index: 12,
+      offset: 0,
+    });
+  });
+
+  it("is pushed up by the next heading as it arrives", () => {
+    // the next heading (row 5, top 100) 10 px under the held one's bottom
+    expect(pinnedHeading(layout, headings, height, 86)).toEqual({
+      index: 0,
+      offset: -10,
+    });
+  });
+
+  it("holds none without headings", () => {
+    expect(pinnedHeading(layout, [], height, 50)).toBeUndefined();
   });
 });

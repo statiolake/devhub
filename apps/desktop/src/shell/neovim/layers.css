@@ -13,6 +13,24 @@
   font: var(--nvim-ui-size, 12px) / 1.45 var(--nvim-ui-font);
 }
 
+/* The scroll and what is held over its top (a heading, `sticky_headings`). */
+.nvim-view-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A row above the items that is not one: a list's title. */
+.nvim-view-header {
+  flex: none;
+  padding: 4px 12px;
+  border-bottom: 1px solid color-mix(in srgb, currentcolor 12%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
 .nvim-view-scroll {
   --nvim-view-scroll-pad: 4px;
   position: relative;
@@ -155,6 +173,36 @@
   margin: 4px 0 2px;
   white-space: nowrap;
   overflow: hidden;
+}
+
+/* An item with its heading above it, outside its focus and its band: one
+   row, measured whole (flow-root: the heading's margins are inside it). */
+.nvim-view-entry {
+  position: relative;
+  display: flow-root;
+  margin: 0 6px;
+}
+
+.nvim-view-entry > .nvim-view-item {
+  margin: 0;
+}
+
+.nvim-view-entry > .nvim-view-heading {
+  padding: 0 6px;
+}
+
+/* The heading of the group at the top, held there over the rows of its
+   group, opaque in the view's ground, pushed up by the next heading. */
+.nvim-view-pinned {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flow-root;
+  padding: 0 12px;
+  background: var(--nvim-ground);
+  box-shadow: 0 1px 0 color-mix(in srgb, currentcolor 8%, transparent);
 }
 
 .nvim-view-plain {

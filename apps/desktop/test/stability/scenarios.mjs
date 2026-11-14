@@ -311,6 +311,36 @@ async function typedInOrchestratorTerminal(ctx) {
   }
 }
 
+/**
+ * The quickfix window drawn as devhub.nvim draws it: a view with its title
+ * row (list `nr` of the two, item `idx`) and a heading per file, the list's
+ * state Neovim's.
+ */
+async function quickfixDrawn(ctx, nr, idx) {
+  const problems = [];
+  const state = ctx
+    .nvimExpr(
+      "getqflist({'nr': 0, 'idx': 0}).nr . ' ' . getqflist({'idx': 0}).idx",
+    )
+    .trim();
+  if (state !== `${String(nr)} ${String(idx)}`)
+    problems.push(
+      `quickfix: list and item ${state}, not ${String(nr)} ${String(idx)}`,
+    );
+  const header = await ctx.evalIn(
+    "pane",
+    "document.querySelector('.nvim-view-header')?.textContent ?? ''",
+  );
+  if (!/Quickfix/i.test(header) || !header.includes(`list ${String(nr)} of 2`))
+    problems.push(`quickfix: the title row says ${JSON.stringify(header)}`);
+  const headings = await ctx.evalIn(
+    "pane",
+    "document.querySelectorAll('.nvim-view-entry > .nvim-view-heading').length",
+  );
+  if (!(headings > 0)) problems.push("quickfix: no file headings drawn");
+  return problems;
+}
+
 export const SCENARIOS = [
   {
     name: "scroll-burst",
@@ -538,6 +568,63 @@ export const SCENARIOS = [
         spec: {},
       },
     ],
+  },
+  {
+    name: "quickfix",
+    description:
+      "the quickfix window drawn natively (devhub.nvim): opened on a grep's result, scrolled under its held file headings, :cnext, :colder and closed",
+    ...neovim,
+    setup: async (ctx) => {
+      await editorAtRest(ctx);
+      // Two lists: the newer of 36 items in 18 files.
+      ctx.nvimExpr(
+        "execute('silent! call setqflist([], ''f'') | silent vimgrep /shifted/j src/**/*.ts | silent vimgrep /doubled/j src/**/*.ts')",
+      );
+      await ctx.settle("pane");
+    },
+    steps: [
+      {
+        // A split: its pane motion is declared; the view is checked from
+        // the first frame the window is drawn in — never its cells first.
+        name: "open",
+        act: (ctx) => ctx.press("pane", "F6"),
+        spec: {},
+        check: (ctx) => quickfixDrawn(ctx, 2, 1),
+      },
+      {
+        name: "scroll",
+        act: (ctx) => ctx.press("pane", "C-d"),
+        regions: [{ name: "list", selector: ".nvim-view" }],
+        spec: {},
+      },
+      {
+        // The next item, from the list's window: the file's window jumps,
+        // and the list marks its new current item.
+        name: "cnext",
+        act: (ctx) => ctx.press("pane", "F8"),
+        spec: {},
+        check: (ctx) => quickfixDrawn(ctx, 2, 2),
+      },
+      {
+        // The list before: the buffer is written anew, its rows the other
+        // list's in one frame.
+        name: "colder",
+        act: (ctx) => ctx.press("pane", "F9"),
+        regions: [{ name: "list", selector: ".nvim-view" }],
+        spec: {},
+        check: (ctx) => quickfixDrawn(ctx, 1, 1),
+      },
+      {
+        name: "close",
+        act: (ctx) => ctx.press("pane", "F7"),
+        spec: {},
+      },
+    ],
+    teardown: (ctx) => {
+      ctx.nvimExpr(
+        "execute('silent! cclose | silent! call setqflist([], ''f'')')",
+      );
+    },
   },
   {
     name: "blink-insert",

@@ -44,7 +44,7 @@ import type {
   ViewPlace,
 } from "./layers";
 import { PROVISIONAL_TTL_MS } from "./provisional";
-import { drawnRows, viewLayout, viewPieces } from "./viewWindow";
+import { drawnRows, pinnedHeading, viewLayout, viewPieces } from "./viewWindow";
 import { placePopup, popupMaxWidth, popupScrollTop } from "./popup";
 import type { OverPart } from "./painter";
 import { createPortal } from "react-dom";
@@ -259,6 +259,47 @@ function GuiView({
     focused,
   );
   const pieces = viewPieces(layout, drawn, padTop.current);
+  // Headings held at the top (`sticky_headings`): each heading's height is
+  // measured with its row (the item's offset in it), else the others'.
+  const headingHeights = useRef(new Map<number, number>());
+  const headings = useMemo(
+    () =>
+      content.stickyHeadings === true
+        ? content.items.flatMap((item, index) =>
+            item.heading !== undefined && item.sticky !== true ? [index] : [],
+          )
+        : [],
+    [content],
+  );
+  const headingHeight = (index: number): number => {
+    const line = content.items[index]?.line;
+    const known =
+      line !== undefined ? headingHeights.current.get(line) : undefined;
+    if (known !== undefined) return known;
+    const all = [...headingHeights.current.values()];
+    return all.length > 0 ? all.reduce((a, b) => a + b, 0) / all.length : 24;
+  };
+  const headingHeightRef = useRef(headingHeight);
+  headingHeightRef.current = headingHeight;
+  const headingsRef = useRef(headings);
+  headingsRef.current = headings;
+  const pinned =
+    headings.length > 0
+      ? pinnedHeading(layout, headings, headingHeight, scrollTop)
+      : undefined;
+  const pinnedNode =
+    pinned !== undefined ? content.items[pinned.index]?.heading : undefined;
+  // How much of the top the held heading covers, at a scroll.
+  const pinnedInset = (top: number): number => {
+    if (headingsRef.current.length === 0) return 0;
+    const at = pinnedHeading(
+      layoutRef.current,
+      headingsRef.current,
+      headingHeightRef.current,
+      top,
+    );
+    return at ? headingHeightRef.current(at.index) + at.offset : 0;
+  };
   // The drawn rows' heights, before the frame is painted: a row drawn for
   // the first time (or drawn anew) that is not as tall as guessed moves
   // the rows after it in this same frame, never in a next one. After every
@@ -283,6 +324,18 @@ function GuiView({
         measured.current.set(line, h);
         changed = true;
       }
+      // A row with its heading: the heading is what is above the item.
+      const body = row.classList.contains("nvim-view-entry")
+        ? row.querySelector<HTMLElement>(":scope > .nvim-view-item")
+        : null;
+      if (body) {
+        const hh = body.offsetTop;
+        const was = headingHeights.current.get(line);
+        if (was === undefined || Math.abs(was - hh) > 0.25) {
+          headingHeights.current.set(line, hh);
+          changed = true;
+        }
+      }
     }
     if (el.clientHeight !== viewport) setViewport(el.clientHeight);
     if (el.scrollTop !== scrollTop) setScrollTop(el.scrollTop);
@@ -305,6 +358,10 @@ function GuiView({
     content.items.forEach((it, i) => {
       if (it.sticky === true && i < index) inset += all[i]?.height ?? 0;
     });
+    // Below its group's heading, held at the top over it.
+    const group = headingsRef.current.filter((h) => h <= index).at(-1);
+    if (group !== undefined && group < index)
+      inset += headingHeightRef.current(group);
     el.scrollTop = revealScroll(
       el.scrollTop,
       Math.max(0, el.clientHeight - inset),
@@ -320,6 +377,24 @@ function GuiView({
     [content.hl, host.mono, host.defaults, host.openLink],
   );
   const ring = ringColor(content.hl, theme.fg);
+  // The header's own clicks: its node's Lua, the cursor left where it is.
+  const headerTheme = useMemo(
+    () => ({
+      ...theme,
+      onAction: (action: number, clicks: number) => {
+        hostRef.current.lua("_layers_click", [
+          "view",
+          content.id,
+          placeRef.current.win,
+          null,
+          action,
+          clicks,
+        ]);
+        hostRef.current.refocus();
+      },
+    }),
+    [theme, content.id],
+  );
   const cursorLine_ = content.hl.get("CursorLine")?.bg;
   const indent = content.indent;
   const guide =
@@ -417,11 +492,13 @@ function GuiView({
           el.clientHeight,
         );
         setScrollTop(el.scrollTop);
+        // The rows under a held heading are out of sight.
+        const covered = pinnedInset(el.scrollTop);
         const next = wheelFocus(
           items,
           focusedRef.current,
-          el.scrollTop,
-          el.clientHeight,
+          el.scrollTop + covered,
+          el.clientHeight - covered,
         );
         const item = content.items[next];
         if (next !== focusedRef.current && item) {
@@ -434,47 +511,75 @@ function GuiView({
         }
       }}
     >
-      <div
-        className="nvim-view-scroll"
-        ref={scroller}
-        onScroll={(event) => {
-          setScrollTop(event.currentTarget.scrollTop);
-        }}
-      >
-        {pieces.map((piece) => {
-          if (piece.kind === "gap")
+      {content.header ? (
+        <div className="nvim-view-header">
+          <ComponentTree node={content.header} theme={headerTheme} />
+        </div>
+      ) : null}
+      <div className="nvim-view-body">
+        <div
+          className="nvim-view-scroll"
+          ref={scroller}
+          onScroll={(event) => {
+            setScrollTop(event.currentTarget.scrollTop);
+          }}
+        >
+          {pieces.map((piece) => {
+            if (piece.kind === "gap")
+              return (
+                <div
+                  key={piece.key}
+                  className="nvim-view-gap"
+                  style={{ height: piece.height }}
+                  aria-hidden
+                />
+              );
+            const index = piece.index;
+            const item = content.items[index];
+            if (item === undefined) return null;
             return (
-              <div
-                key={piece.key}
-                className="nvim-view-gap"
-                style={{ height: piece.height }}
-                aria-hidden
+              <ViewRow
+                key={item.line}
+                item={item}
+                focused={index === focused}
+                band={bandPart(lines, index, visual)}
+                depth={indent !== undefined ? (item.depth ?? 0) : 0}
+                indent={indent}
+                activeGuide={
+                  guide !== undefined &&
+                  index >= guide.from &&
+                  index <= guide.to
+                    ? guide.level
+                    : -1
+                }
+                rowHeight={content.rowHeight}
+                theme={theme}
+                press={press}
+                click={click}
+                menu={hasMenu ? menu : undefined}
               />
             );
-          const index = piece.index;
-          const item = content.items[index];
-          if (item === undefined) return null;
-          return (
-            <ViewRow
-              key={item.line}
-              item={item}
-              focused={index === focused}
-              band={bandPart(lines, index, visual)}
-              depth={indent !== undefined ? (item.depth ?? 0) : 0}
-              indent={indent}
-              activeGuide={
-                guide !== undefined && index >= guide.from && index <= guide.to
-                  ? guide.level
-                  : -1
-              }
-              rowHeight={content.rowHeight}
-              theme={theme}
-              press={press}
-              click={click}
-              menu={hasMenu ? menu : undefined}
-            />
-          );
-        })}
+          })}
+        </div>
+        {pinned !== undefined && pinnedNode !== undefined ? (
+          <div
+            className="nvim-view-pinned"
+            style={
+              pinned.offset < 0
+                ? { transform: `translateY(${String(pinned.offset)}px)` }
+                : undefined
+            }
+            onMouseDown={(event) => {
+              event.preventDefault();
+              const item = content.items[pinned.index];
+              if (item) press(item.line, event.detail > 1 ? 2 : 1);
+            }}
+          >
+            <div className="nvim-view-heading">
+              <ComponentTree node={pinnedNode} theme={theme} />
+            </div>
+          </div>
+        ) : null}
       </div>
       {content.keys.length > 0 ? (
         <div className="nvim-view-keys">
@@ -549,7 +654,11 @@ const ViewRow = memo(function ViewRow({
     }),
     [theme, click, item.line],
   );
-  return (
+  // A heading above the item, outside its focus and its band: the row is
+  // the two, measured together (`data-line`). A sticky item keeps its
+  // heading inside it, held with it.
+  const apart = item.heading !== undefined && item.sticky !== true;
+  const body = (
     <div
       className={[
         "nvim-view-item",
@@ -562,7 +671,7 @@ const ViewRow = memo(function ViewRow({
         .filter(Boolean)
         .join(" ")}
       style={itemStyle}
-      data-line={item.line}
+      data-line={apart ? undefined : item.line}
       onMouseDown={(event) => {
         event.preventDefault();
         // The right button opens the menu (`contextmenu`), and is no click.
@@ -591,7 +700,7 @@ const ViewRow = memo(function ViewRow({
             />
           ))
         : null}
-      {item.heading ? (
+      {item.heading && !apart ? (
         <div className="nvim-view-heading">
           <ComponentTree node={item.heading} theme={theme} />
         </div>
@@ -603,6 +712,22 @@ const ViewRow = memo(function ViewRow({
           {item.text === "" ? " " : item.text}
         </span>
       )}
+    </div>
+  );
+  if (!apart || item.heading === undefined) return body;
+  return (
+    <div className="nvim-view-entry" data-line={item.line}>
+      <div
+        className="nvim-view-heading"
+        onMouseDown={(event) => {
+          event.preventDefault();
+          if (event.button === 2 && menu !== undefined) return;
+          press(item.line, event.detail > 1 ? 2 : 1);
+        }}
+      >
+        <ComponentTree node={item.heading} theme={theme} />
+      </div>
+      {body}
     </div>
   );
 });

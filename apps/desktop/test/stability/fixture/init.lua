@@ -54,3 +54,10 @@ require('nvim-tree').setup {
 require('nvim-tree-ui').setup {}
 require('markdown-preview').setup {}
 vim.keymap.set('n', '<F2>', '<cmd>NvimTreeToggle<CR>')
+
+-- The quickfix window (devhub.nvim draws it natively): open, close, the next
+-- item and the list before.
+vim.keymap.set('n', '<F6>', '<cmd>botright copen 12<CR>')
+vim.keymap.set('n', '<F7>', '<cmd>cclose<CR>')
+vim.keymap.set('n', '<F8>', '<cmd>cnext<CR>')
+vim.keymap.set('n', '<F9>', '<cmd>colder<CR>')

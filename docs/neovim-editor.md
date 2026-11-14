@@ -1294,6 +1294,21 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   ground, rounded only at its ends (`bandPart`), the focus's ring inside
   it: the place carries them (`visual`), for a plugin whose keys work on a
   range.
+- **Headings, a header and marks** — an item `{ node, heading }` has a
+  heading above it that is not an item: drawn outside the item's focus
+  and band (the row is the two, measured together, `.nvim-view-entry`),
+  a press on it a press on its item. `sticky_headings = true` holds each
+  heading at the top while the items under it, to the next heading,
+  scroll, the next heading pushing it up as it arrives (`pinnedHeading`,
+  `.nvim-view-pinned`); the focus is kept in sight below it, and the
+  wheel's focus is taken from the rows it does not cover. `header` (a
+  component, or a function Lua asks at every draw) is a row above the
+  items that is not one, a list's title (`.nvim-view-header`). A text
+  run with `mark = true` is drawn on its group's ground as a rounded
+  chip, as a code mark is: a search's match. devhub.nvim draws the
+  quickfix and location-list windows this way (`lua/devhub/qf.lua`):
+  Neovim keeps the window, the buffer and the keys; the rows are made
+  from `getqflist`, a heading per file, so line N is still item N.
 - **A menu** (`gui.view{ on_context_menu = function(lnum) return items end }`,
   or `gui.menu{ items, on_select?, win?, line? }` on its own) — a native
   menu, put up by main as the Sidebar's row menus and the conversation's

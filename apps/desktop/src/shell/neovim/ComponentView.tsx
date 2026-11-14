@@ -776,7 +776,9 @@ function Column({
 function RunView({ run }: { readonly run: Run }) {
   const theme = useTheme();
   const style: CSSProperties = {
-    ...runStyle(run.hl !== undefined ? theme.hl.get(run.hl) : undefined),
+    ...(run.mark === true && run.hl !== undefined
+      ? markStyle(theme.hl, run.hl)
+      : runStyle(run.hl !== undefined ? theme.hl.get(run.hl) : undefined)),
     ...(run.bold === true ? { fontWeight: 600 } : {}),
     ...(run.italic === true ? { fontStyle: "italic" } : {}),
     ...(run.strike === true ? { textDecoration: "line-through" } : {}),

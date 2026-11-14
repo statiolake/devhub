@@ -115,3 +115,42 @@ export function viewPieces(
     });
   return out;
 }
+
+/**
+ * A view's headings held at the top (`sticky_headings`): the heading of the
+ * group the top of the viewport is in, while that group's own heading has
+ * scrolled out above it, pushed up by the next heading as it arrives — a
+ * file's name over its matches, as VS Code's Search and Problems keep it.
+ * A group runs from an item with a heading to the next one.
+ *
+ * `headings` are the indices of the items with a heading, ascending; an
+ * item's top (`layout.tops`) is its heading's. Answers the item whose
+ * heading to hold and how far it is pushed up (0 or less, in pixels), or
+ * nothing while the heading at the top is the group's own.
+ */
+export function pinnedHeading(
+  layout: ViewLayout,
+  headings: readonly number[],
+  headingHeight: (index: number) => number,
+  scrollTop: number,
+): { readonly index: number; readonly offset: number } | undefined {
+  const { tops } = layout;
+  // The last heading whose top is above the viewport's, by halves.
+  let lo = 0;
+  let hi = headings.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((tops[headings[mid] ?? 0] ?? 0) < scrollTop - 0.5) lo = mid + 1;
+    else hi = mid;
+  }
+  const at = lo - 1;
+  const index = headings[at];
+  if (index === undefined) return undefined;
+  const height = headingHeight(index);
+  const next = headings[at + 1];
+  const nextTop = next !== undefined ? tops[next] : undefined;
+  const offset =
+    nextTop !== undefined ? Math.min(0, nextTop - scrollTop - height) : 0;
+  if (offset <= -height) return undefined;
+  return { index, offset };
+}
