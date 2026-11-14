@@ -105,10 +105,23 @@
         const b = k.getBoundingClientRect();
         return [half(b.top - base), half(b.height)];
       });
+      // A declared motion inside it (the transcript's follow glide, an
+      // arrival rising in): its items' places are that path, not the layout.
+      const moving = document.getAnimations().some((a) => {
+        if (a.playState !== "running") return false;
+        const timing = a.effect?.getComputedTiming?.();
+        if (timing && timing.iterations === Infinity) return false;
+        const target = a.effect?.target;
+        return (
+          target instanceof Element &&
+          (el.contains(target) || target.contains(el))
+        );
+      });
       out[s.name] = {
         scrollTop: half(el.scrollTop),
         box: box(el),
         items: kids,
+        moving,
       };
     }
     return out;

@@ -81,15 +81,20 @@ export function checkMotion(samples, spec = {}) {
           .map(([, y, , h]) => [Math.max(y, py), Math.min(y + h, py + ph)]);
         spans.sort((a, b) => a[0] - b[0]);
         let reach = py;
+        let gap;
         for (const [a, b] of spans) {
-          if (a > reach + TOL) break;
+          if (a > reach + TOL) {
+            gap = [reach, a];
+            break;
+          }
           reach = Math.max(reach, b);
         }
-        if (reach < py + ph - TOL) {
+        if (!gap && reach < py + ph - TOL) gap = [reach, py + ph];
+        if (gap) {
           say(
             "uncovered",
             key,
-            `${key}: rows ${reach}..${py + ph} of its port are covered by neither its canvas nor its ghost in frame ${i}`,
+            `${key}: rows ${gap[0]}..${gap[1]} of its port are covered by neither its canvas nor its ghost in frame ${i}`,
             [i],
           );
         }
@@ -141,7 +146,7 @@ export function checkMotion(samples, spec = {}) {
     const firstAt = [];
     samples.forEach((s, i) => {
       const sc = s.scrollers?.[name];
-      if (!sc) return;
+      if (!sc || sc.moving) return;
       sc.items.forEach(([top], k) => {
         const isLast = k === sc.items.length - 1;
         if (firstAt[k] === undefined) firstAt[k] = { top, i };
