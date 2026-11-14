@@ -2,8 +2,8 @@
 
 /**
  * Run in Background: while the turn waits on a call's work that the CLI can
- * move (`Transcript.foregroundTasks`), its row offers it, and Ctrl+B moves
- * all of it, as in Claude Code's own terminal. Moved, the call stands for
+ * move (`Transcript.foregroundTasks`), its row offers it; Ctrl+B is left to
+ * the composer. Moved, the call stands for
  * the work in the background and leaves the offer behind.
  */
 
@@ -89,6 +89,17 @@ describe("Run in Background on a call's row", () => {
     expect(row().querySelector("summary")).toContainElement(action());
   });
 
+  it("is a button the keyboard reaches, which Return or Space presses", () => {
+    draw(waitingOn(building()));
+    const button = action()!;
+    expect(button.tagName).toBe("BUTTON");
+    expect(button).toHaveAttribute("type", "button");
+    expect(button).toBeEnabled();
+    expect(button.tabIndex).toBe(0);
+    button.focus();
+    expect(button).toHaveFocus();
+  });
+
   it("asks for that call, without folding the call open", () => {
     const { actions } = draw(waitingOn(building()));
     const details = row().querySelector("details")!;
@@ -124,31 +135,20 @@ describe("Run in Background on a call's row", () => {
 });
 
 describe("Ctrl+B", () => {
-  it("moves everything the turn waits on, from the composer or the transcript", () => {
-    const { actions } = draw(waitingOn(building()));
-    fireEvent.keyDown(document.querySelector("textarea")!, {
-      key: "b",
-      ctrlKey: true,
-    });
-    fireEvent.keyDown(document.querySelector(".conversation-scroll")!, {
-      key: "b",
-      ctrlKey: true,
-    });
-    expect(actions.runInBackground).toHaveBeenCalledTimes(2);
-    expect(actions.runInBackground).toHaveBeenCalledWith(undefined);
-    expect(actions.interrupt).not.toHaveBeenCalled();
-  });
-
-  it("is left to the field while nothing can move, and with another modifier", () => {
+  it("is untouched: left to the composer and the transcript, with work to move or without", () => {
     const { actions, redraw } = draw(building());
     const field = document.querySelector("textarea")!;
-    const key = fireEvent.keyDown(field, { key: "b", ctrlKey: true });
-    // Not taken: the field's own Ctrl+B (back a character, on a Mac) stands.
-    expect(key).toBe(true);
-    redraw(waitingOn(building()));
-    fireEvent.keyDown(field, { key: "b", ctrlKey: true, shiftKey: true });
-    fireEvent.keyDown(field, { key: "b", metaKey: true });
-    fireEvent.keyDown(field, { key: "b", ctrlKey: true, isComposing: true });
+    const scroll = document.querySelector(".conversation-scroll")!;
+    for (const transcript of [building(), waitingOn(building())]) {
+      redraw(transcript);
+      // Not taken: the field's own Ctrl+B (back a character, on a Mac) stands.
+      expect(fireEvent.keyDown(field, { key: "b", ctrlKey: true })).toBe(true);
+      expect(fireEvent.keyDown(scroll, { key: "b", ctrlKey: true })).toBe(true);
+      expect(
+        fireEvent.keyDown(document.body, { key: "b", ctrlKey: true }),
+      ).toBe(true);
+    }
     expect(actions.runInBackground).not.toHaveBeenCalled();
+    expect(actions.interrupt).not.toHaveBeenCalled();
   });
 });

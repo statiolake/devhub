@@ -310,15 +310,14 @@ that cannot has its button greyed, the tooltip saying why:
 
 **Run in Background.** While the turn waits on a call's work that the CLI
 can move — a Bash command running in the foreground, a subagent run in the
-foreground — the call's row offers _Run in Background_ at its right, and
-Ctrl+B anywhere in the pane moves all such work at once, as Ctrl+B does in
-Claude Code's own terminal. Moved, the call returns at once and the turn goes
+foreground — the call's row offers _Run in Background_ at its right: a
+button, so Tab reaches it and Return or Space presses it. There is no key for
+it: Ctrl+B is the composer's own (back a character, on a Mac), as it was.
+Moved, the call returns at once and the turn goes
 on; the work is then what any work set going in the background is: the call
 runs while it runs and says _In the background_, the task is in the list
 under the composer (opened from there, stopped from there), and its end is a
-quiet line under the call. Ctrl+B is the pane's only while there is work to
-move, so the composer's own Ctrl+B (back a character, on a Mac) is left alone
-otherwise; nothing is moved on DevHub's say-so, and a CLI that refuses says so
+quiet line under the call. Nothing is moved on DevHub's say-so, and a CLI that refuses says so
 in an error notice (_background_tasks was refused: …_). Which work can move is
 the adapter's to say (`Transcript.foregroundTasks`):
 
@@ -329,9 +328,9 @@ the adapter's to say (`Transcript.foregroundTasks`):
   (`task_updated` with `patch.is_backgrounded: true`) or ended (a
   notification), or the call returns. It is moved with the Agent SDK's
   `backgroundTasks(toolUseId?)`, the control request
-  `{subtype: "background_tasks", tool_use_id}` (Ctrl+B sends it without
-  `tool_use_id`: every foreground task), answered `{backgrounded}` when a
-  call was named. The call's result then says _Command was moved to the
+  `{subtype: "background_tasks", tool_use_id}`, answered `{backgrounded}`.
+  (Without `tool_use_id` it moves every foreground task, as Ctrl+B in the
+  CLI's terminal does; DevHub always names the call.) The call's result then says _Command was moved to the
   background (ID: …)_ and names its `backgroundTaskId`. One named after it
   returned is `backgrounded: false`: _Nothing was moved to the background:
   the call had already returned._ A session with background tasks disabled
@@ -342,11 +341,6 @@ the adapter's to say (`Transcript.foregroundTasks`):
   running command, and needs none: with unified exec a command's call returns
   after its `yield_time_ms` (30 s at most) and the command goes on as a
   background terminal by itself.
-
-In a terminal Agent the CLI reads Ctrl+B itself, but the key goes through
-tmux first, and Ctrl+B is tmux's own prefix unless the person's `tmux.conf`
-changes it: there, as in any tmux, Ctrl+B twice sends it to the CLI (tmux's
-`send-prefix`). DevHub's own chords (Cmd+Q and the keys after it) do not include it.
 
 Each task in the opened list says how long it has run, ticking, as the CLI
 says it (_45s_, _3m 12s_, _1h 5m_). The start is the time the CLI itself
@@ -620,8 +614,7 @@ sends, saves or answers, whatever the field's button does. While the `/`
 command list is open, Return (or Tab) takes the highlighted command, as in any
 list, and ⌘Return still sends what is typed. A key an input method is still
 composing is the input method's, so Return confirms a conversion and sends
-nothing. Esc and Ctrl+C stop a running turn from anywhere in the pane;
-Ctrl+B moves what the turn waits on to the background (_Run in Background_).
+nothing. Esc and Ctrl+C stop a running turn from anywhere in the pane.
 
 **Reading and copying.** The transcript is text: you can drag-select any of
 it — answers, code, tool output, a subagent's work — and copy it with Cmd+C.

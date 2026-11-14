@@ -22,8 +22,8 @@
  * transcript's place says what the pane is for. Beside the conversation, when
  * the pane is wide, a column of subagents; in its place, a subagent the
  * person maximized (`SubagentPanes`). Esc and Ctrl+C stop a running turn from anywhere in the
- * pane, as they do in a terminal Agent, and Ctrl+B moves what the turn waits
- * on to the background while there is such work; being shown puts the keyboard in the
+ * pane, as they do in a terminal Agent (Ctrl+B is the composer's own: what the
+ * turn waits on goes to the background from its call's row); being shown puts the keyboard in the
  * composer, as being shown puts it in a terminal Agent's xterm. Cmd+F opens
  * the find bar (`FindBar`), and F3 / Shift+F3 step through its matches from
  * anywhere in the pane while it is open. "Anywhere in the pane" includes the
@@ -347,23 +347,9 @@ export function ConversationSurface({
         !event.ctrlKey &&
         !event.altKey) ||
       (event.key === "c" && event.ctrlKey && !event.metaKey && !event.altKey);
-    if (stop) {
-      event.preventDefault();
-      void actions.interrupt().catch(actions.reportFailure);
-      return;
-    }
-    // Ctrl+B, as in Claude Code's own terminal: what the turn waits on goes
-    // to the background. Taken only while there is such work, so the
-    // field's own Ctrl+B (back a character, on a Mac) is left alone else.
-    const background =
-      event.key.toLowerCase() === "b" &&
-      event.ctrlKey &&
-      !event.metaKey &&
-      !event.altKey &&
-      !event.shiftKey;
-    if (!background || transcript.foregroundTasks.length === 0) return;
+    if (!stop) return;
     event.preventDefault();
-    void actions.runInBackground(undefined).catch(actions.reportFailure);
+    void actions.interrupt().catch(actions.reportFailure);
   };
   // The pane's keys are the shown pane's wherever the keyboard is in it —
   // and also when it is nowhere: a click on the transcript's words, which

@@ -558,9 +558,10 @@ function ToolTitle({ title }: { readonly title: string }) {
 
 /**
  * Moves the work a running call holds the turn on to the background, as
- * Ctrl+B does in the CLI's own terminal: the call returns at once and the
- * turn goes on. Inside the row's `<summary>`, so its press is kept from
- * folding the call open or shut.
+ * Ctrl+B does in the CLI's own terminal (the pane leaves Ctrl+B to the
+ * composer): the call returns at once and the turn goes on. A plain button,
+ * so Tab reaches it and Return or Space presses it. Inside the row's
+ * `<summary>`, so its press is kept from folding the call open or shut.
  */
 function RunInBackground({ call }: { readonly call: EntryId }) {
   const { runInBackground, reportFailure } = useConversationActions();
@@ -568,7 +569,7 @@ function RunInBackground({ call }: { readonly call: EntryId }) {
     <button
       type="button"
       className="conversation-tool-run-in-background"
-      title="Move this to the background and let the turn go on (Ctrl+B)"
+      title="Move this to the background and let the turn go on"
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
