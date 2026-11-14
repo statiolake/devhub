@@ -383,4 +383,26 @@ describe("a pane's copy mode scrolling", () => {
       [gridOf(1), 2],
     ]);
   });
+
+  it("leaving it keeps the mode's view until the live screen's picture comes", () => {
+    const view = newControlView({ foreground: 0xffffff, background: 0 });
+    applyControl(view, copy(0));
+    applyControl(view, frame(true));
+    applyControl(view, { kind: "copy-mode-closed", pane: 1 });
+    // Its badge with the rows it showed, not the badge gone over them.
+    expect(view.copy.has(1)).toBe(true);
+    applyControl(view, frame(false));
+    expect(view.copy.has(1)).toBe(true);
+    applyControl(view, frame(true));
+    expect(view.copy.has(1)).toBe(false);
+  });
+
+  it("entered again before the live screen came, it stays", () => {
+    const view = newControlView({ foreground: 0xffffff, background: 0 });
+    applyControl(view, copy(0));
+    applyControl(view, { kind: "copy-mode-closed", pane: 1 });
+    applyControl(view, copy(3));
+    applyControl(view, frame(true));
+    expect(view.copy.has(1)).toBe(true);
+  });
 });

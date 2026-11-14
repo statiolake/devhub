@@ -123,6 +123,12 @@ export interface ControlView {
    */
   readonly copyShift: Map<number, number>;
   /**
+   * Panes whose copy mode has closed while their live picture has not come
+   * yet: the mode's view (its badge, its marks) stays until it does, so the
+   * pane changes in one frame, not the badge first and the rows after.
+   */
+  readonly copyClosing: Set<number>;
+  /**
    * What DevHub draws over a pane's cells of its own: its selection
    * (`selection.ts`) and the link under the pointer, underlined (`links.ts`).
    */
@@ -174,6 +180,7 @@ export function newControlView(fallback: {
     numbers: undefined,
     copy: new Map(),
     copyShift: new Map(),
+    copyClosing: new Set(),
     overrides: new Map(),
     marks: new Map(),
     linkIds: new Map(),
@@ -344,7 +351,13 @@ export function applyControl(
         view.copyShift.delete(pane);
         changes.scrolled.set(gridOf(pane), shift);
       }
-      if (view.copy.has(pane) || view.marks.has(pane)) drawCopy(view, pane);
+      const closed = view.copyClosing.has(pane) && frame.full;
+      if (closed) {
+        view.copyClosing.delete(pane);
+        view.copy.delete(pane);
+      }
+      if (closed || view.copy.has(pane) || view.marks.has(pane))
+        drawCopy(view, pane);
       view.cursors.set(pane, frame.cursor);
       view.modes.set(pane, message.modes);
       changes.cursor = true;
@@ -431,6 +444,7 @@ export function applyControl(
       return changes;
     case "copy-mode": {
       const { kind: _, pane, ...copy } = message;
+      view.copyClosing.delete(pane);
       const before = view.copy.get(pane);
       view.copy.set(pane, copy);
       // Entering, the pane was at the foot of its history: the mode may be
@@ -455,10 +469,9 @@ export function applyControl(
           message.pane,
           (view.copyShift.get(message.pane) ?? 0) + before.scroll,
         );
-      view.copy.delete(message.pane);
-      drawCopy(view, message.pane);
-      changes.grids.add(gridOf(message.pane));
-      changes.cursor = true;
+      // The live picture comes next (a full frame): the mode's view goes
+      // with it (`copyClosing`).
+      view.copyClosing.add(message.pane);
       return changes;
     }
     case "notice":
