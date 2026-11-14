@@ -1654,14 +1654,22 @@ in the injected `devhub_gui`, so it always matches the page):
 
 1. The config registered `gui.statusline(fn)` and `fn(win, ctx)` answered a
    component tree: that tree.
-2. Else the window has a `statusline` of its own (window-local: the
+2. Else a plugin gave the window's buffer a footer of its own
+   (`gui.footer(buf, footer)`, `statusline_buffer`: a tree, `false` for an
+   empty footer, or `fn(win, current)`): that, over the window's own
+   `statusline`. It is for a view that draws its window natively —
+   devhub.nvim's quickfix window, whose title row already says what the qf
+   ftplugin's statusline would say again in cells. The option is not
+   touched, so letting go (`nil`, or the buffer wiped) draws the window's
+   own statusline again.
+3. Else the window has a `statusline` of its own (window-local: the
    quickfix ftplugin's, a person's, a window picker's hints): Neovim's cells
    of that row, as Neovim drew them. A local value that is the global one
    again (a picker puts back what it read) is none of its own.
-3. Else the global `statusline` is Neovim's default (empty, or the
+4. Else the global `statusline` is Neovim's default (empty, or the
    option's default value — 0.12's is an expression): DevHub's default
    footer.
-4. Else (a global `statusline` of the person's or a plugin's — lualine):
+5. Else (a global `statusline` of the person's or a plugin's — lualine):
    Neovim's cells, as before, unless the config chooses the default footer
    (`gui.statusline('default')`, `vim.g.devhub_statusline = 'default'`).
    `'cells'` chooses cells everywhere.
@@ -1672,7 +1680,7 @@ pills made of a person's status line), and a row is drawn natively only
 when the person's own config says how (`gui.statusline`) or there is no
 design of theirs at all (Neovim's default). A window's own status line is
 always the window's owner's: cells. With no devhub.nvim, or an older one on
-an SSH host that has no `gui.statusline`, rules 2–4 hold.
+an SSH host that has no `gui.statusline`, rules 3–5 hold.
 
 **The trees** are made in Lua and sent as a `statusline` event (`{
 laststatus, current, wins = { [win] = entry }, keep }`: only the windows

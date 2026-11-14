@@ -9,13 +9,16 @@
  *
  * 1. the config registered `gui.statusline(fn)` and `fn(win, ctx)` answers
  *    a component tree: that tree;
- * 2. else the window has a `statusline` of its own (window-local: the
+ * 2. else a plugin gave the window's buffer a footer of its own
+ *    (`gui.footer(buf, footer)`: a view that draws its window natively, as
+ *    devhub.nvim's quickfix window): that tree, or an empty footer;
+ * 3. else the window has a `statusline` of its own (window-local: the
  *    quickfix ftplugin's, a person's, a window picker's hints): Neovim's
  *    cells of that row, as Neovim drew them;
- * 3. else the global `statusline` is Neovim's default (empty, or the
+ * 4. else the global `statusline` is Neovim's default (empty, or the
  *    option's default value — 0.12's is an expression): DevHub's default
  *    footer, a tree built here;
- * 4. else (a person's or a plugin's global `statusline`): Neovim's cells,
+ * 5. else (a person's or a plugin's global `statusline`): Neovim's cells,
  *    unless the config chose the default footer (`gui.statusline('default')`
  *    or `vim.g.devhub_statusline = 'default'`).
  *
@@ -177,6 +180,19 @@ function M._statusline_entry(win, current)
       return { kind = "tree", node = node }
     end
   end
+  local claim = S.claims and S.claims[vim.api.nvim_win_get_buf(win)]
+  if claim ~= nil then
+    local node = claim
+    if type(claim) == "function" then
+      local ok, value = pcall(claim, win, current)
+      node = ok and value or nil
+    end
+    if node == false then
+      return { kind = "tree", node = { type = "hstack", children = {} } }
+    elseif type(node) == "table" or type(node) == "string" then
+      return { kind = "tree", node = node }
+    end
+  end
   if lstl then return { kind = "cells" } end
   local choice = S.choice or vim.g.devhub_statusline
   if choice == "cells" then return { kind = "cells" } end
@@ -315,6 +331,22 @@ function M.statusline(fn, opts)
     pcall(vim.api.nvim_create_autocmd, events, { group = extra, callback = function() schedule() end })
   end
   S.sent, S.meta = {}, nil
+  schedule()
+end
+
+--- gui.footer(buf, footer): the footer of every window showing buf, over
+--- the window's own statusline (rule 2): a component tree, false (an empty
+--- footer), or fn(win, current) answering either (nil: the rules). nil lets
+--- go, and the rules (the window's own statusline's cells) are back. Gone
+--- with the buffer. A footer the config's gui.statusline fn answers wins.
+function M.statusline_buffer(buf, footer)
+  if buf == nil or buf == 0 then buf = vim.api.nvim_get_current_buf() end
+  S.claims = S.claims or {}
+  S.claims[buf] = footer
+  if footer ~= nil then
+    vim.api.nvim_create_autocmd("BufWipeout", { group = group, buffer = buf, once = true,
+      callback = function() if S.claims then S.claims[buf] = nil end end })
+  end
   schedule()
 end
 

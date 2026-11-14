@@ -374,6 +374,15 @@ async function quickfixDrawn(ctx, nr, idx) {
     "document.querySelectorAll('.nvim-view-entry > .nvim-view-heading').length",
   );
   if (!(headings > 0)) problems.push("quickfix: no file headings drawn");
+  // Its footer DevHub's (empty), not the ftplugin's statusline in cells:
+  // the title is said once, in the title row.
+  const footer = ctx
+    .nvimExpr(
+      "luaeval('(package.loaded.devhub_gui._statusline.sent or {})[vim.fn.getqflist({ winid = 0 }).winid] or \"\"')",
+    )
+    .trim();
+  if (!footer.includes('"kind":"tree"'))
+    problems.push(`quickfix: its footer is ${footer || "not sent"}`);
   return problems;
 }
 

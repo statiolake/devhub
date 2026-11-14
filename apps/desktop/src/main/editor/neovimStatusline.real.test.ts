@@ -162,6 +162,57 @@ end`)) as number;
 	);
 
 	it(
+		"takes a buffer's own footer (gui.footer) over a window's own statusline, and lets go of it",
+		{ timeout: 15_000 },
+		async () => {
+			const h = await attached();
+			// A quickfix window: its ftplugin's statusline is cells.
+			await h.lua(
+				"vim.fn.setqflist({}, ' ', { title = 't', items = { { filename = 'a', lnum = 1, text = 'x' } } }); vim.cmd('copen')",
+			);
+			expect(await h.rules()).toEqual(["default", "cells"]);
+			const qbuf = (await h.lua(
+				"return vim.fn.getqflist({ qfbufnr = 0 }).qfbufnr",
+			)) as number;
+			// An empty footer while a view draws the window…
+			await h.lua("package.loaded.devhub_gui.statusline_buffer(..., false)", [
+				qbuf,
+			]);
+			expect(await h.rules()).toEqual(["default", "tree"]);
+			// …a function's tree, per window…
+			await h.lua(
+				"package.loaded.devhub_gui.statusline_buffer(..., function(win, current) return { type = 'text', text = current and 'here' or 'there' } end)",
+				[qbuf],
+			);
+			const text = (await h.lua(
+				"local w = vim.fn.getqflist({ winid = 0 }).winid; return package.loaded.devhub_gui._statusline_entry(w, true).node.text",
+			)) as string;
+			expect(text).toBe("here");
+			// …a config's gui.statusline tree winning over it…
+			await h.lua(
+				"package.loaded.devhub_gui.statusline(function(win) return { type = 'text', text = 'mine' } end)",
+			);
+			expect(
+				await h.lua(
+					"local w = vim.fn.getqflist({ winid = 0 }).winid; return package.loaded.devhub_gui._statusline_entry(w, true).node.text",
+				),
+			).toBe("mine");
+			await h.lua("package.loaded.devhub_gui.statusline(nil)");
+			// …and let go: the ftplugin's statusline, untouched, is cells again.
+			await h.lua("package.loaded.devhub_gui.statusline_buffer(..., nil)", [
+				qbuf,
+			]);
+			expect(await h.rules()).toEqual(["default", "cells"]);
+			expect(
+				await h.lua(
+					"return vim.wo[vim.fn.getqflist({ winid = 0 }).winid].statusline ~= ''",
+				),
+			).toBe(true);
+			h.ui.client.close();
+		},
+	);
+
+	it(
 		"is made once per turn of the event loop and sent only when it changed",
 		{ timeout: 15_000 },
 		async () => {
