@@ -1151,6 +1151,7 @@ export class NeovimEditor {
         request.exact,
         view.reach.lo / this.painter.cell().height,
         view.reach.hi / this.painter.cell().height,
+        request.toward ?? 0,
       ],
     ]).then(
       (answer) => {

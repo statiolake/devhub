@@ -278,6 +278,8 @@ export interface ScrollRequest {
   readonly rows: number;
   /** A settling request: only if Neovim can scroll by exactly that. */
   readonly exact: boolean;
+  /** A settling request's way the display was going (`restLines`). */
+  readonly toward?: number;
 }
 
 function easeOut(t: number): number {
@@ -350,7 +352,7 @@ export function step(
   if (lines !== 0 && !view.settled) {
     view.settled = true;
     view.want = view.off;
-    return { ...ask(view, lines, now), exact: true };
+    return { ...ask(view, lines, now), exact: true, toward: view.dir };
   }
   view.want = 0;
   if (view.off === 0) {
@@ -413,7 +415,7 @@ function ask(view: ScrollView, rows: number, now: number): ScrollRequest {
  * request comes, and put back at every exact request (the settling one).
  */
 export const SCROLL_LUA = `
-local win, n, grid, row, col, exact_only, lo, hi = ...
+local win, n, grid, row, col, exact_only, lo, hi, toward = ...
 local m = vim.api.nvim_get_mode()
 local bound = {}
 if vim.api.nvim_win_is_valid(win) and vim.wo[win].scrollbind then
@@ -540,10 +542,18 @@ if m.mode == 'n' and not m.blocking and vim.o.mouse ~= ''
       local v = vim.fn.winsaveview()
       local d = math.abs(moved(view, v))
       if d == 0 then break end
-      if exact_only and done + d - rows > rows - done then
-        -- Past the display by more than it falls short: one back.
-        vim.cmd('normal! ' .. (n > 0 and '\\25' or '\\5'))
-        break
+      if exact_only and done + d > rows then
+        -- Past the display. Asked back against the way the display was
+        -- going (\`toward\`), never past it: the display would have to go
+        -- back to meet it. With it, past is where the display goes on to.
+        -- Neither way, the nearer.
+        local back
+        if toward and toward ~= 0 then back = (n > 0) ~= (toward > 0)
+        else back = done + d - rows > rows - done end
+        if back then
+          vim.cmd('normal! ' .. (n > 0 and '\\25' or '\\5'))
+          break
+        end
       end
       done, view = done + d, v
     end

@@ -77,7 +77,7 @@ describe("pixel scrolling", () => {
     // back (not two, to the nearest: the display would then go back 8 px
     // against the wheel), and the display on, 12 px, onto it.
     const back = step(view, rest, CH, ROWS, 2);
-    expect(back).toEqual({ rows: -1, exact: true });
+    expect(back).toEqual({ rows: -1, exact: true, toward: 1 });
     shifted(view, -1, CH, TEXT, rest + 10);
     expect(view.off).toBe(-12);
     step(view, rest + 11, CH, ROWS, 2);
