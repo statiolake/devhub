@@ -253,10 +253,18 @@ async function launch(args, artifacts) {
         );
         const [vis, focused, el] = JSON.parse(last);
         if (vis === "visible" && focused && /nvim-input/.test(el)) return;
-        if (Date.now() > deadline)
+        if (Date.now() > deadline) {
+          // Who moved the focus last: what the page's focus trail kept.
+          const trail = await ctx
+            .evalIn(
+              "pane",
+              "JSON.stringify((window.__chaosFocus ?? []).slice(-6))",
+            )
+            .catch(() => "[]");
           throw new Error(
-            `liveness: focus: the editor did not get the keyboard in 3 s (page ${vis}, focused ${String(focused)}, active ${el})`,
+            `liveness: focus: the editor did not get the keyboard in 3 s (page ${vis}, focused ${String(focused)}, active ${el}); focus trail ${trail}`,
           );
+        }
         await sleep(50);
       }
     },
@@ -680,6 +688,11 @@ async function runPlan(ctx, steps, rate, dir, meta) {
   const bursts = [...new Set(steps.map((s) => s.burst))];
   const t0 = Date.now();
   await editorAtRest(ctx);
+  // Each focus move on the editor's page, with the code that made it.
+  await ctx.evalIn(
+    "pane",
+    `(() => { if (window.__chaosFocusOn) return; window.__chaosFocusOn = true; window.__chaosFocus = []; document.addEventListener("focusin", (e) => { window.__chaosFocus.push({ t: Math.round(performance.now()), to: e.target.tagName + "." + e.target.className, stack: (new Error().stack ?? "").split("\\n").slice(2, 9).map((l) => l.trim()).join(" | ") }); if (window.__chaosFocus.length > 20) window.__chaosFocus.shift(); }, true); document.addEventListener("pointerdown", (e) => { window.__chaosFocus.push({ t: Math.round(performance.now()), press: e.target.tagName + "." + e.target.className, at: [e.clientX, e.clientY], alt: e.altKey, neovim: !!e.target.closest?.("[data-devhub-neovim-pane], .pane-neovim") }); }, true); })()`,
+  );
   // The keyboard to the editor, by a person's click.
   await ctx.realClick("sidebar", ".sidebar-row", "alpha");
   await ctx.realClick("pane", ".nvim-editor");

@@ -102,7 +102,9 @@ export const ACTIONS = [
           "C-d",
           "C-u",
           "C-f",
-          "C-b",
+          // Not <C-b>: tmux's prefix in this profile, taken from Neovim
+          // for tmux as from a person (the key after it is tmux's).
+          "C-y",
           "G",
           "g g",
           "n",
@@ -518,6 +520,25 @@ return 1`);
       await sleep(400);
       await onAlpha(ctx);
       return { said: p.text };
+    },
+  },
+  {
+    // tmux's prefix from inside Neovim (DevHub lends the terminal the keys,
+    // and gives them back once the binding has run): display-panes, the
+    // chooser, the key list, a zoom and back; then Escape.
+    name: "tmux-prefix",
+    hand: "keys",
+    weight: 2,
+    gen: (r) => ({ key: r.pick(["q", "w", "?", "z"]) }),
+    run: async (ctx, p) => {
+      await escapes(ctx);
+      await keys(ctx, ["C-b", p.key], 80);
+      await sleep(400);
+      if (p.key === "z") {
+        await ctx.press("pane", "C-b");
+        await ctx.press("pane", "z");
+      } else await ctx.press("pane", "Escape");
+      await sleep(300);
     },
   },
   {
