@@ -387,6 +387,7 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
       rate,
       quietMs: step.quietMs ?? 600,
       waitFor: step.waitFor,
+      screencast: step.screencast ?? true,
     });
   } catch (error) {
     return fail(`the step failed to run: ${error.message}`);
@@ -416,7 +417,10 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
   let stalePictures;
   if (motionClient) {
     motionSamples = await motionClient.eval("window.__motion.take()");
-    for (const v of checkMotion(motionSamples, step.motion.spec ?? {}))
+    for (const v of checkMotion(motionSamples, {
+      ...step.motion.spec,
+      rate,
+    }))
       problems.push(`${pages[0].page}: [${v.rule}] ${v.message}`);
     if (step.motion.fresh) {
       const problem = await freshRedraw(ctx, motionClient, step.motion.fresh);
@@ -492,6 +496,12 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
         shot.png,
       );
     });
+  }
+  if (motionSamples && process.env.DEVHUB_STABILITY_TRACE) {
+    // Every step's frames, passing or not: the motion itself, to look at.
+    const dir = join(artifacts, scenario.name, `${step.name}-${rate}x`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "trace.json"), JSON.stringify(motionSamples));
   }
   if ((motionSamples || step.coherent) && problems.length > 0) {
     const dir = join(artifacts, scenario.name, `${step.name}-${rate}x`);
@@ -752,6 +762,39 @@ function makeContext(app, paths, pages) {
         });
         if (gapMs > 0) await sleep(gapMs);
       }
+    },
+    /**
+     * A wheel gesture by its own deltas (px, down positive), one every
+     * `gapMs` on the page's own clock — a trackpad's flick and its momentum,
+     * decaying, as no burst of equal notches is. Made in the page: a CDP
+     * event waits for the page to take the one before, so under load a
+     * flick sent from here comes 60 ms an event, every one a tick. What is
+     * due while the page is busy comes as one event, as Chromium coalesces
+     * a wheel's events.
+     */
+    async wheelDeltas(page, selector, deltas, gapMs) {
+      const at = await ctx.centre(page, selector, undefined);
+      if (!at) throw new Error(`${page}: no ${selector} to wheel over`);
+      await ctx.evalIn(
+        page,
+        `new Promise((done) => {
+        const deltas = ${JSON.stringify(deltas)};
+        const [x, y] = ${JSON.stringify(at)};
+        const el = document.elementFromPoint(x, y);
+        const start = performance.now();
+        let sent = 0;
+        const send = () => {
+          const due = Math.min(deltas.length, Math.floor((performance.now() - start) / ${gapMs}) + 1);
+          let deltaY = 0;
+          for (; sent < due; sent++) deltaY += deltas[sent];
+          if (deltaY !== 0)
+            el.dispatchEvent(new WheelEvent("wheel", { deltaY, deltaMode: 0, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+          if (sent < deltas.length) setTimeout(send, Math.max(0, start + sent * ${gapMs} - performance.now()));
+          else done(true);
+        };
+        send();
+      })`,
+      );
     },
     async clickAt(page, x, y) {
       const client = await ctx.page(page);

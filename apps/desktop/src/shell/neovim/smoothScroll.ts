@@ -15,6 +15,16 @@
  * the way the display was going (never back) and the display
  * eases onto it: at rest, what is shown is Neovim's grid, exactly.
  *
+ * A gesture that moved by its pixels *lands* (`../landing.ts`) instead of
+ * stopping and then settling: once its input ends (`LAND_GAP_MS` without an
+ * event), or while a flick's momentum dies away (under `LAND_SPEED`, from
+ * three times that), the row it will rest on is worked out — the next one
+ * the way it goes, past what the momentum still has to come — Neovim is
+ * asked for exactly that row, and the display eases onto it from the speed
+ * it has, in one motion. Neovim's answer is where it lands: a wrapped line
+ * Neovim can only rest at the start of, or the buffer's end, moves the
+ * landing on, still in the one motion.
+ *
  * Neovim scrolling by itself (`<C-d>`, `zz`, `j` past the edge, a search)
  * is the same shift: the ghost holds the old view and the display eases
  * from it to the new one in `EASE_MS`, without waiting for anything — the
@@ -24,6 +34,14 @@
  * ghosts and draws, the editor sends the requests.
  */
 
+import {
+  aheadOf,
+  land,
+  landingAt,
+  moved,
+  retarget,
+  type Landing,
+} from "../landing";
 import { TICK_GAP_MS } from "./wheelLines";
 
 /** How long the display takes to ease onto Neovim's `topline`. */
@@ -43,6 +61,26 @@ export const GLIDE_MS = 120;
 
 /** How long after the last wheel event the display settles. */
 export const WHEEL_IDLE_MS = 110;
+
+/**
+ * How long without a wheel event a gesture moving by its pixels has ended
+ * and lands: longer than a trackpad's events are apart (8–17 ms, a frame or
+ * two when the page is busy and they come together), shorter than a pause.
+ */
+export const LAND_GAP_MS = 40;
+
+/**
+ * A flick's momentum dying away lands from this speed (px/ms, 5 px a frame)
+ * — when it went three times as fast — while its last events still come:
+ * on the row past where they will take it.
+ */
+export const LAND_SPEED = 0.3;
+
+/** Under this (px) an event during a momentum's landing is its momentum, however late. */
+const TAIL_PX = 3;
+
+/** How long a flick's momentum is taken to last, at most and at least (ms). */
+const TAIL_MS = { lo: 60, hi: 400 };
 
 /**
  * How long a request Neovim answered may stay unseen before another may
@@ -98,6 +136,24 @@ export interface ScrollView {
    * measured: where the wheel would have pushed the cursor to (`SCROLL_LUA`).
    */
   reach: { lo: number; hi: number };
+  /**
+   * The landing under way (`../landing.ts`): its curve; whether it is a
+   * flick's momentum, which may carry it further; the place Neovim was
+   * asked to be at for it (undefined: not yet) and whether that answer is
+   * awaited.
+   */
+  land:
+    | { curve: Landing; momentum: boolean; asked?: number; asking: boolean }
+    | undefined;
+  /** The gesture has landed: nothing more is asked of Neovim for it. */
+  landed: boolean;
+  /** The wheel's fastest in this gesture (`speed`), and when. */
+  peak: { speed: number; at: number };
+  /** Reduce Motion: the wheel's own movement only, no landing. */
+  calm: boolean;
+  /** How fast the display moves (px/ms, smoothed over frames), from where it was last frame. */
+  vel: number;
+  seen: { off: number; at: number } | undefined;
 }
 
 export function newScrollView(): ScrollView {
@@ -119,6 +175,12 @@ export function newScrollView(): ScrollView {
     rtt: 30,
     speed: 0,
     reach: { lo: 0, hi: 0 },
+    land: undefined,
+    landed: false,
+    peak: { speed: 0, at: 0 },
+    calm: false,
+    vel: 0,
+    seen: undefined,
   };
 }
 
@@ -128,7 +190,8 @@ export function isActive(view: ScrollView): boolean {
     view.off !== 0 ||
     view.want !== 0 ||
     view.ghost !== undefined ||
-    view.pending !== 0
+    view.pending !== 0 ||
+    view.land !== undefined
   );
 }
 
@@ -161,6 +224,22 @@ export function shifted(
   view.want -= d;
   if (view.glide) view.glide = { ...view.glide, from: view.glide.from - d };
   view.reach = { lo: view.reach.lo - d, hi: view.reach.hi - d };
+  if (view.seen) view.seen = { ...view.seen, off: view.seen.off - d };
+  const landing = view.land;
+  if (landing && led) {
+    landing.curve = moved(landing.curve, -d);
+    if (landing.asked !== undefined) landing.asked -= d;
+    if (landing.asking && Math.sign(rows) === view.pending) {
+      // Neovim is where it could be: past the row on a wrapped line, short
+      // of it at the buffer's end. The landing goes on to there.
+      landing.asking = false;
+      landing.asked = 0;
+      if (landing.curve.to !== 0)
+        landing.curve = retarget(landing.curve, 0, now);
+    }
+  } else if (landing) {
+    view.land = undefined;
+  }
   if (!led) {
     // Started a frame ago: the first frame drawn already shows the move,
     // so a key's scroll is seen as soon as it would be without easing.
@@ -181,6 +260,7 @@ export function shifted(
     view.ghost = undefined;
     view.ease = undefined;
     view.glide = undefined;
+    view.land = undefined;
   }
 }
 
@@ -202,25 +282,54 @@ export function wheeled(
   if (dy === 0) return;
   const dt = now - view.wheelAt;
   const fresh = dt > WHEEL_IDLE_MS;
+  // A landing takes its last small events late (a busy page) as the
+  // gesture still, not a tick: a notch is a few pixels or more.
+  const tail =
+    (view.land?.momentum === true || view.landed) &&
+    Math.sign(dy) === view.dir &&
+    Math.abs(dy) < TAIL_PX &&
+    dt <= WHEEL_IDLE_MS;
   const tick =
     rowHeight !== undefined &&
     rowHeight > 0 &&
+    !tail &&
     (dt > TICK_GAP_MS || Math.sign(dy) !== view.dir);
-  if (tick || Math.sign(dy) !== view.dir) view.credit = 0;
+  const same = !fresh && Math.sign(dy) === view.dir;
+  if (tick || !same) view.credit = 0;
   if (fresh) view.reach = { lo: view.off, hi: view.off };
   // A gesture's first event came a frame after it began, as far as is known.
   const speed = Math.abs(dy) / Math.max(8, fresh ? FRAME_MS : dt);
-  view.speed =
-    fresh || Math.sign(dy) !== view.dir
-      ? speed
-      : 0.5 * view.speed + 0.5 * speed;
+  view.speed = same ? 0.5 * view.speed + 0.5 * speed : speed;
+  if (!same || view.speed > view.peak.speed)
+    view.peak = { speed: view.speed, at: now };
   view.wheelAt = now;
   view.dir = Math.sign(dy);
+  view.calm = !glide;
+  const landed = view.landed && same && !tick;
+  view.landed = false;
+  if (view.land) {
+    // A flick's momentum still coming: the landing goes on (`step` takes
+    // it further if it must). Anything else — a new push, a tick, the other
+    // way — takes over from where the display is.
+    if (same && !tick && view.land.momentum && speed < 1.5 * LAND_SPEED) {
+      view.want += dy;
+      return;
+    }
+    view.land = undefined;
+    if (same && !tick) owe(view);
+    else view.want = view.off;
+  }
   let move = dy;
   if (!tick && view.credit > 0) {
     const paid = Math.min(view.credit, Math.abs(move));
     view.credit -= paid;
     move -= view.dir * paid;
+  }
+  // The last of a flick's momentum, after it landed past where it takes
+  // the wheel: it stays landed, nothing to ask.
+  if (landed && move === 0) {
+    view.landed = true;
+    return;
   }
   if (tick && rowHeight !== undefined) {
     // A tick ends on a whole line: the nearest to where its pixels go, and
@@ -248,6 +357,16 @@ export function wheeled(
 }
 
 /**
+ * Where a landing left the display ahead of the wheel: the wheel's pixels
+ * pay that first (`credit`), as a tick's line ahead is paid, so the display
+ * never goes back and does not set off again for pixels it already went.
+ */
+function owe(view: ScrollView): void {
+  view.credit = Math.max(view.credit, view.dir * (view.off - view.want));
+  view.want = view.off;
+}
+
+/**
  * A request answered (`SCROLL_LUA`'s code): 1 scrolled (its redraw is on
  * the way), 0 could not (an end of the buffer), 2 Neovim's own wheel sent
  * (it may not scroll), -1 nothing sent (a settling request Neovim cannot
@@ -255,6 +374,14 @@ export function wheeled(
  */
 export function replied(view: ScrollView, code: number, now: number): void {
   if (view.pending === 0) return;
+  const landing = view.land;
+  if (landing?.asking && code !== 1 && code !== 2) {
+    // Neovim could not go where the landing was going (the buffer's end, or
+    // not in Normal mode): it lands where Neovim is.
+    landing.asking = false;
+    landing.asked = 0;
+    if (landing.curve.to !== 0) landing.curve = retarget(landing.curve, 0, now);
+  }
   if (code === 1) {
     view.deadline = now + SCROLLED_TIMEOUT_MS;
     return;
@@ -298,13 +425,156 @@ export function step(
   textRows: number,
   dpr: number,
 ): ScrollRequest | undefined {
+  const request = advance(view, now, rowHeight, textRows, dpr);
+  if (view.seen && now > view.seen.at) {
+    const v = (view.off - view.seen.off) / (now - view.seen.at);
+    view.vel = 0.5 * view.vel + 0.5 * v;
+  }
+  view.seen = { off: view.off, at: now };
+  return request;
+}
+
+/** How much further a flick's momentum is to take the wheel (px), from how it has died away so far. */
+function tailOf(view: ScrollView): number {
+  const { speed, at } = view.peak;
+  if (view.speed <= 0 || speed <= view.speed) return 0;
+  const tau = (view.wheelAt - at) / Math.log(speed / view.speed);
+  return view.speed * Math.min(TAIL_MS.hi, Math.max(TAIL_MS.lo, tau));
+}
+
+/**
+ * The row a landing rests on: the next one the way the display goes past
+ * the wheel (and what its momentum has to come), never behind the display;
+ * at an end Neovim cannot go past, its line.
+ */
+function landingRow(
+  view: ScrollView,
+  rowHeight: number,
+  momentum: boolean,
+): number {
+  const dir = view.dir;
+  const wheel = view.want + dir * ((momentum ? tailOf(view) : 0) - view.credit);
+  let to = aheadOf(
+    dir > 0 ? Math.max(wheel, view.off) : Math.min(wheel, view.off),
+    rowHeight,
+    dir,
+  );
+  if (view.stuck === dir && dir * to > 0) to = 0;
+  return dir * (to - view.off) < 0 ? view.off : to;
+}
+
+/** Whether the gesture lands now (`LAND_GAP_MS`, `LAND_SPEED`), and how. */
+function landsNow(view: ScrollView, now: number): boolean | undefined {
+  if (
+    view.land ||
+    view.landed ||
+    view.settled ||
+    view.calm ||
+    view.glide ||
+    view.ease ||
+    view.dir === 0
+  )
+    return undefined;
+  if (now - view.wheelAt >= LAND_GAP_MS) return false;
+  if (view.speed < LAND_SPEED && view.peak.speed >= 3 * LAND_SPEED) return true;
+  return undefined;
+}
+
+/** A frame of a landing (`ScrollView.land`). */
+function landFrame(
+  view: ScrollView,
+  now: number,
+  rowHeight: number,
+  snap: (v: number) => number,
+): ScrollRequest | undefined {
+  const landing = view.land;
+  if (!landing) return undefined;
+  const { lo, hi } = coverage(view);
+  if (landing.asking && view.pending === 0) {
+    // Its answer never showed: it lands where Neovim is.
+    landing.asking = false;
+    landing.asked = 0;
+    if (landing.curve.to !== 0) landing.curve = retarget(landing.curve, 0, now);
+  }
+  if (landing.momentum && !landing.asking) {
+    // The momentum went on further than was thought: it lands further on.
+    const to = landingRow(view, rowHeight, true);
+    if (view.dir * (to - landing.curve.to) > 0) {
+      landing.curve = retarget(landing.curve, to, now);
+      landing.asked = undefined;
+    }
+  }
+  let at = landingAt(landing.curve, now);
+  const pos = Math.min(hi, Math.max(lo, at.pos));
+  if (pos !== at.pos) {
+    // Past what Neovim has drawn yet (a slow link): the display waits at
+    // its edge, and the landing goes on from there, from rest, once the
+    // rows come — it does not run out meanwhile.
+    landing.curve = land(pos, 0, landing.curve.to, now);
+    at = { pos, vel: 0, done: false };
+  }
+  view.off = at.done ? pos : snap(pos);
+  view.reach = {
+    lo: Math.min(view.reach.lo, view.off),
+    hi: Math.max(view.reach.hi, view.off),
+  };
+  if (view.pending !== 0) return undefined;
+  if (landing.asked === undefined) {
+    // Neovim to the row the display lands on, as the settling request does
+    // (only exactly, the way the display goes).
+    landing.asked = landing.curve.to;
+    const rows = Math.round(landing.curve.to / rowHeight);
+    if (rows !== 0) {
+      landing.asking = true;
+      return { ...ask(view, rows, now), exact: true, toward: view.dir };
+    }
+  }
+  if (!at.done) return undefined;
+  view.land = undefined;
+  view.landed = true;
+  owe(view);
+  if (Math.abs(view.off) < 0.5) {
+    view.off = 0;
+    view.want = 0;
+    view.ghost = undefined;
+  }
+  return undefined;
+}
+
+function advance(
+  view: ScrollView,
+  now: number,
+  rowHeight: number,
+  textRows: number,
+  dpr: number,
+): ScrollRequest | undefined {
   const snap = (v: number) => Math.round(v * dpr) / dpr;
   if (view.pending !== 0 && now > view.deadline) view.pending = 0;
   const { lo, hi } = coverage(view);
   // Still catching up with a flick that went past what Neovim has drawn.
   const behind = view.stuck !== view.dir && (view.want < lo || view.want > hi);
   if (view.glide && now - view.glide.start >= GLIDE_MS) view.glide = undefined;
-  if (now - view.wheelAt < WHEEL_IDLE_MS || behind || view.glide) {
+  const momentum = landsNow(view, now);
+  if (momentum !== undefined) {
+    view.settled = true;
+    // From the frame before, where the display is: this frame already
+    // moves on, at the speed it had.
+    view.land = {
+      curve: land(
+        view.off,
+        view.vel,
+        landingRow(view, rowHeight, momentum),
+        Math.min(now, Math.max(now - FRAME_MS, view.seen?.at ?? now)),
+      ),
+      momentum,
+      asking: false,
+    };
+  }
+  if (view.land) return landFrame(view, now, rowHeight, snap);
+  if (
+    !view.landed &&
+    (now - view.wheelAt < WHEEL_IDLE_MS || behind || view.glide)
+  ) {
     const to = Math.min(hi, Math.max(lo, view.want));
     // A glide starts with the first frame that can move: until Neovim has
     // drawn the rows it goes to, it has not begun (not jumped into later).
@@ -318,7 +588,13 @@ export function step(
       ? view.glide.from +
         (to - view.glide.from) * easeOut((now - view.glide.start) / GLIDE_MS)
       : to;
-    view.off = snap(Math.min(hi, Math.max(lo, glided)));
+    const off = snap(Math.min(hi, Math.max(lo, glided)));
+    // Never back while the wheel goes on: a landing's request answered
+    // after the wheel took over (Neovim brought back behind the display)
+    // narrows what is drawn ahead; the display waits where it is, which the
+    // ghost covers, until the rows come.
+    const on = view.dir * (view.want - view.off) >= 0;
+    view.off = on && view.dir * (off - view.off) < 0 ? view.off : off;
     view.reach = {
       lo: Math.min(view.reach.lo, view.off),
       hi: Math.max(view.reach.hi, view.off),

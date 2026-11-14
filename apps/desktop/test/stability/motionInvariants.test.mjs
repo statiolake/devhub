@@ -156,3 +156,75 @@ describe("text in motion", () => {
     ).toEqual(["overshoot"]);
   });
 });
+
+describe("a wheel gesture's landing", () => {
+  const at = (t, origin, more) => ({ ...sample(grid(origin, more)), t });
+  const wheel = (t) => ({ t, wheel: 2 });
+
+  it("holds for a glide that slows onto its row", () => {
+    const frames = [
+      wheel(0),
+      at(0, 0),
+      wheel(16),
+      at(16, -20),
+      wheel(32),
+      at(32, -34),
+      at(48, -42),
+      at(64, -46),
+      at(80, -48),
+      at(96, -48),
+    ];
+    expect(checkMotion(frames, { landing: true })).toEqual([]);
+  });
+
+  it("finds a stop followed by a correction onto the row", () => {
+    // The tail at 1 px a frame, the input over, 140 ms still, then 5 px
+    // onto the row in four frames, 2 px in the first.
+    const frames = [
+      wheel(0),
+      at(0, 0),
+      wheel(16),
+      at(16, -1),
+      wheel(32),
+      at(32, -2),
+      at(172, -4),
+      at(188, -5.5),
+      at(204, -6.5),
+      at(220, -7),
+    ];
+    const found = checkMotion(frames, { landing: true });
+    expect(found.map((v) => v.rule)).toEqual(["corrected"]);
+  });
+
+  it("over wrapped lines lets a stand be, not a faster step", () => {
+    const stand = [
+      wheel(0),
+      at(0, 0),
+      wheel(16),
+      at(16, -1),
+      at(172, -2),
+      at(188, -3),
+    ];
+    expect(checkMotion(stand, { landing: true }).map((v) => v.rule)).toEqual([
+      "corrected",
+    ]);
+    expect(checkMotion(stand, { landing: "wrapped" })).toEqual([]);
+    const fast = [wheel(0), at(0, 0), wheel(16), at(16, -1), at(48, -20)];
+    expect(
+      checkMotion(fast, { landing: "wrapped" }).map((v) => v.rule),
+    ).toEqual(["corrected"]);
+  });
+
+  it("is held unthrottled only", () => {
+    const frames = [wheel(0), at(0, 0), wheel(16), at(16, -1), at(172, -40)];
+    expect(checkMotion(frames, { landing: true }).map((v) => v.rule)).toEqual([
+      "corrected",
+    ]);
+    expect(checkMotion(frames, { landing: true, rate: 6 })).toEqual([]);
+  });
+
+  it("is not asked of a step that does not say so", () => {
+    const frames = [wheel(0), at(0, 0), wheel(16), at(16, -1), at(172, -12)];
+    expect(checkMotion(frames).map((v) => v.rule)).not.toContain("corrected");
+  });
+});

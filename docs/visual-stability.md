@@ -124,6 +124,18 @@ items' places in its content.
 - **kept**: an item of a scroller (a transcript's entries) keeps its place
   in the content while it scrolls and grows; frames under a declared
   motion of its own (the follow glide, an arrival rising) are left out.
+- **landed** (`landing`, at 1x): a wheel gesture ends in one motion.
+  After its last wheel event (or once the display has caught up with it)
+  the window never moves faster than it was going then (by more than
+  0.12 px/ms), and never sets off again once it has stood still (100 ms,
+  or three of its frames): no stop followed by a correction onto a row.
+  The recorder keeps each wheel event the page gets (`{ t, wheel }`) for
+  it. `landing: "wrapped"` (over wrapped lines) lets the stand be: the row
+  Neovim can rest on there is known only from its answer, and a landing
+  at rest by then goes on to it, at most as fast as the rule allows. At
+  6x a frame takes 50–300 ms and Neovim's rows come frames late,
+  so it is not held there. `DEVHUB_STABILITY_TRACE=1` keeps every motion
+  step's frames (`trace.json`), passing or not.
 - **oneWay**: a scroller (a `gui.document`'s drawing) moves one way for
   one gesture: no frame goes back, none past where it ends — no torn or
   in-between frame, no landing correction.
@@ -264,6 +276,8 @@ and screencast pictures).
 | `theme` | dark to light and back (the editor and the Sidebar recorded) |
 | `scroll-burst` | 20 `<C-d>`, 20 `<C-u>`, and the two alternating, 33 ms apart (a held key), `cmdheight=2`, `scrolloff=0`: the command line's rows still, every picture coherent |
 | `scroll` | the wheel slow and fast, down and up, in a long decorated file; `<C-d>`, `<C-u>`, `G`, `gg`, `zz`, `n`, the `scrolloff` edge (motion) |
+| `wheel-landing` | a trackpad's flick and its momentum down and up, a mouse's notches, a slow drag, flicks into the buffer's bottom and top: monotonic, landed, at rest on Neovim's line (gestures made in the page on its own clock, `ctx.wheelDeltas`; no screencast) |
+| `wheel-landing-wrap` | flicks down and up over wrapped lines and folds, where a row is not a line's start (landed) |
 | `scroll-changing` | lines appended and the file rewritten while the wheel turns; diagnostics coming mid-scroll (motion) |
 | `hover-scroll` | the wheel past a hover float and back (aligned) |
 | `split-scroll` | a vsplit of the same buffer, one side scrolled, the split resized while scrolled, closed |

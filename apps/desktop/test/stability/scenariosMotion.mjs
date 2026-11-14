@@ -108,7 +108,128 @@ async function aligned(ctx) {
 const wheelOver = (ctx, notches, delta, gapMs) =>
   ctx.wheel("pane", ".nvim-editor", notches, delta, gapMs);
 
+/**
+ * A trackpad's flick: `first` px a frame, its momentum decaying by `decay`
+ * a frame (as a Mac's does, fractional deltas at its tail) until under a
+ * quarter pixel — about a second of events.
+ */
+const flick = (first, decay = 0.92) => {
+  const deltas = [];
+  for (let d = first; Math.abs(d) >= 0.25; d *= decay)
+    deltas.push(Math.round(d * 100) / 100);
+  return deltas;
+};
+
+const flickOver = (ctx, first, decay) =>
+  ctx.wheelDeltas("pane", ".nvim-editor", flick(first, decay), 16);
+
+/** A wrapped buffer: lines of one to four rows, folds among them. */
+const WRAPPED = `
+vim.cmd('silent! only | enew')
+vim.bo.buftype = 'nofile'
+vim.wo.wrap = true
+vim.wo.number = true
+vim.wo.foldmethod = 'manual'
+local width = vim.api.nvim_win_get_width(0)
+local lines = {}
+for i = 1, 600 do
+  local rows = (i % 5 == 0) and 3 or ((i % 3 == 0) and 2 or 1)
+  local text = 'wrapped ' .. i .. ' '
+  lines[i] = text .. string.rep(string.char(97 + i % 26), math.max(1, (rows - 1) * width + 10 - #text))
+end
+vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
+vim.cmd('normal! zE')
+for start = 50, 560, 70 do vim.cmd(start .. ',' .. (start + 6) .. 'fold') end
+vim.cmd('normal! gg0')
+`;
+
 const MOTION = [
+  {
+    name: "wheel-landing",
+    description:
+      "the end of a wheel gesture: a flick's momentum, a mouse's notches, a slow drag, and flicks into the buffer's ends, each landing on a row as part of its own deceleration (no correction after it)",
+    ...pane,
+    setup: longFile,
+    steps: [
+      {
+        name: "flick-down",
+        act: (ctx) => flickOver(ctx, 37),
+        motion: motion({ landing: true }),
+        screencast: false,
+        quietMs: 1500,
+      },
+      {
+        name: "flick-up",
+        act: (ctx) => flickOver(ctx, -30),
+        motion: motion({ landing: true }),
+        screencast: false,
+        quietMs: 1500,
+      },
+      {
+        name: "notches-down",
+        act: (ctx) =>
+          ctx.wheelDeltas("pane", ".nvim-editor", Array(6).fill(100), 35),
+        motion: motion({ landing: true }),
+        screencast: false,
+        quietMs: 1500,
+      },
+      {
+        name: "slow-down",
+        act: (ctx) =>
+          ctx.wheelDeltas("pane", ".nvim-editor", Array(40).fill(1.5), 16),
+        motion: motion({ landing: true }),
+        screencast: false,
+        quietMs: 1500,
+      },
+      {
+        name: "flick-into-bottom",
+        prep: (ctx) =>
+          ctx.nvimExpr(
+            "winrestview({'topline': line('$') - winheight(0) - 12})",
+          ),
+        act: (ctx) => flickOver(ctx, 30),
+        motion: motion({ landing: true }),
+        screencast: false,
+        quietMs: 1500,
+      },
+      {
+        name: "flick-into-top",
+        prep: (ctx) => ctx.nvimExpr("winrestview({'topline': 14})"),
+        act: (ctx) => flickOver(ctx, -30),
+        motion: motion({ landing: true }),
+        screencast: false,
+        quietMs: 1500,
+      },
+    ],
+  },
+  {
+    name: "wheel-landing-wrap",
+    description:
+      "flicks over wrapped lines and folds, where a row is not a line's start: the landing is on the line Neovim can rest on",
+    ...pane,
+    setup: async (ctx) => {
+      await ctx.focus("pane");
+      ctx.nvimSend("<C-\\><C-n><Esc>");
+      ctx.lua(WRAPPED);
+      await ctx.settle("pane");
+    },
+    steps: [
+      {
+        name: "flick-down",
+        act: (ctx) => flickOver(ctx, 37),
+        motion: motion({ landing: "wrapped" }),
+        screencast: false,
+        quietMs: 1500,
+      },
+      {
+        name: "flick-up",
+        act: (ctx) => flickOver(ctx, -24),
+        motion: motion({ landing: "wrapped" }),
+        screencast: false,
+        quietMs: 1500,
+      },
+    ],
+  },
   {
     name: "scroll",
     description:

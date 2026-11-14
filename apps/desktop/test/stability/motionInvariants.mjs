@@ -12,6 +12,15 @@
 //   covered    every frame, a scrolling window's port is wholly covered by
 //              its canvas and the ghost of its last view: no blank band at
 //              the seam
+//   landed     (spec.landing, unthrottled) a wheel gesture ends in one
+//              motion: after its last wheel event (or once the display has
+//              caught up with it) the display never moves faster than it
+//              was going then (by more than LAND_SLACK), and never sets off
+//              again once it has stood still (LAND_STILL_MS, or three of its
+//              frames) — no stop followed by a correction onto a row.
+//              "wrapped": over wrapped lines, where the row Neovim can rest
+//              on is known only from its answer, the stand is let be (a
+//              landing at rest by then goes on to it, as slowly as it must)
 //   kept       a scroller's items (a conversation's entries) keep their place
 //              in its content once there; only the last may grow
 //   oneWay     a scroller (a gui.document's drawing) moves one way for one
@@ -19,6 +28,18 @@
 //              torn or in-between frame, no landing correction
 
 const TOL = 0.5;
+
+/**
+ * How much faster than at its input's end a landing may go (px/ms): one
+ * that sets off from rest speeds up a little to reach its row (the most a
+ * row's landing from rest goes, 1.5 times its mean speed, is about 0.1),
+ * where a correction after a stop goes 0.2–1 px/ms (3–16 px a frame).
+ */
+const LAND_SLACK = 0.12;
+/** Standing still this long (ms) is a stop, not a frame's wait. */
+const LAND_STILL_MS = 100;
+/** The window before the input's end its speed is read over (ms). */
+const LAND_WINDOW_MS = 60;
 
 function windows(sample) {
   const out = new Map();
@@ -196,6 +217,89 @@ export function checkMotion(samples, spec = {}) {
         break;
       }
       prev = top;
+    }
+  }
+
+  // landed: at 1x. Throttled (6x) a frame takes 50–300 ms, a gesture's
+  // events come a few at once and Neovim's rows frames late: the display
+  // waits at what is drawn and goes on from there, which is that, not an
+  // end of its own.
+  if (spec.landing && (spec.rate ?? 1) <= 2) {
+    const wheels = samples.filter((s) => s.wheel !== undefined);
+    const total = wheels.reduce((sum, w) => sum + w.wheel, 0);
+    const inputEnd = Math.max(...wheels.map((s) => s.t));
+    for (const [key, list] of tracks) {
+      if (wheels.length === 0 || list.length < 2) continue;
+      const ch = list[0].g.ch ?? 15;
+      const pts = list
+        .map(({ i, g }) => ({ i, t: samples[i].t, origin: g.origin }))
+        .sort((a, b) => a.t - b.t);
+      // Where the gesture ends: its last event, or, when the display was
+      // behind it then (a busy page takes in what came late, in one frame),
+      // once it has caught up with all but a row of it.
+      const start = pts[0].origin;
+      const caught = pts.find(
+        (p) => Math.abs(p.origin - start) >= Math.abs(total) - ch,
+      );
+      const end = Math.max(inputEnd, caught?.t ?? inputEnd);
+      // How fast it went over the window before that…
+      const before = pts.filter(
+        (p) => p.t <= end && p.t >= end - LAND_WINDOW_MS,
+      );
+      const prior = [...pts].reverse().find((p) => p.t < end - LAND_WINDOW_MS);
+      const from = prior ?? before[0];
+      const to = before.at(-1) ?? from;
+      const span = Math.max(LAND_WINDOW_MS, (to?.t ?? 0) - (from?.t ?? 0));
+      // …or the wheel itself, at its end.
+      const input =
+        end === inputEnd
+          ? wheels
+              .filter((w) => w.t >= inputEnd - LAND_WINDOW_MS)
+              .reduce((sum, w) => sum + Math.abs(w.wheel), 0) / LAND_WINDOW_MS
+          : 0;
+      const ref = Math.max(
+        input,
+        from && to ? Math.abs(to.origin - from.origin) / span : 0,
+      );
+      // Samples are kept only when something changed: a gap is a stand.
+      const gaps = pts
+        .slice(1)
+        .map((p, k) => p.t - pts[k].t)
+        .sort((a, b) => a - b);
+      const frame = gaps[Math.floor(gaps.length / 2)] ?? 16;
+      const still = Math.max(LAND_STILL_MS, 3 * frame);
+      let last = to ?? pts[0];
+      for (const p of pts) {
+        if (p.t <= end) continue;
+        const moved = Math.abs(p.origin - last.origin);
+        if (moved === 0) continue;
+        if (
+          spec.landing !== "wrapped" &&
+          moved > TOL &&
+          p.t - Math.max(last.t, end) >= still
+        ) {
+          say(
+            "corrected",
+            key,
+            `${key} stood still ${Math.round(p.t - Math.max(last.t, end))} ms after the gesture's end, then moved ${moved}px: a correction after it, not its landing`,
+            [p.i],
+          );
+          break;
+        }
+        // Over a frame at least: two samples a few ms apart are one frame's
+        // pixel rounding, not a speed.
+        const v = moved / Math.max(16, p.t - last.t);
+        if (moved > TOL && v > ref + LAND_SLACK && v > 2 * ref) {
+          say(
+            "corrected",
+            key,
+            `${key} moved ${moved}px in ${Math.round(p.t - last.t)} ms (${v.toFixed(2)} px/ms) ${Math.round(p.t - end)} ms after the gesture's end, faster than the ${ref.toFixed(2)} px/ms it was going then: a correction after it, not its landing`,
+            [p.i],
+          );
+          break;
+        }
+        last = p;
+      }
     }
   }
 

@@ -1,7 +1,7 @@
 /**
  * A `gui.document`'s scroll in motion: the arithmetic, pure (the page draws
  * it, `DocumentPane.tsx`). It moves as a Neovim window does
- * (`smoothScroll.ts`), with its timings and its ease:
+ * (`smoothScroll.ts`), with its timings and its ease (`../landing.ts`):
  *
  * - A key's scroll, and a line the drawing follows (the editor's top, a
  *   search in its window), eases from where the drawing is shown to where
@@ -22,7 +22,8 @@
  * side chases the other's frames.
  */
 
-import { EASE_MS, GLIDE_MS, easeOut } from "./smoothScroll";
+import { easeOutLanding, landingAt } from "../landing";
+import { EASE_MS, GLIDE_MS } from "./smoothScroll";
 import { TICK_GAP_MS } from "./wheelLines";
 
 /**
@@ -75,9 +76,9 @@ export function shownAt(m: DocumentMotion, now: number): number {
   const a = m.anim;
   if (!a) return m.to;
   if (a.ms <= 0) return m.to;
-  const t = (now - a.start) / a.ms;
-  if (t >= 1) return m.to;
-  return a.from + (m.to - a.from) * easeOut(Math.max(0, t));
+  // On the editor's curves (`../landing.ts`): a glide's end is wherever
+  // `to` is now.
+  return landingAt(easeOutLanding(a.from, m.to, a.start, a.ms), now).pos;
 }
 
 /** Whether it is still moving. */

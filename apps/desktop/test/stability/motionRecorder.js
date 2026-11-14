@@ -15,6 +15,8 @@
 // grid it is over.
 // Per scroller (`watch.scrollers`, selectors, a conversation's transcript):
 // its scrollTop and its children's boxes in content coordinates.
+// Each wheel event the page gets is a sample of its own, `{ t, wheel }` (its
+// deltaY): when the gesture's input ended, for the landing rule.
 // eslint-disable-next-line @typescript-eslint/no-unused-expressions
 (function install(watch) {
   const prior = window.__motion;
@@ -148,13 +150,23 @@
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
+  const onWheel = (e) => {
+    if (running)
+      samples.push({
+        t: performance.timeOrigin + e.timeStamp,
+        wheel: e.deltaY,
+      });
+  };
+  window.addEventListener("wheel", onWheel, { capture: true, passive: true });
 
   window.__motion = {
     stop() {
       running = false;
+      window.removeEventListener("wheel", onWheel, { capture: true });
     },
     take() {
       running = false;
+      window.removeEventListener("wheel", onWheel, { capture: true });
       return samples;
     },
   };

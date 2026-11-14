@@ -103,6 +103,23 @@ scroll in Neovim (`<C-d>`, `zz`, a search) eases in 90 ms (`EASE_MS`),
 as before. A trackpad is followed pixel for pixel, never animated: the
 content is under the finger, and momentum is the trackpad's own.
 
+**Landing.** A gesture that moved by its pixels ends on a whole row in its
+own deceleration, never with a correction after it (the person: after a
+big wheel scroll the last small move onto a line read as a hitch — the
+display stood still 110–180 ms, then moved again at 2–16 px a frame).
+Once the input ends (40 ms without an event, `LAND_GAP_MS`), or while a
+flick's momentum dies away (under 0.3 px/ms from three times that,
+`LAND_SPEED`, predicted on by how fast it has been dying), the row is
+picked the way it goes, never back, and the content eases onto it from
+the speed it has (`shell/landing.ts`: a Hermite curve leaving at that
+speed and arriving at rest, only slowing; 80–600 ms by distance and
+speed). New input mid-way takes it on without a jump; Neovim is asked for
+exactly that row, and where Neovim can only rest further on (a wrapped
+line's start, the buffer's end) the landing goes on to there in the same
+motion. A tick's glide is not touched: it already ends on its line; a
+landing's last few-pixel events, however late a busy page takes them,
+are its gesture still, not ticks.
+
 **Per surface.**
 
 - **Neovim's windows** (the GUI, and a Neovim in a tmux pane): the display

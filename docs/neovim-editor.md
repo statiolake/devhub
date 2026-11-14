@@ -619,7 +619,17 @@ one layer model and pane motion.
   Neovim is brought back to the nearest line boundary (a wrapped line's
   start, not a row inside it; inside a line taller than the window, the
   nearest row) and the display eases onto
-  it, so what is shown is Neovim's grid again, exactly. A scroll Neovim
+  it, so what is shown is Neovim's grid again, exactly. A gesture that
+  moved by its pixels lands instead of stopping and then settling
+  (`docs/motion.md`, "Landing"): once its input ends, or while a flick's
+  momentum dies away, the row past where it will stop is picked the way
+  it goes, Neovim is asked for exactly that row (the settling request,
+  sent early) and the display eases onto it from its own speed; where
+  Neovim rests further on (a wrapped line), the landing goes on to there —
+  in the same motion when its answer comes in time, else, the display at
+  rest by then, as a second, slow one (the rest of that line, 1–2 px a
+  frame: DevHub does not know where a wrapped line starts before Neovim
+  says). A scroll Neovim
   makes itself (`<C-d>`, `<C-f>`, `zz`, `j` past the edge, a search) eases
   from the old view to the new in 90 ms, already under way on the first
   frame drawn (keys are never held); a jump of a window or more (`G`) is
