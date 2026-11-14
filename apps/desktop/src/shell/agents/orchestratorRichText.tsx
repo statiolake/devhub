@@ -124,6 +124,7 @@ function useThreadActions(
       cancelLimitResume: none,
       interrupt: none,
       stopTask: none,
+      runInBackground: none,
       answer: none,
       setSetting: none,
       cliDefaults: () => Promise.resolve(undefined),

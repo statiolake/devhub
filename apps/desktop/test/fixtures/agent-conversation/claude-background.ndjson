@@ -1,0 +1,33 @@
+# HAND-WRITTEN, NOT A CAPTURE: the fake agent's side of moving a running Bash
+# command to the background, in the shapes Claude Code 2.1.325's bundle
+# declares (control request `background_tasks` with `tool_use_id`, answered
+# `{backgrounded}`; `task_started` with `is_backgrounded: false` once a
+# foreground command has run 2 s; `task_updated` patch.is_backgrounded; the
+# call's result "Command was moved to the background"). One turn, "Build it":
+# its Bash call waits until DevHub asks for it to go to the background, then
+# the turn goes on and ends while the build still runs; the build ends
+# during the next turn ("Done yet?").
+> {"type":"control_request","request_id":"fixture:1","request":{"subtype":"initialize"}}
+< {"type":"control_response","response":{"subtype":"success","request_id":"fixture:1","response":{"commands":[],"models":[]}}}
+> {"type":"control_request","request_id":"fixture:2","request":{"subtype":"mcp_status"}}
+< {"type":"control_response","response":{"subtype":"success","request_id":"fixture:2","response":{"mcpServers":[]}}}
+> {"type":"user","message":{"role":"user","content":"Build it"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
+< {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000b9","cwd":"/home/testuser/project","model":"claude-sonnet-5","permissionMode":"default","slash_commands":[],"claude_code_version":"2.1.325","tools":[]}
+< {"type":"user","message":{"role":"user","content":"Build it"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000b9","uuid":"00000000-0000-4000-8000-0000000000c1"}
+< {"type":"assistant","message":{"id":"msg_b1","role":"assistant","content":[{"type":"tool_use","id":"toolu_b1","name":"Bash","input":{"command":"npm run build","description":"Build the app"}}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000b9","uuid":"00000000-0000-4000-8000-0000000000c2","timestamp":"2026-11-13T10:00:00.000Z"}
+< {"type":"system","subtype":"task_started","task_id":"b7","tool_use_id":"toolu_b1","description":"Build the app","task_type":"local_bash","is_backgrounded":false,"uuid":"00000000-0000-4000-8000-0000000000c3","session_id":"00000000-0000-4000-8000-0000000000b9"}
+> {"type":"control_request","request_id":"fixture:3","request":{"subtype":"background_tasks","tool_use_id":"toolu_b1"}}
+< {"type":"control_response","response":{"subtype":"success","request_id":"fixture:3","response":{"backgrounded":true}}}
+< {"type":"system","subtype":"task_updated","task_id":"b7","patch":{"is_backgrounded":true},"uuid":"00000000-0000-4000-8000-0000000000c4","session_id":"00000000-0000-4000-8000-0000000000b9"}
+< {"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b7","task_type":"local_bash","description":"Build the app"}],"uuid":"00000000-0000-4000-8000-0000000000c5","session_id":"00000000-0000-4000-8000-0000000000b9"}
+< {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_b1","content":"Command was moved to the background (ID: b7) after running for 4s. Output is being written to: /tmp/tasks/b7.output.","is_error":false}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000b9","uuid":"00000000-0000-4000-8000-0000000000c6","tool_use_result":{"stdout":"","stderr":"","interrupted":false,"backgroundTaskId":"b7","backgroundedByUser":true}}
+< {"type":"assistant","message":{"id":"msg_b2","role":"assistant","content":[{"type":"text","text":"The build goes on in the background."}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000b9","uuid":"00000000-0000-4000-8000-0000000000c7"}
+< {"type":"result","subtype":"success","is_error":false,"duration_ms":4200,"result":"done","session_id":"00000000-0000-4000-8000-0000000000b9"}
+> {"type":"control_request","request_id":"fixture:4","request":{"subtype":"mcp_status"}}
+< {"type":"control_response","response":{"subtype":"success","request_id":"fixture:4","response":{"mcpServers":[]}}}
+> {"type":"user","message":{"role":"user","content":"Done yet?"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
+< {"type":"system","subtype":"task_notification","task_id":"b7","tool_use_id":"toolu_b1","status":"completed","summary":"Build the app","uuid":"00000000-0000-4000-8000-0000000000c8","session_id":"00000000-0000-4000-8000-0000000000b9"}
+< {"type":"system","subtype":"background_tasks_changed","tasks":[],"uuid":"00000000-0000-4000-8000-0000000000c9","session_id":"00000000-0000-4000-8000-0000000000b9"}
+< {"type":"user","message":{"role":"user","content":"Done yet?"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000b9","uuid":"00000000-0000-4000-8000-0000000000ca"}
+< {"type":"assistant","message":{"id":"msg_b3","role":"assistant","content":[{"type":"text","text":"Built."}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-0000000000b9","uuid":"00000000-0000-4000-8000-0000000000cb"}
+< {"type":"result","subtype":"success","is_error":false,"duration_ms":900,"result":"done","session_id":"00000000-0000-4000-8000-0000000000b9"}

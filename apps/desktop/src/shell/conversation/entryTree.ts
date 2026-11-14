@@ -27,6 +27,8 @@ export interface EntryTree {
   readonly unattached: readonly PendingRequest[];
   /** The entry the Agent's plan last stood on (`latestPlan`), whose checklist is drawn unfolded. */
   readonly latestPlan: EntryId | undefined;
+  /** The calls whose work the CLI can move to the background now (`Transcript.foregroundTasks`). */
+  readonly foreground: ReadonlySet<EntryId>;
 }
 
 export const NO_ENTRIES: readonly TranscriptEntry[] = [];
@@ -88,7 +90,28 @@ export function entryTree(
         ? previous.unattached
         : unattached,
     latestPlan: latestPlan(transcript)?.entry,
+    foreground: sameSet(
+      previous?.foreground,
+      transcript.foregroundTasks.map((task) => task.call),
+    ),
   };
+}
+
+const NO_CALLS: ReadonlySet<EntryId> = new Set();
+
+/** The calls as a set: the one before when it holds the same calls. */
+function sameSet(
+  before: ReadonlySet<EntryId> | undefined,
+  calls: readonly EntryId[],
+): ReadonlySet<EntryId> {
+  const after = calls.length === 0 ? NO_CALLS : new Set(calls);
+  if (
+    before !== undefined &&
+    before.size === after.size &&
+    [...after].every((call) => before.has(call))
+  )
+    return before;
+  return after;
 }
 
 /** The parents whose part of the tree is not the same between two trees. */
@@ -110,6 +133,10 @@ export function changedParts(
   };
   compare(before.children, after.children);
   compare(before.requests, after.requests);
+  for (const call of before.foreground)
+    if (!after.foreground.has(call)) changed.add(call);
+  for (const call of after.foreground)
+    if (!before.foreground.has(call)) changed.add(call);
   if (before.latestPlan !== after.latestPlan) {
     if (before.latestPlan !== undefined) changed.add(before.latestPlan);
     if (after.latestPlan !== undefined) changed.add(after.latestPlan);

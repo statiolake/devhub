@@ -1001,6 +1001,45 @@ describe("tasks working in the background", () => {
   });
 });
 
+describe("work the turn waits on that can go to the background", () => {
+  const waiting = (
+    ...calls: [id: string, call: string][]
+  ): ConversationEvent => ({
+    type: "foreground-tasks",
+    tasks: calls.map(([id, call]) => ({ id, call: entryId(call) })),
+  });
+
+  it("is replaced whole by each report", () => {
+    const one = fold(READY, RUNNING, tool("t1"), waiting(["b1", "t1"]));
+    expect(one.foregroundTasks).toEqual([{ id: "b1", call: entryId("t1") }]);
+    expect(applyEvent(one, waiting()).foregroundTasks).toEqual([]);
+  });
+
+  it("refuses a task named twice, or whose call is not a tool call", () => {
+    const transcript = fold(READY, tool("t1"), user("u1", "go"));
+    refused(transcript, waiting(["b1", "t1"], ["b1", "t1"]), /listed twice/);
+    refused(transcript, waiting(["b1", "t9"]), /not an entry/);
+    refused(transcript, waiting(["b1", "u1"]), /not a tool call/);
+  });
+
+  it("ends with the CLI that ran it, and with the turns taken back", () => {
+    const transcript = fold(
+      READY,
+      user("u1", "go"),
+      RUNNING,
+      tool("t1"),
+      waiting(["b1", "t1"]),
+    );
+    expect(
+      applyEvent(transcript, { type: "restarted" }).foregroundTasks,
+    ).toEqual([]);
+    expect(
+      applyEvent(transcript, { type: "rewound", from: entryId("u1") })
+        .foregroundTasks,
+    ).toEqual([]);
+  });
+});
+
 describe("a CLI restarted on its session", () => {
   it("keeps every entry, and nothing the stopped CLI had going goes on", () => {
     const before = fold(

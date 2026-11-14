@@ -466,6 +466,12 @@ function requestFrom(wire: unknown):
 		case "stop-task":
 			if (typeof command.task !== "string") break;
 			return { kind: "stop-task", task: command.task };
+		case "background":
+			if (command.call !== undefined && typeof command.call !== "string") break;
+			return {
+				kind: "background",
+				call: command.call === undefined ? undefined : entryId(command.call),
+			};
 		case "answer":
 			if (
 				typeof command.request !== "string" ||

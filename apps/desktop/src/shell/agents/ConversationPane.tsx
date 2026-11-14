@@ -101,6 +101,8 @@ export function ConversationPane({
       interrupt: () => bridge.conversation.interrupt(agentId),
       cancelLimitResume: () => bridge.conversation.cancelLimitResume(agentId),
       stopTask: (task: string) => bridge.conversation.stopTask(agentId, task),
+      runInBackground: (call: EntryId | undefined) =>
+        bridge.conversation.runInBackground(agentId, call),
       answer: (request: RequestId, answer: RequestAnswer) =>
         bridge.conversation.answer(agentId, request, answer),
       setSetting: (setting: "model" | "effort" | "mode", id: string) =>

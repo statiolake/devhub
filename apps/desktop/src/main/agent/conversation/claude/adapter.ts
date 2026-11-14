@@ -64,6 +64,7 @@ import {
 	type Setting,
 	type SlashCommand,
 	type SendingMessage,
+	type ForegroundTask,
 	type RunningTask,
 	type UserOrigin,
 	type SentOrigin,
@@ -518,6 +519,14 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 */
 	private readonly tasks = new Map<string, EntryId>();
 	/**
+	 * The work the turn waits on that the CLI registered as a task of its own
+	 * (`task_started` with `is_backgrounded: false`: a foreground Bash command
+	 * once it has run 2 s, a foreground subagent), by task id, with its call.
+	 * It leaves when the CLI says it moved to the background or ended;
+	 * `reportForeground` makes the rest the transcript's.
+	 */
+	private readonly foreground = new Map<string, EntryId>();
+	/**
 	 * When each call was made, by the CLI's own clock: the `timestamp` of the
 	 * assistant line that carried it. A background task started by a call
 	 * started then.
@@ -616,11 +625,34 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				return [
 					this.controlRequest({ subtype: "stop_task", task_id: command.task }),
 				];
+			case "background":
+				return [this.controlRequest(this.backgroundRequest(command.call))];
 			case "answer":
 				return [this.answerLine(command.request, command.answer)];
 			case "mcp":
 				return [this.controlRequest(this.mcpRequest(command.request))];
 		}
+	}
+
+	/**
+	 * The CLI's `background_tasks` control request, the Agent SDK's
+	 * `backgroundTasks(toolUseId?)`: with `tool_use_id`, the one task that
+	 * call started; without it, every foreground task — Ctrl+B in the CLI's
+	 * terminal. A call the transcript does not offer it for is DevHub's bug:
+	 * the page offers it for no other.
+	 */
+	private backgroundRequest(call: EntryId | undefined): JsonObject {
+		const offered = this.current.foregroundTasks;
+		if (call === undefined) {
+			if (offered.length === 0) {
+				throw new Error("nothing the turn waits on can go to the background");
+			}
+			return { subtype: "background_tasks" };
+		}
+		if (!offered.some((task) => task.call === call)) {
+			throw new Error(`${call} is not running in the foreground now`);
+		}
+		return { subtype: "background_tasks", tool_use_id: toolUseIdOf(call) };
 	}
 
 	/**
@@ -809,6 +841,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			}
 			try {
 				this.reportBackground();
+				this.reportForeground();
 			} catch (error: unknown) {
 				this.oddity(line, error);
 			}
@@ -1191,6 +1224,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 */
 	private takeRestart(): void {
 		this.background = [];
+		this.foreground.clear();
 		this.emit({ type: "restarted" });
 		this.notice("info", RESTARTED, undefined);
 		this.ours.clear();
@@ -1281,11 +1315,79 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	}
 
 	/**
+	 * What the turn waits on that the CLI can move to the background, after
+	 * each line: each foreground task whose call is still running, in a turn
+	 * that runs, and which the CLI does not already list in the background.
+	 * A call's result can come before the task's own end, so the call is read
+	 * each time rather than trusted to have said.
+	 */
+	private reportForeground(): void {
+		const { state } = this.current;
+		const running = state.phase === "ready" && state.turn === "running";
+		const tasks: ForegroundTask[] = [];
+		if (running) {
+			for (const [id, call] of this.foreground) {
+				if (this.tool(call)?.status !== "running") continue;
+				if (this.background.some((each) => each.taskId === id)) continue;
+				tasks.push({ id, call });
+			}
+		}
+		const before = this.current.foregroundTasks;
+		if (
+			before.length === tasks.length &&
+			before.every(
+				(each, index) =>
+					each.id === tasks[index]!.id && each.call === tasks[index]!.call,
+			)
+		)
+			return;
+		this.emit({ type: "foreground-tasks", tasks });
+	}
+
+	/**
+	 * Whether a task event says the turn waits on its task, or that it no
+	 * longer does: `task_started` names whether it was registered in the
+	 * background, `task_updated` a move there (`patch.is_backgrounded`), and a
+	 * notification its end.
+	 */
+	private noteForeground(
+		line: Extract<ClaudeLine, { type: "task" }>,
+		call: EntryId,
+	): void {
+		if (line.taskId === undefined) return;
+		switch (line.subtype) {
+			case "task_started":
+				if (line.raw.is_backgrounded === false)
+					this.foreground.set(line.taskId, call);
+				else this.foreground.delete(line.taskId);
+				return;
+			case "task_updated": {
+				const raw = line.raw.patch;
+				if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+					return;
+				const patch = raw as JsonObject;
+				if (
+					patch.is_backgrounded === true ||
+					(typeof patch.status === "string" && patch.status !== "running")
+				)
+					this.foreground.delete(line.taskId);
+				return;
+			}
+			case "task_notification":
+				this.foreground.delete(line.taskId);
+				return;
+		}
+	}
+
+	/**
 	 * The CLI that ran them is being replaced (a rewind, a resume): nothing it
 	 * had working in the background is, before what it started is taken back.
 	 */
 	private endBackground(): void {
 		this.background = [];
+		this.foreground.clear();
+		if (this.current.foregroundTasks.length > 0)
+			this.emit({ type: "foreground-tasks", tasks: [] });
 		if (this.current.backgroundTasks.length > 0)
 			this.emit({ type: "background-tasks", tasks: [] });
 	}
@@ -1711,6 +1813,20 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				return this.setSession({
 					mode: { current: request.mode as string, choices: MODES },
 				});
+			case "background_tasks":
+				// Named a call, the CLI says whether it found its task: one that
+				// ended as it was asked has nothing to move, and says so quietly.
+				if (
+					typeof request.tool_use_id === "string" &&
+					line.outcome.payload?.backgrounded === false
+				) {
+					return this.notice(
+						"info",
+						"Nothing was moved to the background: the call had already returned.",
+						undefined,
+					);
+				}
+				return;
 			default:
 				return;
 		}
@@ -2710,6 +2826,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 			);
 		}
 		if (line.taskId !== undefined) this.bindTask(line.taskId, tool.id);
+		this.noteForeground(line, tool.id);
 		if (tool.spawns !== undefined) {
 			if (state === tool.spawns.state) return;
 			return this.emit({
@@ -2774,6 +2891,14 @@ function resumesAtAMessage(version: string | undefined): boolean {
 
 function toolEntryId(toolUseId: string): EntryId {
 	return entryId(`tool:${toolUseId}`);
+}
+
+/** The `tool_use` id a call's entry is named by (`toolEntryId`). */
+function toolUseIdOf(call: EntryId): string {
+	if (!call.startsWith("tool:")) {
+		throw new Error(`${call} is not a call's entry`);
+	}
+	return call.slice("tool:".length);
 }
 
 /**

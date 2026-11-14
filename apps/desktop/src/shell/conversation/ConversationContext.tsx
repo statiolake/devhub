@@ -100,6 +100,11 @@ export interface ConversationActions {
    * `stoppable` is true. It leaves the list when the CLI says it has ended.
    */
   readonly stopTask: (task: string) => Promise<void>;
+  /**
+   * Move what the turn waits on to the background, one of
+   * `Transcript.foregroundTasks`' calls or, with none named, all of it.
+   */
+  readonly runInBackground: (call: EntryId | undefined) => Promise<void>;
   readonly answer: (request: RequestId, answer: RequestAnswer) => Promise<void>;
   /** Pick one of `SessionFacts[setting].choices` by its id. */
   readonly setSetting: (setting: SettingName, id: string) => Promise<void>;

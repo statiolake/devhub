@@ -19,6 +19,7 @@ import {
 	isMaintenanceTurn,
 	requestId,
 	rewindTargets,
+	workState,
 	type ConversationEvent,
 	type NoticeEntry,
 	type PendingRequest,
@@ -5319,6 +5320,238 @@ describe("what works in the background", () => {
 			{ id: "w1", title: "w1" },
 		]);
 		expect(skippedLines(adapter)).toEqual([]);
+	});
+});
+
+describe("moving what the turn waits on to the background", () => {
+	function system(
+		subtype: string,
+		fields: Record<string, unknown> = {},
+	): string {
+		return json({ type: "system", subtype, session_id: SESSION, ...fields });
+	}
+
+	/**
+	 * A foreground Bash command past the 2 s after which the CLI registers it
+	 * as a task of its own: `task_started` with `is_backgrounded: false`,
+	 * naming the call (as 2.1.325 prints it).
+	 */
+	function waitingOnBuild(): ClaudeAdapter {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_fg", "Bash", {
+					command: "npm run build",
+					description: "Build the app",
+				}),
+			]),
+		);
+		adapter.received(
+			system("task_started", {
+				task_id: "b7",
+				tool_use_id: "toolu_fg",
+				description: "Build the app",
+				task_type: "local_bash",
+				is_backgrounded: false,
+			}),
+		);
+		return adapter;
+	}
+
+	function written(line: string | undefined): {
+		request_id: string;
+		request: unknown;
+	} {
+		return JSON.parse(line!) as { request_id: string; request: unknown };
+	}
+
+	function answered(requestId: string, response: unknown): string {
+		return json({
+			type: "control_response",
+			response: { subtype: "success", request_id: requestId, response },
+		});
+	}
+
+	it("offers a foreground command once the CLI has made it a task", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [toolUse("toolu_fg", "Bash", { command: "ls" })]),
+		);
+		// Not yet a task: nothing the CLI could move.
+		expect(adapter.transcript.foregroundTasks).toEqual([]);
+		const waiting = waitingOnBuild();
+		expect(waiting.transcript.foregroundTasks).toEqual([
+			{ id: "b7", call: entryId("tool:toolu_fg") },
+		]);
+	});
+
+	it("does not offer a task registered in the background", () => {
+		const adapter = inTurn();
+		adapter.received(
+			assistantLine("m", [
+				toolUse("toolu_bg", "Bash", {
+					command: "npm run dev",
+					run_in_background: true,
+				}),
+			]),
+		);
+		adapter.received(
+			system("task_started", {
+				task_id: "b1",
+				tool_use_id: "toolu_bg",
+				task_type: "local_bash",
+				is_backgrounded: true,
+			}),
+		);
+		expect(adapter.transcript.foregroundTasks).toEqual([]);
+	});
+
+	it("asks the CLI with `background_tasks` naming the call, and the call goes on in the background", () => {
+		const adapter = waitingOnBuild();
+		const [line] = perform(adapter, {
+			kind: "background",
+			call: entryId("tool:toolu_fg"),
+		});
+		const request = written(line);
+		expect(request.request).toEqual({
+			subtype: "background_tasks",
+			tool_use_id: "toolu_fg",
+		});
+		adapter.received(answered(request.request_id, { backgrounded: true }));
+		// What the CLI prints as the command moves: the patch, the list, and
+		// the call's result naming its task.
+		adapter.received(
+			system("task_updated", {
+				task_id: "b7",
+				patch: { is_backgrounded: true },
+			}),
+		);
+		expect(adapter.transcript.foregroundTasks).toEqual([]);
+		adapter.received(
+			system("background_tasks_changed", {
+				tasks: [
+					{
+						task_id: "b7",
+						task_type: "local_bash",
+						description: "Build the app",
+					},
+				],
+			}),
+		);
+		adapter.received(
+			json({
+				type: "user",
+				message: {
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "toolu_fg",
+							content:
+								"Command was moved to the background (ID: b7) after running for 4s. Output is being written to: /tmp/b7.output.",
+							is_error: false,
+						},
+					],
+				},
+				parent_tool_use_id: null,
+				session_id: SESSION,
+				tool_use_result: {
+					stdout: "",
+					stderr: "",
+					interrupted: false,
+					backgroundTaskId: "b7",
+					backgroundedByUser: true,
+				},
+			}),
+		);
+		expect(entry(adapter, "tool:toolu_fg")).toMatchObject({
+			status: "succeeded",
+			background: { state: "running" },
+		});
+		expect(workState(entry(adapter, "tool:toolu_fg") as ToolEntry)).toBe(
+			"running",
+		);
+		expect(adapter.transcript.backgroundTasks).toMatchObject([
+			{ id: "b7", kind: "shell", call: entryId("tool:toolu_fg") },
+		]);
+		// The turn is not over: it goes on with the call returned.
+		expect(adapter.transcript.state).toEqual({
+			phase: "ready",
+			turn: "running",
+		});
+	});
+
+	it("moves everything the turn waits on with no call named (Ctrl+B)", () => {
+		const adapter = waitingOnBuild();
+		const [line] = perform(adapter, { kind: "background", call: undefined });
+		expect(written(line).request).toEqual({ subtype: "background_tasks" });
+	});
+
+	it("stops offering a call once it has returned, or its task has ended", () => {
+		const returned = waitingOnBuild();
+		returned.received(toolResult("toolu_fg", "built"));
+		expect(returned.transcript.foregroundTasks).toEqual([]);
+
+		const ended = waitingOnBuild();
+		ended.received(
+			system("task_notification", {
+				task_id: "b7",
+				tool_use_id: "toolu_fg",
+				status: "completed",
+				summary: "Build the app",
+			}),
+		);
+		expect(ended.transcript.foregroundTasks).toEqual([]);
+
+		const over = waitingOnBuild();
+		over.received(result());
+		expect(over.transcript.foregroundTasks).toEqual([]);
+	});
+
+	it("says so quietly when the call had returned before the CLI was asked", () => {
+		const adapter = waitingOnBuild();
+		const [line] = perform(adapter, {
+			kind: "background",
+			call: entryId("tool:toolu_fg"),
+		});
+		adapter.received(
+			answered(written(line).request_id, { backgrounded: false }),
+		);
+		expect(adapter.transcript.entries.at(-1)).toMatchObject({
+			kind: "notice",
+			level: "info",
+			text: "Nothing was moved to the background: the call had already returned.",
+		});
+	});
+
+	it("says so when the CLI refuses", () => {
+		const adapter = waitingOnBuild();
+		const [line] = perform(adapter, { kind: "background", call: undefined });
+		adapter.received(
+			json({
+				type: "control_response",
+				response: {
+					subtype: "error",
+					request_id: written(line).request_id,
+					error: "Background tasks are disabled in this session.",
+				},
+			}),
+		);
+		expect(adapter.transcript.entries.at(-1)).toMatchObject({
+			kind: "notice",
+			level: "error",
+			text: "background_tasks was refused: Background tasks are disabled in this session.",
+		});
+	});
+
+	it("refuses to ask for a call the turn is not waiting on", () => {
+		const adapter = inTurn();
+		expect(() =>
+			adapter.encode({ kind: "background", call: undefined }),
+		).toThrow(/nothing the turn waits on/);
+		expect(() =>
+			adapter.encode({ kind: "background", call: entryId("tool:toolu_x") }),
+		).toThrow(/not running in the foreground/);
 	});
 });
 

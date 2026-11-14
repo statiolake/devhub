@@ -100,6 +100,8 @@ interface ToolPart {
   readonly childEntries: readonly TranscriptEntry[];
   readonly requests: readonly PendingRequest[];
   readonly planShown: boolean;
+  /** The turn waits on the call's work, which the CLI can move to the background. */
+  readonly backgroundable: boolean;
 }
 
 function useToolPart(id: EntryId): ToolPart {
@@ -117,15 +119,17 @@ function useToolPart(id: EntryId): ToolPart {
     const childEntries = tree.children.get(id) ?? NO_ENTRIES;
     const requests = tree.requests.get(id) ?? NO_REQUESTS;
     const planShown = tree.latestPlan === id;
+    const backgroundable = tree.foreground.has(id);
     const before = last.current;
     if (
       before?.childEntries === childEntries &&
       before.requests === requests &&
-      before.planShown === planShown
+      before.planShown === planShown &&
+      before.backgroundable === backgroundable
     ) {
       return before;
     }
-    const part = { childEntries, requests, planShown };
+    const part = { childEntries, requests, planShown, backgroundable };
     last.current = part;
     return part;
   }, [store, id]);
@@ -552,7 +556,37 @@ function ToolTitle({ title }: { readonly title: string }) {
   );
 }
 
-function ToolSummary({ entry }: { readonly entry: ToolEntry }) {
+/**
+ * Moves the work a running call holds the turn on to the background, as
+ * Ctrl+B does in the CLI's own terminal: the call returns at once and the
+ * turn goes on. Inside the row's `<summary>`, so its press is kept from
+ * folding the call open or shut.
+ */
+function RunInBackground({ call }: { readonly call: EntryId }) {
+  const { runInBackground, reportFailure } = useConversationActions();
+  return (
+    <button
+      type="button"
+      className="conversation-tool-run-in-background"
+      title="Move this to the background and let the turn go on (Ctrl+B)"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void runInBackground(call).catch(reportFailure);
+      }}
+    >
+      Run in Background
+    </button>
+  );
+}
+
+function ToolSummary({
+  entry,
+  backgroundable,
+}: {
+  readonly entry: ToolEntry;
+  readonly backgroundable: boolean;
+}) {
   const note = workNote(entry);
   return (
     <summary className="conversation-tool-summary">
@@ -570,6 +604,7 @@ function ToolSummary({ entry }: { readonly entry: ToolEntry }) {
       {note === undefined ? null : (
         <span className="conversation-tool-status">{note}</span>
       )}
+      {backgroundable ? <RunInBackground call={entry.id} /> : null}
     </summary>
   );
 }
@@ -609,6 +644,7 @@ const ToolView = memo(function ToolView({
   requests,
   depth,
   planShown,
+  backgroundable,
 }: {
   readonly entry: ToolEntry;
   readonly childEntries: readonly TranscriptEntry[];
@@ -616,6 +652,8 @@ const ToolView = memo(function ToolView({
   readonly depth: number;
   /** Its plan is the Agent's latest, drawn unfolded. */
   readonly planShown: boolean;
+  /** The turn waits on its work, which the CLI can move to the background. */
+  readonly backgroundable: boolean;
 }) {
   const spawns = entry.spawns;
   const subagent = useDisclosure(spawns?.state === "running");
@@ -630,7 +668,7 @@ const ToolView = memo(function ToolView({
           a closed `<details>` keeps it out of layout. It is still in the
           document, so Cmd+F finds it and opens the entry it is in. */}
       <details className="conversation-tool">
-        <ToolSummary entry={entry} />
+        <ToolSummary entry={entry} backgroundable={backgroundable} />
         <ToolBody entry={entry} />
       </details>
       <ReadableView entry={entry} planShown={planShown} />
@@ -720,7 +758,9 @@ function ToolEntryView({
   readonly entry: ToolEntry;
   readonly depth: number;
 }) {
-  const { childEntries, requests, planShown } = useToolPart(entry.id);
+  const { childEntries, requests, planShown, backgroundable } = useToolPart(
+    entry.id,
+  );
   return (
     <ToolView
       entry={entry}
@@ -728,6 +768,7 @@ function ToolEntryView({
       requests={requests}
       depth={depth}
       planShown={planShown}
+      backgroundable={backgroundable}
     />
   );
 }

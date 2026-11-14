@@ -385,6 +385,20 @@ export interface RunningTask {
   readonly stoppable: true | { readonly reason: string };
 }
 
+/**
+ * Work a call is doing in the foreground of the turn — a command the turn
+ * waits on, a subagent run in the foreground — that its CLI can move to the
+ * background while it runs (the `background` command), the way Ctrl+B does
+ * in Claude Code's own terminal. Moved there, the call returns at once and
+ * the turn goes on; the work goes on as one of `Transcript.backgroundTasks`.
+ */
+export interface ForegroundTask {
+  /** The CLI's own name for the task. */
+  readonly id: string;
+  /** The call the turn is waiting on; it is running. */
+  readonly call: EntryId;
+}
+
 export interface NoticeEntry {
   readonly kind: "notice";
   readonly id: EntryId;
@@ -966,6 +980,12 @@ export interface Transcript {
    * background: the conversation's one account of it.
    */
   readonly backgroundTasks: readonly RunningTask[];
+  /**
+   * The calls running in the foreground of the turn whose work the CLI can
+   * move to the background now, oldest first. The adapter's; always empty
+   * for a CLI that cannot (Codex).
+   */
+  readonly foregroundTasks: readonly ForegroundTask[];
   /** The Agent's MCP servers (the adapter's). */
   readonly mcp: McpState;
   /** The MCP sign-in running or run last (DevHub's). */
@@ -1066,6 +1086,11 @@ export type ConversationEvent =
       readonly type: "background-tasks";
       readonly tasks: readonly RunningTask[];
     }
+  /** Replaces the work the CLI can move to the background whole. The adapter's. */
+  | {
+      readonly type: "foreground-tasks";
+      readonly tasks: readonly ForegroundTask[];
+    }
   /** Replaces the MCP servers' state whole. The adapter's. */
   | { readonly type: "mcp"; readonly mcp: McpState }
   /** Replaces the MCP sign-in whole. DevHub's own, not an adapter's. */
@@ -1130,6 +1155,7 @@ export const EMPTY_TRANSCRIPT: Transcript = {
   pending: [],
   sending: [],
   backgroundTasks: [],
+  foregroundTasks: [],
   mcp: NO_MCP,
   mcpSignIn: undefined,
   limitResume: undefined,
@@ -1273,6 +1299,12 @@ export class TranscriptFold {
           backgroundTasks: this.#backgroundTasks(event.tasks),
         };
         return;
+      case "foreground-tasks":
+        this.#transcript = {
+          ...transcript,
+          foregroundTasks: this.#foregroundTasks(event.tasks),
+        };
+        return;
       case "mcp":
         this.#transcript = { ...transcript, mcp: event.mcp };
         return;
@@ -1297,7 +1329,12 @@ export class TranscriptFold {
       }
       case "rewound":
         this.#rewind(event.from);
-        this.#transcript = { ...transcript, entries: this.#entries };
+        // No turn waits on a call once the turns are taken back.
+        this.#transcript = {
+          ...transcript,
+          entries: this.#entries,
+          foregroundTasks: [],
+        };
         return;
       case "session-switched": {
         const open = transcript.requests[0];
@@ -1319,6 +1356,7 @@ export class TranscriptFold {
           ...transcript,
           entries: this.#entries,
           usage: undefined,
+          foregroundTasks: [],
           session: { ...transcript.session, sessionId: event.session },
         };
         return;
@@ -1334,6 +1372,7 @@ export class TranscriptFold {
           requests: [],
           sending: [],
           backgroundTasks: [],
+          foregroundTasks: [],
           compacting: false,
         };
         return;
@@ -1476,6 +1515,22 @@ export class TranscriptFold {
       seen.add(task.id);
       if (task.call !== undefined)
         this.#requireToolEntry(task.call, `call of background task ${task.id}`);
+    }
+    return tasks;
+  }
+
+  #foregroundTasks(
+    tasks: readonly ForegroundTask[],
+  ): readonly ForegroundTask[] {
+    const seen = new Set<string>();
+    for (const task of tasks) {
+      if (seen.has(task.id)) {
+        throw new TranscriptInvariantError(
+          `foreground task ${task.id} is listed twice`,
+        );
+      }
+      seen.add(task.id);
+      this.#requireToolEntry(task.call, `call of foreground task ${task.id}`);
     }
     return tasks;
   }

@@ -73,6 +73,13 @@ export type ConversationCommand =
 	 * ended; a CLI that refuses says so in a notice.
 	 */
 	| { readonly kind: "stop-task"; readonly task: string }
+	/**
+	 * Move work the turn is waiting on to the background
+	 * (`Transcript.foregroundTasks`): that of one call, or, with no call, all
+	 * of it — Ctrl+B in Claude Code's own terminal. The call returns at once
+	 * and the turn goes on; a CLI that refuses says so in a notice.
+	 */
+	| { readonly kind: "background"; readonly call: EntryId | undefined }
 	| {
 			readonly kind: "answer";
 			readonly request: RequestId;

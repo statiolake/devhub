@@ -1618,6 +1618,29 @@ span.conversation-picture-box > img {
   font-size: 0.8em;
 }
 
+/* While the turn waits on a call's work: one quiet text button at the row's
+   right, where its status would be. */
+.conversation-tool-run-in-background {
+  flex: none;
+  order: 3;
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--secondary);
+  font: inherit;
+  font-size: 0.8em;
+}
+
+.conversation-tool-run-in-background:hover {
+  color: var(--primary);
+}
+
+.conversation-tool-status + .conversation-tool-run-in-background {
+  margin-left: var(--space-2);
+}
+
 .conversation-tool-entry:is([data-status="failed"], [data-status="denied"])
   .conversation-tool-status {
   color: var(--status-error);

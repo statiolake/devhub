@@ -670,6 +670,14 @@ export class CodexAdapter implements ProtocolAdapter {
 					return this.interrupt();
 				case "stop-task":
 					return this.stopSubagent(command.task);
+				case "background":
+					// app-server has no request that detaches a running command:
+					// one runs at most `yield_time_ms` (30 s at most) before its
+					// call returns and it goes on as a background terminal by
+					// itself. Nothing is offered (`foregroundTasks` stays empty).
+					throw new Error(
+						"Codex's app-server has no way to move a running command to the background",
+					);
 				case "answer":
 					return this.answer(command.request, command.answer);
 				case "mcp":

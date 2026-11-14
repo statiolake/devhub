@@ -124,6 +124,11 @@ export type ConversationCommandWire =
 	| { readonly kind: "interrupt" }
 	/** Stop one of the background tasks, by its `RunningTask.id`, whose `stoppable` is true. */
 	| { readonly kind: "stop-task"; readonly task: string }
+	/**
+	 * Move what the turn waits on to the background (`Transcript.foregroundTasks`):
+	 * one call's work, or with no call, all of it (Ctrl+B).
+	 */
+	| { readonly kind: "background"; readonly call: EntryId | undefined }
 	| {
 			readonly kind: "answer";
 			readonly request: RequestId;
@@ -220,6 +225,7 @@ export interface ConversationApi {
 	instruct(agentId: string, subagent: EntryId, text: string): Promise<void>;
 	interrupt(agentId: string): Promise<void>;
 	stopTask(agentId: string, task: string): Promise<void>;
+	runInBackground(agentId: string, call: EntryId | undefined): Promise<void>;
 	answer(
 		agentId: string,
 		request: RequestId,

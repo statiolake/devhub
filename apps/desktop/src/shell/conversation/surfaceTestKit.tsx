@@ -44,6 +44,7 @@ export function fakeActions(
     interrupt: vi.fn(() => Promise.resolve()),
     cancelLimitResume: vi.fn(() => Promise.resolve()),
     stopTask: vi.fn(() => Promise.resolve()),
+    runInBackground: vi.fn(() => Promise.resolve()),
     answer: vi.fn(() => Promise.resolve()),
     setSetting: vi.fn(() => Promise.resolve()),
     // No CLI's defaults are known unless a test says so.
