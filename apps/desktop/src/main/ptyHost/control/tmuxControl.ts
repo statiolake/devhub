@@ -223,13 +223,18 @@ export function layoutPanes(
  * everything literal but a single quote, which is closed, escaped and opened.
  * A newline would end the command line, so it is refused (`send-keys` text is
  * sent with `-H` hex where it can hold one).
+ *
+ * `$` is never plain: tmux's parser expands `$NAME` and `${NAME}` in an
+ * unquoted word (`a$b` is `a`), and a `$` that ends the line is a syntax
+ * error — the whole line refused. The `$` key, typed alone, is exactly that
+ * line (`send-keys -K -c <client> -- $`, or `M-$`), so `$` could not be
+ * typed into a terminal.
  */
 export function quoteArg(arg: string): string {
 	if (arg.includes("\n") || arg.includes("\r")) {
 		throw new Error("a tmux command argument cannot hold a line break");
 	}
-	if (/^[A-Za-z0-9_@%$#:.,/=+-]+$/.test(arg) && !arg.startsWith("#"))
-		return arg;
+	if (/^[A-Za-z0-9_@%#:.,/=+-]+$/.test(arg) && !arg.startsWith("#")) return arg;
 	return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 

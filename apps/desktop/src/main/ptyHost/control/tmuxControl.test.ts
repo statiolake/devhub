@@ -161,6 +161,10 @@ describe("tmux control mode", () => {
 		expect(quoteArg("it's here")).toBe(`'it'\\''s here'`);
 		expect(quoteArg("#{pane_id}")).toBe("'#{pane_id}'");
 		expect(quoteArg(";")).toBe("';'");
+		// tmux expands `$NAME` in an unquoted word; a bare `$` is a syntax error.
+		expect(quoteArg("$")).toBe("'$'");
+		expect(quoteArg("M-$")).toBe("'M-$'");
+		expect(quoteArg("$HOME")).toBe("'$HOME'");
 		expect(() => quoteArg("a\nb")).toThrow();
 		expect(commandLine(["send-keys", "-t", "%1", "x y"])).toBe(
 			"send-keys -t %1 'x y'",

@@ -766,6 +766,51 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     await until("the end", () => view.ended);
   }, 20000);
 
+  // The page names a typed character as its key (`controlKeys.ts`), and
+  // each is a word of `send-keys -K -- <key>`. tmux's parser expands `$NAME`
+  // in an unquoted word and refuses a lone `$`, so `$` (and `M-$`, Option as
+  // Meta) never reached the pane; the shell's other specials are read by the
+  // same parser.
+  it("types $ and the shell's other special characters as keys", async () => {
+    const socket = `devhub-specials-${String(process.pid)}`;
+    sockets.push(socket);
+    tmux(socket, "new-session", "-d", "-s", "k", "-x", "80", "-y", "24", "cat");
+    const view = page();
+    const client = new ControlClient({
+      process: controlProcess(socket, "k"),
+      vt: lib,
+      cols: 80,
+      rows: 24,
+      post: view.post,
+      ended: () => undefined,
+    });
+    view.paints(client);
+    const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
+    const typed = "$ `\"'\\#{};~%$HOME ${HOME} a$b";
+    // One keydown, one message, a moment apart, as a person types: each
+    // key its own command line, which a `$` ended — where tmux refused it
+    // (queued together, the next key's ` ; ` hid it).
+    const key = async (name: string) => {
+      client.receive({ kind: "keys", keys: [name] });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    };
+    for (const name of [...typed, "Enter"]) await key(name);
+    // The tty's echo, then cat's copy: the line twice, exactly as typed.
+    await until(
+      "the characters as typed",
+      () =>
+        view.screens.get(pane)?.filter((row) => row === typed).length === 2,
+    );
+    // Option as Meta: ESC then `$`, which the tty echoes as `^[$`.
+    await key("M-$");
+    await key("Enter");
+    await until("M-$", () =>
+      view.screens.get(pane)?.some((row) => row === "^[$"),
+    );
+    client.stop();
+    await until("the end", () => view.ended);
+  }, 20000);
+
   // Neovim's TUI asks for modifyOtherKeys (`CSI > 4 ; 2 m`), and tmux drops an
   // unmodified key it gets with `send-keys -K` while that is on and
   // `extended-keys` is (the person's tmux.conf): only C-c and the like got
