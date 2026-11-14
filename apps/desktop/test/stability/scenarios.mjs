@@ -47,6 +47,13 @@ export const NEOVIM_ROLES = [
   { name: "cmdline", selector: ".nvim-cmdline", text: true },
   { name: "cmdline-content", selector: ".nvim-cmdline-content" },
   { name: "cmdline-row", selector: ".nvim-cmdline-row", max: 4 },
+  // Neovim's prompts drawn natively (PromptViews.tsx): the sheet and the bar.
+  { name: "prompt", selector: ".nvim-prompt, .nvim-prompt-bar", text: true },
+  {
+    name: "prompt-row",
+    selector: ".nvim-prompt-choice, .nvim-prompt-bar-button",
+    max: 8,
+  },
   { name: "footer", selector: ".nvim-footer", max: 6 },
   { name: "tabline", selector: ".nvim-tabline" },
 ];
@@ -112,6 +119,35 @@ export async function editorAtRest(ctx) {
     "execute('lua for _, w in ipairs(vim.api.nvim_list_wins()) do if vim.api.nvim_win_get_config(w).relative ~= \"\" then pcall(vim.api.nvim_win_close, w, true) end end')",
   );
   await ctx.settle("pane");
+}
+
+/** A confirm() of two answers, its question two lines. */
+const CONFIRM =
+  ':call confirm("Delete core0.ts?\\nThe file is removed from disk.", "&Delete\\n&Cancel", 2)<CR>';
+const PROMPT_UP = "!!document.querySelector('.nvim-prompt, .nvim-prompt-bar')";
+const PROMPT_GONE = "!document.querySelector('.nvim-prompt, .nvim-prompt-bar')";
+
+/**
+ * Notes, in the page, whether the command line's box ever held a prompt's
+ * raw answers (`(D)elete, [C]ancel: `), in any frame: they are drawn
+ * natively, never as the box's text.
+ */
+const WATCH_RAW_PROMPT = `(() => {
+  window.__rawPrompt = "";
+  const look = () => {
+    for (const e of document.querySelectorAll(".nvim-cmdline")) {
+      const t = e.textContent ?? "";
+      if (/\\(D\\)elete|\\(y\\)es\\/|Type number/.test(t)) window.__rawPrompt = t;
+    }
+  };
+  window.__rawPromptObserver?.disconnect();
+  window.__rawPromptObserver = new MutationObserver(look);
+  window.__rawPromptObserver.observe(document.body, { subtree: true, childList: true, characterData: true });
+})()`;
+
+async function rawPromptCheck(ctx) {
+  const raw = await ctx.evalIn("pane", "window.__rawPrompt ?? ''");
+  return raw ? [`the command line's box drew a prompt's raw text: ${raw}`] : [];
 }
 
 /** A Neovim float with a rounded border and a title (B′), or two whose borders meet. */
@@ -690,6 +726,59 @@ export const SCENARIOS = [
         spec: { single: ["cmdline", "popup"] },
       },
     ],
+  },
+  {
+    name: "prompt",
+    description:
+      "Neovim's prompts drawn natively: confirm() opening, closing by Esc and by a click, and :s///c's bar moving to the next match",
+    ...neovim,
+    setup: async (ctx) => {
+      await editorAtRest(ctx);
+      await ctx.evalIn("pane", WATCH_RAW_PROMPT);
+    },
+    steps: [
+      {
+        name: "confirm-open",
+        act: (ctx) => ctx.nvimSend(CONFIRM),
+        waitFor: PROMPT_UP,
+        spec: { single: ["prompt", "cmdline"] },
+        check: rawPromptCheck,
+      },
+      {
+        name: "confirm-esc",
+        act: (ctx) => ctx.press("pane", "Escape"),
+        waitFor: PROMPT_GONE,
+        spec: { single: ["prompt", "cmdline"] },
+        check: rawPromptCheck,
+      },
+      {
+        name: "confirm-click",
+        prep: async (ctx) => {
+          ctx.nvimSend(CONFIRM);
+          await ctx.waitIn("pane", PROMPT_UP, 5000);
+          await ctx.settle("pane");
+        },
+        act: (ctx) => ctx.clickText("pane", ".nvim-prompt-choice", "Cancel"),
+        waitFor: PROMPT_GONE,
+        spec: { single: ["prompt", "cmdline"] },
+        check: rawPromptCheck,
+      },
+      {
+        name: "substitute-next",
+        prep: async (ctx) => {
+          ctx.nvimSend(":%s/const/const/gc<CR>");
+          await ctx.waitIn("pane", PROMPT_UP, 5000);
+          await ctx.settle("pane");
+        },
+        act: (ctx) => ctx.press("pane", "n"),
+        spec: { single: ["prompt", "cmdline"] },
+        check: rawPromptCheck,
+      },
+    ],
+    teardown: async (ctx) => {
+      await ctx.press("pane", "Escape");
+      await editorAtRest(ctx);
+    },
   },
   {
     name: "float",

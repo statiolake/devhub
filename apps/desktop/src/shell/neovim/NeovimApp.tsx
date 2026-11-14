@@ -76,6 +76,7 @@ import {
   textCells,
 } from "./cmdline";
 import { routeMessages } from "./messages";
+import { NativePrompts, promptIsNative } from "./PromptViews";
 import {
   ICON_FAMILY,
   cssColor,
@@ -1222,6 +1223,7 @@ export function NeovimSurface({
               typingCount={decorations.typingCount}
             />
             <Popupmenu state={nvim} editor={editor} send={send} />
+            <NativePrompts state={nvim} editor={editor} send={send} />
           </>
         ) : null}
       </div>
@@ -1369,9 +1371,9 @@ function CmdlineLead({
 /**
  * `ext_cmdline` and its prompts, in one bordered box at the bottom
  * (`cmdlinePlace`; the person's pick, mock 2): `:` and `/` share the box,
- * the search count at its right edge; a prompt (`confirm()`, `inputlist()`,
- * the swap file's question, `:s///c`) shows its question over its line,
- * answered with the keys as Neovim reads them. Its text sits on whole
+ * the search count at its right edge; an `input()` prompt shows its words
+ * before its line. Neovim's own prompts (`confirm()`, `inputlist()`, the
+ * swap file's question, `:s///c`) are drawn natively (`PromptViews.tsx`). Its text sits on whole
  * cells in the grid's own font, laid out as Neovim's own command line
  * would hold it (`cmdlineLayout`), so what plugins draw beside it — told
  * where it is by `g:ui_cmdline_pos` — lines up with its text, and the
@@ -1388,6 +1390,8 @@ function Cmdline({
 }) {
   const line = state.cmdline.at(-1);
   if (!line && !state.cmdlineBlock && !state.prompt) return null;
+  // A prompt of Neovim's is drawn natively (`PromptViews.tsx`), never here.
+  if (promptIsNative(state)) return null;
   const cell = editor.cellMetrics();
   const font = editor.font();
   const place = editor.cmdlinePlace();
@@ -1580,7 +1584,11 @@ function CmdlineBand({
       window.clearTimeout(timer);
     };
   }, [echo, cmdheight]);
-  if (state.cmdline.length > 0 || state.prompt || state.cmdlineBlock)
+  // Under a prompt drawn natively the band stays what it was.
+  if (
+    !promptIsNative(state) &&
+    (state.cmdline.length > 0 || state.prompt || state.cmdlineBlock)
+  )
     return null;
   const mode = state.showmode;
   const right = [...state.showcmd, ...state.ruler];
@@ -1950,7 +1958,8 @@ function toastBottom(
     Math.max(...windows.map((b) => b.row + b.height)) * cell.height;
   const state = editor.state;
   const box =
-    state.cmdline.length > 0 || state.prompt !== undefined
+    (state.cmdline.length > 0 || state.prompt !== undefined) &&
+    !promptIsNative(state)
       ? editor.cmdlinePlace().top
       : Number.POSITIVE_INFINITY;
   // And of the pager, which covers the windows' bottom while it is open.

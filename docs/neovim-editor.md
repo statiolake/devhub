@@ -1024,15 +1024,42 @@ the prompt and the band, `main/editor/neovimMessages.ts` is the Lua).
   Any message said again while it shows is that line again, its fade
   started over; a progress message (`:w`'s) is updated under its id.
 - **Prompts** — on 0.12 every question comes as a `confirm` message and a
-  prompt on the command line (`confirm()`, `inputlist()`, `z=`, the swap
-  file's question with its E325 heading said just before it), or as the
-  prompt alone (`:s///c`). The question is shown in the command line's box
-  over its prompt, the box grown upward to hold it (cut from the top if
-  the editor is shorter), and answered with the keys as Neovim reads them.
-  It goes when the prompt's command line does, answered or abandoned: a
-  prompt can be neither lost (it is where the person types) nor stuck (the
-  keys are Neovim's, not a dialog's), and a notification never covers it
-  (the corner rises above the box).
+  prompt on the command line (`confirm()`, `:confirm`, `inputlist()`, `z=`,
+  the swap file's question with its E325 heading said just before it), or
+  as the prompt alone (`:s///c`, `replace with … (y)es/(n)o/…`); the
+  `confirm_sub` and `return_prompt` kinds are gone, and there is no
+  hit-enter prompt (a long message is a notification or the pager, whose
+  `<CR>` closes it as hit-enter did). DevHub draws them natively
+  (`shell/neovim/prompts.ts` reads them, `PromptViews.tsx` draws them),
+  never as the command line's text:
+  - `confirm()`, `:confirm`, E325, `inputlist()` and `z=` are a
+    confirmation sheet hanging from the editor's top, in the quick pick's
+    parts (`PickerParts`, as tmux's chooser): the question's first line its
+    title, the rest under it in the grid's face as Neovim laid it out, one
+    row per answer — its accelerator underlined, its key at the row's end,
+    the default (Neovim's `[X]`) the selected row with `↩`. The answers are
+    parsed from Neovim's rendered prompt (`(D)elete, [C]ancel: `).
+    `inputlist()`'s numbered lines are its rows, the number typed so far in
+    the sheet's field and its row selected. In a short editor the words
+    scroll and the answers stay (`.picker.is-confirmation`, as every DevHub
+    confirmation).
+  - `:s///c` is a bar of one row under the match it asks about (the cell
+    Neovim draws with `IncSearch`; over it at the editor's foot): the
+    replacement and Yes, No, All, Quit, Last with their keys. `^E` and `^Y`
+    stay keys only.
+
+  Neovim owns the answer. The keys reach it as always (the editor keeps
+  the keyboard: a click on the sheet does not take it), and a click on an
+  answer sends that answer's key with `nvim_input` (`<C-u>N<CR>` for an
+  `inputlist()` item); the row clicked shows as taken until Neovim answers.
+  The sheet goes when Neovim's command line does, never on the click. The
+  `confirm` message comes a flush before its prompt: in between nothing is
+  drawn, so the sheet appears once, whole. Between two of `:s///c`'s
+  questions Neovim hides its command line for a flush; the bar is held
+  (`SUBSTITUTE_HOLD_MS`) and moves to the next match instead of blinking.
+  An `input()` prompt stays the command line's. The stability suite's
+  `prompt` scenario checks the sheet and the bar come and go in one change
+  and that the box never shows a prompt's raw text.
 - **Long output** — what a command was asked to print (`list_cmd`: `:ls`,
   `:map`, `:set all`; `:!cmd`'s output; a typed command's output of three
   lines or more; `:messages` and `g<`) opens in the pager: a Neovim buffer

@@ -172,6 +172,7 @@ and screencast pictures).
 | `quickfix` | the quickfix window devhub.nvim draws natively: `:copen` on a `:vimgrep` of 36 items in 18 files (a split, never its cells first), `<C-d>` under the held file headings, `:cnext`, `:colder` (the buffer written anew, the rows the other list's in one frame), `:cclose`; after each, Neovim's list state and the title row agree |
 | `blink-insert` | blink-ui's insert menu opening, the selection moving, closing |
 | `cmdline` | `:` opening, a character typed (blink-ui's command-line menu), Tab, Escape |
+| `prompt` | a `confirm()` drawn natively opening, closed by Escape, answered by a click; `:s///c`'s bar moving to the next match (`check`: the command line's box never held a prompt's raw text, in any frame) |
 | `float` | a float with a rounded border and a title (B′), closed; two floats whose borders are fused, closed; the cursor parked in each corner cell of a borderless float (`check`: the cell's outer strips, where the frame's line is, as without the cursor), closed |
 | `open-file` | `devhub <file>` into the `devhub-nvim` window, twice |
 | `workspace-switch` | the other Workspace selected in the Sidebar, and back |
