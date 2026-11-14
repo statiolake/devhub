@@ -205,6 +205,16 @@ const CMDLINE_ROWS = `(() => {
   return [b.x, a.bottom, b.width, b.bottom - a.bottom];
 })()`;
 
+// The current window's text area, at rest: its grid's canvas (the status
+// line is grid 1's; the fixture has no winbar).
+const TEXT_AREA = `(() => {
+  const ed = Object.values(window.neovimEditors ?? {})[0];
+  const c = ed?.painter.canvases.get(ed.state.cursor.grid)?.canvas;
+  if (!c) return null;
+  const b = c.getBoundingClientRect();
+  return [b.x, b.y, b.width, b.height];
+})()`;
+
 /** A burst of `<C-d>`/`<C-u>` as a held key gives them, 33 ms apart. */
 async function burst(ctx, keys) {
   for (const key of keys) {
@@ -246,6 +256,9 @@ export const SCENARIOS = [
       // rest and drew over the command line's rows (<C-u>) and over what is
       // above the window (<C-d>).
       regions: [{ name: "cmdline-rows", expr: CMDLINE_ROWS, still: true }],
+      // And every picture of the window's text is made of rows it draws at
+      // rest: no row torn between two lines, none half painted.
+      coherent: { expr: TEXT_AREA },
       spec: { only: [] },
       quietMs: 900,
     })),

@@ -25,7 +25,7 @@ import { connect, targets } from "./cdp.mjs";
 import { fetchPlugins } from "./fetchPlugins.mjs";
 import { check } from "./invariants.mjs";
 import { checkMotion } from "./motionInvariants.mjs";
-import { decodePng, regionDigest } from "./pixels.mjs";
+import { decodePng, regionDigest, rowDigests } from "./pixels.mjs";
 import { press as pressKey, type as typeText } from "./keys.mjs";
 import { checkRegions } from "./pixels.mjs";
 import { readFileSync } from "node:fs";
@@ -40,6 +40,74 @@ const motionSource = readFileSync(
 // Carets and the cursor do not take part in the picture compared: they blink.
 const NO_CARETS = `(() => { let s = document.getElementById("__stability_nocaret"); if (!s) { s = document.createElement("style"); s.id = "__stability_nocaret"; s.textContent = ".nvim-cursor, .nvim-cursor-ink, .nvim-view-frame-caret, .nvim-cmdline-caret { visibility: hidden !important }"; document.head.append(s); } })()`;
 const CARETS = `document.getElementById("__stability_nocaret")?.remove()`;
+
+/**
+ * Every picture of a scroll is made of rows the window draws at rest: the
+ * text moves by whole device pixels, the canvas and the ghost meet without
+ * a seam, so each pixel row of the text area, in every screencast frame,
+ * is a row of some picture of the file at rest. A row that is not is torn
+ * (half one line, half another) or garbage. The pictures at rest are taken
+ * after the step, the window brought to each page of `lines` in turn;
+ * carets are hidden throughout (they blink). coherent: { expr, around }:
+ * the text area (an expression giving [x, y, w, h] in CSS px), and how many
+ * lines beyond where the step started and ended the scroll may have shown.
+ */
+async function coherence(ctx, client, coherent, from, shots) {
+  const dpr = await client.eval("devicePixelRatio");
+  const css = await client.eval(coherent.expr);
+  if (!css) return undefined;
+  const rect = css.map((v) => Math.round(v * dpr));
+  const now = Number(ctx.nvimExpr("line('w0')").trim());
+  const height = Number(ctx.nvimExpr("winheight(0)").trim());
+  const last = Number(ctx.nvimExpr("line('$')").trim());
+  const view = ctx.nvimExpr("json_encode(winsaveview())").trim();
+  const lo = Math.max(1, Math.min(from, now) - (coherent.around ?? height));
+  const hi = Math.min(last, Math.max(from, now) + (coherent.around ?? height));
+  const known = new Set();
+  const rest = [];
+  // A page at a time, each a jump (no easing): every line is in one.
+  for (let top = lo; top <= hi; top += Math.max(1, height)) {
+    // The cursor with it, or Neovim moves the view back to the cursor.
+    // An expression's changes are not drawn until something redraws.
+    ctx.nvimExpr(
+      `execute('call winrestview({"topline": ${String(top)}, "lnum": ${String(top)}, "col": 0}) | redraw')`,
+    );
+    const shown = Number(ctx.nvimExpr("line('w0')").trim());
+    // Drawn there, at rest: no scroll of the display left.
+    await ctx.waitIn(
+      "pane",
+      `Object.values(window.neovimEditors ?? {}).some((ed) => { const g = ed.state.cursor.grid; const v = ed.painter.scrollView(g); return ed.state.windows.get(g)?.viewport?.topline === ${String(shown - 1)} && (!v || (v.off === 0 && v.ghost === undefined)); })`,
+      5000,
+    );
+    await ctx.settle("pane", 250);
+    const r = await client.send("Page.captureScreenshot", { format: "png" });
+    const png = Buffer.from(r.data, "base64");
+    rest.push(png);
+    for (const row of rowDigests(decodePng(png), rect)) known.add(row);
+  }
+  ctx.nvimExpr(
+    `execute('call winrestview(json_decode(''${view.replace(/'/g, "''")}'')) | redraw')`,
+  );
+  await ctx.settle("pane", 250);
+  const torn = [];
+  shots.forEach((shot, i) => {
+    const rows = rowDigests(decodePng(shot.png), rect);
+    const strange = rows.flatMap((row, y) => (known.has(row) ? [] : [y]));
+    if (strange.length > 0)
+      torn.push({ i, n: strange.length, first: strange[0] });
+  });
+  if (torn.length === 0) return undefined;
+  return {
+    pictures: rest,
+    message: `${String(torn.length)} of ${String(shots.length)} pictures have pixel rows the window draws at rest nowhere (rect ${JSON.stringify(rect)}): ${torn
+      .slice(0, 6)
+      .map(
+        (t) =>
+          `screencast frame ${String(t.i)}, ${String(t.n)} rows from row ${String(t.first)}`,
+      )
+      .join("; ")}`,
+  };
+}
 
 /**
  * Settled after motion, the picture is what a fresh full redraw draws:
@@ -304,6 +372,12 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
     );
   }
   let recorded;
+  let coherentFrom;
+  let restPictures;
+  if (step.coherent) {
+    await sessions[0].client.eval(NO_CARETS);
+    coherentFrom = Number(ctx.nvimExpr("line('w0')").trim());
+  }
   try {
     recorded = await capture(sessions, () => step.act(ctx), {
       rate,
@@ -314,6 +388,23 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
     return fail(`the step failed to run: ${error.message}`);
   }
   const problems = [];
+  if (step.coherent) {
+    try {
+      const problem = await coherence(
+        ctx,
+        sessions[0].client,
+        step.coherent,
+        coherentFrom,
+        recorded[0].shots,
+      );
+      if (problem) {
+        problems.push(`${pages[0].page}: [torn] ${problem.message}`);
+        restPictures = problem.pictures;
+      }
+    } finally {
+      await sessions[0].client.eval(CARETS);
+    }
+  }
   let frameCount = 0;
   let shotCount = 0;
   const failedPages = [];
@@ -398,15 +489,16 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
       );
     });
   }
-  if (motionSamples && problems.length > 0) {
+  if ((motionSamples || step.coherent) && problems.length > 0) {
     const dir = join(artifacts, scenario.name, `${step.name}-${rate}x`);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, "motion.json"),
-      JSON.stringify(motionSamples, null, 1),
-    );
+    if (motionSamples)
+      writeFileSync(
+        join(dir, "motion.json"),
+        JSON.stringify(motionSamples, null, 1),
+      );
     if (failedPages.length === 0) {
-      // The pictures too, when only the motion rules failed.
+      // The pictures too, when only the motion or coherence rules failed.
       const page = recorded[0];
       writeFileSync(
         join(dir, "frames.json"),
@@ -425,6 +517,10 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
     // A stale picture: what was settled, and what a fresh redraw drew.
     for (const [name, png] of Object.entries(stalePictures ?? {}))
       writeFileSync(join(dir, `stale-${name}.png`), png);
+    // A torn picture: the pictures at rest its rows were looked for in.
+    (restPictures ?? []).forEach((png, i) =>
+      writeFileSync(join(dir, `rest-${String(i).padStart(2, "0")}.png`), png),
+    );
     writeFileSync(join(dir, "violations.txt"), `${problems.join("\n")}\n`);
   }
   // What the step checks of the settled page itself (`check(ctx)`: a list

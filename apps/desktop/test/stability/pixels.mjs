@@ -137,3 +137,25 @@ export function checkRegions(shots, regions, motion) {
   }
   return out;
 }
+
+/**
+ * A digest of each pixel row of `image` inside `rect` ([x, y, w, h], device
+ * px), top to bottom: what the coherence check (`coherent` in run.mjs)
+ * compares row by row.
+ */
+export function rowDigests(image, rect) {
+  const [rx, ry, rw, rh] = rect.map(Math.round);
+  const x0 = Math.max(0, rx);
+  const x1 = Math.min(image.width, rx + rw);
+  const out = [];
+  for (let y = Math.max(0, ry); y < Math.min(image.height, ry + rh); y++) {
+    let h = 0x811c9dc5;
+    for (let x = x0; x < x1; x++) {
+      const o = (y * image.width + x) * 4;
+      h ^= image.data[o] | (image.data[o + 1] << 8) | (image.data[o + 2] << 16);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    out.push(h.toString(16));
+  }
+  return out;
+}
