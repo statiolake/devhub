@@ -53,19 +53,25 @@ async function freshRedraw(ctx, client, selector) {
     await ctx.settle("pane", 300);
     const shot = async () => {
       const r = await client.send("Page.captureScreenshot", { format: "png" });
-      return decodePng(Buffer.from(r.data, "base64"));
+      const png = Buffer.from(r.data, "base64");
+      return { png, image: decodePng(png) };
     };
     const rect = await client.eval(
       `(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return null; const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height].map(Math.round); })()`,
     );
     if (!rect) return undefined;
-    const before = regionDigest(await shot(), rect);
+    const settled = await shot();
+    const before = regionDigest(settled.image, rect);
     ctx.nvimExpr("execute('redraw!')");
     await ctx.settle("pane", 400);
-    const after = regionDigest(await shot(), rect);
+    const fresh = await shot();
+    const after = regionDigest(fresh.image, rect);
     return before === after
       ? undefined
-      : `the settled picture of ${selector} differs from a fresh full redraw (${before} vs ${after})`;
+      : {
+          message: `the settled picture of ${selector} differs from a fresh full redraw (${before} vs ${after})`,
+          pictures: { settled: settled.png, fresh: fresh.png },
+        };
   } finally {
     await client.eval(CARETS);
   }
@@ -296,13 +302,17 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
   let shotCount = 0;
   const failedPages = [];
   let motionSamples;
+  let stalePictures;
   if (motionClient) {
     motionSamples = await motionClient.eval("window.__motion.take()");
     for (const v of checkMotion(motionSamples, step.motion.spec ?? {}))
       problems.push(`${pages[0].page}: [${v.rule}] ${v.message}`);
     if (step.motion.fresh) {
       const problem = await freshRedraw(ctx, motionClient, step.motion.fresh);
-      if (problem) problems.push(`${pages[0].page}: [stale] ${problem}`);
+      if (problem) {
+        problems.push(`${pages[0].page}: [stale] ${problem.message}`);
+        stalePictures = problem.pictures;
+      }
     }
   }
   for (const [index, entry] of pages.entries()) {
@@ -396,6 +406,9 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
         );
       });
     }
+    // A stale picture: what was settled, and what a fresh redraw drew.
+    for (const [name, png] of Object.entries(stalePictures ?? {}))
+      writeFileSync(join(dir, `stale-${name}.png`), png);
     writeFileSync(join(dir, "violations.txt"), `${problems.join("\n")}\n`);
   }
   // What the step checks of the settled page itself (`check(ctx)`: a list

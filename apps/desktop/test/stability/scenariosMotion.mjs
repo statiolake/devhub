@@ -6,6 +6,7 @@
 // underlines are the cells', their signs too), inline virtual text (as an
 // LSP's inlay hints are), folds; and a float at a buffer position (as a hover
 // is), which DevHub carries with its line.
+import { closeSync, openSync, writeSync } from "node:fs";
 import { NEOVIM_MOTION, NEOVIM_ROLES } from "./scenarios.mjs";
 
 const pane = {
@@ -379,6 +380,8 @@ const MOTION = [
         name: "stream-while-scrolled-back",
         prep: async (ctx) => {
           const target = `${ctx.alphaSession()}:0`;
+          // Out of any mode a run before left it in.
+          ctx.app.tmux("copy-mode", "-q", "-t", target);
           ctx.app.tmux("send-keys", "-t", target, "clear; seq 1 400", "Enter");
           await new Promise((r) => setTimeout(r, 800));
           ctx.app.tmux("copy-mode", "-t", target);
@@ -386,15 +389,27 @@ const MOTION = [
           await ctx.settle("pane", 600);
         },
         act: async (ctx) => {
-          const target = `${ctx.alphaSession()}:0`;
-          ctx.app.tmux(
-            "run-shell",
-            "-b",
-            "-t",
-            target,
-            "for i in $(seq 1 200); do echo stream $i; sleep 0.005; done",
-          );
-          await new Promise((r) => setTimeout(r, 1500));
+          // Output written to the pane's terminal, as a program in it
+          // would (run-shell's output is a view of its own, over the pane).
+          const tty = ctx.app
+            .tmux(
+              "display",
+              "-p",
+              "-t",
+              `${ctx.alphaSession()}:0`,
+              "#{pane_tty}",
+            )
+            .trim();
+          const fd = openSync(tty, "w");
+          try {
+            for (let i = 1; i <= 200; i += 1) {
+              writeSync(fd, `stream ${String(i)}\r\n`);
+              await new Promise((r) => setTimeout(r, 5));
+            }
+          } finally {
+            closeSync(fd);
+          }
+          await new Promise((r) => setTimeout(r, 500));
         },
         // Scrolled back, the view does not move while output comes.
         regions: [{ name: "terminal", selector: ".terminal-surface" }],
@@ -409,6 +424,7 @@ const MOTION = [
       },
     ],
     teardown: async (ctx) => {
+      ctx.app.tmux("copy-mode", "-q", "-t", `${ctx.alphaSession()}:0`);
       ctx.app.tmux(
         "send-keys",
         "-t",
