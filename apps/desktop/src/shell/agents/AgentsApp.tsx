@@ -70,6 +70,7 @@ import { useAgents } from "./AgentsContext";
 import { AgentPane } from "./AgentPane";
 import { AgentsDevhubLinks } from "./devhubLinks";
 import { OrchestratorBoard, OrchestratorStart } from "./OrchestratorScreen";
+import { onConversationsPage, useOrchestratorFocus } from "./orchestratorFocus";
 import "./orchestrator.css";
 
 export function AgentsApp() {
@@ -107,6 +108,12 @@ function Panes({
   readonly presentation: AgentPresentationWire;
 }) {
   const { state, appearance, board } = useAgents();
+  // `Cmd+Q O` to a GUI orchestrator's conversation, which is this page's
+  // when it is the Conversations page; the Agents page's board answers it
+  // there (`OrchestratorBoard`).
+  useOrchestratorFocus(
+    presentation === "gui" ? onConversationsPage : undefined,
+  );
   if (state.status !== "ready") return null;
   const layout = state.snapshot.layout;
   // Which Agent is on screen is the projection's answer, read the one way it

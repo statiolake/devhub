@@ -56,6 +56,7 @@ import {
 	type ModalRequest,
 	type RepositoryStatusWire,
 	EMPTY_BOARD,
+	type OrchestratorFocusHalfWire,
 	type OrchestratorViewWire,
 	type ContextMenuRequestWire,
 	type TooltipRequestWire,
@@ -214,7 +215,10 @@ import {
 	type ShellWindow,
 } from "./shellWindow.js";
 import type { KeyboardHalf, SurfaceArrangement } from "./windowLayout.js";
-import { BoardTerminalKeys } from "./boardTerminalKeys.js";
+import {
+	BoardTerminalKeys,
+	orchestratorFocusMove,
+} from "./boardTerminalKeys.js";
 import {
 	agentTerminalSessionName,
 	clampTerminalShare,
@@ -2199,6 +2203,9 @@ export class AppController {
 			showOrchestratorTerminal: () => {
 				this.keyboardInSidebar = false;
 				void this.showOrchestratorTerminal().catch(report);
+			},
+			swapOrchestratorFocus: () => {
+				this.swapOrchestratorFocus();
 			},
 			// The screen first (a deliberate move, as the row's click is),
 			// then the composer on it.
@@ -8295,6 +8302,53 @@ export class AppController {
 		await this.showOrchestratorTerminal("explicit");
 		await this.openInEditor(workspace, target, fileSelection(range), undefined);
 		this.bringToFront();
+	}
+
+	/**
+	 * `Cmd+Q O` on the Orchestrator row, as tmux's `prefix o`: the keys to
+	 * the other of the screen's two halves. The conversation is the
+	 * orchestrator agent's pane — a GUI one's composer, in the Conversations
+	 * view; a TUI one's terminal, in the Agents view. The board is the
+	 * board, or, while the Terminal tab is shown, that tab's terminal, put
+	 * there as choosing the tab puts them (`BoardTerminalKeys`). From the
+	 * Sidebar it is the other half from the one the screen has.
+	 *
+	 * Main knows which half has them in every case but one: a TUI
+	 * orchestrator's pane and the board are one page, whose own focus says
+	 * which, so the page is asked for the other (`toggle`,
+	 * `shell/agents/orchestratorFocus.ts`) — and with the Terminal tab shown
+	 * it chooses the tab, which comes back here as the tab's click does.
+	 */
+	private swapOrchestratorFocus(): void {
+		if (this.coordinator.model.selection.context.kind !== "orchestrator")
+			return;
+		const window = shellWindow();
+		const state = window.layoutState();
+		const gui = state.conversation === "beside-board";
+		const boardTerminal = state.boardTerminal !== undefined;
+		this.keyboardInSidebar = false;
+		const move = orchestratorFocusMove({
+			inBoardTerminal: this.boardTerminalKeys.inTerminal,
+			boardTerminalShown: boardTerminal,
+			gui,
+			keysOnBoard: window.keysOnBoard(),
+		});
+		if (move === "conversation") {
+			// Out of the Terminal tab's terminal, if that had them.
+			this.boardTerminalKeys.focused("agents");
+			window.chooseBoardKeys(false);
+		} else if (move === "board-terminal") {
+			this.boardTerminalKeys.chosen();
+		} else if (move === "board") {
+			window.chooseBoardKeys(true);
+		}
+		this.publishLayoutState();
+		window.focusSurface();
+		// The Terminal tab's terminal is a page of its own and needs no word.
+		if (move !== "board-terminal") {
+			const half: OrchestratorFocusHalfWire = move;
+			this.send(CHANNELS.focusOrchestratorHalf, half);
+		}
 	}
 
 	/**

@@ -12,6 +12,12 @@
    or an escalation opened on it. Nothing it holds can widen it — a long code
    block or a diagram scrolls or scales inside (`overflow: hidden` here and
    on the stage), and opening one moves only the layers in the stage. */
+/* Focused itself only by `Cmd+Q O` (`orchestratorFocus.ts`): the whole
+   board has the keys, and nothing on it is the one to ring. */
+.orchestrator-board:focus {
+  outline: none;
+}
+
 .orchestrator-board {
   --board-pad: var(--space-3);
   /* A push or a pop: `NAV_MS` in `OrchestratorScreen.tsx`. */

@@ -706,7 +706,10 @@ whether the terminal has the keyboard (`AppModel.paneFocus`): a chord moves
 it, a click into a view reports it (`ShellWindow.onContentFocused`), and any
 selection takes it back to the content. `Cmd+Q O` walks the panes on screen —
 Agent → terminal with a full Agent, editor → Agent → terminal in a split,
-nothing to walk with the editor alone — and wraps. `Cmd+Q X` with the terminal in front closes it
+nothing to walk with the editor alone — and wraps. On the Orchestrator row
+it goes between the screen's two halves, the orchestrator's conversation
+and its board (or the board's Terminal tab while that is shown); see
+`docs/orchestrator.md`. `Cmd+Q X` with the terminal in front closes it
 (and its session).
 
 **Ending.** A terminal's pane goes when its session does: the shell exited, or

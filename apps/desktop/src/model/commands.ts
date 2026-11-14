@@ -52,7 +52,7 @@
  * | `Cmd+Q Shift+J`             | `toggle_scratch`          |
  * | `Cmd+Q Shift+O`             | `toggle_orchestrator`     |
  * | `Cmd+Q +`                   | `orchestrator_request`    |
- * | `Cmd+Q O`                   | `swap_split_focus`        |
+ * | `Cmd+Q O`                   | `swap_split_focus` (the Orchestrator's halves too) |
  * | `Cmd+Q V`                   | `toggle_terminal`         |
  * | `Cmd+Q E`                   | `focus_editor`            |
  * | (palette only)              | `focus_sidebar`           |
@@ -663,9 +663,11 @@ export const COMMANDS: readonly CommandDefinition[] = [
   },
   {
     // Every pane on screen, left to right: the editor and the Agent of a
-    // split, and the Agent's terminal when it is open.
+    // split, and the Agent's terminal when it is open. On the Orchestrator
+    // row, its two halves: the conversation and the board (or the board's
+    // Terminal tab while that is shown). tmux's `prefix o`.
     id: "swap_split_focus",
-    label: "Focus the next pane",
+    label: "Focus the next pane (on the Orchestrator: conversation or board)",
     needs: "nothing",
     category: "View",
     defaultKeys: ["o"],

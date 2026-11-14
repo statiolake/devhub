@@ -677,6 +677,21 @@ describe("the layout toggles", () => {
 		expect(run("swap_split_focus", snapshotOf())).toBeUndefined();
 	});
 
+	it("swaps the Orchestrator row's conversation and board, with an orchestrator to swap with", () => {
+		expect(
+			run("swap_split_focus", {
+				...snapshotOf({ context: { kind: "orchestrator" } }),
+				orchestratorAgentId: "b1",
+			}),
+		).toEqual({ kind: "orchestrator-swap-focus" });
+		expect(
+			run(
+				"swap_split_focus",
+				snapshotOf({ context: { kind: "orchestrator" } }),
+			),
+		).toBeUndefined();
+	});
+
 	it("shows the editor by selecting it, from an Agent or from Scratch", () => {
 		expect(
 			run(

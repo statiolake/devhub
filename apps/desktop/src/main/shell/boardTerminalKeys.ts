@@ -53,3 +53,38 @@ export class BoardTerminalKeys {
 		else if (this.#inTerminal === undefined) this.#inTerminal = true;
 	}
 }
+
+/**
+ * Where `Cmd+Q O` on the Orchestrator row takes the keys, from where they
+ * are (`AppController.swapOrchestratorFocus`):
+ *
+ * - `conversation`: out of the board's half — the Terminal tab's terminal,
+ *   or a GUI orchestrator's board — to the orchestrator agent's pane.
+ * - `board-terminal`: from a GUI conversation to the Terminal tab shown,
+ *   chosen as its tab is (`BoardTerminalKeys.chosen`).
+ * - `board`: from a GUI conversation to the board.
+ * - `toggle`: a TUI orchestrator's pane and the board are one page, the
+ *   Agents view, whose focus is the only word on which of them has the
+ *   keys, so that page moves them (to the tab, with it shown).
+ */
+export type OrchestratorFocusMove =
+	| "conversation"
+	| "board-terminal"
+	| "board"
+	| "toggle";
+
+export function orchestratorFocusMove(where: {
+	/** The keys are the Terminal tab's (`BoardTerminalKeys.inTerminal`). */
+	readonly inBoardTerminal: boolean;
+	/** The Terminal tab is on screen. */
+	readonly boardTerminalShown: boolean;
+	/** The orchestrator's pane is a GUI conversation, a view of its own. */
+	readonly gui: boolean;
+	/** With a GUI one, the board rather than it is where the keys go. */
+	readonly keysOnBoard: boolean;
+}): OrchestratorFocusMove {
+	if (where.inBoardTerminal || (where.gui && where.keysOnBoard))
+		return "conversation";
+	if (!where.gui) return "toggle";
+	return where.boardTerminalShown ? "board-terminal" : "board";
+}

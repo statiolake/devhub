@@ -33,6 +33,7 @@ import {
 import type {
   EscalationWire,
   OrchestratorBoardWire,
+  OrchestratorFocusHalfWire,
   TaskWire,
 } from "../../ipc/contract";
 import type { AgentStatus, AppSnapshot } from "../../ipc/appShell";
@@ -71,6 +72,11 @@ import {
 import { DevhubLink } from "../conversation/DevhubLink";
 import { base64Of } from "../conversation/FileEmbed";
 import { isDevhubLink } from "../../model/devhubLink";
+import {
+  focusAgentPane,
+  focusBoard,
+  useOrchestratorFocus,
+} from "./orchestratorFocus";
 import {
   memory,
   rememberTab,
@@ -175,6 +181,30 @@ export function OrchestratorBoard({
     tabButtons.current[to]?.focus();
     if (to !== index) choose(TABS[to]!.tab);
   };
+  // `Cmd+Q O` (`orchestratorFocus.ts`): the keys onto the board, back where
+  // they were on it; or, asked for the other half, to the orchestrator's
+  // pane from the board and from the pane to the board — the Terminal tab's
+  // terminal while that is shown, chosen as its tab is, which is the keys
+  // put in it (main's `BoardTerminalKeys`).
+  const lastOnBoard = useRef<HTMLElement | null>(null);
+  const shown = useRef({ tab, choose });
+  shown.current = { tab, choose };
+  const focusHalf = useCallback((half: OrchestratorFocusHalfWire) => {
+    const board = section.current;
+    if (board === null) return;
+    const onBoard = board.contains(document.activeElement);
+    const to = half === "toggle" ? (onBoard ? "conversation" : "board") : half;
+    if (to === "conversation") {
+      focusAgentPane();
+      return;
+    }
+    if (half === "toggle" && shown.current.tab === "terminal") {
+      shown.current.choose("terminal");
+      return;
+    }
+    focusBoard(board, lastOnBoard.current);
+  }, []);
+  useOrchestratorFocus(focusHalf);
   // Back, Forward, a link or a file sent to the Terminal tab: that tab,
   // which mounts on the model's view.
   useFollowModelView(snapshot, ({ view }) => {
@@ -204,6 +234,12 @@ export function OrchestratorBoard({
       ref={section}
       className="orchestrator-board"
       aria-label="Orchestrator board"
+      // Focusable from script only, so `Cmd+Q O` can put the keys on the
+      // board itself when nothing on it had them.
+      tabIndex={-1}
+      onFocus={(event) => {
+        lastOnBoard.current = event.target;
+      }}
     >
       <header className="orchestrator-board-header">
         <div className="orchestrator-board-title">

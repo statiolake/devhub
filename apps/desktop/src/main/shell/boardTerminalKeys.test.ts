@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { BoardTerminalKeys } from "./boardTerminalKeys.js";
+import {
+	BoardTerminalKeys,
+	orchestratorFocusMove,
+} from "./boardTerminalKeys.js";
 
 describe("the Orchestrator Terminal tab's keys", () => {
 	it("are the terminal's when the tab is first shown, and not off it", () => {
@@ -42,6 +45,54 @@ describe("the Orchestrator Terminal tab's keys", () => {
 		expect(keys.inTerminal).toBe(false);
 		keys.chosen();
 		keys.shown(true);
+		expect(keys.inTerminal).toBe(true);
+	});
+});
+
+describe("Cmd+Q O on the Orchestrator row", () => {
+	const at = (where: Partial<Parameters<typeof orchestratorFocusMove>[0]>) =>
+		orchestratorFocusMove({
+			inBoardTerminal: false,
+			boardTerminalShown: false,
+			gui: true,
+			keysOnBoard: false,
+			...where,
+		});
+
+	it("swaps a GUI orchestrator's conversation and its board", () => {
+		expect(at({})).toBe("board");
+		expect(at({ keysOnBoard: true })).toBe("conversation");
+	});
+
+	it("goes from the conversation into the Terminal tab shown, and out of it to the conversation", () => {
+		expect(at({ boardTerminalShown: true })).toBe("board-terminal");
+		expect(at({ boardTerminalShown: true, inBoardTerminal: true })).toBe(
+			"conversation",
+		);
+		// The tab shown, the keys clicked out into the board's page.
+		expect(at({ boardTerminalShown: true, keysOnBoard: true })).toBe(
+			"conversation",
+		);
+	});
+
+	it("leaves a TUI orchestrator's page to say which of its two has the keys, but for the tab's terminal", () => {
+		expect(at({ gui: false })).toBe("toggle");
+		expect(at({ gui: false, boardTerminalShown: true })).toBe("toggle");
+		expect(
+			at({ gui: false, boardTerminalShown: true, inBoardTerminal: true }),
+		).toBe("conversation");
+	});
+
+	it("takes the keys out of the Terminal tab's terminal, the BoardTerminalKeys way", () => {
+		// What `swapOrchestratorFocus` does with the rule: out, then back in.
+		const keys = new BoardTerminalKeys();
+		keys.shown(true);
+		expect(keys.inTerminal).toBe(true);
+		keys.focused("agents");
+		expect(keys.inTerminal).toBe(false);
+		keys.chosen();
+		// The press's own focus landing afterwards does not undo the choice.
+		keys.focused("editor");
 		expect(keys.inTerminal).toBe(true);
 	});
 });

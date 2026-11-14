@@ -1121,6 +1121,24 @@ export class ShellWindow {
 		this.focusSurface();
 	}
 
+	/**
+	 * Whether the Orchestrator's board, rather than its GUI Agent's
+	 * conversation beside it, is where the keys go back to: what took them
+	 * last, or what `Cmd+Q O` chose (`chooseBoardKeys`). Only while the two are
+	 * drawn by two views (`LayoutState.conversation` `beside-board`).
+	 */
+	keysOnBoard(): boolean {
+		return this.onBoard && this.state.conversation === "beside-board";
+	}
+
+	/**
+	 * `Cmd+Q O` on the Orchestrator row: the board, or its GUI Agent's
+	 * conversation, is where the keys go when the keyboard is next placed.
+	 */
+	chooseBoardKeys(onBoard: boolean): void {
+		this.onBoard = onBoard && this.state.conversation === "beside-board";
+	}
+
 	/** What the arrangement is now — read back by whoever composes the page's. */
 	layoutState(): LayoutState {
 		return this.state;

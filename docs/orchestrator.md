@@ -73,7 +73,24 @@ orchestrator's folder.
   for Scratch, with a way back of its own (`AppModel.togglePlace`). Both
   directions enter Back and Forward's history at once, as a click on the row
   does. With no orchestrator assigned it still opens the screen, which offers
-  Start. The bare `Cmd+Q O` stays the pane step.
+  Start. The bare `Cmd+Q O` stays the pane step, which on this screen is
+  its two halves (below, **Keys**).
+- **`Cmd+Q O`** (`swap_split_focus`, "View: Focus the next pane (on the
+  Orchestrator: conversation or board)" in the palette) moves the keys
+  between the screen's two halves, as tmux's `prefix o` does between
+  panes: the **conversation** — a GUI orchestrator's composer (in the
+  Conversations view), a TUI one's terminal — and the **board**, back on
+  what had them there (a card, the request composer), else the board
+  itself, where Enter opens the card on top; with the **Terminal tab**
+  shown, the board's half is that tab's terminal, which takes them as
+  choosing the tab does (`BoardTerminalKeys`, so the tab never ends up
+  shown with the keys in the board's page). From the Sidebar it is the
+  other half from the one the screen has. With no orchestrator assigned
+  there is no other half and it does nothing. Main knows where the keys
+  are but in one case: a TUI orchestrator's pane and the board are one
+  page, so main asks that page for the other half (`toggle`,
+  `shell/agents/orchestratorFocus.ts`); the rule is
+  `orchestratorFocusMove` in `main/shell/boardTerminalKeys.ts`.
 - Start opens `root` as the row's Workspace (nothing selected), so the
   orchestrator's skills and instructions are an editor click away.
 - With no orchestrator, the right half says so and offers **Start
@@ -798,7 +815,8 @@ drawn over its panes, `devhub <file>`, copy, links.
   keys in the board: main puts them back whenever the tab is chosen,
   `main/shell/boardTerminalKeys.ts`.) On the tab strip, ←/→, Home and End
   move between the tabs (one tab stop, as the mode control's segments).
-  `Cmd+Q E` on the row is the Terminal tab.
+  `Cmd+Q E` on the row is the Terminal tab, and `Cmd+Q O` goes between
+  the tab's terminal and the orchestrator's pane.
 - **History.** A tab chosen is the same place showing another page: the
   entry on screen is written over, as for any tab. Back and Forward put the
   tab back as each entry had it, the board with its task over it included.

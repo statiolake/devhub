@@ -71,7 +71,19 @@ const showContextMenu = vi.fn(
 const copyText = vi.fn((_text: string) => Promise.resolve());
 const openLinkedFile = vi.fn(() => Promise.resolve());
 const openOrchestratorFile = vi.fn(() => Promise.resolve());
+/** Main's `Cmd+Q O` word to this page, as the board subscribed to it. */
+let focusHalf:
+  | ((half: "board" | "conversation" | "toggle") => void)
+  | undefined;
 window.devhub = {
+  onFocusOrchestratorHalf: (
+    listener: (half: "board" | "conversation" | "toggle") => void,
+  ) => {
+    focusHalf = listener;
+    return () => {
+      if (focusHalf === listener) focusHalf = undefined;
+    };
+  },
   showContextMenu,
   copyText,
   openLinkedFile,
@@ -1836,5 +1848,82 @@ describe("what the pane tells main, for the window's title", () => {
     reportOrchestratorView.mockClear();
     screenNow.back({ ...BOARD, inProgress: [] });
     expect(last()).toEqual({ kind: "board" });
+  });
+});
+
+describe("Cmd+Q O: the conversation and the board", () => {
+  const ORCH_WS = { id: "w-orch", root: "/Users/me/orchestrator" };
+
+  /** A TUI orchestrator's pane beside the board, as the Agents page draws it. */
+  function tuiPane(): HTMLTextAreaElement {
+    const pane = document.createElement("div");
+    pane.className = "agent-pane";
+    pane.innerHTML =
+      '<div class="surface-pool-entry" hidden><textarea class="control-input" data-agent="other"></textarea></div>' +
+      '<div class="surface-pool-entry"><textarea class="control-input" data-agent="orch"></textarea></div>';
+    document.body.append(pane);
+    return pane.querySelector<HTMLTextAreaElement>('[data-agent="orch"]')!;
+  }
+
+  function say(half: "board" | "conversation" | "toggle") {
+    act(() => {
+      focusHalf?.(half);
+    });
+  }
+
+  afterEach(() => {
+    document.querySelector(".agent-pane")?.remove();
+  });
+
+  it("toggles a TUI orchestrator's terminal and the board, the board back where it was", () => {
+    const terminal = tuiPane();
+    mount();
+    terminal.focus();
+    say("toggle");
+    // Nothing on the board had the keys: the board itself, where Enter
+    // opens the card on top.
+    expect(document.activeElement).toBe(boardSection());
+    say("toggle");
+    expect(document.activeElement).toBe(terminal);
+    // A card had them: back on that card.
+    const card = document.querySelector<HTMLElement>("[data-task-id='1']")!;
+    card.focus();
+    say("toggle");
+    expect(document.activeElement).toBe(terminal);
+    say("toggle");
+    expect(document.activeElement).toBe(card);
+  });
+
+  it("chooses the Terminal tab from the conversation while it is shown, which is main putting the keys in it", () => {
+    motion(true);
+    const terminal = tuiPane();
+    const model = mountWithModel(BOARD, ORCH_WS);
+    fireEvent.click(screen.getByRole("tab", { name: "ターミナル" }));
+    model.dispatch.mockClear();
+    terminal.focus();
+    say("toggle");
+    expect(model.said()).toEqual([
+      {
+        type: "show_orchestrator_view",
+        view: { kind: "terminal" },
+        drawn: true,
+      },
+    ]);
+    // Main took the keys out of the tab's terminal (its own view) and asks
+    // for the conversation by name.
+    model.dispatch.mockClear();
+    screen.getByRole("tab", { name: "ターミナル" }).focus();
+    say("conversation");
+    expect(document.activeElement).toBe(terminal);
+    expect(model.said()).toEqual([]);
+  });
+
+  it("puts the keys on the board when main names it, and leaves a GUI conversation to its own page", () => {
+    mount();
+    say("board");
+    expect(document.activeElement).toBe(boardSection());
+    // No orchestrator pane on this page: nothing taken from the board.
+    say("conversation");
+    expect(document.activeElement).toBe(boardSection());
   });
 });

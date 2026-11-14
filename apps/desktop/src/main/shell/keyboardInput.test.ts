@@ -119,6 +119,7 @@ function host(zoomActs = true) {
 		selectContext: record("selectContext"),
 		setOrchestratorMode: record("setOrchestratorMode"),
 		showOrchestratorTerminal: record("showOrchestratorTerminal"),
+		swapOrchestratorFocus: record("swapOrchestratorFocus"),
 		openOrchestratorRequest: record("openOrchestratorRequest"),
 		interacted: (url) => {
 			interactions.push(url);
@@ -306,6 +307,29 @@ describe("a chord, as Electron delivers it", () => {
 		const { calls, chordHost } = host();
 		type(chordHost, [PREFIX, input("KeyO", "O", { shift: true })]);
 		expect(calls).toEqual(["togglePlace orchestrator"]);
+	});
+
+	it("hands the bare o on the Orchestrator row to its conversation/board swap", () => {
+		const { calls, chordHost } = host();
+		const onOrchestrator = (agent: string | undefined) => ({
+			...chordHost,
+			snapshot: () =>
+				({
+					...SNAPSHOT,
+					selection: {
+						context: { kind: "orchestrator" },
+						presentation: "full",
+					},
+					...(agent === undefined ? {} : { orchestratorAgentId: agent }),
+				}) as unknown as ReturnType<ChordHost["snapshot"]>,
+		});
+		const taken = type(onOrchestrator("a-1"), [PREFIX, input("KeyO", "o")]);
+		expect(taken).toEqual([true, true]);
+		expect(calls).toEqual(["swapOrchestratorFocus"]);
+		// No orchestrator assigned: the screen is the board and Start.
+		calls.length = 0;
+		type(onOrchestrator(undefined), [PREFIX, input("KeyO", "o")]);
+		expect(calls).toEqual([]);
 	});
 
 	it("keeps the chord through the Shift that arrives before the key", () => {

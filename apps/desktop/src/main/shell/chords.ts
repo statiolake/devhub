@@ -245,6 +245,11 @@ export type ChordEffect =
 	| { readonly kind: "orchestrator-request" }
 	/** The Orchestrator screen's Terminal tab, its editor: `Cmd+Q E` there. */
 	| { readonly kind: "orchestrator-terminal" }
+	/**
+	 * `Cmd+Q O` on the Orchestrator row: the keys from its conversation to
+	 * its board (or the Terminal tab shown), or back.
+	 */
+	| { readonly kind: "orchestrator-swap-focus" }
 	/** The Orchestrator's mode, as the person chooses it. */
 	| {
 			readonly kind: "orchestrator-mode";
@@ -658,6 +663,15 @@ export function resolveChord(
 			};
 
 		case "swap_split_focus": {
+			// The Orchestrator row's two halves: its conversation (the
+			// orchestrator agent's pane) and its board, or the board's Terminal
+			// tab while that is shown. Nothing to swap with no orchestrator
+			// assigned: the screen is the board and a Start button.
+			if (snapshot.selection.context.kind === "orchestrator") {
+				return snapshot.orchestratorAgentId === undefined
+					? undefined
+					: { kind: "orchestrator-swap-focus" };
+			}
 			// Every pane on screen: the selection's own — one, or two side by
 			// side — and the terminal on the right. With only the split, this
 			// is the swap it always was.

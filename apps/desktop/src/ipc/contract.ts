@@ -701,6 +701,12 @@ export interface OrchestratorNextDeliveryWire {
 export type OrchestratorModeWire = "full" | "saving" | "off";
 
 /**
+ * Where `Cmd+Q O` puts the keys in a page of the Orchestrator screen: its
+ * board, its conversation, or the other of the two (`toggle`).
+ */
+export type OrchestratorFocusHalfWire = "board" | "conversation" | "toggle";
+
+/**
  * The Orchestrator screen's board: the tasks by status, the orchestrator,
  * and its mode. Pushed whenever any of it moves.
  */
@@ -894,6 +900,16 @@ export interface OrchestratorActionsBridge {
 	sendOrchestratorRequest(text: string): Promise<void>;
 	/** `Cmd+Q +` / the palette: open the board's request composer. */
 	onOpenOrchestratorRequest(listener: () => void): () => void;
+	/**
+	 * `Cmd+Q O` on the Orchestrator row: where in this page the keys go —
+	 * the board, the orchestrator agent's pane (its composer, or its TUI
+	 * terminal), or (`toggle`, the TUI page, where both are drawn) the other
+	 * of the two from where the page's focus is. See
+	 * `shell/agents/orchestratorFocus.ts`.
+	 */
+	onFocusOrchestratorHalf(
+		listener: (half: OrchestratorFocusHalfWire) => void,
+	): () => void;
 	/**
 	 * What the left pane is showing, for the window's title: main names the
 	 * window (`main/shell/shellTitle.ts`), so the page says only which
@@ -2500,6 +2516,7 @@ export const CHANNELS = {
 	setOrchestratorMode: "devhub:set-orchestrator-mode",
 	sendOrchestratorRequest: "devhub:send-orchestrator-request",
 	openOrchestratorRequest: "devhub:open-orchestrator-request",
+	focusOrchestratorHalf: "devhub:focus-orchestrator-half",
 	reportOrchestratorView: "devhub:report-orchestrator-view",
 	openOrchestratorFile: "devhub:open-orchestrator-file",
 	openLinkedFile: "devhub:open-linked-file",

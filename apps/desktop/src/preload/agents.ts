@@ -11,6 +11,7 @@ import {
 	CHANNELS,
 	type AgentsBridge,
 	type ContextMenuRequestWire,
+	type OrchestratorFocusHalfWire,
 	type OrchestratorModeWire,
 	type OrchestratorViewWire,
 	type RichClipboardWire,
@@ -59,6 +60,8 @@ const api: AgentsBridge = {
 		on<void>(CHANNELS.openOrchestratorRequest, () => {
 			listener();
 		}),
+	onFocusOrchestratorHalf: (listener) =>
+		on<OrchestratorFocusHalfWire>(CHANNELS.focusOrchestratorHalf, listener),
 	reportOrchestratorView: (view: OrchestratorViewWire) => {
 		ipcRenderer.send(CHANNELS.reportOrchestratorView, view);
 	},

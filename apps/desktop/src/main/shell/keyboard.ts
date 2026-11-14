@@ -214,6 +214,11 @@ export interface ChordHost {
 	setOrchestratorMode(mode: "full" | "saving" | "off"): void;
 	/** The Orchestrator screen's Terminal tab, the keys in it. */
 	showOrchestratorTerminal(): void;
+	/**
+	 * `Cmd+Q O` on the Orchestrator row: the keys to the other of its two
+	 * halves, the conversation and the board (its Terminal tab when shown).
+	 */
+	swapOrchestratorFocus(): void;
 	/** Every command, by name — `Cmd+Q :`. */
 	openCommandPalette(): void;
 }
@@ -389,6 +394,9 @@ function perform(
 			return;
 		case "orchestrator-terminal":
 			host.showOrchestratorTerminal();
+			return;
+		case "orchestrator-swap-focus":
+			host.swapOrchestratorFocus();
 			return;
 		case "open-command-palette":
 			host.openCommandPalette();
