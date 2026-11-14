@@ -34,6 +34,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -166,15 +167,25 @@ function slowMachine(rate) {
       ["-c", `echo $$ > ${dir}/cgroup.procs && exec "$0" "$@"`, file, ...args],
     ],
     remove() {
-      try {
-        // Whatever is left in it (a tmux server) goes back to the root first.
-        for (const pid of readFileSync(join(dir, "cgroup.procs"), "utf8")
-          .split("\n")
-          .filter(Boolean))
-          writeFileSync("/sys/fs/cgroup/cpu/cgroup.procs", pid);
-        rmSync(dir, { recursive: false, force: true });
-      } catch {
-        // gone already
+      // Whatever is left in it (a tmux server, a process still exiting)
+      // goes back to the root, and the cgroup goes by rmdir once empty.
+      for (let attempt = 0; attempt < 50; attempt++) {
+        try {
+          for (const pid of readFileSync(join(dir, "cgroup.procs"), "utf8")
+            .split("\n")
+            .filter(Boolean)) {
+            try {
+              writeFileSync("/sys/fs/cgroup/cpu/cgroup.procs", pid);
+            } catch {
+              // exited meanwhile
+            }
+          }
+          rmdirSync(dir);
+          return;
+        } catch (error) {
+          if (error.code === "ENOENT") return;
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+        }
       }
     },
   };
