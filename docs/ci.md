@@ -73,9 +73,12 @@ Check the tag ──> Build: tools darwin-arm64, linux-x64, linux-arm64 ──> 
   [`visual-stability.md`](visual-stability.md)) under Xvfb: every scenario
   recorded frame by frame at 6x and 1x CPU throttling and checked for
   intermediate forms. What it recorded is uploaded as `visual-stability`.
-  It is nightly rather than per push — about three minutes of recording on
-  top of the build, and a few steps fail now and then on a timing it has
-  caught (its doc lists them) — and it does not hold the release back.
+  It is nightly rather than per push — about fourteen minutes of recording
+  on top of the build (the scenarios in motion, the pointer and startup
+  timings included; about 860 s on a 4-core Linux machine) — and it does
+  not hold the release back. There is no per-push subset: the cheapest
+  scroll check alone (`--only scroll-burst`, about 90 s) needs the whole
+  app built and Xvfb, so it stays with the rest.
 - **Tools** (`.github/workflows/tools.yml`) is a workflow of its own. It runs
   when a tag `tools-<toolsVersion>` is pushed, and builds DevHub's tools
   release (`scripts/build_tools.py`: tmux and bash) on macos-15, ubuntu-latest

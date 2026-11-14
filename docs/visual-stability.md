@@ -104,6 +104,43 @@ pattern and why), matched against each problem and nothing else: they are
 printed every time they show (`KNOWN`), with their artifacts, and do not
 fail the run. A problem they do not match fails as ever.
 
+## Things in motion
+
+A scroll, a glide, a stream are many frames by design: a step with
+`motion` is held to `motionInvariants.mjs` (pure, unit-tested) instead of
+the one-change rule. `motionRecorder.js` reads, after every frame's paint,
+each Neovim window's place, its canvas, its scroll port and ghost, its
+display offset and `topline` (`window.neovimEditors`), what is anchored to
+its text (a hover float), and each watched scroller's `scrollTop` and its
+items' places in its content.
+
+- **aligned**: what is anchored to text (a float at a buffer position) stays
+  at the same distance from it in every frame.
+- **monotonic**: a scroll goes one way: the display's origin never steps
+  back against the way it is going (no overshoot, no jump back).
+- **covered**: in every frame the window's text area is covered by its
+  canvas and its ghost together: no band of background between them.
+- **rest**: it ends at rest on Neovim's line: no offset, no ghost.
+- **kept**: an item of a scroller (a transcript's entries) keeps its place
+  in the content while it scrolls and grows; frames under a declared
+  motion of its own (the follow glide, an arrival rising) are left out.
+- **stale** (`fresh`): settled, the editor's picture is what a fresh full
+  redraw (`:redraw!`) draws, the rows under the last status line aside
+  (`:redraw!` clears the message there in Neovim itself). Both pictures
+  are saved with a failure (`stale-settled.png`, `stale-fresh.png`).
+- **torn** (`coherent`): every pixel row of the window's text area, in
+  every screencast frame of the step, is a row the window draws at rest.
+  After the step the window is brought to each page of the lines the
+  scroll could have shown and each is pictured (`rest-NN.png` with a
+  failure); a row half one line, half another, or a scroll whose rows have
+  not come yet, is in none of them. Carets are hidden for the step.
+- **still regions** (`regions[].still`): a region the step must not change
+  at all (the command line's rows under a scroll).
+
+`--neovim-delay 150` runs the suite over a slow link to Neovim
+(`DEVHUB_NEOVIM_DELAY_MS`, `delayProxy.ts`); the scroll scenarios hold
+there too.
+
 ## On a failure
 
 Each failing step writes, under `$DEVHUB_STABILITY_ARTIFACTS` (default
@@ -118,7 +155,7 @@ two shots to see the frame that should not have been:
 
 ## The scenarios
 
-`scenarios.mjs`. Each runs at 6x and at 1x.
+`scenarios.mjs`, and those in motion `scenariosMotion.mjs`. Each runs at 6x and at 1x.
 
 | scenario | steps |
 | --- | --- |
@@ -133,6 +170,18 @@ two shots to see the frame that should not have been:
 | `orchestrator` | the Orchestrator's board coming up, and back (the board only: its tabs are being replaced) |
 | `conversation` | a message sent, a streamed answer received |
 | `theme` | dark to light and back (the editor and the Sidebar recorded) |
+| `scroll-burst` | 20 `<C-d>`, 20 `<C-u>`, and the two alternating, 33 ms apart (a held key), `cmdheight=2`, `scrolloff=0`: the command line's rows still, every picture coherent |
+| `scroll` | the wheel slow and fast, down and up, in a long decorated file; `<C-d>`, `<C-u>`, `G`, `gg`, `zz`, `n`, the `scrolloff` edge (motion) |
+| `scroll-changing` | lines appended and the file rewritten while the wheel turns; diagnostics coming mid-scroll (motion) |
+| `hover-scroll` | the wheel past a hover float and back (aligned) |
+| `split-scroll` | a vsplit of the same buffer, one side scrolled, the split resized while scrolled, closed |
+| `folds` | a fold opened, closed, all opened |
+| `typing-reflow` | typing with blink's menu in a wrapped buffer; a long line typed at the top of a long file (stale) |
+| `tree-scrolled` | nvim-tree's big folder expanded while scrolled, then `<C-d>` |
+| `picker-list` | the snacks list while a query is typed, and its list wheeled (stale) |
+| `terminal-copy-mode` | a pane's output streaming while it is scrolled back in copy mode, then `q` to the bottom |
+| `resize-mid-scroll` | the window resized live while the wheel scrolls |
+| `conversation-scroll` | a GUI Agent's answer streaming while the transcript is wheeled up and down (kept) |
 | `pointer` | not recorded but timed (`pointer.mjs`): the pointer's answers, from the input event to the first frame that shows them — a click's caret, a click into another window, a tree row's focus and hover, a window border and a pane boundary dragged, a terminal selection and Visual's band dragged, a completion row clicked, the pointer's shapes; each within two frames of the rate (34 ms at 1x), Neovim's wheel from rest reported (`docs/neovim-editor.md`, "The pointer"); go to definition against a fake language server (`fixture/fake-lsp.mjs`): the link after Alt goes down and after a move with it held (timed), the hand over it, the link gone in the frame Alt goes up, an Alt-click on the definition in Normal mode with `<C-o>` back (`docs/neovim-editor.md`, "Go to definition with the pointer") |
 | `startup` | not recorded but timed (`startup.mjs`), on DevHubs of its own: from an action to its first correct frame, stage by stage — DevHub launched with a Workspace open, `devhub <folder>`, a Workspace's row clicked, `nvim README.md` typed in a terminal (twice), `devhub <file>` cold and warm, the snacks picker and nvim-tree opened (first, lazily loaded, and again), a GUI Agent's conversation. The stages are main's (`DEVHUB_STARTUP_TRACE=1`: `main/diagnostics/startupTrace.ts`) and the pages' (`performance` marks, `shell/startupMarks.ts`) on one clock; all of it lands in `startup.json`. Thresholds only on the figures that hold still from run to run. `node test/stability/startup.mjs --slow machine` (Linux, root) runs the whole app in a cgroup with 1/rate of the CPU instead of throttling the pages; `--config <dir> --lazy <dir>` runs it on a person's own Neovim config |
 
@@ -180,6 +229,12 @@ DevHub's own, diagnosed and open:
 | `cmdline/close` | blink's menu gone a frame before the command line | a popup closed on the command line goes with Neovim's next flush |
 | `theme` | light chrome round a dark editor | the palette and the terminal's colours go on with the Neovims' recolour; the paint theme asked at once |
 | `sidebar-collapse` (1x) | the old grid at the new size | the view waits off the window until Neovim has redrawn |
+| `scroll-burst` | rows of the old view over the command line (`<C-u>`) and above the window (`<C-d>`), repeated `<C-d>`/`<C-u>` | the ghost is kept in its window's scroll port, never left beside it in the level |
+| `scroll-burst` (coherent) | the grid scrolled with the rows below it blank (the ghost's old lines through them), one with only its line number | a redraw is taken in at its flush: what comes after a flush waits for its own |
+| `scroll/wheel-fast-*` | the display going back up to 7 px to a line at rest | at rest the display goes on to the next line the way it was going (`restLines`) |
+| `scroll-changing/append-while-wheeling` (1x) | the display jumping 1500 px when the file grew while the wheel turned | a repaint of every grid keeps the canvas, and the smooth scroll under way |
+| `scroll-changing/diagnostics-mid-scroll` (1x) | a band of background at the top of the window for a frame | a glide cut by Neovim's scroll stays within what the canvas and the ghost cover |
+| `terminal-copy-mode/jump-to-bottom` (6x) | copy mode's rows without its badge for a frame | the badge goes with the live rows' picture |
 
 ## Adding a scenario
 
