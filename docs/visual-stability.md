@@ -144,6 +144,87 @@ items' places in its content.
 (`DEVHUB_NEOVIM_DELAY_MS`, `delayProxy.ts`); the scroll scenarios hold
 there too.
 
+## Chaos
+
+`chaos.mjs` (`chaos.sh` on Linux, under its own Xvfb) hammers DevHub the way
+a heavy user could and holds it to the same rules while it happens, and to
+Neovim's and tmux's truth whenever it is quiet.
+
+    apps/desktop/test/stability/chaos.sh --seeds 1,2,3 --rates 1,6 --actions 40
+    apps/desktop/test/stability/chaos.sh --seeds 1 --neovim-delay 150
+    apps/desktop/test/stability/chaos.sh --seeds 100 --minutes 25      # a soak
+    apps/desktop/test/stability/chaos.sh --replay <dir>/plan.json
+    apps/desktop/test/stability/chaos.sh --seeds 3 --minimise
+
+**A seed is a run.** It draws a plan (`chaosActions.mjs`): bursts of one to
+six actions, each with every random choice made up front, a quarter of them
+run alongside the one before when a person could (one keyboard, one
+pointer: a window size, a theme, Lua or a program's output need neither).
+The actions, through real input (CDP keys and wheel, X clicks and window
+sizes through xdotool, the `devhub` command, the pane's tty):
+
+| action | what it does |
+| --- | --- |
+| `wheel` | 3-30 wheel notches either way, 0-80 ms apart |
+| `key-scroll` | `<C-d>` `<C-u>` `<C-f>` `<C-y>` `gg` `G` `zz` `n` `N`, up to 20, 0-60 ms apart (not `<C-b>`: tmux's prefix in the profile) |
+| `type` | `o`/`O` and a line of words typed in Insert mode, blink's menu coming and going, then Escape |
+| `cmdline` | `:` and a few characters, then Escape, Tab Escape or Enter |
+| `picker` | `<C-p>`, a query, `<C-g>` Live twice, the preview toggled, the selection moved, closed |
+| `tree` | nvim-tree opened or focused, moved in, folders expanded, a row clicked, its right-click menu, closed |
+| `windows` | `<C-w>` v s c > < + - = w o, up to 8, 0-120 ms apart |
+| `live-resize` | the window resized through X, up to five sizes, then back |
+| `workspace` | the other Workspace and back, up to four times |
+| `sidebar-collapse` | the Sidebar to its rail and back |
+| `orchestrator` | the Orchestrator's board, its Terminal and Board tabs, back to the Workspace (real clicks) |
+| `devhub-open` | `devhub <file>`; now and then `:qa!` first, and the Neovim opened again |
+| `theme` | light or dark, landed, maybe back |
+| `alt-pointer` | Alt held over the text and moved (go to definition's link), maybe an Alt-click and `<C-o>` |
+| `document` | `gui.document` (a Markdown preview) opened, its text replaced and its view scrolled, closed |
+| `terminal-stream` | the shell's tmux window, copy mode scrolled back, 20-300 lines written to its tty, wheeled, back |
+| `conversation` | a fake-claude GUI Agent sent a message that streams back while the transcript is wheeled |
+| `tmux-prefix` | tmux's prefix from inside Neovim and a binding (display-panes, the chooser, the key list, a zoom and back), then Escape: the keys go to tmux and come back |
+| `storm` | 50 alternating keys in about a second: `<C-d>`/`<C-u>`, `:`/Escape, `<C-p>`/Escape, F2/F2, `<C-w>v`/`<C-w>c`, i/Escape, gg/G |
+
+**Each burst** is recorded as a step is (recorder, motion recorder,
+screencast) at the rate's throttling and held, frame by frame, to: no role
+on screen twice that is one (`doubled`); a scrolling window's text area
+covered by its canvas and ghost (`uncovered`); a hover with its text
+(`misaligned`); the burst's last frame at rest (`unsettled`, for windows
+still there).
+
+**Each quiet point** (after the burst, alpha's editor in front, two
+Escapes): Neovim's screen (`screenstring` of every window) is DevHub's
+grids cell for cell (`grid`); Neovim's windows are DevHub's, place and size
+(`layout`); its cursor is DevHub's, and the cursor drawn is inside its
+window (`cursor`); Normal mode in both (`mode`); no window still scrolled
+(`unsettled`); the editor's picture is a fresh full redraw's, once two
+pictures 400 ms apart agree (`stale` when DevHub drew its model wrong,
+`stale-model` when the redraw changed DevHub's model: what came before left
+those cells as they were). Liveness: every line typed ends a line of some
+buffer (`lost-input`); every page answers an evaluation and Neovim an RPC
+within 5 s, an action's request within 20 s, an action ends within 60 s and
+a burst comes to rest within 30 s; both Workspaces' tmux clients attached
+(`liveness`); no exception or console error on any page, none in main's log
+(`exception`). Each page's JS heap (after a GC) and DOM node count go to
+`metrics.csv`; a run of ten minutes or more compares the last fifth's
+median with the first fifth's and fails one that grew by half and by more
+than 20 MiB or 3000 nodes (`growth`).
+
+**On a failure** the seed's directory (`seed-<seed>-<rate>x/`) keeps
+`plan.json` (the seed, the rate, every action with its params, the burst
+that failed), `log.txt` (each action and when), `violations.txt`, the
+burst's `frames.json`, `motion.json` and last 80 pictures, the quiet
+point's pictures (`quiet-settled.png`, `quiet-fresh.png`) and `app.log`.
+A passing seed keeps nothing. `--replay plan.json` runs a plan again on a
+fresh DevHub. `--minimise` shrinks a failing plan by ddmin over its actions
+(each try on a fresh DevHub, `CHAOS_MINIMISE_TRIES`, 16 by default) to
+`minimal.json`, each action its own burst.
+
+What the profile sets for it: `CurSearch` is drawn as `Search`. Neovim's
+CurSearch "may get outdated if changes are made or the screen is redrawn"
+(`:h hl-CurSearch`): it is not redrawn when the cursor leaves the match by
+another motion, in any UI, and the fresh-redraw check found exactly that.
+
 ## On a failure
 
 Each failing step writes, under `$DEVHUB_STABILITY_ARTIFACTS` (default

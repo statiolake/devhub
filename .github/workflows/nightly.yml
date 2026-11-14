@@ -212,6 +212,65 @@ jobs:
           path: .spike/stability
           if-no-files-found: ignore
 
+  test-chaos:
+    name: "Test: chaos (Linux)"
+    needs: decide
+    if: needs.decide.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install Xvfb, xdotool, fonts and Electron's libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth xdotool fonts-dejavu-core \
+            libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libxtst6 libxkbfile1 libsecret-1-0
+
+      - name: Build the desktop app
+        run: pnpm --filter @devhub/desktop build
+
+      # The fixed seeds: the same plans every night, at 1x and (half of
+      # them) 6x.
+      - name: Chaos, fixed seeds
+        env:
+          DEVHUB_STABILITY_ARTIFACTS: ${{ github.workspace }}/.spike/chaos/fixed
+        run: apps/desktop/test/stability/chaos.sh --seeds 1,2,3,4,5,6,7,8 --actions 40
+
+      - name: Chaos, fixed seeds at 6x
+        if: always()
+        env:
+          DEVHUB_STABILITY_ARTIFACTS: ${{ github.workspace }}/.spike/chaos/fixed-6x
+        run: apps/desktop/test/stability/chaos.sh --seeds 1,2,3,4 --rates 6 --actions 40
+
+      # Two of them over a slow link to Neovim.
+      - name: Chaos, slow link
+        if: always()
+        env:
+          DEVHUB_STABILITY_ARTIFACTS: ${{ github.workspace }}/.spike/chaos/slow
+        run: apps/desktop/test/stability/chaos.sh --seeds 1,2 --neovim-delay 150 --actions 40
+
+      # New seeds each night, for ten minutes; a failure names its seed.
+      - name: Chaos, random seeds
+        if: always()
+        env:
+          DEVHUB_STABILITY_ARTIFACTS: ${{ github.workspace }}/.spike/chaos/random
+        run: apps/desktop/test/stability/chaos.sh --seeds $(( GITHUB_RUN_NUMBER * 1000 )) --minutes 10 --actions 40
+
+      - name: Keep what it recorded
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos
+          path: .spike/chaos
+          if-no-files-found: ignore
+
   publish:
     name: "Publish: nightly release"
     needs: [package, test-app]

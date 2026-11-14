@@ -79,6 +79,15 @@ Check the tag ──> Build: tools darwin-arm64, linux-x64, linux-arm64 ──> 
   not hold the release back. There is no per-push subset: the cheapest
   scroll check alone (`--only scroll-burst`, about 90 s) needs the whole
   app built and Xvfb, so it stays with the rest.
+- **Test: chaos (Linux)** (ubuntu-latest) builds the desktop app and runs
+  the visual-stability suite's chaos layer
+  ([`visual-stability.md`](visual-stability.md), "Chaos"): seeds 1-8 at 1x
+  and 1-4 at 6x (about 45 minutes on a 4-core machine), seeds 1-2 over a
+  slow link to Neovim (150 ms each way), then ten minutes of new seeds
+  (from the run number). A failure names its seed; its
+  plan, frames and logs are uploaded as `chaos`, and
+  `chaos.sh --replay plan.json` runs it again. Nightly, not holding the
+  release back.
 - **Tools** (`.github/workflows/tools.yml`) is a workflow of its own. It runs
   when a tag `tools-<toolsVersion>` is pushed, and builds DevHub's tools
   release (`scripts/build_tools.py`: tmux and bash) on macos-15, ubuntu-latest
