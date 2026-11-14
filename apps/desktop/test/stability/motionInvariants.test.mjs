@@ -47,9 +47,28 @@ describe("text in motion", () => {
     expect(
       checkMotion([
         sample(grid(0)),
-        sample(grid(-30, { ghost: [4, 40, 800, 600] })),
+        sample(
+          grid(-30, { ghost: [4, 40, 800, 600], canvas: [4, 44, 800, 600] }),
+        ),
       ]).map((v) => v.rule),
     ).toContain("unsettled");
+  });
+
+  it("holds a ghost the canvas covers whole as at rest (it is not seen)", () => {
+    const covered = [
+      sample(grid(0)),
+      sample(grid(-30, { ghost: [4, -40, 800, 600] })),
+    ];
+    expect(checkMotion(covered).map((v) => v.rule)).not.toContain("unsettled");
+  });
+
+  it("holds no window to rest that is gone by the end (closed mid-scroll)", () => {
+    const closed = [
+      sample(grid(0)),
+      sample(grid(-30, { off: 81, ghost: [4, 40, 800, 600] })),
+      { ...sample(grid(0)), editors: [{ key: "w", ch: 15, grids: [] }] },
+    ];
+    expect(checkMotion(closed).map((v) => v.rule)).not.toContain("unsettled");
   });
 
   it("finds an anchor that does not move with its text (a hover a frame behind)", () => {

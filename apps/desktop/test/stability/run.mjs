@@ -18,7 +18,8 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { startApp } from "./app.mjs";
 import { capture, motionAt } from "./capture.mjs";
 import { connect, targets } from "./cdp.mjs";
@@ -892,4 +893,11 @@ function makeContext(app, paths, pages) {
   return ctx;
 }
 
-await main();
+// Run as the suite; imported (chaos.mjs) for its context and checks.
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+)
+  await main();
+
+export { makeContext, freshRedraw, coherence, NO_CARETS, CARETS, PAGES };

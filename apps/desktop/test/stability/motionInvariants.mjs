@@ -134,11 +134,27 @@ export function checkMotion(samples, spec = {}) {
         prev = g.origin;
       }
     }
-    if (spec.rest !== false && (Math.abs(last.off) > TOL || last.ghost)) {
+    // A window closed while it scrolled (its split closed, its tab left)
+    // has nowhere to rest: only those on screen at the end are held to it.
+    const shownAtEnd = list[list.length - 1].i === samples.length - 1;
+    // A ghost under a canvas that covers the whole text area is not seen
+    // (the canvas paints every cell's ground): only one that shows counts.
+    const seen =
+      last.ghost &&
+      !(
+        last.port &&
+        last.canvas[1] <= last.port[1] + TOL &&
+        last.canvas[1] + last.canvas[3] >= last.port[1] + last.port[3] - TOL
+      );
+    if (
+      spec.rest !== false &&
+      shownAtEnd &&
+      (Math.abs(last.off) > TOL || seen)
+    ) {
       say(
         "unsettled",
         key,
-        `${key} ended ${last.off}px off Neovim's line${last.ghost ? ", its ghost still shown" : ""}`,
+        `${key} ended ${last.off}px off Neovim's line${seen ? ", its ghost still shown" : ""}`,
         [list[list.length - 1].i],
       );
     }
