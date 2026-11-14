@@ -713,7 +713,8 @@ async function runPlan(ctx, steps, rate, dir, meta) {
           },
         ],
         async () => {
-          let previous = Promise.resolve();
+          let previousStarted = Promise.resolve();
+          let allDone = Promise.resolve();
           const running = [];
           for (const step of mine) {
             const go = async () => {
@@ -735,10 +736,19 @@ async function runPlan(ctx, steps, rate, dir, meta) {
                 driver.push(`${step.name}: ${error.message.split("\n")[0]}`);
               }
             };
-            // An overlapping action starts with the one before it.
-            const p = step.overlap ? go() : previous.then(go);
+            // An overlapping action starts when the one before it starts;
+            // any other once everything before it is done.
+            let markStarted = () => {};
+            const started = new Promise((resolve) => {
+              markStarted = resolve;
+            });
+            const p = (step.overlap ? previousStarted : allDone).then(() => {
+              markStarted();
+              return go();
+            });
             running.push(p);
-            previous = step.overlap ? Promise.all([previous, p]) : p;
+            previousStarted = started;
+            allDone = Promise.all([allDone, p]);
           }
           await Promise.all(running);
         },

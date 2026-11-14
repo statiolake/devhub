@@ -125,7 +125,10 @@ export const ACTIONS = [
   },
   {
     name: "type",
-    hand: "keys",
+    // Both: the wheel in Insert mode moves the cursor with the view (Neovim's
+    // own), so a line typed meanwhile goes on another line, as it would in
+    // any UI; the typed line is checked only typed alone.
+    hand: "both",
     weight: 8,
     gen: (r, tag) => {
       const words = Array.from({ length: r.int(2, 12) }, () => r.pick(WORDS));
