@@ -81,6 +81,50 @@ const SOURCE = (n) =>
     ``,
   ].join("\n");
 
+const CHART_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAADAAAAAYCAIAAAAzn+mLAAAAq0lEQVR42u3OAQoBARRAQcdRSimllFJKKaWU0lNKKSUkJCQktCEhISEhoQ0JSZIkOZaD+HOC0Wj56vjoeRt4GXmaeJi5W7hZudq42Dk5ODo5uNi5UT1svax9rPwsA8yDzEJMw4yjjOIMk/TT9LJ087SLtMo0q9QVlAa1FpUO5R6lAYUR+Qm5GZkF6RWpDQmV+J7YkciZsEZCEpKQhCQkIQlJSEISkpCE/iv0A8l1Nxsm0ReuAAAAAElFTkSuQmCC";
+
+const PREVIEW_MD = ["# A long mixed document", ""]
+  .concat(
+    ...Array.from({ length: 8 }, (_, k) => {
+      const i = k + 1;
+      return [
+        `## Section ${i}`,
+        "",
+        `Prose of section ${i}: a paragraph long enough to wrap in the preview, so a line of the source is not a line of the drawing, and the mapping has to measure what is drawn rather than count lines.`,
+        "",
+        "| Key | Value | Note |",
+        "| --- | ----- | ---- |",
+        ...Array.from(
+          { length: 6 },
+          (_, r) => `| k${i}${r + 1} | ${(r + 1) * i} | row ${r + 1} |`,
+        ),
+        "",
+        "```ts",
+        ...Array.from(
+          { length: 12 },
+          (_, r) => `const v${i}_${r + 1} = ${r + 1} * ${i}; // line ${r + 1}`,
+        ),
+        "```",
+        "",
+        ...(i % 3 === 1 ? ["![Weekly builds](chart.png)", ""] : []),
+        ...(i % 3 === 2
+          ? [
+              "```mermaid",
+              "flowchart LR",
+              "  A[Source] --> B(Preview)",
+              "  B --> C{Aligned}",
+              "```",
+              "",
+            ]
+          : []),
+        ...Array.from({ length: 4 }, (_, r) => `- item ${i}.${r + 1}`),
+        "",
+      ];
+    }),
+  )
+  .join("\n");
+
 function sampleWorkspace(dir, name) {
   write(
     join(dir, "README.md"),
@@ -99,6 +143,13 @@ function sampleWorkspace(dir, name) {
     );
   }
   write(join(dir, "docs", "guide.md"), "# Guide\n\nalpha beta gamma delta\n");
+  // A long Markdown file of uneven blocks — wrapped prose, tables, code, a
+  // picture, a diagram — for a gui.document preview (scenariosMotion.mjs).
+  write(join(dir, "docs", "preview.md"), PREVIEW_MD);
+  writeFileSync(
+    join(dir, "docs", "chart.png"),
+    Buffer.from(CHART_PNG, "base64"),
+  );
   // A long file to scroll (scenariosMotion.mjs): numbered, and varied enough
   // that a row drawn at the wrong place shows.
   write(

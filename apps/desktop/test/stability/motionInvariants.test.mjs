@@ -113,4 +113,27 @@ describe("text in motion", () => {
       ).map((v) => v.rule),
     ).toEqual(["pushed"]);
   });
+
+  it("holds a scroller to one way, and finds one that goes back or past its end", () => {
+    const at = (tops) =>
+      tops.map((scrollTop) => ({
+        t: 0,
+        editors: [],
+        anchors: {},
+        scrollers: {
+          d: { scrollTop, box: [0, 0, 1, 1], items: [], moving: false },
+        },
+      }));
+    expect(checkMotion(at([0, 40, 90, 120, 120]), { oneWay: ["d"] })).toEqual(
+      [],
+    );
+    expect(
+      checkMotion(at([0, 60, 40, 120]), { oneWay: ["d"] }).map((v) => v.rule),
+    ).toEqual(["reversed"]);
+    expect(
+      checkMotion(at([300, 200, 90, 100]), { oneWay: ["d"] }).map(
+        (v) => v.rule,
+      ),
+    ).toEqual(["overshoot"]);
+  });
 });

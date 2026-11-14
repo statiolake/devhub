@@ -7,6 +7,7 @@ import {
   lineMarks,
   pixelOfLine,
   scrolledTop,
+  sourcePlace,
 } from "./documents";
 
 describe("gui.document's events", () => {
@@ -153,5 +154,49 @@ describe("a heading's anchor", () => {
     expect(headingSlug("API: v2.0 (beta)", seen)).toBe("api-v20-beta");
     expect(headingSlug("日本語の見出し", seen)).toBe("日本語の見出し");
     expect(headingSlug("Getting Started", seen)).toBe("getting-started-1");
+  });
+
+  it("finds a point of the drawing in the source: a word in prose, a column in code", () => {
+    const lines = [
+      "# Title", // 1
+      "", // 2
+      "Some **bold** text and a [link](x.md) to", // 3
+      "the second line of it, and text again.", // 4
+      "", // 5
+      "  ```ts", // 6
+      "  const x = 1;", // 7
+      "  let y = x;", // 8
+      "  ```", // 9
+    ];
+    // "text" the second time: on the paragraph's second line.
+    const drawn = "Some bold text and a link to the second line of it, and te";
+    expect(sourcePlace(lines, 3, drawn, "xt again.", false)).toEqual({
+      line: 4,
+      col: lines[3]!.indexOf("text again") + 2,
+    });
+    // Its first word, past markup.
+    expect(sourcePlace(lines, 3, "Some bo", "ld text", false)).toEqual({
+      line: 3,
+      col: lines[2]!.indexOf("bold") + 2,
+    });
+    // Between words: the word after the point.
+    expect(sourcePlace(lines, 3, "Some ", "bold", false)).toEqual({
+      line: 3,
+      col: lines[2]!.indexOf("bold"),
+    });
+    // Nothing to go by: the block's line.
+    expect(
+      sourcePlace(lines, 3, "Some bold text and a link to ", "", false),
+    ).toEqual({
+      line: 3,
+      col: undefined,
+    });
+    // Code: past the fence, lines as drawn, its indent kept.
+    expect(sourcePlace(lines, 6, "const x = 1;\nlet ", "y = x;", true)).toEqual(
+      {
+        line: 8,
+        col: 6,
+      },
+    );
   });
 });

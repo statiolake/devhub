@@ -610,6 +610,11 @@
 }
 
 .nvim-document-scroll {
+  /* Its text is selected with the mouse (the grid's is not). */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  outline: none;
   overflow-x: hidden;
   overflow-y: auto;
   box-sizing: border-box;

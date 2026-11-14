@@ -282,7 +282,8 @@ export interface ScrollRequest {
   readonly toward?: number;
 }
 
-function easeOut(t: number): number {
+/** The ease every scroll here lands with (ease-out cubic): `documentMotion.ts` too. */
+export function easeOut(t: number): number {
   return 1 - (1 - t) ** 3;
 }
 

@@ -354,3 +354,74 @@ export function headingSlug(text: string, seen: Map<string, number>): string {
   seen.set(base, n + 1);
   return n === 0 ? base : `${base}-${String(n)}`;
 }
+
+/** A place in the source: its line, and its column in UTF-16 units (0-based) when known. */
+export interface SourcePlace {
+  readonly line: number;
+  readonly col: number | undefined;
+}
+
+const WORD = /[\p{L}\p{M}\p{N}_]+$/u;
+const WORD_START = /^[\p{L}\p{M}\p{N}_]+/u;
+
+function occurrences(text: string, word: string): number {
+  let n = 0;
+  for (
+    let i = text.indexOf(word);
+    i >= 0;
+    i = text.indexOf(word, i + word.length)
+  )
+    n += 1;
+  return n;
+}
+
+/**
+ * Where in the source a point of the drawing is (an Alt-click, as SyncTeX's
+ * inverse search): `block` is the source line the block clicked starts at,
+ * `before` and `after` its drawn text up to the point and from it.
+ *
+ * In code (`code`), drawn lines are the source's: the line is the block's
+ * (past its fence) and the column the point's. In prose, markup is gone
+ * from the drawing, so the word under the point is looked for: the same
+ * occurrence of it, counted from the block's start, in the source from the
+ * block's line on. A word not found there (markup inside it) gives the
+ * block's line alone.
+ */
+export function sourcePlace(
+  lines: readonly string[],
+  block: number,
+  before: string,
+  after: string,
+  code: boolean,
+): SourcePlace {
+  const start = Math.max(1, Math.min(block, Math.max(1, lines.length)));
+  if (code) {
+    const fence = /^\s*(```|~~~)/.test(lines[start - 1] ?? "");
+    const first = start + (fence ? 1 : 0);
+    const rows = before.split("\n");
+    const line = Math.min(first + rows.length - 1, Math.max(1, lines.length));
+    const indent = /^\s*/.exec(lines[start - 1] ?? "")?.[0].length ?? 0;
+    return { line, col: (fence ? indent : 0) + rows.at(-1)!.length };
+  }
+  const head = WORD.exec(before)?.[0] ?? "";
+  const tail = WORD_START.exec(after)?.[0] ?? "";
+  const word = head + tail;
+  if (word === "") return { line: start, col: undefined };
+  const nth = occurrences(before.slice(0, before.length - head.length), word);
+  const text = lines.slice(start - 1).join("\n");
+  let at = -1;
+  for (
+    let k = 0, i = text.indexOf(word);
+    i >= 0;
+    i = text.indexOf(word, i + word.length), k += 1
+  ) {
+    if (k === nth) {
+      at = i;
+      break;
+    }
+  }
+  if (at < 0) return { line: start, col: undefined };
+  const offset = at + head.length;
+  const upTo = text.slice(0, offset).split("\n");
+  return { line: start + upTo.length - 1, col: upTo.at(-1)!.length };
+}

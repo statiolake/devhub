@@ -52,4 +52,5 @@ require('nvim-tree').setup {
   view = { width = 32 },
 }
 require('nvim-tree-ui').setup {}
+require('markdown-preview').setup {}
 vim.keymap.set('n', '<F2>', '<cmd>NvimTreeToggle<CR>')

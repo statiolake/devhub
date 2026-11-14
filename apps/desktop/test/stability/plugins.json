@@ -4,7 +4,7 @@
     {
       "name": "devhub.nvim",
       "url": "https://github.com/statiolake/devhub.nvim",
-      "commit": "54ed83341571ba8e0edf674b83fddbada9787963"
+      "commit": "f1e2dcafbd1b8971dfa17b8c92eb1eef269b01e3"
     },
     {
       "name": "vscode-2026-theme.nvim",
@@ -40,6 +40,11 @@
       "name": "nvim-tree-ui.devhub",
       "url": "https://github.com/statiolake/nvim-tree-ui.devhub",
       "commit": "9e9116f37a0e4607c4b77706efeb5130b0de1ba0"
+    },
+    {
+      "name": "markdown-preview.devhub",
+      "url": "https://github.com/statiolake/markdown-preview.devhub",
+      "commit": "4cd55752f7e258e9106c996c8af1c924b2e25480"
     }
   ]
 }

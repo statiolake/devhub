@@ -188,13 +188,24 @@ end
 --- one; <Esc> goes back; q closes. Answers a handle: :update(text, base?),
 --- :scroll_to(line) (the source line at the top), :close(), :is_open(),
 --- :view() ({ top, bottom }: the source lines in sight).
+---
+--- on_view(handle, view) — view = { top, bottom } — hears each scroll the
+--- person made in the document (a key in its window, the wheel, a heading
+--- link), frame by frame as it moves; never one it made to follow
+--- :scroll_to or its own window, so a source that follows it and a document
+--- that follows the source do not chase each other.
+--- on_source_click(handle, pos) — pos = { line, col? } — hears an Alt-click
+--- on the drawing: the source line, and the byte column (1-based) when the
+--- text clicked tells it. Without it the document's own window takes the
+--- cursor there.
 function M.document(opts)
   opts = opts or {}
   local format = opts.format or "markdown"
   if format ~= "markdown" then error("devhub_gui.document: format must be 'markdown'") end
   local doc = { id = M._next + 1, format = format, lines = split_lines(opts.text),
     base = opts.base and vim.fn.fnamemodify(vim.fn.expand(opts.base), ":p"):gsub("/$", "") or vim.fn.getcwd(),
-    title = opts.title, on_link = opts.on_link, on_close = opts.on_close, remote_images = opts.remote_images == true }
+    title = opts.title, on_link = opts.on_link, on_close = opts.on_close, on_view = opts.on_view,
+    on_source_click = opts.on_source_click, remote_images = opts.remote_images == true }
   M._next = doc.id
   doc.buf = vim.api.nvim_create_buf(false, true)
   vim.bo[doc.buf].buftype = "nofile"
@@ -262,10 +273,12 @@ end
 
 -- The page ----------------------------------------------------------------
 
---- The page scrolled the drawing (a key, the wheel, a link to a heading):
---- the source lines it shows, top and bottom. The window's view follows,
---- with its cursor on the top line.
-function M._document_view(id, top, bottom)
+--- The page scrolled the drawing: the source lines it shows, top and
+--- bottom. The window's view follows, with its cursor on the top line.
+--- follow: the drawing moved to follow (:scroll_to, its window), which
+--- on_view does not hear; else the person scrolled it (a key, the wheel, a
+--- link to a heading), and it does.
+function M._document_view(id, top, bottom, follow)
   local doc = M._documents[id]
   if not doc or type(top) ~= "number" then return end
   local count = math.max(1, #doc.lines)
@@ -276,10 +289,42 @@ function M._document_view(id, top, bottom)
   local win = doc_win(doc)
   if win then
     pcall(vim.api.nvim_win_call, win, function()
-      vim.fn.winrestview({ topline = top, lnum = top, col = 0 })
+      if vim.fn.line("w0") ~= top then vim.fn.winrestview({ topline = top, lnum = top, col = 0 }) end
     end)
   end
   M._schedule_place()
+  if follow ~= true and type(doc.on_view) == "function" then
+    local ok, err = pcall(doc.on_view, doc.handle, { top = top, bottom = bottom })
+    if not ok then vim.notify("devhub document: on_view: " .. tostring(err), vim.log.levels.ERROR) end
+  end
+end
+
+--- An Alt-click on the drawing: the source line, and where in it the text
+--- clicked is (UTF-16 units, 0-based; nil when not known). on_source_click
+--- hears it as a byte column, 1-based; without one, the document's window
+--- takes the cursor there.
+function M._document_source_click(id, line, col16)
+  local doc = M._documents[id]
+  if not doc or type(line) ~= "number" then return end
+  line = math.min(math.max(1, math.floor(line)), math.max(1, #doc.lines))
+  local col
+  if type(col16) == "number" and col16 >= 0 then
+    local text = doc.lines[line] or ""
+    local ok, byte = pcall(vim.str_byteindex, text, "utf-16", math.floor(col16), false)
+    if not ok then ok, byte = pcall(vim.str_byteindex, text, math.floor(col16), true) end
+    col = ok and type(byte) == "number" and math.min(byte, #text) + 1 or nil
+  end
+  local pos = { line = line, col = col }
+  if type(doc.on_source_click) == "function" then
+    local ok, err = pcall(doc.on_source_click, doc.handle, pos)
+    if not ok then vim.notify("devhub document: on_source_click: " .. tostring(err), vim.log.levels.ERROR) end
+    return
+  end
+  local win = doc_win(doc)
+  if win then
+    vim.api.nvim_set_current_win(win)
+    pcall(vim.api.nvim_win_set_cursor, win, { line, math.max(0, (col or 1) - 1) })
+  end
 end
 
 --- A click in the document: its window becomes the current one.

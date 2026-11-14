@@ -253,4 +253,55 @@ describe.skipIf(NVIM === undefined)("gui.document in a real Neovim", () => {
 			await lua("return { _G.doc:is_open(), _G.closed == _G.doc.id }"),
 		).toEqual([false, true]);
 	});
+
+	it("tells on_view the person's scrolls, not the ones that followed, and an Alt-click's place", async () => {
+		const { ui } = await attached();
+		const lua = (code: string, args: unknown[] = []) =>
+			ui.request("nvim_exec_lua", [code, args]);
+		const text = [
+			"# Title",
+			"",
+			"héllo wörld and more",
+			...Array.from({ length: 60 }, (_, i) => `line ${String(i)}`),
+		].join("\n");
+		await lua(
+			`_G.views = {}
+			_G.doc = require('devhub_gui').document{ text = ...,
+				on_view = function(h, view) table.insert(_G.views, { h.id, view.top, view.bottom }) end }`,
+			[text],
+		);
+		const id = (await lua("return _G.doc.id")) as number;
+		const gui = "require('devhub_gui')";
+		// The person's scroll (the wheel, a key): heard, and the window's view.
+		await lua(`${gui}._document_view(...)`, [id, 12, 30, false]);
+		// One that followed the source (:scroll_to): the window's, not heard.
+		await lua(`${gui}._document_view(...)`, [id, 20, 38, true]);
+		expect(
+			await lua(
+				"return { _G.views, vim.fn.line('w0', _G.doc.win), _G.doc:view() }",
+			),
+		).toEqual([[[id, 12, 30]], 20, { top: 20, bottom: 38 }]);
+
+		// An Alt-click: the byte column of a UTF-16 one, 1-based; a line alone.
+		await lua(
+			`_G.clicks = {}
+			local h = ${gui}._documents[...]
+			h.on_source_click = function(_, pos) table.insert(_G.clicks, pos) end`,
+			[id],
+		);
+		await lua(`${gui}._document_source_click(...)`, [id, 3, 7]);
+		await lua(`${gui}._document_source_click(...)`, [id, 40, null]);
+		expect(await lua("return _G.clicks")).toEqual([
+			{ line: 3, col: 9 },
+			{ line: 40 },
+		]);
+		// Without one: the document's own window takes the cursor there.
+		await lua(`${gui}._documents[...].on_source_click = nil`, [id]);
+		await lua(`${gui}._document_source_click(...)`, [id, 3, 7]);
+		expect(
+			await lua(
+				"return { vim.api.nvim_get_current_win() == _G.doc.win, vim.api.nvim_win_get_cursor(0) }",
+			),
+		).toEqual([true, [3, 8]]);
+	});
 });

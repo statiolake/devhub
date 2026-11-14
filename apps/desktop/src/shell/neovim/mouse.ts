@@ -17,12 +17,13 @@ import type { GridBox } from "./redraw";
 /**
  * What on the page takes its own presses and wheel, not Neovim: a GUI
  * window, a view (framed or not), a card, a popup, the notifications, and
- * a node of a footer that runs Lua (`on_click`). Every other press on a
+ * a node of a footer that runs Lua (`on_click`), and a `gui.document`
+ * (its text is selected, its links clicked, its wheel its own). Every other press on a
  * footer is Neovim's, on grid 1's cell under it (a status line drag
  * resizes, a click moves to the window, a `%@` region runs).
  */
 export const GUI_OWNED =
-  ".nvim-gui-window, .nvim-popup, .nvim-view, .nvim-inline-card, .nvim-view-frame, .nvim-toasts, .nvim-footer [data-action]";
+  ".nvim-gui-window, .nvim-document, .nvim-popup, .nvim-view, .nvim-inline-card, .nvim-view-frame, .nvim-toasts, .nvim-footer [data-action]";
 
 export interface CellMetrics {
   readonly width: number;

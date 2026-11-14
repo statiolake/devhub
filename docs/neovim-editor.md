@@ -1490,7 +1490,9 @@ menus — all of it bundled and pinned, nothing fetched.
 local doc = gui.document{ text = text, format = 'markdown', base = dir, split = 'right',
   title = 'README.md', remote_images = false, scroll = { line = 1 },
   on_link = function(link) end,         -- { path, line?, col?, href }: true when handled
-  on_close = function(doc) end }
+  on_close = function(doc) end,
+  on_view = function(doc, view) end,    -- the person scrolled it: { top, bottom }
+  on_source_click = function(doc, pos) end } -- an Alt-click: { line, col? } in the source
 doc:update(text, base?); doc:scroll_to(line); doc:view(); doc:close(); doc:is_open()
 ```
 
@@ -1509,11 +1511,40 @@ doc:update(text, base?); doc:scroll_to(line); doc:view(); doc:close(); doc:is_op
   interpolated within a block. The window's keys (buffer maps: `j`/`k`,
   `<C-d>`/`<C-u>`, `<C-f>`/`<C-b>`, `<Space>`, `gg`/`G`) ask the page for a
   scroll (`document_scroll`); `doc:scroll_to(line)` asks for a line at the
-  top; the wheel scrolls it on the page. Each way the page says back which
-  source lines are in sight (`_document_view`), and the window's view
-  follows; when Neovim moves the window's top itself (a search), the
-  drawing follows. The page reflows around the line at the top: a picture
-  or a diagram arriving does not move what is being read.
+  top; the wheel scrolls it on the page. Every scroll moves as a window's
+  smooth scroll does (`shell/neovim/documentMotion.ts`, with
+  `smoothScroll.ts`'s `EASE_MS`, `GLIDE_MS` and ease): a key's or a
+  followed line eases from where the drawing is shown (a new one mid-way
+  turns without a jump; one further than a screen slides its last screen
+  in), the wheel is pixel for pixel with a tick a line at least
+  (`wheelLines.ts`'s rule), Reduce Motion places it at once. Each frame the
+  page says back which source lines are in sight (`_document_view`), and
+  the window's view follows; with it goes who moved it: the person (a key
+  in the window, the wheel, a heading link), which `on_view` hears — a
+  source that follows the preview — or a follow (`scroll_to`, its window
+  moved by Neovim), which it does not, so a source and its preview never
+  chase each other's frames. A `scroll_to` of the line already at the top
+  does not move the drawing, and a top the page itself said
+  (`documents`' `told`) is not followed back. When Neovim moves the
+  window's top itself (a search), the drawing eases there. The page
+  reflows around the line at the top: a picture or a diagram arriving does
+  not move what is being read.
+- **The mouse is the drawing's** (`GUI_OWNED`'s `.nvim-document`): nothing
+  of a press, a drag or the wheel goes to Neovim. A drag selects its text
+  (a double click a word, a triple click a paragraph); ⌘C, the Edit menu's
+  Copy and the right-click menu's Copy copy it through `copyText`, with
+  DevHub's notice; Esc or a click elsewhere lets it go. While text is
+  selected the keyboard is the drawing's (focusing Neovim's field drops a
+  selection in Chromium); any other key lets it go and is handed to
+  Neovim. A plain click makes the window current and gives the keys back.
+  A click on a link follows it, but not the click that ends a drag. An
+  Alt-click is the source's (SyncTeX's inverse search): the block under it
+  gives the line, and the word under it, found again in the source from
+  there (`sourcePlace`; in code, the drawn line and column), the column;
+  `_document_source_click` hands it to `on_source_click`, or puts the
+  document window's cursor there. Selecting with `v`/`V` in the window is
+  not done: Visual mode there would select the hidden source lines, not
+  the drawing.
 - **Links.** `<Tab>`/`<S-Tab>` move a focus between the links of the source
   (Lua reads them off the lines: `[…](…)`, `<…>`, bare URLs), from the top
   of what is in sight; the page rings that link (`data-href`, the link's

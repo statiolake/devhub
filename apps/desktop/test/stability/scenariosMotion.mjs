@@ -79,6 +79,32 @@ vim.api.nvim_open_win(buf, false, { relative = 'win', win = vim.api.nvim_get_cur
   row = 1, col = 0, width = 40, height = 3, border = 'rounded', style = 'minimal' })
 `;
 
+// A gui.document's drawing: one scroller, its blocks its items. Each
+// frame it moves one way and its blocks keep their places in it (no torn
+// or in-between frame); the source window follows it, a line at a time.
+const DOC = ".nvim-document-scroll";
+const preview = () => ({
+  anchors: [],
+  scrollers: [{ name: "preview", selector: DOC, items: "[data-source-line]" }],
+  fresh: ".nvim-editor",
+  spec: { kept: ["preview"], oneWay: ["preview"] },
+});
+
+/** At rest, the source window's top line is the line the preview has at its top. */
+async function aligned(ctx) {
+  const said = ctx
+    .nvimExpr(
+      'luaeval(\'(function() local g = require("devhub_gui"); local _, d = next(g._documents); local src = vim.fn.win_findbuf(vim.fn.bufnr("docs/preview.md"))[1]; return (d and d.view and d.view.top or -1) .. " " .. (src and vim.fn.line("w0", src) or -1) end)()\')',
+    )
+    .trim();
+  const [preview, source] = said.split(" ").map(Number);
+  return preview > 0 && preview === source
+    ? []
+    : [
+        `the preview's top is source line ${preview}, the source window's is ${source}`,
+      ];
+}
+
 const wheelOver = (ctx, notches, delta, gapMs) =>
   ctx.wheel("pane", ".nvim-editor", notches, delta, gapMs);
 
@@ -457,6 +483,112 @@ const MOTION = [
         motion: motion({ monotonic: false }),
       },
     ],
+  },
+  {
+    name: "document-preview",
+    description:
+      "a Markdown preview (gui.document, markdown-preview.devhub) of a long file of uneven blocks: wheel bursts and keys in the preview, the source leading, each settling with the two aligned; and a selection dragged in its text",
+    ...pane,
+    setup: async (ctx) => {
+      await ctx.focus("pane");
+      ctx.nvimSend("<C-\\><C-n><Esc>");
+      ctx.nvimExpr(
+        "execute('silent! only | silent! tabonly | silent! NvimTreeClose | silent! edit! docs/preview.md | MarkdownPreview')",
+      );
+      await ctx.waitIn(
+        "pane",
+        "document.querySelectorAll('.nvim-document-scroll [data-source-line]').length > 40 && !!document.querySelector('.nvim-document img')",
+      );
+      await ctx.settle("pane", 400);
+    },
+    steps: [
+      {
+        name: "wheel-fast-down",
+        act: (ctx) => ctx.wheel("pane", DOC, 14, 120, 16),
+        motion: preview(),
+        check: aligned,
+      },
+      {
+        name: "wheel-slow-up",
+        act: (ctx) => ctx.wheel("pane", DOC, 6, -120, 120),
+        motion: preview(),
+        check: aligned,
+      },
+      {
+        name: "keys-in-preview",
+        prep: (ctx) => ctx.nvimSend("<C-w>l"),
+        act: async (ctx) => {
+          await ctx.press("pane", "C-d");
+          await new Promise((r) => setTimeout(r, 40));
+          await ctx.press("pane", "C-d");
+        },
+        motion: preview(),
+        check: aligned,
+      },
+      {
+        name: "G-in-preview",
+        act: (ctx) => ctx.press("pane", "S-G"),
+        motion: preview(),
+        check: aligned,
+      },
+      {
+        name: "source-leads",
+        prep: (ctx) => ctx.nvimSend("<C-w>h40Gzt"),
+        act: async (ctx) => {
+          await ctx.press("pane", "C-d");
+          await new Promise((r) => setTimeout(r, 40));
+          await ctx.press("pane", "C-d");
+        },
+        motion: preview(),
+        check: aligned,
+      },
+      {
+        name: "selection-drag",
+        prep: (ctx) => ctx.nvimSend("1Gzt"),
+        act: async (ctx) => {
+          const at = await ctx.centre(
+            "pane",
+            ".nvim-document p",
+            "Prose of section 1",
+          );
+          if (!at) throw new Error("no paragraph to select in");
+          const client = await ctx.page("pane");
+          const mouse = (type, x, y, buttons) =>
+            client.send("Input.dispatchMouseEvent", {
+              type,
+              x,
+              y,
+              button: "left",
+              buttons,
+              clickCount: 1,
+            });
+          const [x, y] = at;
+          await mouse("mouseMoved", x - 200, y - 20, 0);
+          await mouse("mousePressed", x - 200, y - 20, 1);
+          for (let k = 1; k <= 8; k++)
+            await mouse("mouseMoved", x - 200 + k * 50, y - 20 + k * 5, 1);
+          await mouse("mouseReleased", x + 200, y + 20, 0);
+        },
+        spec: { only: [] },
+        check: async (ctx) => {
+          const problems = [];
+          const text = await ctx.evalIn("pane", "getSelection().toString()");
+          if (!String(text).includes("paragraph long enough"))
+            problems.push(
+              `the drag selected ${JSON.stringify(text)}, not the paragraph's text`,
+            );
+          const mode = ctx.nvimExpr("mode()").trim();
+          if (mode !== "n")
+            problems.push(`the drag reached Neovim: mode ${mode}`);
+          ctx.nvimSend("<Esc>");
+          await ctx.evalIn("pane", "getSelection().removeAllRanges(), 1");
+          return problems;
+        },
+      },
+    ],
+    teardown: (ctx) => {
+      ctx.nvimExpr("execute('silent! MarkdownPreviewStop | silent! only')");
+    },
   },
   {
     name: "conversation-scroll",

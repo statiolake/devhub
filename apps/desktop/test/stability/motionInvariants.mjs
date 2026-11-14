@@ -14,6 +14,9 @@
 //              the seam
 //   kept       a scroller's items (a conversation's entries) keep their place
 //              in its content once there; only the last may grow
+//   oneWay     a scroller (a gui.document's drawing) moves one way for one
+//              gesture: no frame goes back, none past where it ends — no
+//              torn or in-between frame, no landing correction
 
 const TOL = 0.5;
 
@@ -138,6 +141,45 @@ export function checkMotion(samples, spec = {}) {
         `${key} ended ${last.off}px off Neovim's line${last.ghost ? ", its ghost still shown" : ""}`,
         [list[list.length - 1].i],
       );
+    }
+  }
+
+  // oneWay
+  for (const name of spec.oneWay ?? []) {
+    const tops = [];
+    samples.forEach((s, i) => {
+      const sc = s.scrollers?.[name];
+      if (sc) tops.push({ i, top: sc.scrollTop });
+    });
+    if (tops.length < 2) continue;
+    const first = tops[0].top;
+    const end = tops[tops.length - 1].top;
+    const dir = Math.sign(end - first);
+    let prev = first;
+    for (const { i, top } of tops) {
+      if (
+        dir !== 0 &&
+        Math.sign(top - prev) === -dir &&
+        Math.abs(top - prev) > TOL
+      ) {
+        say(
+          "reversed",
+          name,
+          `${name} went back ${Math.abs(top - prev)}px in frame ${i} (moving ${dir > 0 ? "down" : "up"})`,
+          [i],
+        );
+        break;
+      }
+      if (dir !== 0 && (top - end) * dir > TOL) {
+        say(
+          "overshoot",
+          name,
+          `${name} went ${Math.abs(top - end)}px past where it ended, in frame ${i}`,
+          [i],
+        );
+        break;
+      }
+      prev = top;
     }
   }
 

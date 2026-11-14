@@ -12,11 +12,22 @@
  *
  * The page keeps how far down the drawing is scrolled, in pixels; Neovim
  * keeps everything else. The keys ask for a scroll (`DocumentScroll`), the
- * wheel scrolls it here, and either way the source lines in sight are told
- * back (`_document_view`); when Neovim moves the window's top itself (a
- * search, `:42`), the drawing follows. Each block carries the source line
- * it starts at (`sourceLines`), which is how a line is a height
- * (`documents.ts`).
+ * wheel scrolls it here, and either way it eases as the editor's smooth
+ * scroll does (`documentMotion.ts`) and the source lines in sight are told
+ * back, frame by frame (`_document_view`) — as the person's scroll, or as
+ * one that followed (`scroll_to`, its window), which the source is not told
+ * of, so neither side chases the other. When Neovim moves the window's top
+ * itself (a search, `:42`), the drawing follows. Each block carries the
+ * source line it starts at (`sourceLines`), measured where it is drawn,
+ * which is how a line is a height (`documents.ts`).
+ *
+ * The mouse is the drawing's (`GUI_OWNED`): a drag selects its text, ⌘C,
+ * the Edit menu's Copy and the right-click menu's copy it with DevHub's
+ * notice; Esc or a click elsewhere lets it go. While text is selected the
+ * keyboard is here (focusing Neovim's field would drop the selection); any
+ * other key lets it go and is Neovim's. A click on a link follows it, not
+ * the click that ends a drag. An Alt-click is the source's: the place it
+ * is in the source (`sourcePlace`) goes to Lua (`on_source_click`).
  */
 
 import {
@@ -47,12 +58,26 @@ import {
   lineMarks,
   pixelOfLine,
   scrolledTop,
+  sourcePlace,
   type DocumentActivation,
   type DocumentContent,
   type DocumentPlace,
   type DocumentScroll,
   type LineMark,
+  type SourcePlace,
 } from "./documents";
+import {
+  bounded,
+  easeTo,
+  frame,
+  movedTo,
+  moving,
+  newMotion,
+  wheelBy,
+  type DocumentMotion,
+  type MotionCause,
+} from "./documentMotion";
+import { reducedMotion } from "./paneMotion";
 import type { LayerHost } from "./LayerViews";
 
 /** The renderer's requests, answered by Lua on the Neovim's machine. */
@@ -180,6 +205,77 @@ export function focusedAnchor(
   return best?.el;
 }
 
+/** The selection, when it is text of `root` (not collapsed). */
+function selectionOf(root: HTMLElement): Selection | undefined {
+  const selection = window.getSelection();
+  if (
+    !selection ||
+    selection.isCollapsed ||
+    selection.rangeCount === 0 ||
+    !root.contains(selection.getRangeAt(0).commonAncestorContainer)
+  )
+    return undefined;
+  return selection;
+}
+
+function isCopyKey(event: KeyboardEvent): boolean {
+  return (
+    (event.metaKey || event.ctrlKey) &&
+    !event.shiftKey &&
+    !event.altKey &&
+    event.key.toLowerCase() === "c"
+  );
+}
+
+/** The caret at a point of the page: its node and offset, or nothing. */
+function caretAt(
+  x: number,
+  y: number,
+): { node: Node; offset: number } | undefined {
+  const d = document as Document & {
+    caretPositionFromPoint?: (
+      x: number,
+      y: number,
+    ) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  const position = d.caretPositionFromPoint?.(x, y);
+  if (position) return { node: position.offsetNode, offset: position.offset };
+  const range = d.caretRangeFromPoint?.(x, y);
+  if (range) return { node: range.startContainer, offset: range.startOffset };
+  return undefined;
+}
+
+/**
+ * The source place of a point in the drawing (an Alt-click): the block
+ * under it and its drawn text either side of the point (`sourcePlace`).
+ */
+export function sourcePlaceAt(
+  root: HTMLElement,
+  target: Element,
+  caret: { node: Node; offset: number } | undefined,
+  lines: readonly string[],
+): SourcePlace | undefined {
+  const block = target.closest<HTMLElement>("[data-source-line]");
+  if (!block || !root.contains(block)) return undefined;
+  const line = Number(block.dataset["sourceLine"]);
+  if (!Number.isFinite(line)) return undefined;
+  const code = block.querySelector("pre code") ?? block.closest("pre");
+  const within = code ?? block;
+  if (!caret || !within.contains(caret.node)) return { line, col: undefined };
+  const range = document.createRange();
+  range.selectNodeContents(within);
+  range.setEnd(caret.node, caret.offset);
+  const before = range.toString();
+  range.selectNodeContents(within);
+  range.setStart(caret.node, caret.offset);
+  const after = range.toString();
+  return sourcePlace(lines, line, before, after, code !== null);
+}
+
+/** A press moved this far is a drag (a selection), not a click. */
+const DRAG_PX = 4;
+
 export default function DocumentPane({
   content,
   place,
@@ -200,22 +296,38 @@ export default function DocumentPane({
   const scroller = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const marks = useRef<LineMark[]>([]);
-  const lineCount = useMemo(
-    () => content.text.split("\n").length,
-    [content.text],
-  );
+  const lines = useMemo(() => content.text.split("\n"), [content.text]);
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
+  const lineCount = lines.length;
   const countRef = useRef(lineCount);
   countRef.current = lineCount;
   /** The line (with its fraction) the top is at: kept as the drawing reflows. */
   const anchor = useRef<number | undefined>(undefined);
-  /** The source lines last told to Lua. */
-  const told = useRef<{ top: number; bottom: number } | undefined>(undefined);
+  /** The source lines last told to Lua, and whether as a follow. */
+  const told = useRef<
+    { top: number; bottom: number; follow: boolean } | undefined
+  >(undefined);
   /** A scroll to a line asked before the drawing was measured. */
   const pendingTo = useRef<number | undefined>(undefined);
   const hostRef = useRef(host);
   hostRef.current = host;
+  /** The scroll in motion (`documentMotion.ts`), and its frame. */
+  // Where it starts is none of the person's doing: told as followed.
+  const motion = useRef<DocumentMotion>({ ...newMotion(), cause: "follow" });
+  const raf = useRef(0);
+  /** The `scrollTop` this page last set: any other is the scroll bar's. */
+  const setTop = useRef(0);
+  /** A press: where, and whether it was the Alt-click's. */
+  const press = useRef<{ x: number; y: number; alt: boolean } | undefined>(
+    undefined,
+  );
 
   const total = () => scroller.current?.scrollHeight ?? 0;
+  const maxTop = () => {
+    const el = scroller.current;
+    return el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0;
+  };
   const pixelOf = useCallback(
     (line: number) =>
       pixelOfLine(marks.current, line, total(), countRef.current),
@@ -227,6 +339,9 @@ export default function DocumentPane({
     const el = scroller.current;
     // Nothing measured yet: nothing to say (a guess would move Neovim).
     if (!el || marks.current.length === 0) return;
+    const m = motion.current;
+    // Neovim moved the window itself: what it has is told once, settled.
+    if (m.cause === "neovim" && moving(m)) return;
     const all = total();
     anchor.current = lineAtPixelExact(
       marks.current,
@@ -234,18 +349,62 @@ export default function DocumentPane({
       all,
       countRef.current,
     );
-    const top = lineAtPixel(marks.current, el.scrollTop, all, countRef.current);
+    // A pixel in: `scrollTop` is a device pixel, a line's top may be a
+    // fraction of one below it.
+    const top = lineAtPixel(
+      marks.current,
+      el.scrollTop + 1,
+      all,
+      countRef.current,
+    );
     const bottom = lineAtPixel(
       marks.current,
       el.scrollTop + el.clientHeight - 1,
       all,
       countRef.current,
     );
+    const follow = m.cause === "follow";
     const before = told.current;
-    if (before && before.top === top && before.bottom === bottom) return;
-    told.current = { top, bottom };
-    hostRef.current.lua("_document_view", [content.id, top, bottom]);
+    if (
+      before &&
+      before.top === top &&
+      before.bottom === bottom &&
+      before.follow === follow
+    )
+      return;
+    told.current = { top, bottom, follow };
+    hostRef.current.lua("_document_view", [content.id, top, bottom, follow]);
   }, [content.id]);
+
+  /** The drawing at the motion's place. */
+  const show = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return;
+    el.scrollTop = motion.current.top;
+    setTop.current = el.scrollTop;
+    report();
+  }, [report]);
+
+  const step = useCallback(() => {
+    raf.current = 0;
+    const more = frame(motion.current, performance.now());
+    show();
+    if (more) raf.current = requestAnimationFrame(step);
+  }, [show]);
+
+  /** Show the motion now, and on each frame while it moves. */
+  const run = useCallback(() => {
+    show();
+    if (moving(motion.current) && raf.current === 0)
+      raf.current = requestAnimationFrame(step);
+  }, [show, step]);
+
+  useEffect(
+    () => () => {
+      if (raf.current !== 0) cancelAnimationFrame(raf.current);
+    },
+    [],
+  );
 
   /** Where each block is, from the drawing as it stands. */
   const measure = useCallback(() => {
@@ -271,14 +430,23 @@ export default function DocumentPane({
     marks.current = laidOut ? measured : [];
   }, []);
 
+  /** Ease to `top` (`documentMotion.ts`), as `cause` asked. */
   const scrollTo = useCallback(
-    (top: number) => {
+    (top: number, cause: MotionCause) => {
       const el = scroller.current;
       if (!el) return;
-      el.scrollTop = Math.max(0, top);
-      report();
+      easeTo(
+        motion.current,
+        top,
+        performance.now(),
+        el.clientHeight,
+        maxTop(),
+        cause,
+        !reducedMotion(),
+      );
+      run();
     },
-    [report],
+    [run],
   );
 
   // The drawing changed (an edit, a picture or a diagram arriving, a new
@@ -292,12 +460,23 @@ export default function DocumentPane({
       if (pendingTo.current !== undefined && marks.current.length > 0) {
         const line = pendingTo.current;
         pendingTo.current = undefined;
-        scrollTo(pixelOf(line));
+        // The first place is taken at once: there is nothing shown to move.
+        const m = motion.current;
+        movedTo(m, Math.min(maxTop(), pixelOf(line)));
+        m.cause = "follow";
+        show();
         return;
       }
       if (marks.current.length === 0) return;
-      if (anchor.current !== undefined) el.scrollTop = pixelOf(anchor.current);
-      report();
+      const m = motion.current;
+      bounded(m, maxTop());
+      // In motion, the motion places it; at rest the line on top stays.
+      if (!moving(m) && anchor.current !== undefined) {
+        const cause = m.cause;
+        movedTo(m, Math.min(maxTop(), pixelOf(anchor.current)));
+        m.cause = cause;
+      }
+      show();
     };
     again();
     const observer = new ResizeObserver(again);
@@ -305,16 +484,17 @@ export default function DocumentPane({
     return () => {
       observer.disconnect();
     };
-  }, [content.text, width, measure, pixelOf, report, scrollTo]);
+  }, [content.text, width, measure, pixelOf, show]);
 
-  // Neovim moved the window's top itself (a search, `:42`): followed.
+  // Neovim moved the window's top itself (a search, `:42`): followed. A top
+  // that is the page's own (`told`) is not.
   useLayoutEffect(() => {
-    if (told.current?.top === place.topline) return;
+    if (place.told || told.current?.top === place.topline) return;
     if (marks.current.length === 0) {
       pendingTo.current = place.topline;
       return;
     }
-    scrollTo(pixelOf(place.topline));
+    scrollTo(pixelOf(place.topline), "neovim");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new top
   }, [place.topline]);
 
@@ -331,19 +511,56 @@ export default function DocumentPane({
       pendingTo.current = scroll.line ?? 1;
       return;
     }
+    const m = motion.current;
+    // A line followed that is the one at the top already (the source
+    // following this drawing, said back): where it is, not its line's top.
+    if (
+      scroll.by === "to" &&
+      lineAtPixel(marks.current, m.to, total(), countRef.current) ===
+        (scroll.line ?? 1)
+    )
+      return;
     const lineHeight =
       parseFloat(getComputedStyle(el).fontSize || "15") * 1.6 || 24;
     scrollTo(
-      scrolledTop(
-        scroll,
-        el.scrollTop,
-        el.clientHeight,
-        el.scrollHeight - el.clientHeight,
-        lineHeight,
-        pixelOf,
-      ),
+      scrolledTop(scroll, m.to, el.clientHeight, maxTop(), lineHeight, pixelOf),
+      scroll.by === "to" ? "follow" : "page",
     );
   }, [scroll, pixelOf, scrollTo]);
+
+  // The wheel: pixel for pixel, a tick a line at least, eased as the
+  // editor's (`documentMotion.ts`). Not passive: the page's own scroll is
+  // not wanted on top of it. Sideways and a pinch are the page's.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const wheel = (event: WheelEvent) => {
+      if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY))
+        return;
+      event.preventDefault();
+      const line =
+        parseFloat(getComputedStyle(el).fontSize || "15") * 1.6 || 24;
+      const dy =
+        event.deltaMode === 1
+          ? event.deltaY * line
+          : event.deltaMode === 2
+            ? event.deltaY * el.clientHeight
+            : event.deltaY;
+      wheelBy(
+        motion.current,
+        dy,
+        performance.now(),
+        line,
+        maxTop(),
+        !reducedMotion(),
+      );
+      run();
+    };
+    el.addEventListener("wheel", wheel, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", wheel);
+    };
+  }, [run]);
 
   // The link the keyboard is on: ringed, and brought into sight.
   const focusLine = place.focus?.line;
@@ -361,7 +578,7 @@ export default function DocumentPane({
     const box = el.getBoundingClientRect();
     const at = link.getBoundingClientRect();
     if (at.top < box.top || at.bottom > box.bottom) {
-      scrollTo(el.scrollTop + (at.top - box.top) - el.clientHeight / 3);
+      scrollTo(el.scrollTop + (at.top - box.top) - el.clientHeight / 3, "page");
     }
   }, [focusLine, focusHref, content.text, scrollTo]);
 
@@ -396,6 +613,7 @@ export default function DocumentPane({
         const box = el.getBoundingClientRect();
         scrollTo(
           el.scrollTop + heading.getBoundingClientRect().top - box.top - 8,
+          "page",
         );
         return;
       }
@@ -408,6 +626,35 @@ export default function DocumentPane({
     () => new PathLinks(actions.resolvePaths, actions.reportFailure),
     [actions],
   );
+
+  /** Copy the selected text, with DevHub's notice. */
+  const copySelection = useCallback((): boolean => {
+    const el = scroller.current;
+    const selection = el ? selectionOf(el) : undefined;
+    if (!selection) return false;
+    void actions.copyText(selection.toString()).catch(actions.reportFailure);
+    return true;
+  }, [actions]);
+
+  /** Let the selection go, and give the keyboard back to Neovim. */
+  const release = useCallback(() => {
+    const el = scroller.current;
+    if (el && selectionOf(el)) window.getSelection()?.removeAllRanges();
+    hostRef.current.refocus();
+  }, []);
+
+  // A click elsewhere lets the selection go.
+  useEffect(() => {
+    const away = (event: MouseEvent) => {
+      const el = scroller.current;
+      if (!el || el.contains(event.target as Node)) return;
+      if (selectionOf(el)) window.getSelection()?.removeAllRanges();
+    };
+    window.addEventListener("mousedown", away, true);
+    return () => {
+      window.removeEventListener("mousedown", away, true);
+    };
+  }, []);
 
   const fg = host.defaults.foreground;
   const bg = host.defaults.background;
@@ -425,14 +672,120 @@ export default function DocumentPane({
       className="nvim-document-scroll conversation-typeset"
       ref={scroller}
       style={style}
-      onScroll={report}
-      onPointerDown={(event) => {
-        // Its window becomes Neovim's current one; the keys stay Neovim's.
+      // The keyboard's while text is selected (⌘C, Esc); Neovim's otherwise.
+      tabIndex={-1}
+      onScroll={() => {
+        const el = scroller.current;
+        if (!el) return;
+        // Not this page's doing: its scroll bar, the page's own find.
+        if (Math.abs(el.scrollTop - setTop.current) > 1) {
+          if (raf.current !== 0) cancelAnimationFrame(raf.current);
+          raf.current = 0;
+          movedTo(motion.current, el.scrollTop);
+          setTop.current = el.scrollTop;
+        }
+        report();
+      }}
+      onMouseDown={(event) => {
         if (event.button !== 0) return;
+        press.current = {
+          x: event.clientX,
+          y: event.clientY,
+          alt: event.altKey,
+        };
+        // An Alt-click is the source's: no selection starts.
+        if (event.altKey) {
+          event.preventDefault();
+          return;
+        }
+        // Its window becomes Neovim's current one; the keys stay Neovim's.
         host.lua("_document_focus", [content.id]);
       }}
-      onPointerUp={() => {
-        host.refocus();
+      onMouseUp={(event) => {
+        if (event.button !== 0) return;
+        const el = scroller.current;
+        // A selection keeps the keyboard here, for ⌘C; a plain click gives
+        // it back to Neovim.
+        if (el && selectionOf(el)) el.focus({ preventScroll: true });
+        else host.refocus();
+      }}
+      onClickCapture={(event) => {
+        const down = press.current;
+        press.current = undefined;
+        const el = scroller.current;
+        const doc = body.current;
+        if (!el || !doc) return;
+        if (event.altKey || down?.alt === true) {
+          // Alt-click: the source's place, for the source to go to.
+          event.preventDefault();
+          event.stopPropagation();
+          const at = sourcePlaceAt(
+            doc,
+            event.target as Element,
+            caretAt(event.clientX, event.clientY),
+            linesRef.current,
+          );
+          if (at)
+            host.lua("_document_source_click", [
+              content.id,
+              at.line,
+              at.col ?? null,
+            ]);
+          return;
+        }
+        // The click that ends a drag (a selection) follows no link.
+        const dragged =
+          down !== undefined &&
+          Math.hypot(event.clientX - down.x, event.clientY - down.y) >= DRAG_PX;
+        if (dragged || (event.detail > 1 && selectionOf(el))) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+      onKeyDown={(event) => {
+        const el = scroller.current;
+        if (!el || !selectionOf(el)) {
+          host.refocus();
+          return;
+        }
+        if (isCopyKey(event.nativeEvent)) {
+          event.preventDefault();
+          copySelection();
+          return;
+        }
+        if (["Shift", "Control", "Alt", "Meta"].includes(event.key)) return;
+        // Esc lets it go; any other key does too, and is Neovim's.
+        release();
+        if (event.key === "Escape") {
+          event.preventDefault();
+          return;
+        }
+        // A character arrives as text in the field focused now; a named key
+        // or a chord is handed to it.
+        const named = event.key.length !== 1 || event.ctrlKey || event.metaKey;
+        const input = document.activeElement;
+        if (named && input instanceof HTMLElement && input !== el) {
+          event.preventDefault();
+          input.dispatchEvent(new KeyboardEvent("keydown", event.nativeEvent));
+        }
+      }}
+      onCopy={(event) => {
+        // The Edit menu's Copy: the selection, with the notice.
+        if (copySelection()) event.preventDefault();
+      }}
+      onContextMenu={(event) => {
+        const el = scroller.current;
+        if (!el || !selectionOf(el)) return;
+        event.preventDefault();
+        void host.bridge
+          .showContextMenu?.({
+            items: [{ id: "copy", label: "Copy" }],
+            at: { x: Math.round(event.clientX), y: Math.round(event.clientY) },
+          })
+          .then((chosen) => {
+            if (chosen === "copy") copySelection();
+          })
+          .catch(actions.reportFailure);
       }}
     >
       <ConversationActionsProvider value={actions}>

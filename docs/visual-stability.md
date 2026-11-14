@@ -124,6 +124,9 @@ items' places in its content.
 - **kept**: an item of a scroller (a transcript's entries) keeps its place
   in the content while it scrolls and grows; frames under a declared
   motion of its own (the follow glide, an arrival rising) are left out.
+- **oneWay**: a scroller (a `gui.document`'s drawing) moves one way for
+  one gesture: no frame goes back, none past where it ends — no torn or
+  in-between frame, no landing correction.
 - **stale** (`fresh`): settled, the editor's picture is what a fresh full
   redraw (`:redraw!`) draws, the rows under the last status line aside
   (`:redraw!` clears the message there in Neovim itself). Both pictures
@@ -186,6 +189,7 @@ and screencast pictures).
 | `picker-list` | the snacks list while a query is typed, and its list wheeled (stale) |
 | `terminal-copy-mode` | a pane's output streaming while it is scrolled back in copy mode, then `q` to the bottom |
 | `resize-mid-scroll` | the window resized live while the wheel scrolls |
+| `document-preview` | a Markdown preview (`gui.document`, markdown-preview.devhub) of a long file of uneven blocks: wheel bursts and keys in it, the source leading, and a selection dragged in its text (oneWay, kept; at rest the source's top line is the preview's) |
 | `conversation-scroll` | a GUI Agent's answer streaming while the transcript is wheeled up and down (kept) |
 | `pointer` | not recorded but timed (`pointer.mjs`): the pointer's answers, from the input event to the first frame that shows them — a click's caret, a click into another window, a tree row's focus and hover, a window border and a pane boundary dragged, a terminal selection and Visual's band dragged, a completion row clicked, the pointer's shapes; each within two frames of the rate (34 ms at 1x), Neovim's wheel from rest reported (`docs/neovim-editor.md`, "The pointer"); go to definition against a fake language server (`fixture/fake-lsp.mjs`): the link after Alt goes down and after a move with it held (timed), the hand over it, the link gone in the frame Alt goes up, an Alt-click on the definition in Normal mode with `<C-o>` back (`docs/neovim-editor.md`, "Go to definition with the pointer") |
 | `startup` | not recorded but timed (`startup.mjs`), on DevHubs of its own: from an action to its first correct frame, stage by stage — DevHub launched with a Workspace open, `devhub <folder>`, a Workspace's row clicked, `nvim README.md` typed in a terminal (twice), `devhub <file>` cold and warm, the snacks picker and nvim-tree opened (first, lazily loaded, and again), a GUI Agent's conversation. The stages are main's (`DEVHUB_STARTUP_TRACE=1`: `main/diagnostics/startupTrace.ts`) and the pages' (`performance` marks, `shell/startupMarks.ts`) on one clock; all of it lands in `startup.json`. Thresholds only on the figures that hold still from run to run. `node test/stability/startup.mjs --slow machine` (Linux, root) runs the whole app in a cgroup with 1/rate of the CPU instead of throttling the pages; `--config <dir> --lazy <dir>` runs it on a person's own Neovim config |
