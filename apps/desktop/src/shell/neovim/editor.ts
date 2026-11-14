@@ -891,6 +891,15 @@ export class NeovimEditor {
    * (rapid <C-d> in the stability suite's coherence check).
    */
   private unflushed: readonly unknown[] = [];
+  private flushes = 0;
+
+  /**
+   * How many of Neovim's flushes have been taken in: what Lua said before
+   * a flush is about that flush or a later one (`NeovimApp`'s placements).
+   */
+  flushCount(): number {
+    return this.flushes;
+  }
 
   redraw(batches: readonly unknown[]): void {
     const { flushed, rest } = takeFlushed(this.unflushed, batches);
@@ -910,7 +919,10 @@ export class NeovimEditor {
     const defaults = this.state.defaults;
     this.stage("first-redraw");
     applyRedraw(this.state, batches, this.pending);
-    if (this.pending.flushed) this.stage("first-flush");
+    if (this.pending.flushed) {
+      this.stage("first-flush");
+      this.flushes += 1;
+    }
     if (
       this.state.defaults !== defaults &&
       (this.state.defaults.background !== defaults.background ||

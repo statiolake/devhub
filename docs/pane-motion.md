@@ -99,6 +99,20 @@ itself, and the resting path draws the frame after the last.
   its window's group, at the inner clip's foot and as wide as the clip,
   so it follows the bottom edge and the width as the window grows or
   shrinks (`placeFooter`). A gone window keeps a copy of its last one.
+- **What the page draws over a window** (a `gui.view` such as nvim-tree's,
+  a framed view's chrome, a `gui.document`: its `over` clips) is a part
+  of its window's group, so a new window comes with its view from the
+  first frame. A gone window keeps a copy of it over its last picture
+  (`GridPainter.overPictures`, `domPicture.ts`: the elements cloned, a
+  canvas's pixels and the scroll offsets copied), taken before the flush
+  that closes it is drawn: React lets go of the view as the window closes,
+  and the copy is nobody's. The view itself stays on its window until that
+  flush: Lua takes it off as the window closes (`view_clear`,
+  `document_clear`, a placement without it), before Neovim flushes the
+  close, and the page holds that event to Neovim's next flush
+  (`NeovimApp`'s placements; a window that stays shows its new buffer in
+  it). So a window leaves as it was on screen, never as the buffer's
+  cells under its view.
   Grid 1 is not drawn: what is under the groups is the editor's ground.
   (Before, the row of grid 1 under each window was copied into a strip.)
 - **The cursor** is in its pane's content: on tmux it is moved into the
@@ -363,7 +377,8 @@ Each pane has one of three roles, matched by identity (tmux pane id
   the first frame, under the keep panes, and is uncovered as they move
   off it. It does not slide or scale.
 - **gone**: only in the old layout. Its last picture (the canvas it
-  already has, kept, not copied) stays at its last visual rectangle
+  already has, kept, not copied, and a copy of what the page drew over
+  it) stays at its last visual rectangle
   under the keep panes, which cover it as they grow. It is dropped when
   the transition ends.
 

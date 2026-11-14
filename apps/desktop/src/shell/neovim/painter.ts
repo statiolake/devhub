@@ -31,6 +31,7 @@ import type {
 } from "./redraw";
 import type { CellMetrics } from "./mouse";
 import type { CellSpan } from "./cursorInk";
+import { domPicture } from "./domPicture";
 import { pinnedRows, type BufposAnchor, type FloatRef } from "./riders";
 import { strokesFor, type Stroke, type StrokeKind } from "./strokes";
 import {
@@ -1084,6 +1085,29 @@ export class GridPainter {
         copy.height,
       );
     return copy;
+  }
+
+  /**
+   * A copy of what the page lays over a grid as drawn now — its views, a
+   * framed view's chrome and shadow, its riders (`over`), each clip where
+   * it is, in the surface's pixels: with its grid's `picture`, the window
+   * as it was on screen, for a window that goes (`WindowMotion`). The
+   * page's own elements are its trees' (React's), which let go of them as
+   * the window closes, so they are copied, never carried off. The cursor
+   * is not copied: a window that goes has none.
+   */
+  overPictures(grid: number): HTMLElement[] {
+    const out: HTMLElement[] = [];
+    for (const entry of this.overs.values()) {
+      if (entry.grid !== grid || entry.part === "cursor") continue;
+      if (!entry.clip.isConnected || entry.clip.style.display === "none")
+        continue;
+      if (entry.inner.childElementCount === 0) continue;
+      const copy = domPicture(entry.clip);
+      copy.classList.add("nvim-over-picture");
+      out.push(copy);
+    }
+    return out;
   }
 
   /** How wide a boundary between windows is drawn (`placePanes`). */

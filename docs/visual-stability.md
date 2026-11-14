@@ -155,12 +155,16 @@ two shots to see the frame that should not have been:
 
 ## The scenarios
 
-`scenarios.mjs`, and those in motion `scenariosMotion.mjs`. Each runs at 6x and at 1x.
+`scenarios.mjs`, those in motion `scenariosMotion.mjs`, and a view's window
+coming and going `scenariosViewClose.mjs`. Each runs at 6x and at 1x. A
+step's `check(ctx, recorded)` sees the recording too (each page's frames
+and screencast pictures).
 
 | scenario | steps |
 | --- | --- |
 | `picker` | snacks picker open, preview off, preview on, the window resized with it open (live), query to Normal, close |
 | `tree` | nvim-tree open (a split: its pane motion declared), a folder expanded, `<C-d>` under the sticky header, collapsed, closed |
+| `view-close` | a view's window going and coming with its pane motion: nvim-tree opened with F2, closed with `q`, toggled four times 60 ms apart; the snacks picker closed; a `gui.document` Markdown preview closed with `q`. `check`: no screencast picture shows the buffer's cells where the view is (`cellBands`): against three pictures at rest — the view, the view hidden (its cells), the window gone — a column band whose cells-only pixels are mostly the cells' fails |
 | `blink-insert` | blink-ui's insert menu opening, the selection moving, closing |
 | `cmdline` | `:` opening, a character typed (blink-ui's command-line menu), Tab, Escape |
 | `float` | a float with a rounded border and a title (B′), closed; two floats whose borders are fused, closed; the cursor parked in each corner cell of a borderless float (`check`: the cell's outer strips, where the frame's line is, as without the cursor), closed |
@@ -230,6 +234,7 @@ DevHub's own, diagnosed and open:
 | `cmdline/close` | blink's menu gone a frame before the command line | a popup closed on the command line goes with Neovim's next flush |
 | `theme` | light chrome round a dark editor | the palette and the terminal's colours go on with the Neovims' recolour; the paint theme asked at once |
 | `sidebar-collapse` (1x) | the old grid at the new size | the view waits off the window until Neovim has redrawn |
+| `view-close/tree-close-q`, `tree-toggle-fast`, `document-close` | nvim-tree's own text (a document's Markdown source) where the view was, at rest for a frame and then for the whole close motion | a view taken off a window still open waits for Neovim's next flush; a gone window's motion carries a copy of what the page drew over it (`overPictures`) |
 | `scroll-burst` | rows of the old view over the command line (`<C-u>`) and above the window (`<C-d>`), repeated `<C-d>`/`<C-u>` | the ghost is kept in its window's scroll port, never left beside it in the level |
 | `scroll-burst` (coherent) | the grid scrolled with the rows below it blank (the ghost's old lines through them), one with only its line number | a redraw is taken in at its flush: what comes after a flush waits for its own |
 | `scroll/wheel-fast-*` | the display going back up to 7 px to a line at rest | at rest the display goes on to the next line the way it was going (`restLines`) |

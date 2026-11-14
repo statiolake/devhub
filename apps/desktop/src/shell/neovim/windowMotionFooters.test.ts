@@ -3,7 +3,8 @@
 /**
  * A window's footer (the element drawn in its status line row) moves with
  * its window: at its group's clip's foot, as wide as the clip, frame by
- * frame; a window that goes keeps a copy of its footer in its group.
+ * frame; a window that goes keeps a copy of its footer in its group, and
+ * a copy of what the page drew over it (its view) over its picture.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +31,8 @@ function fakePainter() {
   const windows = new Map<number, MotionGroup>();
   const footers = new Map<number, HTMLElement>();
   const pictures = new Map<number, HTMLElement>();
+  /** What the page drew over each window (a view), as the painter copies it. */
+  const overs = new Map<number, HTMLElement[]>();
   const footerOf = (grid: number) => {
     let el = footers.get(grid);
     if (!el) {
@@ -48,6 +51,12 @@ function fakePainter() {
       copy.classList.add("nvim-footer-picture");
       pictures.set(grid, copy);
       return copy;
+    },
+    overPictures: (grid: number) => {
+      const copy = document.createElement("div");
+      copy.className = "nvim-clip nvim-clip-covers nvim-over-picture";
+      overs.set(grid, [...(overs.get(grid) ?? []), copy]);
+      return [copy];
     },
     groundOf: () => undefined,
     hairline: () => 0.5,
@@ -71,6 +80,7 @@ function fakePainter() {
     windows,
     footers,
     pictures,
+    overs,
   };
 }
 
@@ -150,6 +160,13 @@ describe("a window's footer while windows move", () => {
     expect(gone).toBeDefined();
     expect(gone?.parentElement).toBe(fake.windows.get(2)?.clipB);
     expect(fake.footers.get(2)?.parentElement ?? null).toBeNull();
+    // What the page drew over it (its view), copied once, before the flush
+    // was drawn, and carried in its group's content: it leaves with it.
+    expect(fake.overs.get(2)).toHaveLength(1);
+    expect(fake.overs.get(2)?.[0]?.parentElement).toBe(
+      fake.windows.get(2)?.content,
+    );
+    expect(fake.overs.has(3)).toBe(false);
     // The staying window's footer: at its clip's foot (the surface's last
     // row but the command line's two), as wide as the clip is at the start
     // (its old width, half a cell into the gap on its left), growing.

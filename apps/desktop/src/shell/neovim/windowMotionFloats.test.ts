@@ -35,6 +35,7 @@ function fakePainter() {
     picture: () => undefined,
     footerOf: () => undefined,
     footerPicture: () => undefined,
+    overPictures: () => [],
     groundOf: () => undefined,
     hairline: () => 0.5,
     hideBoundaries: () => undefined,

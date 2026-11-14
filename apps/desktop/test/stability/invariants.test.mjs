@@ -2,7 +2,7 @@
 // Each case is the shape of a fault the suite found or was built to find.
 import { describe, expect, it } from "vitest";
 import { check } from "./invariants.mjs";
-import { decodePng, regionDigest } from "./pixels.mjs";
+import { cellBands, decodePng, regionDigest } from "./pixels.mjs";
 import { deflateSync } from "node:zlib";
 
 const frame = (els, extra = {}) => ({
@@ -158,5 +158,44 @@ describe("the picture", () => {
     expect(regionDigest(image, [1, 0, 1, 1])).not.toBe(
       regionDigest(other, [1, 0, 1, 1]),
     );
+  });
+});
+
+describe("a view's region never shows its buffer's cells (cellBands)", () => {
+  // 32x8 pictures in one colour each, the cells' own pixels in a column band.
+  const image = (fill, band) => {
+    const width = 32;
+    const height = 8;
+    const data = Buffer.alloc(width * height * 4);
+    for (let y = 0; y < height; y++)
+      for (let x = 0; x < width; x++) {
+        const o = (y * width + x) * 4;
+        const c = band && x >= band[0] && x < band[1] ? band[2] : fill;
+        data[o] = c[0];
+        data[o + 1] = c[1];
+        data[o + 2] = c[2];
+        data[o + 3] = 255;
+      }
+    return { width, height, data };
+  };
+  const view = image([30, 30, 60]);
+  const behind = image([10, 10, 10]);
+  // The buffer's text: bright in the second band only.
+  const cells = image([10, 10, 10], [16, 32, [220, 220, 220]]);
+  const refs = { view, cells, behind };
+  const rect = [0, 0, 32, 8];
+
+  it("passes the view, what is behind, and a mix of the two", () => {
+    expect(cellBands(view, refs, rect, 10)).toEqual([]);
+    expect(cellBands(behind, refs, rect, 10)).toEqual([]);
+    expect(
+      cellBands(image([30, 30, 60], [16, 32, [10, 10, 10]]), refs, rect, 10),
+    ).toEqual([]);
+  });
+
+  it("finds the band where the cells show", () => {
+    expect(cellBands(cells, refs, rect, 10)).toEqual([
+      { x: 16, own: 128, shown: 128 },
+    ]);
   });
 });

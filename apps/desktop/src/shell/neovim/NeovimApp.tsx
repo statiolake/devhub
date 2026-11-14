@@ -468,10 +468,22 @@ export function NeovimSurface({
      * - an event that lets go of a frame whose windows are still in the
      *   layout being painted waits for the paint that draws them closed
      *   (Lua says so as they close, before Neovim flushes the close);
+     * - an event that takes a view or a document off a window still in
+     *   the layout being painted waits for Neovim's next flush: a window
+     *   that closes is drawn closed by it — the view is on it until then,
+     *   and leaves with it, copied into its pane's motion
+     *   (`WindowMotion`) — and a window that stays shows its new buffer
+     *   in it;
      * - nothing waits longer than SETTLE_WAIT_MS (a letting-go,
      *   LETTING_GO_CAP_MS).
      */
-    let placements: { kind: string; payload: unknown; at: number }[] = [];
+    let placements: {
+      kind: string;
+      payload: unknown;
+      at: number;
+      /** Neovim's flushes taken in when it came (`flushCount`). */
+      flushes: number;
+    }[] = [];
     let layersNow = NO_LAYERS;
     editor.setPlacements((open, regathering) => {
       if (placements.length === 0) return;
@@ -494,6 +506,16 @@ export function NeovimSurface({
           (win) => !kept.has(win) && open.has(win),
         );
         if (lettingGo && now - p.at <= LETTING_GO_CAP_MS) break;
+        const covered = coveredWins(next);
+        const uncovering = [...coveredWins(state)].some(
+          (win) => !covered.has(win) && open.has(win),
+        );
+        if (
+          uncovering &&
+          editor.flushCount() === p.flushes &&
+          now - p.at <= LETTING_GO_CAP_MS
+        )
+          break;
         state = next;
         taken += 1;
       }
@@ -630,6 +652,7 @@ export function NeovimSurface({
           kind: event.kind,
           payload: event.payload,
           at: performance.now(),
+          flushes: editor.flushCount(),
         });
         editor.placementsCame();
         return;
@@ -1480,6 +1503,18 @@ function drawnFrameWins(layers: Layers): Set<number> {
       layers.views.get(place.id)?.frame ? place.wins : [],
     ),
   );
+}
+
+/** The windows a view or a document covers: placed, with its content. */
+function coveredWins(layers: Layers): Set<number> {
+  return new Set([
+    ...layers.placedViews.flatMap((place) =>
+      layers.views.get(place.id) ? [place.win] : [],
+    ),
+    ...layers.placedDocuments.flatMap((place) =>
+      layers.documents.get(place.id) ? [place.win] : [],
+    ),
+  ]);
 }
 
 /**

@@ -9,7 +9,10 @@
  * grid (or scroll port), what rides it and its cursor, and its footer (the
  * element drawn in its status line row, `placeFooters`) at the clip's foot,
  * as wide as the clip. A window that is gone is its last picture, and a
- * copy of its footer, covered as its neighbours grow over it. Its content's origin follows its text: the rows
+ * copy of its footer, covered as its neighbours grow over it; and over
+ * that picture a copy of what the page drew over its cells (a view, a
+ * framed view's chrome, a document: `GridPainter.overPictures`), so it
+ * leaves as it was on screen, never as the buffer's cells under a view. Its content's origin follows its text: the rows
  * `topline` moved (`win_viewport`, before and after) are rows the content
  * moved, so a window that kept its cursor line in view by scrolling moves
  * its lines with the edge rather than under it.
@@ -24,6 +27,7 @@
  */
 
 import { boundariesOf } from "./chrome";
+import { putPicture } from "./domPicture";
 import { PART_Z, type GridPainter, type MotionGroup } from "./painter";
 import {
   classify,
@@ -152,6 +156,8 @@ export class WindowMotion {
         readonly footers: ReadonlyMap<number, HTMLElement>;
         /** Gone windows' last pictures. */
         readonly pictures: ReadonlyMap<number, HTMLCanvasElement>;
+        /** What the page drew over each gone window, copied (`overPictures`). */
+        readonly overs: ReadonlyMap<number, readonly HTMLElement[]>;
         readonly grounds: ReadonlyMap<number, string>;
         readonly size: { readonly width: number; readonly height: number };
         readonly extent: { readonly width: number; readonly height: number };
@@ -243,6 +249,7 @@ export class WindowMotion {
     // A gone window is its last picture and its last footer: kept from
     // the transition before, or copied now, before this flush draws.
     const pictures = new Map<number, HTMLCanvasElement>();
+    const overs = new Map<number, readonly HTMLElement[]>();
     const footers = new Map<number, HTMLElement>();
     const laid = new Map<number, { x: number; y: number }>();
     const grounds = new Map<number, string>();
@@ -251,6 +258,10 @@ export class WindowMotion {
       const rest = seen.rests.get(grid);
       const picture = m?.pictures.get(grid) ?? this.painter.picture(grid);
       if (picture !== undefined) pictures.set(grid, picture);
+      // Copied now, before this flush draws: its draw takes the gone
+      // grid's clips away, and with them what the page drew in them.
+      const over = m?.overs.get(grid) ?? this.painter.overPictures(grid);
+      if (over.length > 0) overs.set(grid, over);
       // A copy: the live footer, which this flush takes away, is the
       // painter's (and its tree the page's), never carried off.
       const kept = m?.footers.get(grid);
@@ -337,6 +348,13 @@ export class WindowMotion {
       picture.style.top = `${String(at.y)}px`;
       this.painter.motionGroup(grid, 1).content.append(picture);
     }
+    // Over its picture, each where it was (in the surface's pixels, as the
+    // parts in a group's content are), at its own part's z.
+    for (const [grid, copies] of overs) {
+      if (!laid.has(grid)) continue;
+      const content = this.painter.motionGroup(grid, 1).content;
+      for (const copy of copies) putPicture(content, copy);
+    }
     for (const [grid, footer] of footers) {
       if (windows.has(grid)) continue;
       this.painter.motionGroup(grid, 1).clipB.append(footer);
@@ -376,6 +394,7 @@ export class WindowMotion {
       laid,
       footers,
       pictures,
+      overs,
       grounds,
       size: { width: this.root.clientWidth, height: this.root.clientHeight },
       extent: {

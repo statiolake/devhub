@@ -152,6 +152,7 @@ import { runPointer } from "./pointer.mjs";
 import { describe as describeStartup, runStartup } from "./startup.mjs";
 import { SCENARIOS, editorAtRest } from "./scenarios.mjs";
 import { MOTION_SCENARIOS } from "./scenariosMotion.mjs";
+import { VIEW_CLOSE_SCENARIOS } from "./scenariosViewClose.mjs";
 
 // Pages by name. `pane` is the terminal page of the Workspace on screen (each
 // Workspace has its own; the others are hidden).
@@ -219,9 +220,11 @@ async function main() {
         process.once("SIGINT", resolve).once("SIGTERM", resolve),
       );
     }
-    const scenarios = [...SCENARIOS, ...MOTION_SCENARIOS].filter(
-      (s) => !args.only || args.only.includes(s.name),
-    );
+    const scenarios = [
+      ...SCENARIOS,
+      ...MOTION_SCENARIOS,
+      ...VIEW_CLOSE_SCENARIOS,
+    ].filter((s) => !args.only || args.only.includes(s.name));
     for (const scenario of scenarios) {
       for (const rate of args.rates) {
         const scenarioStarted = Date.now();
@@ -523,11 +526,13 @@ async function runStep(ctx, scenario, step, rate, artifacts) {
     );
     writeFileSync(join(dir, "violations.txt"), `${problems.join("\n")}\n`);
   }
-  // What the step checks of the settled page itself (`check(ctx)`: a list
-  // of problems), after the recording's rules.
+  // What the step checks of the settled page itself (`check(ctx, recorded)`:
+  // a list of problems; `recorded` each page's frames and pictures), after
+  // the recording's rules.
   if (step.check) {
     try {
-      for (const problem of await step.check(ctx)) problems.push(problem);
+      for (const problem of await step.check(ctx, recorded))
+        problems.push(problem);
     } catch (error) {
       problems.push(`the step's check failed: ${error.message}`);
     }

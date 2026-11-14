@@ -159,3 +159,45 @@ export function rowDigests(image, rect) {
   }
   return out;
 }
+
+// The view-close check (scenariosViewClose.mjs): column bands, and how
+// near a channel is to count as the same colour or as another.
+const BAND = 16; // device px wide
+const NEAR = 10; // a channel this close is the same colour
+const FAR = 40; // a channel this far is another colour
+
+const at = (image, x, y) => (y * image.width + x) * 4;
+const diff = (a, oa, b, ob) =>
+  Math.max(
+    Math.abs(a.data[oa] - b.data[ob]),
+    Math.abs(a.data[oa + 1] - b.data[ob + 1]),
+    Math.abs(a.data[oa + 2] - b.data[ob + 2]),
+  );
+
+/**
+ * The column bands of `rect` in which `frame` shows the cells: of the
+ * pixels where `cells` differs from both `view` and `behind`, at least
+ * half as `cells` has them (and at least `min` of them).
+ */
+export function cellBands(frame, refs, rect, min = 40) {
+  const { view, cells, behind } = refs;
+  const [rx, ry, rw, rh] = rect;
+  const x1 = Math.min(rx + rw, frame.width, cells.width);
+  const y1 = Math.min(ry + rh, frame.height, cells.height);
+  const out = [];
+  for (let bx = Math.max(0, rx); bx < x1; bx += BAND) {
+    let own = 0;
+    let shown = 0;
+    for (let y = Math.max(0, ry); y < y1; y++) {
+      for (let x = bx; x < Math.min(bx + BAND, x1); x++) {
+        const o = at(cells, x, y);
+        if (diff(cells, o, view, o) < FAR || diff(cells, o, behind, o) < FAR)
+          continue;
+        own += 1;
+        if (diff(frame, at(frame, x, y), cells, o) <= NEAR) shown += 1;
+      }
+    }
+    if (own >= min && shown * 2 >= own) out.push({ x: bx, own, shown });
+  }
+  return out;
+}
