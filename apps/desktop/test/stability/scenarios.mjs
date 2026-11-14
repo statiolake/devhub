@@ -17,6 +17,7 @@
 // `ctx` (run.mjs) has the app, the pages, keys, clicks, the managed
 // Neovim's RPC and the Workspaces' paths.
 
+import { PROPS } from "./invariants.mjs";
 import { decodePng, regionDigest } from "./pixels.mjs";
 
 // What a Neovim surface draws, by role (pane.html). Rows and items are capped:
@@ -824,8 +825,12 @@ export const SCENARIOS = [
         spec: {
           // Text grows: a block's height and its own text may change, its
           // place and width may not (nothing pushed, rule 1).
-          // The Smart Buttons' box follows the turn (idle, running, idle):
-          // two causes in this one step, so it is not held to one change.
+          // The Smart Buttons follow the turn (idle, running, idle): two
+          // causes in this one step, so they are not held to one change.
+          // Their triggers are the agent's status and the repository's
+          // state: whether any holds while the answer runs (a change left
+          // uncommitted by an earlier step) decides whether the row goes
+          // away and comes back, so it is not compared at all.
           // The person's message is quieter while it is on its way to the
           // CLI (`data-sending`), until the CLI's echo: a designed state,
           // its second form the echo's, not the send's.
@@ -836,7 +841,7 @@ export const SCENARIOS = [
             entry: ["r"],
             transcript: ["r"],
             scroll: ["r"],
-            smart: ["r"],
+            smart: PROPS,
           },
           anchored: ["block", "assistant", "user"],
         },
