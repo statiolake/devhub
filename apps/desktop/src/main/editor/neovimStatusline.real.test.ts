@@ -43,7 +43,7 @@ async function attached() {
 	const socket = join(sockets, "n.sock");
 	const child = spawn(
 		TEST_NVIM as string,
-		["--headless", "--clean", "--listen", socket],
+		["--headless", "--clean", "-n", "--listen", socket],
 		{ stdio: "ignore" },
 	);
 	children.push(child);
