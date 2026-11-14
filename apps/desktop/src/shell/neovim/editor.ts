@@ -916,9 +916,10 @@ export class NeovimEditor {
       (this.state.defaults.background !== defaults.background ||
         this.state.defaults.foreground !== defaults.foreground)
     ) {
-      // A colorscheme changed: its grounds are asked at once, and the
-      // paint waits for them (`themeWaiting`).
-      this.askThemeNow();
+      // A colorscheme changed: its grounds are what Lua pushed before
+      // this redraw (`offerTheme`), taken in at its flush; with none, they
+      // are asked at once, and the paint waits for them (`themeWaiting`).
+      if (this.offeredTheme === undefined) this.askThemeNow();
       if (this.recolours.length > 0) this.recoloured = true;
     }
     if (this.pending.flushed && this.recoloured) {
@@ -938,15 +939,40 @@ export class NeovimEditor {
       this.painter.setStatusline(this.statuslineAtFlush);
       this.statuslineAtFlush = undefined;
     }
+    // The theme Lua pushed before this flush's redraw: its grounds with
+    // its cells, in the paint that follows.
+    let themed = false;
+    if (this.pending.flushed && this.offeredTheme !== undefined) {
+      const offered = this.offeredTheme;
+      this.offeredTheme = undefined;
+      // A recolour Neovim flushed in parts (the defaults first, the
+      // groups after) has been waiting since its first part: it ends
+      // with this flush, the one the push came before — its last.
+      if (this.themeWaiting && this.themeAnswer !== undefined)
+        this.themeAnswer(offered);
+      else themed = this.painter.setTheme(offered);
+    }
     if (this.pending.flushed) this.hold.flushed();
-    if (this.pending.flushed && this.frame === 0) {
+    if (this.pending.flushed && (this.frame === 0 || themed)) {
+      if (this.frame !== 0) cancelAnimationFrame(this.frame);
       this.frame = requestAnimationFrame(() => {
         this.frame = 0;
         this.commit(() => {
-          this.paint();
+          this.paint(themed);
         });
       });
     }
+  }
+
+  /**
+   * The paint theme as Lua pushed it (`PAINT_THEME_EVENT`, at the attach
+   * and at each `ColorScheme`): before the redraw it goes with, which takes
+   * it in at its flush — a paint waiting on its question then too, not now:
+   * the cells of that flush are the ones the theme is of.
+   */
+  offerTheme(theme: PaintTheme): void {
+    if (this.disposed) return;
+    this.offeredTheme = theme;
   }
 
   /** Where Lua says the windows are: places grids Neovim did not. */
@@ -1293,6 +1319,10 @@ export class NeovimEditor {
 
   /** A colorscheme's grounds are asked for, and the paint waits for them. */
   private themeWaiting = false;
+  /** What ends the wait (`askThemeNow`), while it waits. */
+  private themeAnswer: ((theme: PaintTheme) => void) | undefined;
+  /** Pushed by Lua, for the flush it goes with (`offerTheme`). */
+  private offeredTheme: PaintTheme | undefined;
 
   /**
    * Ask the paint theme now, not in 120 ms (`askTheme`), and hold the
@@ -1309,6 +1339,7 @@ export class NeovimEditor {
       if (this.disposed || asked !== this.themeAsks || !this.themeWaiting)
         return;
       this.themeWaiting = false;
+      this.themeAnswer = undefined;
       if (theme !== undefined) this.painter.setTheme(theme);
       // Everything again, in the new colours and on the new grounds.
       if (this.frame !== 0) cancelAnimationFrame(this.frame);
@@ -1317,6 +1348,9 @@ export class NeovimEditor {
         this.paint(true);
       });
     };
+    // Lua's push answers it as well as the question, at its flush
+    // (`offerTheme`).
+    this.themeAnswer = done;
     window.setTimeout(() => {
       done(undefined);
     }, SETTLE_WAIT_MS);

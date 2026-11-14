@@ -10,7 +10,7 @@
  */
 
 import type { GridBox, NeovimUiState } from "./redraw";
-import { KINDS, KIND_GROUPS, kindGroup, type Kind } from "./kinds";
+import { KINDS, kindGroup, type Kind } from "./kinds";
 
 /**
  * What the painter knows of the colorscheme beyond the grid's own colours,
@@ -100,51 +100,9 @@ export const NO_THEME: PaintTheme = {
   cmdheight: 1,
 };
 
-/**
- * Asked with `nvim_exec_lua` (`nvim_get_hl`): each group's colours,
- * links followed; `cmdheight`; the global `fillchars` and each window's
- * of the tab page. Nothing of any plugin: DevHub knows Neovim, not what
- * the person installed in it.
- */
-export const THEME_LUA = `local names = ...
-local out = { groups = {}, wins = {}, cmdheight = vim.o.cmdheight, laststatus = vim.o.laststatus, fillchars = vim.go.fillchars }
-for _, name in ipairs(names) do
-  local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
-  if ok then out.groups[name] = hl end
-end
-out.grounds = {}
-local function bg(name)
-  local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
-  return ok and hl.bg or nil
-end
-for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-  out.wins[tostring(win)] = vim.wo[win].fillchars
-  local map = {}
-  for from, to in vim.wo[win].winhighlight:gmatch('([^,:]+):([^,]+)') do map[from] = to end
-  out.grounds[tostring(win)] = { normal = bg(map.Normal or 'Normal'), nc = bg(map.NormalNC or 'NormalNC') }
-end
-return out`;
-
-export const THEME_GROUPS: readonly string[] = [
-  "Normal",
-  "NormalFloat",
-  "FloatBorder",
-  "StatusLine",
-  "WinSeparator",
-  "Comment",
-  "DiagnosticInfo",
-  "DiagnosticWarn",
-  "DiagnosticError",
-  "DiagnosticOk",
-  "Pmenu",
-  "PmenuSel",
-  "PmenuKind",
-  "PmenuExtra",
-  "PmenuKindSel",
-  "PmenuExtraSel",
-  "Visual",
-  ...KIND_GROUPS,
-];
+// What the paint theme is asked with, and pushed by: Lua's, in `src/ipc`
+// (the setup pushes it on `ColorScheme`, `neovimUi.ts`).
+export { THEME_GROUPS, THEME_LUA } from "../../ipc/neovimPaintTheme";
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)

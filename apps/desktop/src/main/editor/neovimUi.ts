@@ -15,6 +15,10 @@
  * waits on them. See `docs/neovim-editor.md`.
  */
 
+import {
+	PAINT_THEME_EVENT,
+	PAINT_THEME_FUNCTION_LUA,
+} from "../../ipc/neovimPaintTheme.js";
 import { startupTrace } from "../diagnostics/startupTrace.js";
 import { MsgpackExt, decode } from "./msgpack.js";
 import { DECOR_LUA } from "./neovimDecor.js";
@@ -495,6 +499,24 @@ function M.overlay(opts)
     pointer = opts.pointer,
     held = opts.held == true,
   })
+end
+
+-- The paint theme, pushed (src/ipc/neovimPaintTheme.ts): now, before this
+-- UI's first redraw, and at each ColorScheme, before the redraw that shows
+-- it, so the page paints a colorscheme's cells on its grounds without
+-- asking Neovim for them first. Last of the ColorScheme autocommands at
+-- the time (the config's ran first), as the page's own question was.
+do
+${PAINT_THEME_FUNCTION_LUA}
+  local function push_paint_theme()
+    local ok, theme = pcall(paint_theme, paint_theme_groups)
+    if ok then M._event("${PAINT_THEME_EVENT}", theme) end
+  end
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    group = vim.api.nvim_create_augroup("devhub_gui_paint_theme", { clear = true }),
+    callback = push_paint_theme,
+  })
+  push_paint_theme()
 end
 
 -- vim.ui.select and vim.ui.input in DevHub's quick pick (docs/native-picker.md):

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { familyOf, kindOf, markPath } from "./kinds";
+import { KIND_GROUPS, familyOf, kindOf, markPath } from "./kinds";
+import { THEME_GROUPS } from "../../ipc/neovimPaintTheme";
 import { themeOf } from "./chrome";
 
 describe("a completion kind", () => {
@@ -34,5 +35,12 @@ describe("a completion kind", () => {
     expect(theme.kinds?.colours.get("Method")).toBe(0x333333);
     expect(theme.kinds?.colours.has("Field")).toBe(false);
     expect(theme.kinds).toEqual({ colours: new Map([["Method", 0x333333]]) });
+  });
+});
+
+describe("the paint theme's groups", () => {
+  it("ask every group a completion kind is coloured by", () => {
+    // `THEME_GROUPS` is Lua's list too (`src/ipc`), spelled out there.
+    for (const group of KIND_GROUPS) expect(THEME_GROUPS).toContain(group);
   });
 });

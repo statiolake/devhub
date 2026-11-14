@@ -41,6 +41,8 @@
  * terminal or another Neovim.
  */
 
+import { PAINT_THEME_EVENT } from "../../ipc/neovimPaintTheme";
+import { themeOf } from "./chrome";
 import { startupMark } from "../startupMarks";
 import {
   useCallback,
@@ -506,6 +508,11 @@ export function NeovimSurface({
       // scrolled when the placement came, not when it is drawn.
       const scrolled = editor.scrolledRows();
       const rowsOf = (win: number) => scrolled.get(win) ?? 0;
+      if (event.kind === PAINT_THEME_EVENT) {
+        // The paint theme, pushed by Lua before the redraw it goes with.
+        editor.offerTheme(themeOf(event.payload));
+        return;
+      }
       if (event.kind === "quick_pick") {
         // vim.ui.select / vim.ui.input: put to the person in DevHub's quick
         // pick; Lua's callback runs with the answer (docs/native-picker.md).

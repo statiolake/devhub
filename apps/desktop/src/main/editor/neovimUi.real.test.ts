@@ -29,6 +29,7 @@ import {
 	type NeovimUiState,
 } from "../../shell/neovim/redraw.js";
 import { floatLabelsOf } from "../../shell/neovim/frame.js";
+import { PAINT_THEME_EVENT } from "../../ipc/neovimPaintTheme.js";
 import { TEST_NVIM } from "./testNeovim.js";
 
 const NVIM = TEST_NVIM;
@@ -909,6 +910,62 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		await h.ui.request("nvim_win_set_config", [win, { title: " Grep " }]);
 		await h.until(() => float()?.wantsLabels === true, "the new title");
 		h.ui.client.close();
+	});
+
+	it("pushes its paint theme before the first redraw, and at a ColorScheme before the redraw that shows it", async () => {
+		const client = await startNvim();
+		/** The pushed themes' Normal grounds and the flushes, in the order they came. */
+		const order: string[] = [];
+		const state = initialUiState();
+		const sink: NeovimUiSink = {
+			redraw: (batches) => {
+				if (applyRedraw(state, batches).flushed)
+					order.push(`flush ${String(state.defaults.background)}`);
+			},
+			guiWindows: () => undefined,
+			guiOpen: () => undefined,
+			guiClose: () => undefined,
+			guiSend: () => undefined,
+			guiEvent: (kind, payload) => {
+				if (kind !== PAINT_THEME_EVENT) return;
+				const bg = (
+					payload as { groups?: { Normal?: { bg?: number } } } | undefined
+				)?.groups?.Normal?.bg;
+				order.push(`theme ${String(bg)}`);
+			},
+		};
+		const ui = new NeovimUi(client, {
+			read: () => Promise.resolve(""),
+			write: () => undefined,
+		});
+		await ui.attach(sink, 60, 20);
+		const waitFor = async (check: () => boolean, what: string) => {
+			const deadline = Date.now() + 5_000;
+			while (!check()) {
+				if (Date.now() > deadline)
+					throw new Error(`timed out waiting for ${what}: ${order.join(", ")}`);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+		};
+		await waitFor(() => order.some((o) => o.startsWith("flush")), "a flush");
+		// The attach's: before any flush.
+		expect(order[0]).toMatch(/^theme /u);
+		order.length = 0;
+		await ui.request("nvim_exec_lua", [
+			"vim.cmd('highlight Normal guibg=#102030 guifg=#e0e0e0'); vim.api.nvim_exec_autocmds('ColorScheme', {})",
+			[],
+		]);
+		const ground = String(0x102030);
+		await waitFor(
+			() => order.includes(`flush ${ground}`),
+			"the recoloured flush",
+		);
+		// Pushed with the new grounds, ahead of the flush that shows them.
+		expect(order.indexOf(`theme ${ground}`)).toBeGreaterThanOrEqual(0);
+		expect(order.indexOf(`theme ${ground}`)).toBeLessThan(
+			order.indexOf(`flush ${ground}`),
+		);
+		ui.client.close();
 	});
 
 	it("sends toasts, and places an image where its windows show it", async () => {
