@@ -245,7 +245,6 @@ function toWireConfig(config: Config): SettingsConfigWire {
 		terminal: {
 			macOptionIsMeta: config.terminal.macOptionIsMeta,
 		},
-		editor: { definitionModifier: config.editor.definitionModifier },
 		voice: { enabled: config.voice.enabled, model: config.voice.model },
 		keybindings: {
 			prefix: config.keybindings.prefix,
@@ -406,7 +405,6 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 		terminal: {
 			macOptionIsMeta: wire.terminal.macOptionIsMeta,
 		},
-		editor: { definitionModifier: wire.editor.definitionModifier },
 		voice: { enabled: wire.voice.enabled, model: wire.voice.model },
 		keybindings: {
 			prefix: wire.keybindings.prefix,

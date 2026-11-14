@@ -49,12 +49,6 @@ export interface PaintTheme {
    */
   readonly visual?: { readonly bg: number; readonly fg?: number };
   /**
-   * A link's ink, for a symbol drawn as a link to its definition while the
-   * modifier is held (`definitionLink.ts`): `@markup.link`'s, else
-   * `Underlined`'s; absent until asked, or when the theme gives neither.
-   */
-  readonly link?: number;
-  /**
    * `laststatus`: with 1 or 2 a window's status line is its own (`boundariesOf`).
    */
   readonly laststatus?: number;
@@ -149,8 +143,6 @@ export const THEME_GROUPS: readonly string[] = [
   "PmenuKindSel",
   "PmenuExtraSel",
   "Visual",
-  "@markup.link",
-  "Underlined",
   ...KIND_GROUPS,
 ];
 
@@ -221,7 +213,6 @@ export function themeOf(answer: unknown): PaintTheme {
     });
   }
   const separator = colour("WinSeparator", "fg");
-  const link = colour("@markup.link", "fg") ?? colour("Underlined", "fg");
   const visualBg = colour("Visual", "bg");
   const visualFg = colour("Visual", "fg");
   const visual =
@@ -233,7 +224,6 @@ export function themeOf(answer: unknown): PaintTheme {
     grounds,
     ...(separator !== undefined ? { separator } : {}),
     ...(visual !== undefined ? { visual } : {}),
-    ...(link !== undefined ? { link } : {}),
     ...(laststatus !== undefined ? { laststatus } : {}),
     winFillchars,
     cmdheight,
@@ -276,7 +266,6 @@ export function sameTheme(a: PaintTheme, b: PaintTheme): boolean {
       JSON.stringify([...(b.grounds ?? [])]) &&
     a.separator === b.separator &&
     JSON.stringify(a.visual) === JSON.stringify(b.visual) &&
-    a.link === b.link &&
     a.laststatus === b.laststatus
   );
 }

@@ -278,12 +278,6 @@ export interface AppAppearanceWire {
 	 * moments — when a terminal is built, and live whenever settings change.
 	 */
 	readonly terminalMacOptionIsMeta: boolean | "left";
-	/**
-	 * `[editor] definition_modifier`: `"alt"`, `"cmd"`, `"ctrl"` or `"off"`,
-	 * the key that makes a symbol a link to its definition in the Neovim
-	 * editor. With the appearance for the same reason as the Option key.
-	 */
-	readonly editorDefinitionModifier: "alt" | "cmd" | "ctrl" | "off";
 }
 /** `open_microphone_settings` opens System Settings at Privacy & Security → Microphone. */
 export type AppErrorActionWire =

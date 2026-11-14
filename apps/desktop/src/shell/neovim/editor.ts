@@ -81,20 +81,17 @@ import { dragBand } from "./dragBand";
 import { PerFrame } from "./perFrame";
 import { Provisional, PROVISIONAL_TTL_MS } from "./provisional";
 import {
-  DefinitionLinks,
-  LINK_CANCEL_LUA,
-  LINK_HOVER_LUA,
-  LINK_JUMP_LUA,
-  isModifierKey,
-  linkAttr,
-  linkCells,
-  modifierHeld,
-  type LinkCell,
-} from "./definitionLink";
-import {
-  DEFAULT_DEFINITION_MODIFIER,
-  type DefinitionModifier,
-} from "../../model/definitionModifier";
+  MOUSE_MOVE_FEED_LUA,
+  ModifierMoves,
+  forwardsMoves,
+  inSpans,
+  overlayAttr,
+  overlayEventOf,
+  sameOverlay,
+  spanCells,
+  type MoveSend,
+  type Overlay,
+} from "./overlay";
 import { MetaComposition, OptionKeys } from "../surfaces/optionKey";
 import { BaseKeys, layoutMapSource } from "../surfaces/baseKeys";
 import type { MacOptionIsMeta } from "../../model/macOption";
@@ -142,8 +139,6 @@ export interface EditorSettings {
    */
   readonly font: FontSpec;
   readonly macOptionIsMeta: MacOptionIsMeta;
-  /** `[editor] definition_modifier` (`definitionLink.ts`); default Alt. */
-  readonly definitionModifier?: DefinitionModifier;
 }
 
 /** How long the cursor's blink takes to fade out or in. */
@@ -154,12 +149,13 @@ const BLINK_FADE_MS = 120;
  */
 const BAND_HL = 0x40000000;
 /**
- * The same for a symbol drawn as a link to its definition (`drawLink`):
- * each cell's own id plus this.
+ * The same for a cell overlay (`gui.overlay`, `drawOverlays`): each cell's
+ * own id plus this, plus `OVERLAY_SLOT` for each overlay drawn before it.
  */
-const LINK_HL = 0x20000000;
-/** The link's ink when the theme gives none (VS Code's). */
-const LINK_FALLBACK = 0x3794ff;
+const OVERLAY_HL = 0x20000000;
+const OVERLAY_SLOT = 0x01000000;
+/** At most this many overlays at once (their ids stay under `BAND_HL`). */
+const OVERLAY_MAX = 16;
 
 /** A cursor's glide from cell to cell (`glideCursor`). */
 const CURSOR_GLIDE_MS = 70;
@@ -243,7 +239,9 @@ export class NeovimEditor {
   /** A paint waits for a new float's labels: whether it was a full one. */
   private labelsPaint: { force: boolean } | undefined;
   private readonly listeners = new Set<() => void>();
-  private dragging: { button: string; target: MouseTarget } | undefined;
+  private dragging:
+    | { button: string; target: MouseTarget; readonly plain: boolean }
+    | undefined;
   /**
    * The caret where a click or a drag put it, before Neovim says so
    * (`clickCaret.ts`, `provisional.ts`): Neovim's cursor wins as soon as
@@ -270,19 +268,40 @@ export class NeovimEditor {
   private readonly banded = new Map<number, Map<number, number>>();
   private bandTimer = 0;
   /**
-   * The pointer's go to definition (`definitionLink.ts`): the symbol under
-   * it drawn as a link while the modifier is held.
+   * Cell overlays (`gui.overlay`, `overlay.ts`), by id, in the order they
+   * came; with the modifiers held when a `held` one came.
    */
-  private readonly links: DefinitionLinks;
-  /** The cells the link is drawn over, by grid: Neovim's highlight there. */
-  private readonly linked = new Map<number, Map<number, number>>();
-  /** What the link's cells showed when it was drawn, by grid and cell. */
-  private linkText = new Map<number, string>();
-  /** The pointer's shape but for a link: a border's, or the I-beam. */
+  private readonly overlays = new Map<
+    string,
+    { readonly overlay: Overlay; readonly heldWith: string }
+  >();
+  /**
+   * Where each overlay is drawn: its grid, each cell's own highlight and
+   * what the cell showed then (it stands while the cells show the same).
+   */
+  private readonly overlaid = new Map<
+    string,
+    {
+      readonly grid: number;
+      readonly cells: Map<number, number>;
+      readonly text: Map<number, string>;
+    }
+  >();
+  /** The pointer's shape but for an overlay's: a border's, or the I-beam. */
   private shapeBelow = "";
+  /** The window cell under the pointer, while it is over the grids. */
+  private pointerCell: MouseTarget | undefined;
+  /** The modifiers held now, as the last key or pointer event said. */
+  private heldModifiers = "";
+  /** Neovim's side of modifier moves (`overlay.ts`). */
+  private readonly modifierMoves = new ModifierMoves();
+  /** Modifier moves, one a frame at most. */
+  private readonly moves: PerFrame<{
+    readonly at: MouseTarget;
+    readonly modifiers: string;
+    readonly again?: boolean;
+  }>;
   private stopWatchingModifier: () => void = () => {};
-  /** A redraw is being taken in (`redraw`). */
-  private redrawing = false;
   /** When the pointer last moved the caret: a move it makes does not glide. */
   private pointerMoved = -Infinity;
   /** A Meta dead key's composition, dropped (`surfaces/optionKey.ts`). */
@@ -360,34 +379,8 @@ export class NeovimEditor {
     this.windowMotion = new WindowMotion(this.painter, this.gridLayer);
     this.gridLayer.style.font = fontOf(this.painter.fontSpec());
     this.input.style.font = this.gridLayer.style.font;
-    this.links = new DefinitionLinks({
-      hover: (seq, at) => {
-        const request = this.port.request?.bind(this.port);
-        const win = this.state.gridWins.get(at.grid);
-        if (!request || win === undefined) return undefined;
-        return request("nvim_exec_lua", [
-          LINK_HOVER_LUA,
-          [seq, win, at.row, at.col],
-        ]);
-      },
-      jump: (at) => {
-        const win = this.state.gridWins.get(at.grid);
-        if (win === undefined) return;
-        this.port.call("nvim_exec_lua", [LINK_JUMP_LUA, [win, at.row, at.col]]);
-      },
-      cancel: () => {
-        this.port.call("nvim_exec_lua", [LINK_CANCEL_LUA, []]);
-      },
-      changed: () => {
-        this.placePointerShape();
-        // Taken by a redraw: its own paint draws what it leaves.
-        if (this.redrawing) return;
-        // At once, in this event's frame: the link comes and goes with the
-        // modifier and the pointer, never a frame behind them.
-        this.unlink();
-        this.drawLink();
-        this.paint();
-      },
+    this.moves = new PerFrame(({ at, modifiers, again }) => {
+      this.sendMove(this.modifierMoves.move(at, modifiers, again === true));
     });
     this.bindInput();
     this.watchModifier();
@@ -909,8 +902,9 @@ export class NeovimEditor {
     // Neovim's cells under the band are Neovim's again while its redraw is
     // taken in (a scroll moves them, a line rewrites them); the band is
     // drawn again over what it then shows, where it does not show Visual.
-    const linked = this.linked.size > 0;
-    if (linked) this.unlink();
+    // (An overlay not drawn yet, its window's grid not there, is drawn too.)
+    const overlaid = this.overlays.size > 0;
+    if (this.overlaid.size > 0) this.unoverlay();
     const banded = this.banded.size > 0;
     if (banded) this.unband();
     const defaults = this.state.defaults;
@@ -933,16 +927,9 @@ export class NeovimEditor {
       this.recoloured = false;
     }
     if (this.visualBand !== undefined || banded) this.drawBand();
-    // The link stands while its cells show what they showed; a redraw that
-    // rewrote or moved them takes it (it is asked again).
-    if (linked) {
-      if (this.linkStands()) this.drawLink();
-      else {
-        this.redrawing = true;
-        this.links.invalidate();
-        this.redrawing = false;
-      }
-    }
+    // An overlay stands while its cells show what they showed; a redraw
+    // that rewrote or moved them takes it (`overlayStands`).
+    if (overlaid) this.redrawOverlays();
     if (this.pending.flushed && this.atFlush.length > 0) {
       window.clearTimeout(this.atFlushTimer);
       this.atPaint.push(...this.atFlush.splice(0));
@@ -1656,39 +1643,44 @@ export class NeovimEditor {
     this.placePointerShape();
   }
 
-  /** The hand over a link, else what is below it (`placeSash`). */
+  /** An overlay's shape over its cells, else what is below (`placeSash`). */
   private placePointerShape(): void {
-    pointerShape(
-      this.gridLayer,
-      this.links.overLink ? "pointer" : this.shapeBelow,
-    );
+    pointerShape(this.gridLayer, this.overlayShape() ?? this.shapeBelow);
   }
 
-  /** The modifier as the person holds it, as `definitionLink.ts` reads it. */
-  private definitionModifier(): DefinitionModifier {
-    return this.settings.definitionModifier ?? DEFAULT_DEFINITION_MODIFIER;
+  /** The shape of the newest overlay with one under the pointer. */
+  private overlayShape(): string | undefined {
+    const at = this.pointerCell;
+    if (at === undefined) return undefined;
+    let shape: string | undefined;
+    for (const [id, { overlay }] of this.overlays) {
+      if (overlay.pointer === undefined) continue;
+      if (this.overlaid.get(id)?.grid !== at.grid) continue;
+      if (inSpans(overlay.spans, at.row, at.col)) shape = overlay.pointer;
+    }
+    return shape;
   }
 
   /**
-   * The modifier's own key, wherever the keys are (the terminal, a field,
-   * another pane): it goes down and up with the pointer still. The window
-   * losing focus lets it go, as its keyup never comes.
+   * The modifier keys, wherever the keys are (the terminal, a field,
+   * another pane): they go down and up with the pointer still, and that is
+   * a move for Neovim (`overlay.ts`). The window losing focus lets them
+   * go, as their keyup never comes.
    */
   private watchModifier(): void {
     const key = (event: KeyboardEvent) => {
       if (this.disposed) return;
-      const modifier = this.definitionModifier();
-      if (isModifierKey(event.key, modifier)) {
-        this.links.modifier(
-          event.type === "keydown" && modifierHeld(event, modifier),
-        );
-      } else if (event.type === "keydown") {
-        // A chord with it (Alt+x): a key, not a hover.
-        this.links.modifier(false);
-      }
+      if (
+        event.key !== "Alt" &&
+        event.key !== "Meta" &&
+        event.key !== "Control" &&
+        event.key !== "Shift"
+      )
+        return;
+      this.modifiersNow(mouseModifiers(event));
     };
     const blur = () => {
-      this.links.modifier(false);
+      this.modifiersNow("");
     };
     window.addEventListener("keydown", key, true);
     window.addEventListener("keyup", key, true);
@@ -1700,77 +1692,181 @@ export class NeovimEditor {
     };
   }
 
-  /** A window's cell for the link: not grid 1, not a GUI's. */
-  private linkCell(at: MouseTarget | undefined): LinkCell | undefined {
-    if (at === undefined || at.grid === 1) return undefined;
-    if (!this.state.gridWins.has(at.grid)) return undefined;
-    if (this.state.cmdline.length > 0 || !this.state.mouse) return undefined;
-    return at;
+  /**
+   * The modifiers held now (a key or a pointer event said): `held`
+   * overlays that came with others go at once, in this event's frame, and
+   * the pointer over the grids is a move with them for Neovim.
+   */
+  private modifiersNow(modifiers: string): void {
+    if (modifiers === this.heldModifiers) return;
+    this.heldModifiers = modifiers;
+    let gone = false;
+    for (const [id, { overlay, heldWith }] of this.overlays) {
+      if (!overlay.held || heldWith === modifiers) continue;
+      this.overlays.delete(id);
+      gone = true;
+    }
+    if (gone) this.repaintOverlays();
+    if (this.pointerCell !== undefined && !this.dragging)
+      this.moves.push({ at: this.pointerCell, modifiers });
   }
 
-  /** Neovim's answer about the link, as the `definition_link` event. */
-  definitionLink(payload: unknown): void {
-    this.links.answer(payload);
+  /** A modifier move, as `ModifierMoves` says to send it. */
+  private sendMove(send: MoveSend): void {
+    if (send === undefined) return;
+    if (send.via === "feed") {
+      this.port.call("nvim_exec_lua", [MOUSE_MOVE_FEED_LUA, [send.key]]);
+      return;
+    }
+    const { at, modifiers } = send;
+    this.port.call("nvim_input_mouse", [
+      "move",
+      "",
+      modifiers,
+      at.grid,
+      at.row,
+      at.col,
+    ]);
   }
 
-  /** The link's cells given back to Neovim's highlights. */
-  private unlink(): void {
-    for (const [id, cells] of this.linked) {
+  /**
+   * The `overlay` GUI event (`gui.overlay`): a window's cells drawn with a
+   * highlight over their own, or that taken away — at once, in this
+   * event's frame. A `held` one that comes when no modifier is held (it
+   * was answered after they went up) is not drawn.
+   */
+  setOverlay(payload: unknown): void {
+    const event = overlayEventOf(payload);
+    if (event === undefined) return;
+    if (event.kind === "clear") {
+      if (!this.overlays.delete(event.id)) return;
+    } else {
+      const { overlay } = event;
+      const before = this.overlays.get(overlay.id);
+      if (overlay.held && !forwardsMoves(this.heldModifiers)) {
+        if (before === undefined) return;
+        this.overlays.delete(overlay.id);
+      } else {
+        if (
+          before !== undefined &&
+          sameOverlay(before.overlay, overlay) &&
+          this.overlaid.has(overlay.id)
+        )
+          return;
+        if (before === undefined && this.overlays.size >= OVERLAY_MAX) return;
+        // Moved to the end: drawn over the ones before it.
+        this.overlays.delete(overlay.id);
+        this.overlays.set(overlay.id, {
+          overlay,
+          heldWith: this.heldModifiers,
+        });
+      }
+    }
+    this.repaintOverlays();
+  }
+
+  /** The overlays drawn again as they are now, and painted. */
+  private repaintOverlays(): void {
+    this.unoverlay();
+    this.drawOverlays();
+    this.placePointerShape();
+    this.paint();
+  }
+
+  /** The overlays' cells given back to Neovim's highlights. */
+  private unoverlay(): void {
+    for (const { grid: id, cells } of this.overlaid.values()) {
       const grid = this.state.grids.get(id);
       if (grid === undefined) continue;
       for (const [cell, hl] of cells) {
-        if (grid.hls[cell] !== LINK_HL + hl) continue;
+        const now = grid.hls[cell] ?? 0;
+        if (now < OVERLAY_HL || now >= BAND_HL) continue;
         grid.hls[cell] = hl;
         grid.dirty.add(Math.floor(cell / grid.width));
       }
       this.pending.grids.add(id);
     }
-    this.linked.clear();
+    this.overlaid.clear();
   }
 
-  /** Whether the link's cells still show what they did when it was drawn. */
-  private linkStands(): boolean {
-    const link = this.links.link;
-    if (link === undefined) return false;
-    const grid = this.state.grids.get(link.grid);
+  /** Whether an overlay's cells still show what they did when drawn. */
+  private overlayStands(id: string): boolean {
+    const drawn = this.overlaid.get(id);
+    if (drawn === undefined) return false;
+    const grid = this.state.grids.get(drawn.grid);
     if (grid === undefined) return false;
-    for (const [cell, text] of this.linkText) {
+    for (const [cell, text] of drawn.text) {
       if (grid.chars[cell] !== text) return false;
     }
     return true;
   }
 
   /**
-   * The link over its cells: each cell's own colours with the link's ink
-   * and an underline in it, as Neovim would draw `@markup.link` there.
+   * After a redraw is taken in: the overlays whose cells still show what
+   * they did are drawn again; the others go, and with the modifiers still
+   * held the pointer's move is said again, as the text moved under it.
    */
-  private drawLink(): void {
-    const link = this.links.link;
-    if (link === undefined) {
-      this.linkText = new Map();
-      return;
+  private redrawOverlays(): void {
+    let gone = false;
+    for (const id of [...this.overlays.keys()]) {
+      if (this.overlayStands(id)) continue;
+      const { overlay } = this.overlays.get(id)!;
+      this.overlays.delete(id);
+      if (overlay.held) gone = true;
     }
-    const grid = this.state.grids.get(link.grid);
-    if (grid === undefined) return;
-    const ink = this.painter.paintTheme().link ?? LINK_FALLBACK;
-    const cells = new Map<number, number>();
-    const text = new Map<number, string>();
-    for (const cell of linkCells(grid.width, grid.height, link.spans)) {
-      const own = grid.hls[cell] ?? 0;
-      if (!this.state.hl.has(LINK_HL + own))
-        this.state.hl.set(
-          LINK_HL + own,
-          linkAttr(this.state.hl.get(own) ?? {}, ink),
-        );
-      cells.set(cell, own);
-      text.set(cell, grid.chars[cell] ?? "");
-      grid.hls[cell] = LINK_HL + own;
-      grid.dirty.add(Math.floor(cell / grid.width));
+    // Given back before the redraw was taken in: drawn again over it.
+    this.overlaid.clear();
+    this.drawOverlays();
+    this.placePointerShape();
+    if (gone && this.pointerCell !== undefined && !this.dragging)
+      this.moves.push({
+        at: this.pointerCell,
+        modifiers: this.heldModifiers,
+        again: true,
+      });
+  }
+
+  /**
+   * Each overlay over its cells: each cell's own colours with the
+   * overlay's highlight over them (`overlayAttr`), as Neovim would draw a
+   * highlight there, in a highlight id of its own.
+   */
+  private drawOverlays(): void {
+    let slot = 0;
+    for (const [id, { overlay }] of this.overlays) {
+      const base = OVERLAY_HL + slot * OVERLAY_SLOT;
+      slot += 1;
+      const gridId = [...this.state.gridWins].find(
+        ([, win]) => win === overlay.win,
+      )?.[0];
+      const grid =
+        gridId === undefined ? undefined : this.state.grids.get(gridId);
+      if (gridId === undefined || grid === undefined) continue;
+      const cells = new Map<number, number>();
+      const text = new Map<number, string>();
+      const made = new Set<number>();
+      for (const cell of spanCells(grid.width, grid.height, overlay.spans)) {
+        let own = grid.hls[cell] ?? 0;
+        // Under another overlay: the cell's own, from that one.
+        for (const drawn of this.overlaid.values())
+          if (drawn.grid === gridId && drawn.cells.has(cell))
+            own = drawn.cells.get(cell)!;
+        if (own >= OVERLAY_SLOT) continue;
+        if (!made.has(own)) {
+          made.add(own);
+          this.state.hl.set(
+            base + own,
+            overlayAttr(this.state.hl.get(own) ?? {}, overlay.style),
+          );
+        }
+        cells.set(cell, own);
+        text.set(cell, grid.chars[cell] ?? "");
+        grid.hls[cell] = base + own;
+        grid.dirty.add(Math.floor(cell / grid.width));
+      }
+      this.overlaid.set(id, { grid: gridId, cells, text });
+      if (cells.size > 0) this.pending.grids.add(gridId);
     }
-    this.linkText = text;
-    if (cells.size === 0) return;
-    this.linked.set(link.grid, cells);
-    this.pending.grids.add(link.grid);
   }
 
   /**
@@ -2349,6 +2445,9 @@ export class NeovimEditor {
         at.row,
         at.col,
       ]);
+      // Neovim compares a move with the last press, drag or release (not
+      // the wheel): `ModifierMoves`.
+      if (button !== "wheel") this.modifierMoves.mouse(at);
     };
     // A GUI window, a view (framed or not), a card, a popup and the
     // notifications are DevHub's: their own clicks and wheel (all but the
@@ -2390,18 +2489,11 @@ export class NeovimEditor {
       const button = mouseButton(event.button);
       if (!button || !this.state.mouse) return;
       const at = target(event);
-      // The modifier's click on a link (or a symbol whose answer is coming)
-      // is the jump, not a click: Neovim never sees this press.
-      const linkAt = this.linkCell(at);
-      if (
-        button === "left" &&
-        event.detail <= 1 &&
-        linkAt !== undefined &&
-        this.links.click(linkAt, modifierHeld(event, this.definitionModifier()))
-      ) {
-        return;
-      }
-      this.dragging = { button, target: at };
+      // With a modifier the press is Neovim's to say (a mapping of
+      // <A-LeftMouse> may do anything): no caret is guessed, now or as
+      // it drags.
+      const plain = mouseModifiers(event) === "";
+      this.dragging = { button, target: at, plain };
       // The border under the press, not the last one hovered: a press need
       // not come after a move (a wheel turned, the window raised).
       this.placeSash(at);
@@ -2413,7 +2505,7 @@ export class NeovimEditor {
         button === "left" &&
         !this.sashDragged &&
         event.detail <= 1 &&
-        mouseModifiers(event) === ""
+        plain
       ) {
         this.guessCaret(at);
         const box = this.boxes.find((b) => b.grid === at.grid);
@@ -2434,18 +2526,19 @@ export class NeovimEditor {
     layer.addEventListener("mousemove", (event) => {
       const at = ownedByGui(event) ? undefined : target(event);
       if (!this.dragging) {
-        this.links.pointerAt(
-          this.linkCell(at),
-          modifierHeld(event, this.definitionModifier()),
-        );
+        this.pointerCell = this.state.mouse ? at : undefined;
+        const modifiers = mouseModifiers(event);
+        // With Ctrl, Alt or Cmd held the move is Neovim's, for mappings of
+        // <A-MouseMove> and the like (`overlay.ts`); a plain one is not
+        // sent, but for the one that tells it they went up.
+        if (this.pointerCell !== undefined)
+          this.moves.push({ at: this.pointerCell, modifiers });
+        this.modifiersNow(modifiers);
         this.placeSash(at);
       }
     });
-    layer.addEventListener("mouseleave", (event) => {
-      this.links.pointerAt(
-        undefined,
-        modifierHeld(event, this.definitionModifier()),
-      );
+    layer.addEventListener("mouseleave", () => {
+      this.pointerCell = undefined;
       if (!this.sashDragged) this.placeSash(undefined);
     });
     // A drag's moves, one a frame at most (`PerFrame`): a fast hand over a
@@ -2472,7 +2565,12 @@ export class NeovimEditor {
       // under it (`placeSashBand`).
       if (this.sashDragged) this.placeSashBand(this.sashOn, same);
       // Visual's end follows the pointer: the caret is there at once.
-      if (drag.button === "left" && !this.sashDragged && same.grid !== 1)
+      if (
+        drag.button === "left" &&
+        drag.plain &&
+        !this.sashDragged &&
+        same.grid !== 1
+      )
         this.guessCaret(same);
       // And Visual's band reaches it at once (`drawBand`).
       if (this.visualBand !== undefined && same.grid === this.visualBand.grid) {
@@ -2521,8 +2619,6 @@ export class NeovimEditor {
         if (ownedByGui(event)) return;
         event.preventDefault();
         const at = target(event);
-        // The text moves under the pointer: the link is asked again.
-        if (this.links.link !== undefined) this.links.invalidate();
         // A window's vertical scrolling follows the trackpad in pixels
         // (`smoothScroll.ts`); with a modifier, sideways or anywhere else
         // the wheel is Neovim's, in line steps.

@@ -472,6 +472,31 @@ local function gui_event(kind, payload)
 end
 M._event = gui_event
 
+-- gui.overlay{ id, win, spans = { { row, col0, col1 }, ... }, hl, pointer, held }:
+-- a highlight DevHub draws over a window's grid cells (0-based, the
+-- window's own), over their own highlights and with no redraw (the page's
+-- overlay.ts). hl is a group's name or nvim_get_hl's attributes (fg, bg,
+-- sp, underline, ...); pointer a CSS cursor over the cells ("pointer");
+-- held: drawn only while the modifier keys held when it comes stay held.
+-- The same id again replaces it; { id } alone takes it away.
+function M.overlay(opts)
+  if type(opts) ~= "table" or type(opts.id) ~= "string" then
+    error("gui.overlay: { id = string, ... }", 2)
+  end
+  local hl = opts.hl
+  if type(hl) == "string" then
+    hl = vim.api.nvim_get_hl(0, { name = hl, link = false })
+  end
+  gui_event("overlay", {
+    id = opts.id,
+    win = opts.win,
+    spans = opts.spans,
+    hl = hl,
+    pointer = opts.pointer,
+    held = opts.held == true,
+  })
+end
+
 -- vim.ui.select and vim.ui.input in DevHub's quick pick (docs/native-picker.md):
 -- the question goes to the page, the person answers in DevHub's own picker
 -- (its keys: typing filters, arrows, Return, Escape), and the callback runs

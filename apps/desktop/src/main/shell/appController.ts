@@ -4593,7 +4593,6 @@ export class AppController {
 			// without a theme (in a test) has DevHub's own.
 			shellThemeIfInstalled()?.terminalPalette(),
 			config.terminal.macOptionIsMeta,
-			config.editor.definitionModifier,
 		);
 	}
 

@@ -816,7 +816,8 @@ when it does not — and after 600 ms with no answer the guess is taken back.
   display.
 - **Pointer shapes**: the I-beam over text (Neovim's and the terminal's),
   the arrow over what DevHub draws over it (views, popups, footers, the
-  tab line), the hand over a terminal link, resize arrows over a border.
+  tab line), the hand over a terminal link, resize arrows over a border,
+  and whatever Lua names over a `gui.overlay`'s cells (below).
 
 What still waits for Neovim: a wheel's first tick from rest (there is no
 row beyond the window to show until Neovim draws it), a band that shrinks
@@ -830,61 +831,101 @@ in the real app under Xvfb, at each CPU rate, and over a slow link with
 socket that holds each chunk), and fails when what should be at once is
 not.
 
+### Modifiers and the pointer: `<A-MouseMove>` and `gui.overlay`
+
+Neovim owns the mouse's meaning here as it does the keys': DevHub has no
+setting for it and decides nothing about a modifier-click or a modifier
+hover. It only carries them (`overlay.ts`):
+
+- **Clicks with a modifier are Neovim's**, as every click is:
+  `nvim_input_mouse("left", "press", "A", …)` is `<A-LeftMouse>`, for
+  Neovim's own meaning or any mapping of it. The caret DevHub guesses for a
+  click (and for its drag) is a plain click's only: with a modifier held a
+  mapping may do anything.
+- **Moves go with Ctrl, Alt or Cmd held**, one a frame at most (`PerFrame`):
+  `nvim_input_mouse("move", "", "A", grid, row, col)`, which Neovim 0.12
+  delivers as `<A-MouseMove>` (`<M-MouseMove>`, the same key) to Normal and
+  Insert mode mappings whether `'mousemoveevent'` is on or not. Plain moves
+  (and Shift alone, which is typing) are not sent: Neovim would take every
+  one as a key (`CursorHold`'s timer, `vim.on_key`) for nothing. A move
+  that comes while Neovim waits for the rest of a command (`d`, a count,
+  `<Leader>…`) is dropped by Neovim and does not break it.
+- **The modifiers changing with the pointer still** (going down, coming up,
+  the window losing focus) is a move too, with the new set; going up, one
+  plain `<MouseMove>`, so a mapping's state can end, and then nothing until
+  one is held again. Neovim has no key-up event; this is how it hears one.
+  Neovim drops a move to the cell of its last mouse event whatever the
+  modifiers (`check_multiclick` in `os/input.c`), so at that cell the move
+  is fed as the key itself (`nvim_feedkeys(vim.keycode("<MouseMove>"),
+  "mt")`), at the mouse position Neovim already has.
+- **`gui.overlay`** (the injected `devhub_gui`; devhub.nvim's facade):
+  `{ id, win, spans = { { row, col0, col1 } }, hl, pointer, held }` draws a
+  highlight (a group's name or `nvim_get_hl`'s attributes) over a window's
+  grid cells, over their own highlights — the same overrides as Visual's
+  band in a drag, given back before each redraw is taken in and drawn again
+  after it while the cells show what they did — so it costs the buffer
+  nothing and Neovim redraws nothing. `pointer` is the cursor over its
+  cells (the hand). `held` ties it to the modifiers held when it comes: it
+  goes in the frame they change, before Neovim hears of it; one that comes
+  with none held is not drawn. A redraw that rewrites its cells takes it
+  away, and with the modifiers still held the pointer's move is said again
+  (the text moved under it). `{ id }` alone takes it away.
+
 ### Go to definition with the pointer
 
-VS Code's Cmd-hover and Cmd-click, with Option (Alt) by default:
-`[editor] definition_modifier = "alt" | "cmd" | "ctrl" | "off"` (Settings,
-Terminal, Editor: "Go to definition").
+VS Code's Cmd-hover and Cmd-click, as two Neovim mappings devhub.nvim makes
+in DevHub's GUI at the first `LspAttach` (Normal and Insert mode, unless the
+key is mapped already; `vim.g.devhub_definition_links = false` for none):
+
+```lua
+vim.keymap.set({ 'n', 'i' }, '<A-LeftMouse>', require('devhub.definition').click)
+vim.keymap.set({ 'n', 'i' }, '<A-MouseMove>', require('devhub.definition').hover)
+```
+
+Another modifier is a mapping of your own (`<D-LeftMouse>`,
+`<D-MouseMove>`); DevHub knows nothing of either.
 
 - **Held over a symbol that has a definition**, it is drawn as a link:
-  underlined, in the theme's link colour (`@markup.link`'s ink, else
-  `Underlined`'s, asked with the other theme colours, `chrome.ts`), and the
-  pointer is a hand. The link is the page's own drawing over exactly the
-  symbol's cells — the same highlight overrides as Visual's band in a drag,
-  given back before each redraw is taken in and drawn again after it while
-  its cells still show what they did — so it costs the buffer nothing and is
-  gone in the frame the modifier goes up, the pointer leaves the symbol, the
-  wheel turns or a redraw rewrites its cells (`definitionLink.ts`,
-  `NeovimEditor.drawLink`).
-- **Whether it has one is Neovim's**: while the modifier is held, and only
-  then, the page asks devhub.nvim's `devhub.definition` about the window cell
-  under the pointer, one ask a frame at most (`PerFrame`), and not again over
-  the same word. Lua maps the cell to the buffer with `screenpos()` (wrap,
-  closed folds, inline virtual text and horizontal scrolling as Neovim lays
-  them out; a concealed character is checked against what the screen shows),
-  takes the `iskeyword` word there and sends `textDocument/definition` to
-  every client of the buffer that has it (`vim.lsp.buf_request_all`). One
-  request at a time: the next word, or the modifier going up, cancels the one
-  in flight. Answers are kept by `changedtick` and word, so going back and
-  forth over a line asks each word once. A cached answer comes back with the
-  ask; a new one comes as the GUI event `definition_link`. Over SSH that is a
-  round trip, only while the modifier is held.
-- **A click with the modifier on the link** — or on a symbol whose answer is
-  still coming — is the jump, and not a click: the press never reaches
-  Neovim, so no cursor move or Visual drag comes first. Lua puts the cursor on
-  the symbol and runs `vim.lsp.buf.definition()`, so the jump is the one typed
-  there: the jumplist (`<C-o>` comes back to the symbol), the tag stack, the
-  quickfix list for several results, another file in the same window. A
-  symbol whose answer then says "none" is left alone. A config whose own
-  definition key runs something else (a picker's `lsp_definitions`) names it
-  with devhub.nvim's `setup { definition_jump = function(ctx) … end }`: it is
-  run instead, with the cursor already on the symbol, so the click and the
-  key are one action. DevHub knows neither: it only asks Lua to jump.
-- **Everywhere else the click is Neovim's**, unchanged: no LSP client with
-  definitions, not a word, a word known to have no definition, Visual or
-  Operator-pending mode, the command line, grid 1, a GUI's element. With Alt
-  that is Neovim's own `<A-LeftMouse>` (a blockwise Visual start under the
-  default `mousemodel`), and any mapping of it.
+  `hover()` maps `getmousepos()`'s screen cell to the buffer with
+  `screenpos()` (wrap, closed folds, inline virtual text and horizontal
+  scrolling as Neovim lays them out; a concealed character is checked
+  against what the screen shows), takes the `iskeyword` word there and asks
+  `textDocument/definition` of every client of the buffer that has it
+  (`vim.lsp.buf_request_all`). One request at a time: the next word cancels
+  the one in flight. Answers are kept by `changedtick` and word, so going
+  back and forth over a line asks each word once. A symbol with one is
+  drawn with `gui.overlay`: underlined in `@markup.link`'s ink (else
+  `Underlined`'s), the hand, `held` — so it is gone in the frame the
+  modifier goes up, the round trip to Neovim notwithstanding. Any other key
+  takes it away in Lua too (`vim.on_key`): the plain `<MouseMove>` of the
+  modifier going up, a key, a click, the wheel. Over SSH that is a round
+  trip a move, only while the modifier is held.
+- **A click on such a symbol** is the jump: `click()` puts the cursor on
+  the symbol and runs `vim.lsp.buf.definition()`, so the jump is the one
+  typed there: the jumplist (`<C-o>` comes back to the symbol), the tag
+  stack, the quickfix list for several results, another file in the same
+  window. The press's drag and release are dropped (`vim.on_key`), so no
+  Visual starts from the symbol while the jump is on its way. An answer
+  still coming is waited for (500 ms at most). A config whose own
+  definition key runs something else (a picker's `lsp_definitions`) names
+  it with devhub.nvim's `setup { definition_jump = function(ctx) … end }`:
+  it is run instead, with the cursor already on the symbol, so the click
+  and the key are one action.
+- **Everywhere else the click is Neovim's**: no LSP client with
+  definitions, not a word, a word with no definition, a turned-off
+  `vim.g.devhub_definition_links` — `click()` feeds the press again without
+  mappings, so it is what Neovim does with it unmapped (with Alt, a
+  blockwise Visual start under the default `mousemodel`). Visual mode,
+  Operator-pending and the command line are not mapped at all.
 - Nothing is mouse-only: `<C-]>` (with the LSP's `tagfunc`) and your own
   mappings of `vim.lsp.buf.definition()` stay as they are.
-- Without devhub.nvim (or with `vim.g.devhub_definition_links = false`) there
-  is no module to ask, and every click is Neovim's.
 
 The `pointer` scenario of the visual-stability suite times it against a fake
 server (`fixture/fake-lsp.mjs`): the link after Alt goes down and after a
 move with Alt held (reported), the hand over it, the link gone in the frame
 Alt goes up, and an Alt-click that lands on the definition in Normal mode
-with `<C-o>` back.
+with `<C-o>` back. devhub.nvim's own tests drive the mappings headlessly
+with `nvim_input_mouse` over RPC.
 
 ### Floating surfaces
 

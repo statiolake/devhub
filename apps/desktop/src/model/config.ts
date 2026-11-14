@@ -71,11 +71,6 @@ import {
   type MacOptionIsMeta,
 } from "./macOption.js";
 import {
-  DEFAULT_DEFINITION_MODIFIER,
-  isDefinitionModifier,
-  type DefinitionModifier,
-} from "./definitionModifier.js";
-import {
   DEFAULT_RESUME_MESSAGE,
   resumeMessageProblem,
 } from "./conversation.js";
@@ -567,12 +562,6 @@ export interface TerminalConfig {
   readonly macOptionIsMeta: MacOptionIsMeta;
 }
 
-/** `[editor]`: the Neovim editor DevHub draws. */
-export interface EditorConfig {
-  /** `definition_modifier`. See `model/definitionModifier.ts`. */
-  readonly definitionModifier: DefinitionModifier;
-}
-
 /**
  * `[voice]`: dictation into the composer. Off by default, and the model it
  * reads is downloaded only when it is turned on and the person agrees
@@ -601,8 +590,6 @@ export interface Config {
   readonly themes: readonly CustomThemeConfig[];
   /** `[terminal]`: how DevHub's own terminals read the keyboard. */
   readonly terminal: TerminalConfig;
-  /** `[editor]`: the Neovim editor's pointer. */
-  readonly editor: EditorConfig;
   /** `[voice]`: whether voice input is on, and with which model. */
   readonly voice: VoiceConfig;
   /**
@@ -828,7 +815,6 @@ export function defaultConfig(): Config {
     terminal: {
       macOptionIsMeta: DEFAULT_MAC_OPTION_IS_META,
     },
-    editor: { definitionModifier: DEFAULT_DEFINITION_MODIFIER },
     voice: { enabled: false, model: DEFAULT_VOICE_MODEL },
     keybindings: defaultKeybindings(),
     workspaceSources: defaultWorkspaceSources(),
@@ -866,7 +852,6 @@ export type ValidationCode =
   | "invalid_appearance"
   | "invalid_theme"
   | "invalid_mac_option_is_meta"
-  | "invalid_definition_modifier"
   | "invalid_voice_model"
   | "invalid_keybinding"
   | "unknown_command"
@@ -1576,9 +1561,6 @@ export function validateConfig(config: Config): void {
   if (!isMacOptionIsMeta(config.terminal.macOptionIsMeta)) {
     fail("invalid_mac_option_is_meta", "terminal.mac_option_is_meta");
   }
-  if (!isDefinitionModifier(config.editor.definitionModifier)) {
-    fail("invalid_definition_modifier", "editor.definition_modifier");
-  }
   if (!isVoiceModelId(config.voice.model)) {
     fail("invalid_voice_model", "voice.model");
   }
@@ -1621,7 +1603,6 @@ const TOP_LEVEL_KEYS = [
   "appearance",
   "themes",
   "terminal",
-  "editor",
   "voice",
   "keybindings",
   "workspace_sources",
@@ -2226,19 +2207,6 @@ export function interpretConfig(document: unknown): Config {
     );
   }
 
-  const editorTable = requireTable(table["editor"] ?? {}, "editor");
-  checkKeys(editorTable, ["definition_modifier"], "editor");
-  const definitionModifier =
-    editorTable["definition_modifier"] ?? DEFAULT_DEFINITION_MODIFIER;
-  if (!isDefinitionModifier(definitionModifier)) {
-    fail(
-      typeof definitionModifier === "string"
-        ? "invalid_definition_modifier"
-        : "invalid_type",
-      "editor.definition_modifier",
-    );
-  }
-
   const voiceTable = requireTable(table["voice"] ?? {}, "voice");
   checkKeys(voiceTable, ["enabled", "model"], "voice");
   const voiceModel = optionalString(
@@ -2376,7 +2344,6 @@ export function interpretConfig(document: unknown): Config {
     },
     themes: customThemesFromValue(table["themes"]),
     terminal: { macOptionIsMeta },
-    editor: { definitionModifier },
     voice: {
       enabled: optionalBoolean(voiceTable, "enabled", "voice", false),
       model: voiceModel as VoiceModelId,
@@ -2594,12 +2561,6 @@ export function configDocument(config: Config): Record<string, TomlValue> {
     terminal: {
       mac_option_is_meta: config.terminal.macOptionIsMeta,
     },
-    // Only when it is not the default, so a file that never said it stays so.
-    ...(config.editor.definitionModifier === DEFAULT_DEFINITION_MODIFIER
-      ? {}
-      : {
-          editor: { definition_modifier: config.editor.definitionModifier },
-        }),
     voice: {
       enabled: config.voice.enabled,
       model: config.voice.model,

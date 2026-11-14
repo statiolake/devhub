@@ -543,9 +543,12 @@ print(message)
 
 /**
  * Go to definition with the pointer (docs/neovim-editor.md, "Go to
- * definition with the pointer"): Alt held over `greet` draws it as a link
- * once Neovim has answered (reported: a round trip and an LSP request), the
- * link goes in the frame Alt goes up (at once, one frame), and Alt-click
+ * definition with the pointer"): devhub.nvim's <A-MouseMove> and
+ * <A-LeftMouse> mappings, which DevHub only feeds. Alt held over `greet`
+ * (Alt going down with the pointer still, or a move with it held) draws it
+ * as a link once Neovim has answered (reported: a round trip and an LSP
+ * request) with `gui.overlay`, the hand over it; the link goes in the frame
+ * Alt goes up (at once, one frame: the overlay is `held`); and Alt-click
  * jumps — Neovim's cursor on the definition, no Visual, `<C-o>` back.
  */
 async function definitionCases(t) {

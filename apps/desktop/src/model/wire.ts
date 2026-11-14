@@ -106,11 +106,6 @@ import {
   isMacOptionIsMeta,
   type MacOptionIsMeta,
 } from "./macOption.js";
-import {
-  DEFAULT_DEFINITION_MODIFIER,
-  isDefinitionModifier,
-  type DefinitionModifier,
-} from "./definitionModifier.js";
 import { builtinThemes, terminalPaletteOfTheme } from "./themes/theme.js";
 import { DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME } from "./themes/selection.js";
 import type { CoordinatorReplay } from "./coordinator.js";
@@ -182,7 +177,6 @@ export function appearanceWire(
   sequence: number,
   terminal: TerminalPaletteWire | undefined,
   macOptionIsMeta: MacOptionIsMeta = DEFAULT_MAC_OPTION_IS_META,
-  definitionModifier: DefinitionModifier = DEFAULT_DEFINITION_MODIFIER,
 ): AppAppearanceWire {
   const wire: AppAppearanceWire = {
     sequence,
@@ -196,7 +190,6 @@ export function appearanceWire(
     terminalMargin: config.terminalMargin,
     terminalTheme: terminalThemeWire(terminal),
     terminalMacOptionIsMeta: macOptionIsMeta,
-    editorDefinitionModifier: definitionModifier,
   };
   validateAppearanceWire(wire);
   return wire;
@@ -220,7 +213,6 @@ function validateAppearanceWire(wire: AppAppearanceWire): void {
     wire.terminalScrollSensitivity > 20 ||
     wire.terminalMargin > 64 ||
     !isMacOptionIsMeta(wire.terminalMacOptionIsMeta) ||
-    !isDefinitionModifier(wire.editorDefinitionModifier) ||
     !terminalPaletteIsValid(wire.terminalTheme.light) ||
     !terminalPaletteIsValid(wire.terminalTheme.dark)
   ) {

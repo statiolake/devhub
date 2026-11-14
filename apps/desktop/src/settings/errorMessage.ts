@@ -116,8 +116,6 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
       return "`appearance.theme` is a theme's name or light:<name>,dark:<name>. A [themes.<name>] table gives every colour as #rrggbb (or #rgb), and its palette exactly 16 of them; its name cannot contain a comma or start with light: or dark:.";
     case "invalid_mac_option_is_meta":
       return 'Option is Meta in DevHub\'s terminals with `true`, the left Option only with `"left"`, or never with `false`.';
-    case "invalid_definition_modifier":
-      return '`editor.definition_modifier` is `"alt"`, `"cmd"`, `"ctrl"` or `"off"`.';
     case "invalid_voice_model":
       return '`voice.model` is `"small"` or `"large-v3-turbo"`.';
     case "invalid_string":
