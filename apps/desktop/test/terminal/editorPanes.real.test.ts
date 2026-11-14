@@ -158,8 +158,11 @@ function barePanes(
         ).trim(),
       ),
     show: (_target, paneId, socketPath) => {
+      if (!panes(tmux).some((pane) => pane.paneId === paneId)) {
+        return Promise.resolve("gone");
+      }
       tmux(showEditorPaneArgs(paneId, socketPath));
-      return Promise.resolve();
+      return Promise.resolve("alive");
     },
     state: (_target, paneId) => {
       const row = panes(tmux).find((pane) => pane.paneId === paneId);
@@ -344,9 +347,14 @@ describe.skipIf(TMUX === undefined || NVIM === undefined)(
       const ends: readonly (() => void)[] = [
         () => nvim(["--remote-send", "<Esc>:q!<CR>"]),
         () => nvim(["--remote-send", "<Esc>:enew<CR>ix<Esc>:qa!<CR>"]),
-        () => process.kill(Number(nvim(["--remote-expr", "getpid()"])), "SIGKILL"),
+        () =>
+          process.kill(Number(nvim(["--remote-expr", "getpid()"])), "SIGKILL"),
         () => {
-          tmux(["kill-window", "-t", neovims.paneOf(target.workspaceId) as string]);
+          tmux([
+            "kill-window",
+            "-t",
+            neovims.paneOf(target.workspaceId) as string,
+          ]);
         },
       ];
       try {
@@ -362,7 +370,13 @@ describe.skipIf(TMUX === undefined || NVIM === undefined)(
             panes(tmux).find((row) => row.paneId === pane)?.windowActive,
           ).toBe(true);
           expect(
-            tmux(["display-message", "-p", "-t", pane, "#{@devhub-nvim}"]).trim(),
+            tmux([
+              "display-message",
+              "-p",
+              "-t",
+              pane,
+              "#{@devhub-nvim}",
+            ]).trim(),
           ).toBe(socket);
           expect(nvim(["--remote-expr", "expand('%:p')"])).toBe(file);
           expect(nvim(["--remote-expr", "$TMUX_PANE"])).toBe(pane);

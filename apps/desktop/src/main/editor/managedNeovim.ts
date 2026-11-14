@@ -67,13 +67,16 @@ export interface EditorPanes {
 	): Promise<string>;
 	/**
 	 * Make the pane's window the one the session shows, the pane active, and
-	 * name its Neovim's socket (on its machine) for the overlay.
+	 * name its Neovim's socket (on its machine) for the overlay — only if its
+	 * program is running. Answers the pane's state as read for it, which is
+	 * how a jump learns its Neovim's pane went (one tmux command, over SSH
+	 * one round trip, and not a `state` before it).
 	 */
 	show(
 		target: WorkspaceTerminalTarget,
 		paneId: string,
 		socketPath: string,
-	): Promise<void>;
+	): Promise<PaneState>;
 	/** Whether `paneId` is one of this Workspace's panes, and running. */
 	state(target: WorkspaceTerminalTarget, paneId: string): Promise<PaneState>;
 	kill(target: WorkspaceTerminalTarget, paneId: string): Promise<void>;
@@ -194,6 +197,13 @@ interface ServerRecord {
  * `message` for the CLI and the link, and `window` for the Workspace's
  * `devhub-nvim` window (`failureArgv`), which shows it in place of Neovim.
  */
+/** A jump's show found its Neovim's pane not running. */
+class PaneNotRunning extends Error {
+	constructor(readonly state: Exclude<PaneState, "alive">) {
+		super(`Neovim's pane is ${state}`);
+	}
+}
+
 export class NeovimStartFailure extends Error {
 	constructor(
 		message: string,
@@ -584,6 +594,13 @@ export class ManagedNeovims {
 					await this.openIn(target, record, file, started);
 					return { started };
 				} catch (error) {
+					if (error instanceof PaneNotRunning && !started) {
+						// Found ended at the show: put away as `server` would
+						// have, and the jump goes on to the next one.
+						await this.retire(target, record, error.state);
+						if (ended >= MAX_ENDED_PER_JUMP) throw error;
+						continue;
+					}
 					// Only its end. A Neovim started for this jump that ends
 					// is said, not started for ever; one found running may be
 					// on its way out (`:q` typed as the jump came: adopted
@@ -616,7 +633,14 @@ export class ManagedNeovims {
 		// One adopted whose pane could not be named is still opened in, and
 		// only not brought to the front.
 		if (record.paneId !== undefined) {
-			await this.panes.show(target, record.paneId, record.socketPath);
+			const pane = await this.panes.show(
+				target,
+				record.paneId,
+				record.socketPath,
+			);
+			// Its pane's state is read here, not before (`server`): one that
+			// is not running is a Neovim that ended.
+			if (pane !== "alive") throw new PaneNotRunning(pane);
 		}
 		if (file.waitMarkerPath !== undefined) {
 			record.waitMarkers.add(file.waitMarkerPath);
@@ -723,19 +747,32 @@ export class ManagedNeovims {
 	): Promise<{ readonly record: ServerRecord; readonly started: boolean }> {
 		const known = this.records.get(target.workspaceId);
 		if (known !== undefined) {
-			if (await this.isAlive(target, known)) {
-				return { record: known, started: false };
-			}
-			if (known.paneId !== undefined) {
-				// A pane left dead by `remain-on-exit` would sit in the
-				// person's window list for ever.
-				await this.panes.kill(target, known.paneId).catch(() => undefined);
-			}
-			await this.forget(target.workspaceId, known);
+			// Its pane is not asked after here: the show that follows reads it
+			// (`openIn`), and a pane that went is put away then.
+			if (!known.client.closed) return { record: known, started: false };
+			await this.retire(
+				target,
+				known,
+				known.paneId === undefined ? "gone" : "dead",
+			);
 		}
 		const adopted = await this.adopt(target);
 		if (adopted !== undefined) return { record: adopted, started: false };
 		return { record: await this.start(target), started: true };
+	}
+
+	/** A Neovim found ended: its pane, if one is left, and its record go. */
+	private async retire(
+		target: WorkspaceTerminalTarget,
+		record: ServerRecord,
+		pane: PaneState,
+	): Promise<void> {
+		if (record.paneId !== undefined && pane !== "gone") {
+			// A pane left dead by `remain-on-exit` would sit in the
+			// person's window list for ever.
+			await this.panes.kill(target, record.paneId).catch(() => undefined);
+		}
+		await this.forget(target.workspaceId, record);
 	}
 
 	private async isAlive(

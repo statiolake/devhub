@@ -630,8 +630,15 @@ describe.skipIf(TMUX === undefined)(
       ]);
       expect(paneId).toMatch(/^%[0-9]+$/u);
       expect(await test.runtime.editorPaneState(target, paneId)).toBe("alive");
+      // A show answers the state its own lookup read: one command for both.
+      expect(
+        await test.runtime.showEditorPane(target, paneId, "/tmp/nvim.sock"),
+      ).toBe("alive");
       await test.runtime.killEditorPane(target, paneId);
       expect(await test.runtime.editorPaneState(target, paneId)).toBe("gone");
+      expect(
+        await test.runtime.showEditorPane(target, paneId, "/tmp/nvim.sock"),
+      ).toBe("gone");
     });
 
     it("makes a workspace's session once when its terminal and an editor window ask for it at once", async () => {

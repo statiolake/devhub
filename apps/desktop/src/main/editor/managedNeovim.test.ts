@@ -128,12 +128,16 @@ function world() {
 	/** Each window shown, as `<pane> <socket>`. */
 	const shown: string[] = [];
 	let next = 1;
+	/** How many times a pane's state was asked on its own (not by a show). */
+	let stateAsked = 0;
 	let failStart = false;
 	let stateOverride:
 		| ((paneId: string) => Promise<PaneState> | undefined)
 		| undefined;
 	let nvim: string | undefined = "/opt/homebrew/bin/nvim";
 
+	const paneState = (paneId: string): Promise<PaneState> =>
+		stateOverride?.(paneId) ?? Promise.resolve(panes.get(paneId) ?? "gone");
 	const editorPanes: EditorPanes = {
 		open: (target, argv) => {
 			const paneId = `%${String(next++)}`;
@@ -161,12 +165,16 @@ function world() {
 			listening.set(socket, new FakeServer(paneId));
 			return Promise.resolve(paneId);
 		},
-		show: (_target, paneId, socketPath) => {
-			shown.push(`${paneId} ${socketPath}`);
-			return Promise.resolve();
+		// As tmux's: the pane read, and shown only while its program runs.
+		show: async (_target, paneId, socketPath) => {
+			const state = await paneState(paneId);
+			if (state === "alive") shown.push(`${paneId} ${socketPath}`);
+			return state;
 		},
-		state: (_target, paneId) =>
-			stateOverride?.(paneId) ?? Promise.resolve(panes.get(paneId) ?? "gone"),
+		state: (_target, paneId) => {
+			stateAsked += 1;
+			return paneState(paneId);
+		},
 		kill: (_target, paneId) => {
 			log.push(`kill ${paneId}`);
 			panes.delete(paneId);
@@ -218,6 +226,7 @@ function world() {
 		shown,
 		make,
 		server: () => listening.get(SOCKET),
+		stateAsked: () => stateAsked,
 		failNextStart: () => {
 			failStart = true;
 		},
@@ -324,12 +333,16 @@ describe("a jump while that Neovim is alive", () => {
 		const neovims = w.make();
 		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
 		w.log.length = 0;
+		const asked = w.stateAsked();
 		const result = await neovims.open(WORKSPACE, {
 			path: "/src/widget/b.ts",
 			line: 3,
 		});
 		expect(result).toEqual({ started: false });
 		expect(w.log).toEqual([]);
+		// Its pane is read by the show alone: one tmux command, not two.
+		expect(w.stateAsked()).toBe(asked);
+		expect(w.shown.at(-1)).toBe(`%1 ${SOCKET}`);
 		expect(w.server()?.opens()[1]).toEqual(["/src/widget/b.ts", 3, null, null]);
 	});
 

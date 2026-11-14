@@ -2525,18 +2525,22 @@ export class TmuxTerminalRuntime {
 	/**
 	 * Show a Workspace's `devhub-nvim` pane: its window selected, the pane
 	 * active, its Neovim's socket named for the overlay (`showEditorPaneArgs`).
+	 * Answers the pane's state as the lookup before it read it
+	 * (`editorPaneState`): a pane that is not running is not shown, and
+	 * whoever asked learns it without asking again.
 	 */
 	async showEditorPane(
 		target: WorkspaceTerminalTarget,
 		paneId: string,
 		socketPath: string,
 		cancel = new CancellationToken(),
-	): Promise<void> {
-		await this.onWorkspacePane(
+	): Promise<"alive" | "dead" | "gone"> {
+		return this.onWorkspacePane(
 			target,
 			paneId,
 			showEditorPaneArgs(paneId, socketPath),
 			cancel,
+			{ running: true },
 		);
 	}
 
@@ -2564,11 +2568,15 @@ export class TmuxTerminalRuntime {
 		paneId: string,
 		args: readonly string[],
 		cancel: CancellationToken,
-	): Promise<void> {
+		// Only on a pane whose program is running, not one `remain-on-exit` kept.
+		only: { readonly running: boolean } = { running: false },
+	): Promise<"alive" | "dead" | "gone"> {
 		const release = await this.gate.acquireOperation(cancel);
 		try {
 			const pane = await this.workspacePaneUnlocked(target, paneId, cancel);
-			if (pane === undefined) return;
+			if (pane === undefined) return "gone";
+			const state = pane.dead ? "dead" : "alive";
+			if (only.running && state === "dead") return state;
 			const output = await this.runTmux(
 				this.socket(),
 				args,
@@ -2577,6 +2585,7 @@ export class TmuxTerminalRuntime {
 				OperationDeadline.in(this.timeoutMs),
 			);
 			if (!output.success) throw output.refusal();
+			return state;
 		} finally {
 			release();
 		}

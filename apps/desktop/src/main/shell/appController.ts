@@ -1696,11 +1696,12 @@ export class AppController {
 			panes: {
 				open: async (target, argv) =>
 					(await tmuxOf(target.machine)).openEditorWindow(target, argv),
-				show: async (target, paneId, socketPath) => {
-					await (
-						await tmuxOf(target.machine)
-					).showEditorPane(target, paneId, socketPath);
-				},
+				show: async (target, paneId, socketPath) =>
+					(await tmuxOf(target.machine)).showEditorPane(
+						target,
+						paneId,
+						socketPath,
+					),
 				state: async (target, paneId) =>
 					(await tmuxOf(target.machine)).editorPaneState(target, paneId),
 				kill: async (target, paneId) => {
