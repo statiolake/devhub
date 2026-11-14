@@ -1609,7 +1609,7 @@ export class AppController {
 		// Workspace's session) is never what it closes; and on a launch that
 		// remembers an SSH host it asks that host too, which is a connection.
 		// It asks the same tmux server the first terminal does, so it waits
-		// for that terminal's attach (`launchMilestones.ts`).
+		// for that terminal to be drawn (`launchMilestones.ts`).
 		const sweeper = this.sessionSweeper;
 		afterFirstTerminal(() => {
 			void sweeper.sweepAll().then(

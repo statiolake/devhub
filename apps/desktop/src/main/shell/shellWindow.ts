@@ -507,7 +507,7 @@ export class ShellWindow {
 		// painted last of all (about 0.6 s of a launch's 2.5 s, more on a slow
 		// machine). The rest — the layers, which draw nothing until they are
 		// asked to, and a content view not on screen — run once the first
-		// terminal has its client (or, with none on screen, once those have
+		// terminal is drawn (or, with none on screen, once those have
 		// loaded), or after `LATER_PAGES_MS` at most. Each of them takes what
 		// it is to draw when its page has loaded (`did-finish-load`), as it
 		// did when they all loaded together.
@@ -540,8 +540,8 @@ export class ShellWindow {
 			for (const view of later) view.openPage();
 		};
 		if (this.terminalViews.size + this.editorTerminals.size > 0) {
-			// A terminal on screen: they wait for it to have its client, the
-			// attach being the busiest part of a launch (tmux, the pty host).
+			// A terminal on screen: they wait for it to be drawn, its attach
+			// being the busiest part of a launch (tmux, the pty host).
 			afterFirstTerminal(openLater, LATER_PAGES_MS);
 		} else {
 			const timer = setTimeout(openLater, LATER_PAGES_MS);

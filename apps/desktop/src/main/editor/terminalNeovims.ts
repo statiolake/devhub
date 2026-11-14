@@ -43,6 +43,7 @@
  */
 
 import { startupTrace } from "../diagnostics/startupTrace.js";
+import { terminalShown } from "../shell/launchMilestones.js";
 import type { RuntimeId } from "../runtime/runtime.js";
 import type { WorkspaceTerminalTarget } from "../terminal/ports.js";
 
@@ -488,6 +489,8 @@ export class TerminalNeovims {
 	 * they are until a page speaks for the terminal again.
 	 */
 	controlPanes(terminalId: string, panes: ControlPanes | undefined): void {
+		// A terminal's page says what its panes are once it has drawn them.
+		if (panes !== undefined && panes.panes.length > 0) terminalShown();
 		const watch = this.watches.get(terminalId);
 		if (watch === undefined) {
 			// The page can say it before main has heard of the terminal.

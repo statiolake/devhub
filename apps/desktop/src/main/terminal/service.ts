@@ -13,7 +13,6 @@
  * terminal target and refuses the request when there is none.
  */
 
-import { terminalAttached } from "../shell/launchMilestones.js";
 import { randomBytes } from "node:crypto";
 import {
 	app,
@@ -193,7 +192,6 @@ export function registerTerminalService(
 					},
 					route: { page: event.sender, channelId: id },
 				});
-				terminalAttached();
 				const hosted = attachments.hostedGeneration(receipt.attachmentId);
 				return {
 					result: ok(receipt),
