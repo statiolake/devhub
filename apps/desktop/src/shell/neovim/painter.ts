@@ -1334,23 +1334,34 @@ export class GridPainter {
         continue;
       }
       if (entry.width === -2) canvas.style.background = "";
+      // Made again only when its size changes: the grid's, its crop, or its
+      // pixels (a font, a device pixel ratio). A repaint of everything (a
+      // theme, a font that loaded) repaints its rows and keeps it — and
+      // keeps a smooth scroll under way: made again, the scroll was
+      // dropped and the display jumped to wherever Neovim was, lines ahead
+      // of it (1500 px at once, lines appended while the wheel turned).
+      const w =
+        (grid.width - crop.left - crop.right) * this.metrics.width +
+        bleed.l +
+        bleed.r;
+      const h =
+        (grid.height - crop.top - crop.bottom) * this.metrics.height +
+        bleed.t +
+        bleed.b;
+      const pw = Math.max(1, Math.ceil(w * this.dpr));
+      const ph = Math.max(1, Math.ceil(h * this.dpr));
       if (
         entry.width !== grid.width ||
         entry.height !== grid.height ||
         entry.crop !== cropKey ||
-        fresh ||
-        forceAll
+        canvas.width !== pw ||
+        canvas.height !== ph ||
+        canvas.style.width !== `${String(w)}px` ||
+        canvas.style.height !== `${String(h)}px` ||
+        fresh
       ) {
-        const w =
-          (grid.width - crop.left - crop.right) * this.metrics.width +
-          bleed.l +
-          bleed.r;
-        const h =
-          (grid.height - crop.top - crop.bottom) * this.metrics.height +
-          bleed.t +
-          bleed.b;
-        canvas.width = Math.max(1, Math.ceil(w * this.dpr));
-        canvas.height = Math.max(1, Math.ceil(h * this.dpr));
+        canvas.width = pw;
+        canvas.height = ph;
         canvas.style.width = `${String(w)}px`;
         canvas.style.height = `${String(h)}px`;
         entry.width = grid.width;
