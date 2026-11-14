@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { NeovimClient } from "./neovimRpc.js";
 import {
 	NeovimUi,
+	SETUP_CHUNKS,
 	type NeovimUiSink,
 	type WindowLayoutReport,
 } from "./neovimUi.js";
@@ -384,7 +385,10 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			// One request: DevHub's setup, then the attach.
 			expect(attaches).toHaveLength(1);
 			expect(attaches[0]).toMatch(
-				/^(nvim_exec_lua\+){9}nvim_ui_attach\+nvim_exec_lua$/,
+				// each of DevHub's chunks, the first-UI check, _before_attach, then the attach
+				new RegExp(
+					`^(nvim_exec_lua\\+){${String(SETUP_CHUNKS.length + 2)}}nvim_ui_attach\\+nvim_exec_lua$`,
+				),
 			);
 			expect(first.asked).not.toContain("nvim_ui_detach");
 			expect(await first.ui.request("nvim_exec_lua", [sizes, []])).toEqual([

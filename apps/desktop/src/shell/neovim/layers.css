@@ -619,7 +619,6 @@
   font-family: var(--nvim-ui-font, system-ui, sans-serif);
   font-size: var(--conversation-font-size);
   line-height: 1.6;
-  scrollbar-width: thin;
 }
 
 .nvim-document-body {
