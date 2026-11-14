@@ -55,6 +55,9 @@ export const NEOVIM_ROLES = [
  * after a `dd` or an `o` (slideLines).
  */
 export const NEOVIM_MOTION = [
+  // A window's pane motion (windowMotion.ts): its group exists from the
+  // transition's first frame, before any picture or edge is made for it.
+  ".nvim-motion",
   ".nvim-motion-picture",
   ".nvim-motion-edge",
   ".nvim-scroll-ghost",
