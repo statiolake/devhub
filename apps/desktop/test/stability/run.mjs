@@ -589,6 +589,15 @@ function makeContext(app, paths, pages) {
       .toString()
       .trim()
       .split("\n")[0];
+  // X's focus on the window, which no window manager gives it here: a
+  // click or a key through X goes nowhere useful before.
+  const focusWindow = (id) => {
+    try {
+      execFileSync("xdotool", ["windowfocus", "--sync", id]);
+    } catch {
+      // it has it already
+    }
+  };
   let baseSize;
   let luaChunks = 0;
   const visiblePane = async () => {
@@ -640,6 +649,47 @@ function makeContext(app, paths, pages) {
         page,
         `document.querySelector(${JSON.stringify(selector)})?.focus()`,
       );
+    },
+    /**
+     * A click the way a person's arrives: through X into the window, so
+     * main sees the view under it take the keyboard (`webContents` focus),
+     * which a CDP click into one page never shows it. `at`: "centre", or
+     * "corner" (2 px inside the element's top-left). Every view sits at the
+     * window's bottom edge, the Sidebar at its left and a content view at
+     * its right: its place is the window's page's size less its own.
+     */
+    async realClick(page, selector, text, at = "centre") {
+      const box = await ctx.evalIn(
+        page,
+        `(() => {
+        const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((e) => ${JSON.stringify(text ?? null)} === null || e.textContent.includes(${JSON.stringify(text ?? "")}));
+        if (!el) return null;
+        const b = el.getBoundingClientRect();
+        return [b.x, b.y, b.width, b.height, innerWidth, innerHeight];
+      })()`,
+      );
+      if (!box) throw new Error(`${page}: no ${selector} with "${text}"`);
+      const [w, h] = await ctx.evalIn("index", "[innerWidth, innerHeight]");
+      const [x, y, width, height, viewWidth, viewHeight] = box;
+      const point =
+        at === "corner" ? [x + 2, y + 2] : [x + width / 2, y + height / 2];
+      const id = windowId();
+      focusWindow(id);
+      execFileSync("xdotool", [
+        "mousemove",
+        "--window",
+        id,
+        String(Math.round((page === "sidebar" ? 0 : w - viewWidth) + point[0])),
+        String(Math.round(h - viewHeight + point[1])),
+      ]);
+      await sleep(80);
+      execFileSync("xdotool", ["click", "1"]);
+    },
+    /** Text typed through X into whatever has the keyboard, then Return. */
+    async realTypeLine(text) {
+      focusWindow(windowId());
+      execFileSync("xdotool", ["type", "--delay", "30", text]);
+      execFileSync("xdotool", ["key", "Return"]);
     },
     /** Where the element is: its centre, or nothing. */
     async centre(page, selector, text) {

@@ -214,6 +214,7 @@ import {
 	type ShellWindow,
 } from "./shellWindow.js";
 import type { KeyboardHalf, SurfaceArrangement } from "./windowLayout.js";
+import { BoardTerminalKeys } from "./boardTerminalKeys.js";
 import {
 	agentTerminalSessionName,
 	clampTerminalShare,
@@ -2587,13 +2588,7 @@ export class AppController {
 		const model = this.coordinator.model;
 		// A click into the Terminal tab, or out of it into the board or the
 		// orchestrator's pane: where the keys stay while the tab is shown.
-		if (this.boardTerminalKeys !== undefined && pane.kind !== "terminal") {
-			const keys = pane.kind === "editor";
-			if (keys !== this.boardTerminalKeys) {
-				this.boardTerminalKeys = keys;
-				this.publishLayoutState();
-			}
-		}
+		if (this.boardTerminalKeys.focused(pane.kind)) this.publishLayoutState();
 		if (pane.kind === "terminal") {
 			if (model.paneFocus === pane.terminalId) return;
 			this.dispatchOwn({
@@ -4912,9 +4907,7 @@ export class AppController {
 		// orchestrator's pane (`paneFocused`).
 		const onBoardTerminal =
 			surface.kind === "agent" && boardTerminalKey !== undefined;
-		if (!onBoardTerminal) this.boardTerminalKeys = undefined;
-		else if (this.boardTerminalKeys === undefined)
-			this.boardTerminalKeys = true;
+		this.boardTerminalKeys.shown(onBoardTerminal);
 		const keyboard: KeyboardHalf = this.keyboardInSidebar
 			? "sidebar"
 			: paneFocus !== undefined
@@ -4922,7 +4915,7 @@ export class AppController {
 				: surface.kind === "editor" ||
 					  (surface.kind === "split" &&
 							snapshot.selection.context.kind !== "agent") ||
-					  (onBoardTerminal && this.boardTerminalKeys === true)
+					  (onBoardTerminal && this.boardTerminalKeys.inTerminal)
 					? "editor"
 					: "agents";
 		// While a divider is being dragged the views follow the pointer as
@@ -4963,11 +4956,8 @@ export class AppController {
 		this.publishAreas(shell);
 	}
 
-	/**
-	 * Whether the keys are the Terminal tab's while it is on screen:
-	 * undefined while it is not, so choosing it again starts in it.
-	 */
-	private boardTerminalKeys: boolean | undefined;
+	/** Whether the keys are the Terminal tab's while it is on screen. */
+	private readonly boardTerminalKeys = new BoardTerminalKeys();
 
 	/**
 	 * The Workspace whose editor area the Orchestrator's Terminal tab shows,
@@ -8312,7 +8302,7 @@ export class AppController {
 	 * (the tab chosen, written over the entry on screen as a click is).
 	 */
 	private async showOrchestratorTerminal(reason?: "explicit"): Promise<void> {
-		this.boardTerminalKeys = true;
+		this.boardTerminalKeys.chosen();
 		// A view said without `explicit` only writes over the entry on the
 		// row, and selects nothing: the row is selected first.
 		if (
@@ -9910,10 +9900,31 @@ export class AppController {
 		} catch (error) {
 			throw namedFailure(error);
 		}
+		// The Orchestrator's Terminal tab chosen — its tab, the selected one
+		// clicked again, the row's Show Editor — is the keys put in it, as
+		// `Cmd+Q E` puts them, whatever had them: the Sidebar, or the board,
+		// which the press on the tab itself (in the board's header) has just
+		// made theirs (`paneFocused`). Only the first show used to: after a
+		// click in the header, choosing the tab left them in the board.
+		const choseBoardTerminal =
+			intent.type === "show_orchestrator_view" &&
+			intent.view.kind === "terminal";
+		if (choseBoardTerminal) {
+			this.keyboardInSidebar = false;
+			this.boardTerminalKeys.chosen();
+		}
 		const settled =
 			intent.type === "set_agent_managed"
 				? await this.handAgentOver(intent.agentId, intent.managed)
 				: await this.dispatchAwaiting(intent);
+		if (choseBoardTerminal) {
+			// Again: the press's own focus may have come in meanwhile.
+			this.boardTerminalKeys.chosen();
+			this.publishLayoutState();
+			// Placed even when the arrangement already said so: the press
+			// that chose the tab put the keyboard in the board's page.
+			shellWindow().focusSurface();
+		}
 
 		// Selecting the Editor activity is the moment its view has to exist. It is
 		// done here rather than in the model because a view is an effect on the

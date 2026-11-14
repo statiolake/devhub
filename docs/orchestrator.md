@@ -790,9 +790,13 @@ drawn over its panes, `devhub <file>`, copy, links.
   a deliberate move — a place in Back and Forward at once — and puts the keys
   in the Neovim. A helper agent's `devhub <file>` still opens beside that
   agent, as any Agent's does.
-- **Keys.** Choosing the tab puts the keys in the terminal; a click into the
+- **Keys.** Choosing the tab puts the keys in the terminal — every time it
+  is chosen, the tab already shown clicked again included; a click into the
   board's header or the orchestrator's pane takes them back out, and a click
-  into the terminal puts them in again. On the tab strip, ←/→, Home and End
+  into the terminal puts them in again. (The press on the tab is itself in
+  the header, so a choice that said nothing once the tab was shown left the
+  keys in the board: main puts them back whenever the tab is chosen,
+  `main/shell/boardTerminalKeys.ts`.) On the tab strip, ←/→, Home and End
   move between the tabs (one tab stop, as the mode control's segments).
   `Cmd+Q E` on the row is the Terminal tab.
 - **History.** A tab chosen is the same place showing another page: the

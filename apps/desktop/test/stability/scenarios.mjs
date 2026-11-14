@@ -223,6 +223,49 @@ async function burst(ctx, keys) {
   }
 }
 
+// The Orchestrator's board, as the `orchestrator` scenario records it.
+const ORCHESTRATOR_ROLES = [
+  {
+    name: "board",
+    selector: "[class*='orchestrator'], [class*='board']",
+    max: 40,
+  },
+];
+
+let typedLines = 0;
+
+/**
+ * A line typed through X with the Terminal tab on screen: it must reach the
+ * orchestrator's Workspace's shell (its `ws-` session, in the orchestrator's
+ * folder) — through main's keyboard to that terminal page, `send-keys` and
+ * tmux. With a `$`, which tmux's command parser once refused.
+ */
+async function typedInOrchestratorTerminal(ctx) {
+  const mark = `typed-${String(++typedLines)}$`;
+  await ctx.realTypeLine(`echo '${mark}'`);
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const sessions = ctx.app
+      .tmux("list-panes", "-a", "-F", "#{session_name} #{pane_current_path}")
+      .split("\n")
+      .filter(
+        (line) => line.startsWith("ws-") && line.endsWith("/orchestrator"),
+      )
+      .map((line) => line.split(" ")[0]);
+    for (const session of new Set(sessions)) {
+      const screen = ctx.app.tmux("capture-pane", "-p", "-t", session);
+      if (screen.split("\n").some((row) => row === mark)) return [];
+    }
+    if (Date.now() > deadline) {
+      const focused = await ctx.evalIn("agents", "document.hasFocus()");
+      return [
+        `"echo '${mark}'" typed with the Terminal tab on screen never reached the orchestrator's shell (${sessions.length === 0 ? "no ws- session in the orchestrator's folder" : `sessions ${sessions.join(", ")}`}; the board's page ${focused ? "has" : "has not"} the keyboard)`,
+      ];
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+}
+
 export const SCENARIOS = [
   {
     name: "scroll-burst",
@@ -671,6 +714,72 @@ export const SCENARIOS = [
         act: (ctx) => ctx.clickText("sidebar", ".sidebar-row", "alpha"),
         pages: [{ page: "sidebar", roles: SIDEBAR_ROLES }],
         spec: {},
+      },
+    ],
+  },
+  {
+    name: "orchestrator-terminal",
+    description:
+      "typing in the Orchestrator's Terminal tab, the keys put there by choosing the tab (real X clicks and keys, through main's keyboard)",
+    page: "agents",
+    roles: ORCHESTRATOR_ROLES,
+    // Real clicks only, here and in the steps. A CDP press leaves the view
+    // it went to holding the pointer: every real press after it goes there
+    // until one has, so the first real click (the row, again: selecting it
+    // twice is selecting it) is for whichever view an earlier scenario
+    // pressed in.
+    setup: async (ctx) => {
+      for (let i = 0; i < 2; i++) {
+        await ctx.realClick("sidebar", ".sidebar-row", "Orchestrator");
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
+      await ctx.waitIn("agents", "!!document.querySelector('[role=tab]')");
+      await ctx.settle("agents");
+    },
+    teardown: async (ctx) => {
+      await ctx.realClick("agents", "[role=tab]", "ボード");
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      await ctx.realClick("sidebar", ".sidebar-row", "alpha");
+      await ctx.settle("sidebar");
+    },
+    steps: [
+      {
+        name: "choose-tab",
+        known: [
+          {
+            match: /^agents: \[intermediate\] board#\d+ took \d+ forms/,
+            owner: "devhub",
+            why: "at 6x, the tab's line under the terminal's view (what it says until the view is over it) says the folder is being opened, then that it connects: a Workspace opened for the tab, then attached",
+          },
+        ],
+        act: (ctx) => ctx.realClick("agents", "[role=tab]", "ターミナル"),
+        // The Workspace's terminal page, laid over the board's body.
+        waitFor: "!!document.querySelector('#orchestrator-panel-terminal')",
+        spec: {},
+        check: (ctx) => typedInOrchestratorTerminal(ctx),
+      },
+      {
+        // The press lands in the board's header, which takes the keys out
+        // of the terminal; choosing the tab shown must put them back.
+        name: "choose-tab-again",
+        act: (ctx) => ctx.realClick("agents", "[role=tab]", "ターミナル"),
+        spec: {},
+        check: (ctx) => typedInOrchestratorTerminal(ctx),
+      },
+      {
+        name: "header-then-tab",
+        act: async (ctx) => {
+          await ctx.realClick(
+            "agents",
+            ".orchestrator-board-header",
+            undefined,
+            "corner",
+          );
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          await ctx.realClick("agents", "[role=tab]", "ターミナル");
+        },
+        spec: {},
+        check: (ctx) => typedInOrchestratorTerminal(ctx),
       },
     ],
   },

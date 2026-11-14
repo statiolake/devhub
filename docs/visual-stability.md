@@ -168,6 +168,7 @@ two shots to see the frame that should not have been:
 | `workspace-switch` | the other Workspace selected in the Sidebar, and back |
 | `sidebar-collapse` | the Sidebar to its rail and back (Sidebar, window page and editor recorded) |
 | `orchestrator` | the Orchestrator's board coming up, and back (the board only: its tabs are being replaced) |
+| `orchestrator-terminal` | the Orchestrator's Terminal tab chosen, chosen again while shown, and chosen after a click in the board's header; after each (`check`) a line with a `$` typed through X reaches the orchestrator's shell — real X clicks and keys, so main's keyboard is what puts them there (a CDP press leaves its view holding the pointer, so the scenario's own clicks are all real) |
 | `conversation` | a message sent, a streamed answer received |
 | `theme` | dark to light and back (the editor and the Sidebar recorded) |
 | `scroll-burst` | 20 `<C-d>`, 20 `<C-u>`, and the two alternating, 33 ms apart (a held key), `cmdheight=2`, `scrolloff=0`: the command line's rows still, every picture coherent |

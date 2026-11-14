@@ -1324,6 +1324,33 @@ describe("the Terminal tab", () => {
     });
   });
 
+  // The press on the tab is in the board's header, which takes the keys out
+  // of the terminal (main's `paneFocused`): a click on the Terminal tab
+  // already shown said nothing, and the keys stayed in the board for good.
+  it("is chosen again when clicked while shown, so main puts the keys back in it", () => {
+    motion(true);
+    const model = mountWithModel(BOARD, ORCH_WS);
+    fireEvent.click(tab("ターミナル"));
+    fireEvent.click(tab("ターミナル"));
+    expect(tab("ターミナル")).toHaveAttribute("aria-selected", "true");
+    expect(model.said()).toEqual([
+      {
+        type: "show_orchestrator_view",
+        view: { kind: "terminal" },
+        drawn: true,
+      },
+      {
+        type: "show_orchestrator_view",
+        view: { kind: "terminal" },
+        drawn: true,
+      },
+    ]);
+    // The board shown is not chosen again: nothing there to give keys to.
+    fireEvent.click(tab("ボード"));
+    fireEvent.click(tab("ボード"));
+    expect(model.said()).toHaveLength(3);
+  });
+
   it("says it is opening the folder while the Orchestrator row has no Workspace", () => {
     mountWithModel();
     fireEvent.click(tab("ターミナル"));

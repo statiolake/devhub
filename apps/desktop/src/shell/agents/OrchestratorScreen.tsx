@@ -227,7 +227,11 @@ export function OrchestratorBoard({
                 aria-controls={`orchestrator-panel-${one.tab}`}
                 tabIndex={tab === one.tab ? 0 : -1}
                 onClick={() => {
-                  if (tab !== one.tab) choose(one.tab);
+                  // The Terminal tab, even when it is the one shown: choosing
+                  // it is the keys put in it, and the press on it (in the
+                  // header) has just taken them out (main's `paneFocused`).
+                  if (tab !== one.tab || one.tab === "terminal")
+                    choose(one.tab);
                 }}
               >
                 {one.label}
