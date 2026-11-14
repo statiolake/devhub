@@ -95,6 +95,15 @@ const ARM_EDITOR = (text, includeExisting) => `(() => {
   window.__startupProbe = out;
 })()`;
 
+/** A framed view's rows (the picker as DevHub draws it). */
+const FRAMED_ROWS =
+  "document.querySelectorAll('.nvim-view-frame-row').length > 0";
+/** A view's items (nvim-tree as DevHub draws it). */
+const VIEW_ITEMS = "document.querySelectorAll('.nvim-view-item').length > 3";
+/** `text` in a Neovim grid of the page: what Neovim draws as cells. */
+const GRID_SHOWS = (text) =>
+  `Object.values(window.neovimEditors ?? {}).some((ed) => [...ed.state.grids.values()].some((g) => g.chars.join('').includes(${JSON.stringify(text)})))`;
+
 /**
  * Armed before the action: the first frame (after its rAF callbacks, before
  * it is painted) in which `pred` holds.
@@ -378,9 +387,24 @@ async function settleNvim(run, client) {
 async function runCases(run, { user, launches = 1 }) {
   const out = [];
   const { paths } = run;
+  // A person's own config draws what it draws: the harness's config has
+  // snacks as DevHub's framed view and nvim-tree as a view, a person's may
+  // have either as Neovim's cells (snacks-ui.devhub off, or a version of it
+  // DevHub no longer answers; nvim-tree without nvim-tree-ui). There, what
+  // shows them is their text in a grid.
   const keys = user
-    ? { picker: "C-e", tree: (c) => typeTree(c) }
-    : { picker: "C-p", tree: (c) => press(c, "F2") };
+    ? {
+        picker: "C-e",
+        tree: (c) => typeTree(c),
+        pickerShown: `(${FRAMED_ROWS}) || ${GRID_SHOWS("Files")}`,
+        treeShown: `(${VIEW_ITEMS}) || ${GRID_SHOWS("README.md")}`,
+      }
+    : {
+        picker: "C-p",
+        tree: (c) => press(c, "F2"),
+        pickerShown: FRAMED_ROWS,
+        treeShown: VIEW_ITEMS,
+      };
 
   // First launch, nothing open yet.
   await run.start();
@@ -522,26 +546,16 @@ async function runCases(run, { user, launches = 1 }) {
       "picker",
       (c) => press(c, keys.picker),
       (c) => press(c, "Escape"),
-      "document.querySelectorAll('.nvim-view-frame-row').length > 0",
+      keys.pickerShown,
     ],
     [
       "picker#2",
       (c) => press(c, keys.picker),
       (c) => press(c, "Escape"),
-      "document.querySelectorAll('.nvim-view-frame-row').length > 0",
+      keys.pickerShown,
     ],
-    [
-      "tree",
-      keys.tree,
-      keys.tree,
-      "document.querySelectorAll('.nvim-view-item').length > 3",
-    ],
-    [
-      "tree#2",
-      keys.tree,
-      keys.tree,
-      "document.querySelectorAll('.nvim-view-item').length > 3",
-    ],
+    ["tree", keys.tree, keys.tree, keys.treeShown],
+    ["tree#2", keys.tree, keys.tree, keys.treeShown],
   ]) {
     await focus();
     await run.arm(alpha, ARM_FRAME(shown));
