@@ -56,8 +56,11 @@ async function freshRedraw(ctx, client, selector) {
       const png = Buffer.from(r.data, "base64");
       return { png, image: decodePng(png) };
     };
+    // Not the message rows under the last status line: :redraw! clears
+    // them in Neovim itself (Insert's "-- INSERT --" is not said again
+    // until the mode changes), whatever draws its screen.
     const rect = await client.eval(
-      `(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return null; const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height].map(Math.round); })()`,
+      `(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return null; const b = e.getBoundingClientRect(); const f = [...e.querySelectorAll(".nvim-footer")].pop(); const bottom = f ? Math.min(b.bottom, f.getBoundingClientRect().bottom) : b.bottom; return [b.x, b.y, b.width, bottom - b.y].map(Math.round); })()`,
     );
     if (!rect) return undefined;
     const settled = await shot();
