@@ -308,13 +308,14 @@ export function step(
     if (view.glide && to === view.glide.from && view.pending !== 0)
       view.glide.start = now;
     // A tick glides to its line; a swipe's pixels are followed as they come.
-    view.off = snap(
-      view.glide
-        ? view.glide.from +
-            (to - view.glide.from) *
-              easeOut((now - view.glide.start) / GLIDE_MS)
-        : to,
-    );
+    // Never outside what the canvas and the ghost cover: a glide that began
+    // before Neovim scrolled (its start moved with the scroll) would pass
+    // through rows neither has, and show the window's background there.
+    const glided = view.glide
+      ? view.glide.from +
+        (to - view.glide.from) * easeOut((now - view.glide.start) / GLIDE_MS)
+      : to;
+    view.off = snap(Math.min(hi, Math.max(lo, glided)));
     view.reach = {
       lo: Math.min(view.reach.lo, view.off),
       hi: Math.max(view.reach.hi, view.off),

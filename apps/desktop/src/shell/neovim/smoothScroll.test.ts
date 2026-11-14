@@ -215,6 +215,39 @@ describe("a wheel tick", () => {
     expect(first).toBeLessThan(CH * 0.5);
   });
 
+  it("never shows past what is drawn when Neovim scrolls mid-glide", () => {
+    // Ticks and swipes either way, Neovim answering each request 8 to 48 ms
+    // later: glides are cut by scrolls. A glide's start moves with the
+    // scroll, and the curve from there passed through rows that neither
+    // the canvas nor the ghost has (a band of background at the top of the
+    // window, in the stability suite's motion checks).
+    let seed = 1;
+    const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let trial = 0; trial < 200; trial += 1) {
+      const view = newScrollView();
+      const scrolls: { at: number; rows: number }[] = [];
+      for (let now = 0; now < 480; now += 8) {
+        if (random() < 0.3) {
+          const dy = (random() < 0.5 ? -1 : 1) * (random() < 0.5 ? 4 : 40);
+          wheeled(view, dy, now, CH);
+        }
+        while (scrolls.length > 0 && scrolls[0]!.at <= now) {
+          replied(view, 1, now);
+          shifted(view, scrolls.shift()!.rows, CH, TEXT, now);
+        }
+        const ask = step(view, now, CH, ROWS, 2);
+        if (ask)
+          scrolls.push({
+            at: now + 8 + Math.floor(random() * 40),
+            rows: ask.rows,
+          });
+        const { lo, hi } = coverage(view);
+        expect(view.off).toBeGreaterThanOrEqual(lo);
+        expect(view.off).toBeLessThanOrEqual(hi);
+      }
+    }
+  });
+
   it("at the end of the buffer comes to rest", () => {
     const view = newScrollView();
     wheeled(view, 4, 0, CH);
