@@ -152,6 +152,8 @@ export interface ViewFrame {
   readonly status: ComponentNode | undefined;
   readonly previewTitle: ComponentNode | undefined;
   readonly placeholder: string | undefined;
+  /** At the hint row's right end: buttons (a composer's send, cancel). */
+  readonly actions?: ComponentNode | undefined;
 }
 
 export interface FrameRect {
@@ -190,6 +192,11 @@ export interface FramePlace {
       })
     | undefined;
   readonly preview: (FrameRect & { readonly win: number }) | undefined;
+  /**
+   * A frame round an editable window (`gui.frame`): `list` is that
+   * window, drawn as Neovim's cells, not rows.
+   */
+  readonly editor?: boolean;
 }
 
 export interface Layers extends DocumentLayers {
@@ -340,6 +347,7 @@ function viewFrame(value: unknown): ViewFrame | undefined {
     title: parseNode(f["title"]),
     status: parseNode(f["status"]),
     previewTitle: parseNode(f["preview_title"]),
+    actions: parseNode(f["actions"]),
     placeholder:
       typeof f["placeholder"] === "string" ? f["placeholder"] : undefined,
   };
@@ -416,6 +424,7 @@ function framePlace(value: unknown): FramePlace[] {
           : undefined,
       preview:
         pvRect && pvWin !== undefined ? { ...pvRect, win: pvWin } : undefined,
+      ...(r["editor"] === true ? { editor: true } : {}),
     },
   ];
 }

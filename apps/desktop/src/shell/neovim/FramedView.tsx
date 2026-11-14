@@ -11,6 +11,11 @@
  * where Lua says its window stands (`FramePlace`), so the frame follows the
  * plugin's own layout. A click, the wheel and how many rows fit go back as
  * Lua calls; the plugin decides what they do.
+ *
+ * The same frame goes round an editable window instead of a list
+ * (`gui.frame`, `place.editor`): a composer's frontend. That window stays
+ * Neovim's cells, edited as any; the frame is its title band and its hint
+ * row, with the plugin's buttons (`actions`) at the row's right end.
  */
 
 import {
@@ -173,8 +178,9 @@ export interface FrameParts {
  * Where each part goes, from where the plugin's windows stand: the header
  * is the query window's rows across the frame (or what is above the list),
  * the list is the list window's cells, the hint row is the frame's last row
- * (the list stops above it), and the preview's title is the row above the
- * preview window when one is free there.
+ * (the list stops above it; round an editable window, every row below it),
+ * and the preview's title is the row above the preview window when one is
+ * free there.
  */
 export function frameParts(
   place: FramePlace,
@@ -189,11 +195,20 @@ export function frameParts(
   const headerRows = query
     ? Math.max(0, query.row - frame.row + query.height)
     : Math.max(0, list.row - frame.row);
-  const keys =
-    withKeys && frame.height > headerRows + 1
-      ? { row: frame.height - 1, col: 0, width: frame.width, height: 1 }
-      : undefined;
   const at = rel(list);
+  // Round an editable window, the hint row is every row under it (a row
+  // or two, as the plugin laid them out); round a list, the frame's last.
+  const below =
+    place.editor === true ? frame.height - (at.row + list.height) : 1;
+  const keys =
+    withKeys && below >= 1 && frame.height > headerRows + below
+      ? {
+          row: frame.height - below,
+          col: 0,
+          width: frame.width,
+          height: below,
+        }
+      : undefined;
   const listTop = Math.max(at.row, headerRows);
   const listBottom = Math.min(
     at.row + list.height,
@@ -269,9 +284,10 @@ function FrameParts({
     ),
   } as CSSProperties;
   const { frame } = place;
+  const editor = place.editor === true;
   const parts = frameParts(
     place,
-    content.keys.length > 0,
+    content.keys.length > 0 || content.actions !== undefined,
     content.previewTitle !== undefined,
   );
   const px = (r: FramePart): CSSProperties => ({
@@ -298,11 +314,15 @@ function FrameParts({
       {parts.header ? (
         <div className="nvim-view-frame-header" style={px(parts.header)}>
           {content.title ? (
-            <div className="nvim-view-frame-title">
+            <div
+              className={`nvim-view-frame-title${editor ? " nvim-view-frame-title-grow" : ""}`}
+            >
               <ComponentTree node={content.title} theme={theme} />
             </div>
           ) : null}
-          <QueryField content={content} place={place} host={host} />
+          {editor ? null : (
+            <QueryField content={content} place={place} host={host} />
+          )}
           {content.status ? (
             <div className="nvim-view-frame-status">
               <ComponentTree node={content.status} theme={theme} />
@@ -310,13 +330,15 @@ function FrameParts({
           ) : null}
         </div>
       ) : null}
-      <FrameList
-        view={view}
-        place={place}
-        host={host}
-        theme={frameTheme(host, view.hl, () => undefined)}
-        style={px(parts.list)}
-      />
+      {editor ? null : (
+        <FrameList
+          view={view}
+          place={place}
+          host={host}
+          theme={frameTheme(host, view.hl, () => undefined)}
+          style={px(parts.list)}
+        />
+      )}
       {parts.previewTitle && content.previewTitle ? (
         <div
           className="nvim-view-frame-preview-title"
@@ -325,7 +347,7 @@ function FrameParts({
           <ComponentTree node={content.previewTitle} theme={theme} />
         </div>
       ) : null}
-      {place.preview ? (
+      {place.preview && !editor ? (
         <div
           className="nvim-view-frame-rule"
           style={{
@@ -343,6 +365,11 @@ function FrameParts({
               <span>{label}</span>
             </span>
           ))}
+          {content.actions ? (
+            <div className="nvim-view-frame-actions">
+              <ComponentTree node={content.actions} theme={theme} />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

@@ -1367,6 +1367,22 @@ local list = gui.view{ buf = lbuf, win = lwin, keys = { { '↩', 'open' } },    
   drawn this way by
   [snacks-ui.devhub](https://github.com/statiolake/snacks-ui.devhub),
   outside devhub.nvim (`native-picker.md`).
+- **A frame round an editable window** (`gui.frame{ win, body, title,
+  status, keys, actions }`) — the framed view's frame round a window you
+  write in instead of a list: a composer's frontend, whoever's composer it
+  is. The **body** stays Neovim's cells, edited as any window (its modes,
+  motions, undo, maps); the page draws the header on the frame float's rows
+  above it (`title`, `status`), and the hint row on every row below it
+  (`keys`, then `actions` at its right end: buttons whose `on_click` runs in
+  Lua and does what a key does — nothing is the pointer's only). The view
+  has no items (`render_view` sends none, and an edit sends nothing: the
+  body's cells are its content); `place_frame` sends the body as its
+  `list` with `editor`, and its windows are claimed as any frame's, so the
+  body and the blank float under it are drawn bare from their first frame,
+  in the frame's line and shadow. The plugin lays the windows out — DevHub
+  adds no padding — and closes the frame's float with the body, in the same
+  tick. vscode-review-relay's comment composer is drawn this way by
+  [review-relay-ui.devhub](https://github.com/statiolake/review-relay-ui.devhub).
 - **`gui.inline`** — a card under a line, in the rows an extmark's
   `virt_lines` reserve (the image plumbing, again on every scroll, fold,
   edit and window change). The page measures the card at the width it is

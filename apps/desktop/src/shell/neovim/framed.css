@@ -228,3 +228,18 @@
   white-space: nowrap;
   overflow: hidden;
 }
+
+/* A frame round an editable window (`gui.frame`): the title takes the
+   header's room, and the plugin's buttons sit at the hint row's right end. */
+.nvim-view-frame-title-grow {
+  flex: 1;
+}
+
+.nvim-view-frame-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--frame-ink);
+  font-size: var(--nvim-ui-size, 12px);
+}

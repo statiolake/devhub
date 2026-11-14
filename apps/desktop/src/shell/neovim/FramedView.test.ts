@@ -94,6 +94,47 @@ describe("frameParts", () => {
   });
 });
 
+describe("frameParts round an editable window", () => {
+  // A composer: a frame float 10 rows tall, the body 6 rows from its third.
+  const place: FramePlace = {
+    id: 2,
+    win: 1003,
+    wins: [1003, 1002],
+    frame: { row: 13, col: 3, width: 62, height: 10, top: 0 },
+    list: {
+      row: 15,
+      col: 4,
+      width: 60,
+      height: 6,
+      top: 0,
+      cursor: 2,
+      current: true,
+    },
+    query: undefined,
+    preview: undefined,
+    editor: true,
+  };
+
+  it("puts the title band on the rows above the body, the hints on every row below it", () => {
+    expect(frameParts(place, true, false)).toEqual({
+      header: { row: 0, col: 0, width: 62, height: 2 },
+      list: { row: 2, col: 1, width: 60, height: 6 },
+      previewTitle: undefined,
+      keys: { row: 8, col: 0, width: 62, height: 2 },
+    });
+  });
+
+  it("has no hint row when the body reaches the frame's foot", () => {
+    const parts = frameParts(
+      { ...place, frame: { ...place.frame, height: 8 } },
+      true,
+      false,
+    );
+    expect(parts.keys).toBeUndefined();
+    expect(parts.list.height).toBe(6);
+  });
+});
+
 describe("the query field's cursor and selection", () => {
   const show = (runs: ReturnType<typeof fieldRuns>) =>
     runs.map((r) => `${r.caret ? "[" : ""}${r.selected ? "<" : ""}${r.text}`);

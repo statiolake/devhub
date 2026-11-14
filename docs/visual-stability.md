@@ -166,6 +166,7 @@ and screencast pictures).
 | scenario | steps |
 | --- | --- |
 | `picker` | snacks picker open, preview off, preview on, the window resized with it open (live), query to Normal, close |
+| `composer` | a composer framed round its editable window (`gui.frame`, as `review-relay-ui.devhub` frames vscode-review-relay's) opened with `<F5>`, typed in, sent with `<C-s>`, opened again, to Normal mode, cancelled with `q`: never the bare float or a frame without its body |
 | `tree` | nvim-tree open (a split: its pane motion declared), a folder expanded, `<C-d>` under the sticky header, collapsed, closed |
 | `view-close` | a view's window going and coming with its pane motion: nvim-tree opened with F2, closed with `q`, toggled four times 60 ms apart; the snacks picker closed; a `gui.document` Markdown preview closed with `q`. `check`: no screencast picture shows the buffer's cells where the view is (`cellBands`): against three pictures at rest — the view, the view hidden (its cells), the window gone — a column band whose cells-only pixels are mostly the cells' fails |
 | `blink-insert` | blink-ui's insert menu opening, the selection moving, closing |

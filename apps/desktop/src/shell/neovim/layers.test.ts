@@ -302,6 +302,51 @@ describe("buffer-backed GUI layers on the page", () => {
     ]);
   });
 
+  it("keeps a frame round an editable window: its buttons, and that its list is the body", () => {
+    let state = applyLayerEvent(NO_LAYERS, "view", {
+      id: 9,
+      items: [],
+      keys: [["<C-s>", "send"]],
+      frame: {
+        title: { type: "text", text: "Comment" },
+        actions: { type: "button", text: "Send", action: 1 },
+        editor: true,
+      },
+      hl: {},
+    });
+    expect(state.views.get(9)?.frame?.actions).toMatchObject({
+      type: "button",
+      text: "Send",
+    });
+    const rect = { row: 13, col: 3, width: 62, height: 10, top: 0 };
+    state = applyLayerEvent(state, "layers", {
+      frames: [
+        {
+          id: 9,
+          win: 1003,
+          wins: [1003, 1002],
+          frame: rect,
+          list: {
+            ...rect,
+            row: 15,
+            col: 4,
+            width: 60,
+            height: 6,
+            cursor: 1,
+            current: true,
+          },
+          editor: true,
+        },
+      ],
+    });
+    expect(state.placedFrames[0]?.editor).toBe(true);
+    expect(state.placedFrames[0]?.list).toMatchObject({
+      row: 15,
+      height: 6,
+      current: true,
+    });
+  });
+
   it("keeps the last settled seq, and the windows the frames claim", () => {
     const placed = applyLayerEvent(NO_LAYERS, "layers", {
       frames: [

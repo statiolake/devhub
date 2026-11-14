@@ -5,7 +5,9 @@
  * `virt_lines` rows of an extmark, as tall as DevHub measures it), `popup`
  * (a hover)
  * — a view may instead be drawn in a frame over a float, round a query
- * field and a preview window: a picker's frontend, whoever's picker it is.
+ * field and a preview window: a picker's frontend, whoever's picker it is;
+ * and `frame` is that frame round an editable window instead of a list (a
+ * composer's frontend, whoever's composer it is).
  *
  * Neovim keeps the state, the layout and the keys: the buffer's lines are
  * the items (searchable, `5j`, marks), its cursor line is the focus, and an
@@ -197,7 +199,9 @@ local MAX_ITEMS = 5000
 local function render_view(view)
   if not vim.api.nvim_buf_is_valid(view.buf) then return end
   local actions, hls, items = {}, {}, {}
-  local count = math.min(vim.api.nvim_buf_line_count(view.buf), MAX_ITEMS)
+  -- A frame round an editable window (gui.frame): its lines are the
+  -- window's cells, not items.
+  local count = view.editor and 0 or math.min(vim.api.nvim_buf_line_count(view.buf), MAX_ITEMS)
   local lines = vim.api.nvim_buf_get_lines(view.buf, 0, count, false)
   for lnum = 1, count do
     local node
@@ -231,7 +235,7 @@ local function render_view(view)
       return node ~= nil and serialize(node, actions, hls, 0) or nil
     end
     frame = { title = part(f.title), status = part(f.status), preview_title = part(f.preview_title),
-      placeholder = f.placeholder }
+      actions = part(f.actions), placeholder = f.placeholder, editor = view.editor or nil }
   end
   M._actions["view:" .. view.id] = actions
   event("view", { id = view.id, items = items, hl = hl_table(hls), keys = keys_list(view.keys), frame = frame,
@@ -295,6 +299,7 @@ function M.view(opts)
   opts = opts or {}
   local buf = buf_of(opts.buf)
   local view = { id = next_id(), buf = buf, items = opts.items, on_click = opts.on_click, keys = opts.keys,
+    editor = opts._editor == true or nil,
     on_context_menu = type(opts.on_context_menu) == "function" and opts.on_context_menu or nil,
     on_scroll = opts.on_scroll, on_rows = opts.on_rows,
     indent = type(opts.indent) == "number" and opts.indent > 0 and opts.indent or nil,
@@ -307,7 +312,8 @@ function M.view(opts)
     end
     view.frame = { win = frame_win, query_win = win_of(f.query), placeholder = type(f.query) == "table" and f.query.placeholder or nil,
       preview_win = win_of(f.preview), preview_title = type(f.preview) == "table" and f.preview.title or nil,
-      title = f.title, status = f.status }
+      title = f.title, status = f.status, actions = f.actions }
+    if view.editor then view.frame.body_win = win_of(f.body) end
   end
   M._views[view.id] = view
   local handle = { id = view.id, buf = buf }
@@ -324,13 +330,13 @@ function M.view(opts)
   function handle.redraw()
     if M._views[view.id] == view then schedule_place() end
   end
-  --- A framed view's parts: { title?, status?, preview_title?, placeholder?,
-  --- preview_win? (false: none) }.
+  --- A framed view's parts: { title?, status?, actions?, preview_title?,
+  --- placeholder?, preview_win? (false: none) }.
   function handle.frame(self, changes)
     if type(self) ~= "table" or self.id == nil then changes = self end
     local f = view.frame
     if not f or M._views[view.id] ~= view or type(changes) ~= "table" then return end
-    for _, key in ipairs({ "title", "status", "preview_title", "placeholder" }) do
+    for _, key in ipairs({ "title", "status", "actions", "preview_title", "placeholder" }) do
       if changes[key] ~= nil then f[key] = changes[key] end
     end
     if changes.preview_win ~= nil then f.preview_win = win_of(changes.preview_win) end
@@ -340,13 +346,15 @@ function M.view(opts)
     vim.api.nvim_create_autocmd("WinClosed", { group = group, pattern = tostring(view.frame.win), once = true,
       callback = function() M.view_clear(view.id) end })
   end
-  vim.api.nvim_buf_attach(buf, false, {
-    on_lines = function()
-      if M._views[view.id] ~= view then return true end
-      schedule_render(view)
-    end,
-    on_reload = function() schedule_render(view) end,
-  })
+  if not view.editor then
+    vim.api.nvim_buf_attach(buf, false, {
+      on_lines = function()
+        if M._views[view.id] ~= view then return true end
+        schedule_render(view)
+      end,
+      on_reload = function() schedule_render(view) end,
+    })
+  end
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = group, buffer = buf, once = true,
     callback = function() M.view_clear(view.id) end,
@@ -361,6 +369,25 @@ function M.view(opts)
   render_view(view)
   schedule_place()
   return handle
+end
+
+--- gui.frame{ win, body, title?, status?, actions?, keys? }: the framed
+--- view's frame round an editable window instead of a list — a composer's
+--- frontend, whoever's composer it is. win is the float the frame covers,
+--- body a window over it that stays Neovim's cells (a buffer of its own,
+--- edited as any: its modes, its maps), shown as it stands; the header is
+--- the rows of win above body (title, then status at its right end), the
+--- hint row win's last row (keys, then actions at its right end: buttons
+--- whose on_click runs here). Answers the view's handle: :frame{ title?,
+--- status?, actions? }, :close(). Closing win ends it.
+function M.frame(opts)
+  opts = opts or {}
+  local body = win_of(opts.body)
+  if not body or not vim.api.nvim_win_is_valid(body) then
+    error("devhub_gui.frame: body must be a window")
+  end
+  return M.view({ buf = vim.api.nvim_win_get_buf(body), keys = opts.keys, _editor = true,
+    frame = { win = opts.win, body = body, title = opts.title, status = opts.status, actions = opts.actions } })
 end
 
 function M.view_clear(id)
@@ -825,8 +852,13 @@ local function place_frame(view, current)
   if not vim.api.nvim_win_is_valid(f.win) then return nil end
   if vim.api.nvim_win_get_tabpage(f.win) ~= vim.api.nvim_get_current_tabpage() then return nil end
   local list_win
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    if vim.api.nvim_win_get_buf(win) == view.buf and win ~= f.win then list_win = win break end
+  if view.editor then
+    -- A frame round an editable window: its body is where the list goes.
+    if f.body_win and vim.api.nvim_win_is_valid(f.body_win) then list_win = f.body_win end
+  else
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_buf(win) == view.buf and win ~= f.win then list_win = win break end
+    end
   end
   if not list_win then return nil end
   -- Its windows: the page draws their chrome, the painter only their cells.
@@ -836,6 +868,7 @@ local function place_frame(view, current)
   list.cursor = vim.api.nvim_win_get_cursor(list_win)[1]
   list.current = current == list_win
   entry.list = list
+  entry.editor = view.editor
   if f.query_win and vim.api.nvim_win_is_valid(f.query_win) then
     local q = outer_rect(f.query_win)
     local qbuf = vim.api.nvim_win_get_buf(f.query_win)

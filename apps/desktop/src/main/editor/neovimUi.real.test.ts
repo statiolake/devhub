@@ -1804,6 +1804,115 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		h.ui.client.close();
 	}, 20_000);
 
+	it("frames an editable window: its cells the body, the title band above, the hints and buttons below", async () => {
+		const h = await attached(80, 24);
+		const waitFor = async (check: () => boolean, what: string) => {
+			const deadline = Date.now() + 3_000;
+			while (!check()) {
+				if (Date.now() > deadline)
+					throw new Error(`timed out waiting for ${what}`);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+		};
+		const last = (kind: string) =>
+			h.gui.events.filter((e) => e.kind === kind).at(-1)?.payload as
+				| Record<string, unknown>
+				| undefined;
+		const frames = () =>
+			(last("layers")?.["frames"] ?? []) as Record<string, unknown>[];
+		// A composer: a body over a blank float a row taller each way, one
+		// cell in, with the body current in Insert mode.
+		await h.ui.request("nvim_exec_lua", [
+			`local gui = require('devhub_gui')
+			local frame = vim.api.nvim_open_win(vim.api.nvim_create_buf(false, true), false,
+				{ relative = 'editor', row = 3, col = 4, width = 42, height = 10, style = 'minimal', focusable = false, zindex = 60 })
+			local bbuf = vim.api.nvim_create_buf(false, true)
+			vim.api.nvim_buf_set_lines(bbuf, 0, -1, false, { 'first', 'second' })
+			local body = vim.api.nvim_open_win(bbuf, true,
+				{ relative = 'editor', row = 5, col = 5, width = 40, height = 6, style = 'minimal', zindex = 61 })
+			_G.sent = 0
+			_G.composer = gui.frame{ win = frame, body = body,
+				title = { type = 'text', text = 'Comment' },
+				keys = { { '<C-s>', 'send' } },
+				actions = { type = 'button', text = 'Send', on_click = function() _G.sent = _G.sent + 1 end } }
+			_G.frame_win, _G.body_win = frame, body
+			vim.cmd('startinsert!')`,
+			[],
+		]);
+		await waitFor(() => frames().length === 1, "the frame placed");
+		const view = last("view") as {
+			id: number;
+			items: unknown[];
+			keys: unknown;
+			frame: {
+				title?: { text?: string };
+				actions?: { text?: string };
+				editor?: boolean;
+			};
+		};
+		// No items: the body's lines are its cells, not rows.
+		expect(view.items).toEqual([]);
+		expect(view.keys).toEqual([["<C-s>", "send"]]);
+		expect(view.frame).toMatchObject({
+			title: { text: "Comment" },
+			actions: { text: "Send" },
+			editor: true,
+		});
+		const placed = frames()[0] as Record<string, unknown>;
+		expect(placed["editor"]).toBe(true);
+		expect(placed["frame"]).toMatchObject({
+			row: 3,
+			col: 4,
+			width: 42,
+			height: 10,
+		});
+		expect(placed["list"]).toMatchObject({
+			row: 5,
+			col: 5,
+			width: 40,
+			height: 6,
+			current: true,
+		});
+		// Its windows, claimed for the page: the frame and the body.
+		expect((placed as { wins: number[] }).wins).toHaveLength(2);
+		// Typing is Neovim's: the body's buffer changes, no view is sent for it.
+		const views = h.gui.events.filter((e) => e.kind === "view").length;
+		await h.ui.request("nvim_input", ["typed"]);
+		await waitFor(() => frames()[0] !== placed, "placed again");
+		expect(
+			await h.ui.request("nvim_exec_lua", [
+				"return vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(_G.body_win), 0, -1, false)",
+				[],
+			]),
+		).toEqual(["firsttyped", "second"]);
+		expect(h.gui.events.filter((e) => e.kind === "view").length).toBe(views);
+		// A button's click runs its Lua; the parts change by :frame.
+		const action = (view.frame.actions as { action?: number }).action;
+		await h.ui.request("nvim_exec_lua", [
+			"require('devhub_gui')._frame_action(...)",
+			[view.id, action],
+		]);
+		expect(await h.ui.request("nvim_exec_lua", ["return _G.sent", []])).toBe(1);
+		await h.ui.request("nvim_exec_lua", [
+			"_G.composer:frame{ status = { type = 'text', text = 'draft' } }",
+			[],
+		]);
+		await waitFor(
+			() =>
+				(last("view")?.["frame"] as { status?: { text?: string } } | undefined)
+					?.status?.text === "draft",
+			"the status",
+		);
+		// Closing the frame's float ends it.
+		await h.ui.request("nvim_exec_lua", [
+			"vim.api.nvim_win_close(_G.body_win, true); vim.api.nvim_win_close(_G.frame_win, true)",
+			[],
+		]);
+		await waitFor(() => last("view_clear") !== undefined, "closed");
+		await waitFor(() => frames().length === 0, "unplaced");
+		h.ui.client.close();
+	}, 20_000);
+
 	it("sets Neovim's own virtual text in the UI face and leaves a plugin's as cells", async () => {
 		const h = await attached(60, 12);
 		const decor = () => {

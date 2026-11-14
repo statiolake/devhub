@@ -36,6 +36,8 @@ export const NEOVIM_ROLES = [
   { name: "frame-row", selector: ".nvim-view-frame-row", max: 60 },
   { name: "frame-status", selector: ".nvim-view-frame-status" },
   { name: "frame-preview-title", selector: ".nvim-view-frame-preview-title" },
+  { name: "frame-keys", selector: ".nvim-view-frame-keys" },
+  { name: "frame-actions", selector: ".nvim-view-frame-actions" },
   { name: "view", selector: ".nvim-view", max: 6 },
   { name: "view-sticky", selector: ".nvim-view-sticky", max: 4 },
   { name: "view-item", selector: ".nvim-view-item", max: 60 },
@@ -124,6 +126,48 @@ local function open(row, col, title)
 end
 open(8, 20, ' First ')
 ${fused ? "open(8, 45, ' Second ')" : ""}
+`;
+
+/**
+ * A composer framed by `gui.frame` (devhub.nvim), as a plugin's DevHub
+ * extension frames one: a buffer to write in, in a float under the cursor's
+ * line, over a blank float a row taller each way that the frame covers, and
+ * closed with it in the same tick. <F5> opens it; <C-s> and q close it.
+ */
+const COMPOSER_LUA = `
+_G.stability_composer = function()
+  local gui = require('devhub.gui')
+  local code = vim.api.nvim_get_current_win()
+  local lnum = vim.api.nvim_win_get_cursor(code)[1]
+  local place = { relative = 'win', win = code, bufpos = { lnum - 1, 0 } }
+  local frame = vim.api.nvim_open_win(vim.api.nvim_create_buf(false, true), false, vim.tbl_extend('force', place,
+    { row = 1, col = -1, width = 52, height = 10, style = 'minimal', focusable = false, zindex = 60 }))
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden = 'wipe'
+  local body = vim.api.nvim_open_win(buf, true, vim.tbl_extend('force', place,
+    { row = 3, col = 0, width = 50, height = 6, style = 'minimal', zindex = 61 }))
+  vim.api.nvim_create_autocmd('WinClosed', { pattern = tostring(body), once = true, callback = function()
+    if vim.api.nvim_win_is_valid(frame) then vim.api.nvim_win_close(frame, true) end
+  end })
+  local function close()
+    vim.cmd('stopinsert')
+    if vim.api.nvim_win_is_valid(body) then vim.api.nvim_win_close(body, true) end
+  end
+  vim.keymap.set({ 'n', 'i' }, '<C-s>', close, { buffer = buf })
+  vim.keymap.set('n', 'q', close, { buffer = buf })
+  gui.frame {
+    win = frame, body = body,
+    title = { type = 'text', size = 'sm', runs = { { text = 'Comment', bold = true }, { text = '  core0.ts L3', hl = 'Comment' } } },
+    keys = { { '<C-s>', 'send' }, { 'q', 'cancel' } },
+    actions = { type = 'hstack', gap = 6, children = {
+      { type = 'button', text = 'Cancel', on_click = close },
+      { type = 'button', text = 'Send', tone = 'accent', on_click = close },
+    } },
+  }
+  vim.cmd('startinsert')
+end
+vim.keymap.set('n', '<F5>', _G.stability_composer)
+vim.api.nvim_win_set_cursor(0, { 3, 0 })
 `;
 
 /** A borderless float, entered, the cursor a block in its last cell. */
@@ -389,6 +433,65 @@ export const SCENARIOS = [
         act: (ctx) => ctx.press("pane", "Escape"),
         regions: [
           { name: "picker", selector: ".nvim-view-frame-edge", from: "before" },
+        ],
+        spec: floatSpec,
+      },
+    ],
+  },
+  {
+    name: "composer",
+    description:
+      "a composer framed round its editable window (gui.frame) opening, typed in, sent, opened again and cancelled from Normal mode",
+    ...neovim,
+    setup: async (ctx) => {
+      await editorAtRest(ctx);
+      ctx.lua(COMPOSER_LUA);
+      await ctx.settle("pane");
+    },
+    steps: [
+      {
+        name: "open",
+        act: (ctx) => ctx.press("pane", "F5"),
+        regions: [{ name: "composer", selector: ".nvim-view-frame-edge" }],
+        spec: floatSpec,
+      },
+      {
+        name: "type",
+        act: (ctx) => ctx.type("pane", "looks off"),
+        spec: floatSpec,
+      },
+      {
+        name: "send",
+        act: (ctx) => ctx.press("pane", "C-s"),
+        regions: [
+          {
+            name: "composer",
+            selector: ".nvim-view-frame-edge",
+            from: "before",
+          },
+        ],
+        spec: floatSpec,
+      },
+      {
+        name: "reopen",
+        act: (ctx) => ctx.press("pane", "F5"),
+        regions: [{ name: "composer", selector: ".nvim-view-frame-edge" }],
+        spec: floatSpec,
+      },
+      {
+        name: "normal",
+        act: (ctx) => ctx.press("pane", "Escape"),
+        spec: floatSpec,
+      },
+      {
+        name: "cancel",
+        act: (ctx) => ctx.press("pane", "q"),
+        regions: [
+          {
+            name: "composer",
+            selector: ".nvim-view-frame-edge",
+            from: "before",
+          },
         ],
         spec: floatSpec,
       },
