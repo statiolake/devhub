@@ -865,7 +865,11 @@ Terminal, Editor: "Go to definition").
   the symbol and runs `vim.lsp.buf.definition()`, so the jump is the one typed
   there: the jumplist (`<C-o>` comes back to the symbol), the tag stack, the
   quickfix list for several results, another file in the same window. A
-  symbol whose answer then says "none" is left alone.
+  symbol whose answer then says "none" is left alone. A config whose own
+  definition key runs something else (a picker's `lsp_definitions`) names it
+  with devhub.nvim's `setup { definition_jump = function(ctx) … end }`: it is
+  run instead, with the cursor already on the symbol, so the click and the
+  key are one action. DevHub knows neither: it only asks Lua to jump.
 - **Everywhere else the click is Neovim's**, unchanged: no LSP client with
   definitions, not a word, a word known to have no definition, Visual or
   Operator-pending mode, the command line, grid 1, a GUI's element. With Alt
