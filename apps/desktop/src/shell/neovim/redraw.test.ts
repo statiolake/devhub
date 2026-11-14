@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyRedraw,
+  takeFlushed,
   charOffsetOfByte,
   claimFloats,
   floatBorder,
@@ -538,5 +539,25 @@ describe("a screen Neovim draws on grid 1 (`:intro`)", () => {
       ["flush", []],
     ]);
     expect(state.screen).toBe(false);
+  });
+});
+
+describe("a redraw taken in at its flush", () => {
+  const line = ["grid_line", [2, 0, 0, [["x"]], false]];
+  const scroll = ["grid_scroll", [2, 0, 10, 0, 80, 5, 0]];
+  const flush = ["flush"];
+
+  it("holds what comes before Neovim's flush", () => {
+    const first = takeFlushed([], [scroll]);
+    expect(first.flushed).toEqual([]);
+    const second = takeFlushed(first.rest, [line, flush]);
+    expect(second.flushed).toEqual([scroll, line, flush]);
+    expect(second.rest).toEqual([]);
+  });
+
+  it("holds what comes after the last flush for the next", () => {
+    const { flushed, rest } = takeFlushed([], [line, flush, scroll]);
+    expect(flushed).toEqual([line, flush]);
+    expect(rest).toEqual([scroll]);
   });
 });

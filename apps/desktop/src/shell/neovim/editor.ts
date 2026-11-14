@@ -24,6 +24,7 @@ import {
   type MessageEvent,
   type NeovimUiState,
   type RedrawChanges,
+  takeFlushed,
 } from "./redraw";
 import {
   GridPainter,
@@ -888,7 +889,23 @@ export class NeovimEditor {
   /** A footer that waits for the flush it was made for (`setStatusline`). */
   private statuslineAtFlush: Statusline | undefined;
 
+  /**
+   * What Neovim sent since its last `flush`: the start of a redraw it has
+   * not finished (a long one comes in several notifications, and only the
+   * last says flush). Taken in with its flush, never before: a frame
+   * painted from it showed a scroll whose rows had not come yet — the
+   * grid moved up, the rows it left blank, one with only its line number
+   * (rapid <C-d> in the stability suite's coherence check).
+   */
+  private unflushed: readonly unknown[] = [];
+
   redraw(batches: readonly unknown[]): void {
+    const { flushed, rest } = takeFlushed(this.unflushed, batches);
+    this.unflushed = rest;
+    if (flushed.length > 0) this.redrawFlushed(flushed);
+  }
+
+  private redrawFlushed(batches: readonly unknown[]): void {
     // Neovim's cells under the band are Neovim's again while its redraw is
     // taken in (a scroll moves them, a line rewrites them); the band is
     // drawn again over what it then shows, where it does not show Visual.
@@ -962,6 +979,7 @@ export class NeovimEditor {
   /** Neovim went away: what is drawn stays, nothing is sent. */
   reset(): void {
     this.wheel.reset();
+    this.unflushed = [];
   }
 
   dispose(): void {

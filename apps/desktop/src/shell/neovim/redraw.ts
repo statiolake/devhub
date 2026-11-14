@@ -636,6 +636,28 @@ export function screenOf(state: NeovimUiState): boolean {
   return false;
 }
 
+/**
+ * The batches a redraw takes in now: everything Neovim sent up to its last
+ * `flush`, after what was held from before (`held`); what came after that
+ * flush is held for the next. A redraw Neovim has not finished (a long one
+ * comes in several notifications, only the last saying flush) is never
+ * drawn half done.
+ */
+export function takeFlushed(
+  held: readonly unknown[],
+  batches: readonly unknown[],
+): { flushed: readonly unknown[]; rest: readonly unknown[] } {
+  let end = -1;
+  batches.forEach((batch, i) => {
+    if (Array.isArray(batch) && batch[0] === "flush") end = i;
+  });
+  if (end < 0) return { flushed: [], rest: [...held, ...batches] };
+  return {
+    flushed: [...held, ...batches.slice(0, end + 1)],
+    rest: batches.slice(end + 1),
+  };
+}
+
 /** Fold one `redraw` notification's batches into `state`. */
 export function applyRedraw(
   state: NeovimUiState,
