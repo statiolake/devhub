@@ -11,8 +11,8 @@
  * the text area, and between them cover every row the display can be on.
  * A wheel moving the display past what they cover asks Neovim for one more
  * line ahead (`ScrollRequest`), so the next rows are there before they are
- * needed. When the wheel stops, Neovim is brought to the nearest line
- * (a line back, when it is ahead by more than half a line) and the display
+ * needed. When the wheel stops, Neovim is brought to the next whole line
+ * the way the display was going (never back) and the display
  * eases onto it: at rest, what is shown is Neovim's grid, exactly.
  *
  * Neovim scrolling by itself (`<C-d>`, `zz`, `j` past the edge, a search)
@@ -343,8 +343,9 @@ export function step(
     return undefined;
   }
   if (view.pending !== 0) return undefined;
-  // At rest: Neovim to the nearest line first, then the display onto it.
-  const lines = Math.round(view.off / rowHeight);
+  // At rest: Neovim to the next whole line the way the display was going
+  // (`restLines`), then the display onto it — on, never back.
+  const lines = restLines(view.off, rowHeight, view.dir);
   if (lines !== 0 && !view.settled) {
     view.settled = true;
     view.want = view.off;
@@ -364,6 +365,21 @@ export function step(
     view.ease = undefined;
   }
   return undefined;
+}
+
+/**
+ * The lines Neovim is brought at rest, for a display `off` pixels from its
+ * line that was moving `dir`: the next whole line that way, so the display
+ * eases on to it and never back. Settled on the nearest line, a wheel that
+ * stopped past one by less than half a line went back to it (7 px back at
+ * the end of a fast burst, in the stability suite's motion checks). Less
+ * than a pixel is the line it is on.
+ */
+export function restLines(off: number, rowHeight: number, dir: number): number {
+  if (Math.abs(off) < 1) return 0;
+  if (dir > 0) return Math.ceil(off / rowHeight - 1e-9);
+  if (dir < 0) return Math.floor(off / rowHeight + 1e-9);
+  return Math.round(off / rowHeight);
 }
 
 function ask(view: ScrollView, rows: number, now: number): ScrollRequest {

@@ -73,6 +73,7 @@ async function freshRedraw(ctx, client, selector) {
 import { appDir, makeProfile, writeSettings } from "./profile.mjs";
 import { runPointer } from "./pointer.mjs";
 import { SCENARIOS, editorAtRest } from "./scenarios.mjs";
+import { MOTION_SCENARIOS } from "./scenariosMotion.mjs";
 
 // Pages by name. `pane` is the terminal page of the Workspace on screen (each
 // Workspace has its own; the others are hidden).
@@ -140,7 +141,7 @@ async function main() {
         process.once("SIGINT", resolve).once("SIGTERM", resolve),
       );
     }
-    const scenarios = SCENARIOS.filter(
+    const scenarios = [...SCENARIOS, ...MOTION_SCENARIOS].filter(
       (s) => !args.only || args.only.includes(s.name),
     );
     for (const scenario of scenarios) {

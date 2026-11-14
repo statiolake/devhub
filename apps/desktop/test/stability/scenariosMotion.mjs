@@ -81,7 +81,7 @@ vim.api.nvim_open_win(buf, false, { relative = 'win', win = vim.api.nvim_get_cur
 const wheelOver = (ctx, notches, delta, gapMs) =>
   ctx.wheel("pane", ".nvim-editor", notches, delta, gapMs);
 
-export const MOTION_SCENARIOS = [
+const MOTION = [
   {
     name: "scroll",
     description:
@@ -520,3 +520,17 @@ export const MOTION_SCENARIOS = [
     teardown: (ctx) => ctx.clickText("sidebar", ".sidebar-row", "alpha"),
   },
 ];
+
+/**
+ * A step in motion changes what it draws every frame by design: it is held
+ * to the motion invariants (`motion`) and the per-frame rules, not to the
+ * discrete steps' one change, unless it says otherwise.
+ */
+export const MOTION_SCENARIOS = MOTION.map((scenario) => ({
+  ...scenario,
+  steps: scenario.steps.map((step) =>
+    step.motion && step.spec === undefined
+      ? { ...step, spec: { only: [] } }
+      : step,
+  ),
+}));

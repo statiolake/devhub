@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  restLines,
   EASE_MS,
   GLIDE_MS,
   WHEEL_IDLE_MS,
@@ -63,7 +64,7 @@ describe("pixel scrolling", () => {
     expect(view.reach).toEqual({ lo: view.off, hi: view.off });
   });
 
-  it("brings Neovim back to the nearest line at rest, then eases onto it", () => {
+  it("brings Neovim to the next whole line the wheel was going at rest, then eases on to it", () => {
     const view = newScrollView();
     wheeled(view, 5, 0);
     step(view, 0, CH, ROWS, 2);
@@ -72,10 +73,13 @@ describe("pixel scrolling", () => {
     step(view, 16, CH, ROWS, 2);
     expect(view.off).toBe(-32);
     const rest = 16 + WHEEL_IDLE_MS + 1;
+    // 32 px short of the line Neovim is on, going down: Neovim one line
+    // back (not two, to the nearest: the display would then go back 8 px
+    // against the wheel), and the display on, 12 px, onto it.
     const back = step(view, rest, CH, ROWS, 2);
-    expect(back).toEqual({ rows: -2, exact: true });
-    shifted(view, -2, CH, TEXT, rest + 10);
-    expect(view.off).toBe(8);
+    expect(back).toEqual({ rows: -1, exact: true });
+    shifted(view, -1, CH, TEXT, rest + 10);
+    expect(view.off).toBe(-12);
     step(view, rest + 11, CH, ROWS, 2);
     step(view, rest + 11 + EASE_MS, CH, ROWS, 2);
     expect(view.off).toBe(0);
@@ -252,5 +256,14 @@ describe("a wheel tick", () => {
     const { rows, seen } = run([[4, 0]], false);
     expect(rows).toBe(1);
     expect(seen.find((v) => v > 0)).toBe(CH);
+  });
+
+  it("settles the way the display was going, never back", () => {
+    expect(restLines(7, 15, 1)).toBe(1);
+    expect(restLines(-7, 15, -1)).toBe(-1);
+    expect(restLines(-32, 20, 1)).toBe(-1);
+    expect(restLines(32, 20, -1)).toBe(1);
+    expect(restLines(0.4, 15, 1)).toBe(0);
+    expect(restLines(9, 15, 0)).toBe(1);
   });
 });
