@@ -372,6 +372,29 @@ describe("TerminalNeovims", () => {
 		neovims.dispose();
 	});
 
+	it("gives the keys back after what the prefix opened has closed, whichever way its key went", async () => {
+		const { neovims, views } = setup();
+		neovims.controlPanes("t", panes());
+		await vi.waitFor(() => {
+			expect(views()).toHaveLength(1);
+		});
+		neovims.attached("tnv:1");
+		expect(neovims.overlayKey("tnv:1", key({ key: "b", control: true }))).toBe(
+			"hand",
+		);
+		// The page types the prefix and the key after it (q: display-panes)
+		// into its terminal; main sees the numbers cover the panes, not q.
+		neovims.controlPanes("t", panes({ covered: true }));
+		expect(neovims.keyboardOverlay("t")).toBeUndefined();
+		// Escape closes them.
+		expect(neovims.terminalKey("t", key({ key: "Escape" }))).toBe("pass");
+		neovims.controlPanes("t", panes({ covered: false }));
+		await vi.waitFor(() => {
+			expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
+		});
+		neovims.dispose();
+	});
+
 	it("sends a prefix its page could not type through the control client", async () => {
 		const { neovims, ports, views } = setup();
 		neovims.controlPanes("t", panes());

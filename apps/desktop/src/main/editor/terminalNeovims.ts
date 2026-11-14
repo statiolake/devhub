@@ -532,7 +532,24 @@ export class TerminalNeovims {
 					.map((pane) => [pane.paneId, pane.socket]),
 			),
 		});
+		const wasCovered = control.panes.covered;
 		control.panes = panes;
+		// Something tmux's prefix opened covers the panes (display-panes, a
+		// prompt, a menu, the chooser): the key after the prefix was typed,
+		// whichever way it reached tmux (the page's own handing of it is not
+		// seen here as a key). The prefix is done: its keys come back once
+		// what covers the panes has gone. Left armed, they never came back:
+		// the keys typed after display-panes' numbers went to tmux, not to
+		// the Neovim (the stability suite's chaos, prefix q then Escape).
+		if (
+			!wasCovered &&
+			panes.covered &&
+			watch.lend?.kind === "prefix" &&
+			watch.lend.armed
+		) {
+			watch.lend = { kind: "prefix", armed: false };
+			this.settle(watch);
+		}
 		this.applyControl(watch);
 		// A hint that says what is confirmed already (a control client read
 		// it, `paneSocket`) needs no reading.
